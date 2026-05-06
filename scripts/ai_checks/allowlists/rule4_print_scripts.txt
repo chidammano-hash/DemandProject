@@ -1,0 +1,48 @@
+# TEMPORARY allowlist — pinned existing print() violations in production script subdirs.
+# CLAUDE.md rule: scripts/etl|ml|inventory|forecasting|ops|ai must use logging.getLogger(__name__).
+# Ruff rule T201 also enabled in pyproject.toml scoped to those dirs as a backup.
+# DO NOT add new entries.
+scripts/etl/load.py
+scripts/etl/load_backtest_forecasts.py
+scripts/etl/load_ext_ml_forecasts.py
+scripts/etl/load_open_pos.py
+scripts/etl/normalize_dataset_csv.py
+scripts/etl/normalize_inventory_csv.py
+scripts/etl/run_pipeline.py
+scripts/forecasting/apply_event_adjustments.py
+scripts/forecasting/compute_bias_corrections.py
+scripts/forecasting/compute_blended_forecast.py
+scripts/forecasting/generate_consensus_plan.py
+scripts/forecasting/generate_quantile_forecasts.py
+scripts/inventory/assign_replenishment_policies.py
+scripts/inventory/classify_abc_xyz.py
+scripts/inventory/compute_demand_signals.py
+scripts/inventory/compute_echelon_targets.py
+scripts/inventory/compute_eoq.py
+scripts/inventory/compute_investment_plan.py
+scripts/inventory/compute_lead_time_variability.py
+scripts/inventory/compute_rebalancing.py
+scripts/inventory/generate_planned_orders.py
+scripts/inventory/generate_replenishment_exceptions.py
+scripts/inventory/refresh_health_scores.py
+scripts/inventory/refresh_intramonth_stockout.py
+scripts/inventory/release_planned_orders.py
+scripts/inventory/run_ss_simulation.py
+scripts/inventory/run_supply_chain_scenario.py
+scripts/inventory/update_lead_time_actuals.py
+scripts/ml/auto_tune.py
+scripts/ml/clean_backtest_models.py
+scripts/ml/clean_forecasts_by_date.py
+scripts/ml/compare_backtest_runs.py
+scripts/ml/label_clusters.py
+scripts/ml/run_champion_selection.py
+scripts/ml/run_expert_system_backtest.py
+scripts/ml/simulate_champion_strategies.py
+scripts/ml/train_meta_learner.py
+scripts/ml/tune_hyperparams.py
+scripts/ops/compute_financial_plan.py
+scripts/ops/compute_service_level_actuals.py
+scripts/ops/fix_dq_issues.py
+scripts/ops/generate_storyboard_exceptions.py
+scripts/ops/populate_dq_checks.py
+scripts/ops/run_sop_cycle.py

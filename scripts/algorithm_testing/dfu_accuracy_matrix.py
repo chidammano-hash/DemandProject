@@ -11,6 +11,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +61,7 @@ def build_dfu_accuracy_matrix(
     deduped = (
         predictions_df.groupby(
             ["sku_ck", "startdate", "algorithm_id"], sort=False
-        )["basefcst_pref"]
+        )[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -80,7 +82,7 @@ def build_dfu_accuracy_matrix(
             columns=["sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"]
         )
 
-    joined["abs_error"] = (joined["basefcst_pref"] - joined["qty"]).abs()
+    joined["abs_error"] = (joined[FORECAST_QTY_COL] - joined["qty"]).abs()
 
     # Step 3: Aggregate per (sku_ck, algorithm_id)
     agg = (
@@ -154,7 +156,7 @@ def compute_inverse_wape_blend(
     if dfu_accuracy_matrix.empty or predictions_df.empty:
         logger.warning("compute_inverse_wape_blend: empty input, returning empty frame")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     # Select top-K algorithms per DFU by lowest WAPE
@@ -174,7 +176,7 @@ def compute_inverse_wape_blend(
     deduped = (
         predictions_df.groupby(
             ["sku_ck", "startdate", "algorithm_id"], sort=False
-        )["basefcst_pref"]
+        )[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -192,20 +194,20 @@ def compute_inverse_wape_blend(
             "with accuracy matrix"
         )
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     blended_input["weighted_pred"] = (
-        blended_input["basefcst_pref"] * blended_input["weight"]
+        blended_input[FORECAST_QTY_COL] * blended_input["weight"]
     )
 
     result = (
         blended_input.groupby(["sku_ck", "startdate"], sort=False)["weighted_pred"]
         .sum()
         .reset_index()
-        .rename(columns={"weighted_pred": "basefcst_pref"})
+        .rename(columns={"weighted_pred": FORECAST_QTY_COL})
     )
-    result["basefcst_pref"] = result["basefcst_pref"].clip(lower=0.0)
+    result[FORECAST_QTY_COL] = result[FORECAST_QTY_COL].clip(lower=0.0)
     result["algorithm_id"] = "hybrid_blend"
 
     logger.info(

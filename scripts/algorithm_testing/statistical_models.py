@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 # DFU count below which sequential execution is faster than process-pool overhead
@@ -343,7 +345,7 @@ def _run_all_models_for_dfu(
                     {
                         "sku_ck": sku_ck,
                         "startdate": ts,
-                        "basefcst_pref": float(val),
+                        FORECAST_QTY_COL: float(val),
                         "algorithm_id": model_id,
                     }
                 )
@@ -394,7 +396,7 @@ def run_statistical_models(
     if not enabled_models:
         logger.warning("No enabled statistical models; returning empty DataFrame")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     sku_cks = sales_df["sku_ck"].unique()
@@ -484,7 +486,7 @@ def run_statistical_models(
     if not all_results:
         logger.warning("All statistical model predictions failed; returning empty DataFrame")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     result_df = pd.DataFrame(all_results)

@@ -188,22 +188,29 @@ class ChainDetail(ChainSummary):
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
-def _get_chain_runner(pool=Depends(_get_pool)) -> IntegrationChainRunner:
-    """Construct an IntegrationChainRunner bound to the shared connection pool."""
-    return IntegrationChainRunner(pool)
+def _get_chain_runner() -> IntegrationChainRunner:
+    """Construct an IntegrationChainRunner bound to the shared connection pool.
+
+    Resolves the pool via direct ``_get_pool()`` call rather than
+    ``Depends(_get_pool)`` (per CLAUDE.md "DB & API Patterns" — FastAPI's
+    inspection of MagicMock signatures raises 422 in tests).
+    """
+    return IntegrationChainRunner(_get_pool())
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 @router.get("/scan", response_model=ScanResponse)
-def scan(pool=Depends(_get_pool)) -> ScanResponse:
+def scan() -> ScanResponse:
     """Scan the input directory and return detected changes + a proposed chain.
 
     Read-only — no auth required. Delegates entirely to
-    :func:`common.services.integration_scanner.scan_input_dir`.
+    :func:`common.services.integration_scanner.scan_input_dir`. Resolves the
+    pool via direct ``_get_pool()`` call rather than ``Depends(_get_pool)``
+    (per CLAUDE.md "DB & API Patterns").
     """
-    payload: dict[str, Any] = scan_input_dir(pool) or {}
+    payload: dict[str, Any] = scan_input_dir(_get_pool()) or {}
     return ScanResponse(
         scanned_at=str(payload.get("scanned_at", "")),
         changes=[DomainChangeModel(**c) for c in payload.get("changes", [])],

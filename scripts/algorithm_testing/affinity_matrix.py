@@ -9,6 +9,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,7 @@ def build_affinity_matrix(
     """
     # --- Validate inputs -------------------------------------------------------
     for name, df, required in [
-        ("predictions_df", predictions_df, {"sku_ck", "startdate", "basefcst_pref", "algorithm_id"}),
+        ("predictions_df", predictions_df, {"sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"}),
         ("actuals_df", actuals_df, {"sku_ck", "startdate", "qty"}),
         ("classification_df", classification_df, {"sku_ck", "archetype"}),
     ]:
@@ -57,7 +59,7 @@ def build_affinity_matrix(
 
     # --- Step 1: Aggregate duplicate predictions (multiple timeframes) ---------
     preds = (
-        predictions_df.groupby(["sku_ck", "startdate", "algorithm_id"], sort=False)["basefcst_pref"]
+        predictions_df.groupby(["sku_ck", "startdate", "algorithm_id"], sort=False)[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -95,7 +97,7 @@ def build_affinity_matrix(
         return _empty_affinity_matrix(), _empty_detail_df()
 
     # --- Step 4: Compute per-row absolute error --------------------------------
-    merged["abs_error"] = np.abs(merged["basefcst_pref"] - merged["qty"])
+    merged["abs_error"] = np.abs(merged[FORECAST_QTY_COL] - merged["qty"])
 
     # --- Step 5: Group by (archetype, algorithm_id) and aggregate --------------
     grouped = merged.groupby(["archetype", "algorithm_id"], sort=False)
@@ -103,7 +105,7 @@ def build_affinity_matrix(
     detail = grouped.agg(
         sum_abs_error=("abs_error", "sum"),
         sum_actual=("qty", "sum"),
-        sum_forecast=("basefcst_pref", "sum"),
+        sum_forecast=(FORECAST_QTY_COL, "sum"),
         n_dfu_months=("abs_error", "count"),
         n_dfus=("sku_ck", "nunique"),
         mean_abs_error=("abs_error", "mean"),
@@ -243,7 +245,7 @@ def compute_ceiling_accuracy(
         DataFrame with columns: archetype, ceiling_accuracy, n_dfu_months
     """
     for name, df, required in [
-        ("predictions_df", predictions_df, {"sku_ck", "startdate", "basefcst_pref", "algorithm_id"}),
+        ("predictions_df", predictions_df, {"sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"}),
         ("actuals_df", actuals_df, {"sku_ck", "startdate", "qty"}),
         ("classification_df", classification_df, {"sku_ck", "archetype"}),
     ]:
@@ -257,7 +259,7 @@ def compute_ceiling_accuracy(
 
     # Average duplicate timeframe predictions
     preds = (
-        predictions_df.groupby(["sku_ck", "startdate", "algorithm_id"], sort=False)["basefcst_pref"]
+        predictions_df.groupby(["sku_ck", "startdate", "algorithm_id"], sort=False)[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -273,7 +275,7 @@ def compute_ceiling_accuracy(
         return pd.DataFrame(columns=["archetype", "ceiling_accuracy", "n_dfu_months"])
 
     # Compute absolute error per prediction row
-    merged["abs_error"] = np.abs(merged["basefcst_pref"] - merged["qty"])
+    merged["abs_error"] = np.abs(merged[FORECAST_QTY_COL] - merged["qty"])
 
     # For each (sku_ck, startdate), keep the row with the lowest abs_error (oracle pick)
     idx_best = merged.groupby(["sku_ck", "startdate"], sort=False)["abs_error"].idxmin()

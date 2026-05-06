@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common.core.constants import CAT_FEATURES
+from common.core.constants import CAT_FEATURES, FORECAST_QTY_COL
 from common.core.utils import get_algorithm_params, load_config, load_forecast_pipeline_config
 from common.ml.feature_engineering import get_feature_columns
 from common.ml.model_registry import (
@@ -179,7 +179,7 @@ def run_tree_models(
 
     if len(predict_df) == 0:
         logger.warning("No prediction rows for predict_months=%s", predict_months)
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     all_model_results: list[pd.DataFrame] = []
 
@@ -260,7 +260,7 @@ def run_tree_models(
                     group_label, const_val, len(pred_g),
                 )
                 result = pred_g[["sku_ck", "startdate"]].copy()
-                result["basefcst_pref"] = max(const_val, 0.0)
+                result[FORECAST_QTY_COL] = max(const_val, 0.0)
                 result["algorithm_id"] = model_id
                 group_results.append(result)
                 continue
@@ -306,7 +306,7 @@ def run_tree_models(
             )
 
             result = pred_g[["sku_ck", "startdate"]].copy()
-            result["basefcst_pref"] = preds
+            result[FORECAST_QTY_COL] = preds
             result["algorithm_id"] = model_id
             group_results.append(result)
 
@@ -322,7 +322,7 @@ def run_tree_models(
 
     if not all_model_results:
         logger.warning("No tree model predictions produced")
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     combined = pd.concat(all_model_results, ignore_index=True)
     logger.info(

@@ -27,6 +27,7 @@ from common.core.constants import (
     CUSTOMER_FEATURE_COLS,
     ENHANCED_FEATURES,
     EXTERNAL_FORECAST_FEATURES,
+    FORECAST_QTY_COL,
     FOURIER_FEATURES,
     LAG_RANGE,
     METADATA_COLS,
@@ -500,8 +501,8 @@ def enrich_with_external_forecast(
         return grid
 
     # Merge external forecast onto grid
-    ext = ext_forecast_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
-    ext = ext.rename(columns={"basefcst_pref": "_ext_fcst"})
+    ext = ext_forecast_df[["sku_ck", "startdate", FORECAST_QTY_COL]].copy()
+    ext = ext.rename(columns={FORECAST_QTY_COL: "_ext_fcst"})
     ext = ext.drop_duplicates(subset=["sku_ck", "startdate"], keep="first")
 
     grid = grid.merge(ext, on=["sku_ck", "startdate"], how="left")
@@ -739,7 +740,7 @@ def update_grid_with_predictions(
             (e.g. inside the recursive prediction loop).
     """
     df = grid if inplace else grid.copy()
-    pred_map = predictions.drop_duplicates(subset="sku_ck", keep="first").set_index("sku_ck")["basefcst_pref"]
+    pred_map = predictions.drop_duplicates(subset="sku_ck", keep="first").set_index("sku_ck")[FORECAST_QTY_COL]
     mask = df["startdate"] == month
     df.loc[mask, "qty"] = df.loc[mask, "sku_ck"].map(pred_map).fillna(0)
 
@@ -779,7 +780,7 @@ def update_grid_incremental(
     Mutates ``grid`` in-place. Only valid when grid is a uniform cross-product
     sorted by (sku_ck, startdate).
     """
-    pred_map = predictions.drop_duplicates(subset="sku_ck", keep="first").set_index("sku_ck")["basefcst_pref"]
+    pred_map = predictions.drop_duplicates(subset="sku_ck", keep="first").set_index("sku_ck")[FORECAST_QTY_COL]
     month_mask = grid["startdate"] == month
     grid.loc[month_mask, "qty"] = grid.loc[month_mask, "sku_ck"].map(pred_map).fillna(0).astype(grid["qty"].dtype)
 

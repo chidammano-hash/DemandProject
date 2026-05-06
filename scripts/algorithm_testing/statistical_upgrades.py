@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 _STATSFORECAST_AVAILABLE = False
@@ -420,7 +422,7 @@ def _fit_dfu_upgrades(args: tuple) -> list[dict]:
                 results.append({
                     "sku_ck": sku_ck,
                     "startdate": ts,
-                    "basefcst_pref": float(val),
+                    FORECAST_QTY_COL: float(val),
                     "algorithm_id": model_id,
                 })
 
@@ -460,12 +462,12 @@ def run_statistical_upgrades(
     if not _STATSFORECAST_AVAILABLE:
         logger.warning("statsforecast not installed; returning empty DataFrame")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     if not enabled_models:
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     sku_cks = sales_df["sku_ck"].unique()
@@ -542,7 +544,7 @@ def run_statistical_upgrades(
     if not all_results:
         logger.warning("All statistical upgrade predictions failed")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     result_df = pd.DataFrame(all_results)

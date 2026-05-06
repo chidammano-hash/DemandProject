@@ -5,9 +5,10 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from api.core import get_conn
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,10 @@ def _fetch_messages(conn: Any, session_id: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @router.post("/lgbm-tuning/chat/sessions", status_code=201)
-def create_session(body: CreateSessionBody) -> dict:
+def create_session(
+    body: CreateSessionBody,
+    _: None = Depends(require_api_key),
+) -> dict:
     """Create a new chat session, seeded with current run summary context."""
     with get_conn() as conn:
         # Seed context with recent run summary
@@ -176,7 +180,11 @@ def get_session(session_id: str) -> dict:
 
 
 @router.post("/lgbm-tuning/chat/sessions/{session_id}/messages")
-def send_message(session_id: str, body: SendMessageBody) -> dict:
+def send_message(
+    session_id: str,
+    body: SendMessageBody,
+    _: None = Depends(require_api_key),
+) -> dict:
     """Send a user message and get AI response.
 
     Flow:
@@ -267,7 +275,11 @@ def send_message(session_id: str, body: SendMessageBody) -> dict:
 
 
 @router.post("/lgbm-tuning/chat/sessions/{session_id}/confirm-run")
-def confirm_run(session_id: str, body: ConfirmRunBody) -> dict:
+def confirm_run(
+    session_id: str,
+    body: ConfirmRunBody,
+    _: None = Depends(require_api_key),
+) -> dict:
     """Confirm an AI recommendation and trigger async backtest."""
     with get_conn() as conn:
         # Validate session

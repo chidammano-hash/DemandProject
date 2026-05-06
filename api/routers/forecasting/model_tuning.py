@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from api.core import get_conn, set_cache
 
 logger = logging.getLogger(__name__)
@@ -776,12 +777,12 @@ def cb_get_run(run_id: int, response: FastAPIResponse):
 
 
 @router.post("/catboost-tuning/runs", status_code=201)
-def cb_create_run(body: CreateRunBody):
+def cb_create_run(body: CreateRunBody, _: None = Depends(require_api_key)):
     return _create_run_impl("catboost", body)
 
 
 @router.put("/catboost-tuning/runs/{run_id}")
-def cb_update_run(run_id: int, body: UpdateRunBody):
+def cb_update_run(run_id: int, body: UpdateRunBody, _: None = Depends(require_api_key)):
     return _update_run_impl("catboost", run_id, body)
 
 
@@ -805,7 +806,7 @@ def cb_get_months(run_id: int, response: FastAPIResponse):
 
 
 @router.post("/catboost-tuning/runs/{run_id}/promote")
-def cb_promote_run(run_id: int):
+def cb_promote_run(run_id: int, _: None = Depends(require_api_key)):
     return _promote_run_impl("catboost", run_id)
 
 
@@ -844,12 +845,12 @@ def xgb_get_run(run_id: int, response: FastAPIResponse):
 
 
 @router.post("/xgboost-tuning/runs", status_code=201)
-def xgb_create_run(body: CreateRunBody):
+def xgb_create_run(body: CreateRunBody, _: None = Depends(require_api_key)):
     return _create_run_impl("xgboost", body)
 
 
 @router.put("/xgboost-tuning/runs/{run_id}")
-def xgb_update_run(run_id: int, body: UpdateRunBody):
+def xgb_update_run(run_id: int, body: UpdateRunBody, _: None = Depends(require_api_key)):
     return _update_run_impl("xgboost", run_id, body)
 
 
@@ -873,7 +874,7 @@ def xgb_get_months(run_id: int, response: FastAPIResponse):
 
 
 @router.post("/xgboost-tuning/runs/{run_id}/promote")
-def xgb_promote_run(run_id: int):
+def xgb_promote_run(run_id: int, _: None = Depends(require_api_key)):
     return _promote_run_impl("xgboost", run_id)
 
 

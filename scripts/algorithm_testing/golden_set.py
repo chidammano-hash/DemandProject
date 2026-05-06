@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 import psycopg
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.ml.backtest_sampler import stratified_sample
@@ -242,12 +243,12 @@ def load_external_forecast(
 
     if not df.empty:
         df["startdate"] = pd.to_datetime(df["startdate"])
-        df["basefcst_pref"] = pd.to_numeric(
-            df["basefcst_pref"], errors="coerce"
+        df[FORECAST_QTY_COL] = pd.to_numeric(
+            df[FORECAST_QTY_COL], errors="coerce"
         ).fillna(0)
         # Dedup: multiple lags may exist per (sku_ck, startdate) — keep mean
         df = df.groupby(["sku_ck", "startdate"], sort=False, as_index=False)[
-            "basefcst_pref"
+            FORECAST_QTY_COL
         ].mean()
 
     logger.info(
@@ -298,8 +299,8 @@ def load_existing_predictions(
 
     if not df.empty:
         df["startdate"] = pd.to_datetime(df["startdate"])
-        df["basefcst_pref"] = pd.to_numeric(
-            df["basefcst_pref"], errors="coerce"
+        df[FORECAST_QTY_COL] = pd.to_numeric(
+            df[FORECAST_QTY_COL], errors="coerce"
         ).fillna(0)
         df["tothist_dmd"] = pd.to_numeric(
             df["tothist_dmd"], errors="coerce"

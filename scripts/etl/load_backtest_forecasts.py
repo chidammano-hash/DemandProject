@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 
@@ -28,7 +29,7 @@ from common.services.perf_profiler import profiled_section
 LOAD_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id",
+    FORECAST_QTY_COL, "tothist_dmd", "model_id",
 ]
 
 BATCH_SIZE = 2_000_000
@@ -63,7 +64,7 @@ _ARCHIVE_TABLE = "backtest_lag_archive"
 ARCHIVE_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id", "timeframe",
+    FORECAST_QTY_COL, "tothist_dmd", "model_id", "timeframe",
 ]
 _ARCHIVE_SECONDARY_INDEXES = [
     "idx_backtest_lag_archive_model_id",

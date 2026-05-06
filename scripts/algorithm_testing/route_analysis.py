@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.constants import FORECAST_QTY_COL  # noqa: E402
 from scripts.algorithm_testing.lag_accuracy import add_lag_columns  # noqa: E402
 from scripts.algorithm_testing.comparison import compute_portfolio_predictions  # noqa: E402
 from scripts.algorithm_testing.golden_set import load_golden_set_data  # noqa: E402
@@ -138,7 +139,7 @@ def _compute_dfu_wape(
     """Return sku_ck, algorithm_id, wape, n — WAPE over all matched (sku_ck, startdate)."""
     # Average duplicate (sku_ck, startdate, algorithm_id) predictions first
     deduped = (
-        predictions_df.groupby(["sku_ck", "startdate", "algorithm_id"])["basefcst_pref"]
+        predictions_df.groupby(["sku_ck", "startdate", "algorithm_id"])[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -149,7 +150,7 @@ def _compute_dfu_wape(
     )
     if joined.empty:
         return pd.DataFrame(columns=["sku_ck", "algorithm_id", "wape", "n"])
-    joined["abs_err"] = (joined["basefcst_pref"] - joined["qty"]).abs()
+    joined["abs_err"] = (joined[FORECAST_QTY_COL] - joined["qty"]).abs()
     agg = (
         joined.groupby(["sku_ck", "algorithm_id"], sort=False)
         .agg(abs_err=("abs_err", "sum"), actual=("qty", "sum"), n=("qty", "count"))
@@ -180,11 +181,11 @@ def _materialise_routing(
 ) -> pd.DataFrame:
     """Join best_per_dfu with preds_pool; fill gaps from fallback_preds."""
     routed = best_per_dfu.merge(
-        preds_pool[["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]],
+        preds_pool[["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]],
         on=["sku_ck", "algorithm_id"],
         how="left",
     )
-    covered = routed.dropna(subset=["basefcst_pref"])[["sku_ck", "startdate", "basefcst_pref"]]
+    covered = routed.dropna(subset=[FORECAST_QTY_COL])[["sku_ck", "startdate", FORECAST_QTY_COL]]
 
     # Fallback: DFUs with no prediction from their best algorithm
     covered_skus = covered["sku_ck"].unique()
@@ -195,7 +196,7 @@ def _materialise_routing(
         fallback = fallback_preds[
             (fallback_preds["sku_ck"].isin(missing_skus))
             & (fallback_preds["algorithm_id"] == fallback_algo)
-        ][["sku_ck", "startdate", "basefcst_pref"]]
+        ][["sku_ck", "startdate", FORECAST_QTY_COL]]
         covered = pd.concat([covered, fallback], ignore_index=True)
         logger.info(
             "Routing fallback: %d DFUs → %s", len(missing_skus), fallback_algo
@@ -203,7 +204,7 @@ def _materialise_routing(
 
     return (
         covered
-        .dropna(subset=["basefcst_pref"])
+        .dropna(subset=[FORECAST_QTY_COL])
         .drop_duplicates(subset=["sku_ck", "startdate"])
         .reset_index(drop=True)
     )
@@ -228,7 +229,7 @@ def _build_insufficient_preds(
     rolling_mean → ridge → tree models (last-resort).
     """
     if not insuff_skus:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     pool = _best_lag_pool(
         predictions_df[predictions_df["sku_ck"].isin(insuff_skus)]
@@ -243,13 +244,13 @@ def _build_insufficient_preds(
             break
         algo_preds = pool[
             (pool["algorithm_id"] == algo) & (pool["sku_ck"].isin(remaining))
-        ][["sku_ck", "startdate", "basefcst_pref"]]
+        ][["sku_ck", "startdate", FORECAST_QTY_COL]]
         if not algo_preds.empty:
             parts.append(algo_preds)
             covered.update(algo_preds["sku_ck"].unique())
 
     if not parts:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     result = (
         pd.concat(parts, ignore_index=True)
@@ -289,14 +290,14 @@ def strategy_per_dfu_all_tf(
     Prediction sourced from best-lag prediction per (sku_ck, startdate, algorithm_id).
     """
     if dfu_accuracy_matrix.empty:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     matrix = dfu_accuracy_matrix.rename(columns={"n_months": "n"})
     required = {"sku_ck", "algorithm_id", "wape", "n"}
     missing_cols = required - set(matrix.columns)
     if missing_cols:
         logger.warning("S1: dfu_accuracy_matrix missing columns %s; skipping", missing_cols)
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
     best = _pick_best_per_dfu(matrix, min_n)
     pool = _best_lag_pool(predictions_df)
     return _materialise_routing(best, pool, pool)
@@ -314,14 +315,14 @@ def strategy_per_dfu_causal(
     Evaluation is purely on the most recent (held-out) timeframe's predictions.
     """
     if "timeframe_idx" not in predictions_df.columns:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     max_tf = int(predictions_df["timeframe_idx"].max())
     history = predictions_df[predictions_df["timeframe_idx"] < max_tf]
     latest = predictions_df[predictions_df["timeframe_idx"] == max_tf]
 
     if history.empty:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     dfu_wape = _compute_dfu_wape(history, actuals_df)
     best = _pick_best_per_dfu(dfu_wape, min_n)
@@ -347,7 +348,7 @@ def strategy_per_dfu_exec_lag(
     """
     if not exec_lag_map or not tf_train_end_map:
         logger.warning("S3 skipped: exec_lag_map or tf_train_end_map unavailable")
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     # Add natural_lag and execution_lag columns
     preds_lag = add_lag_columns(predictions_df.copy(), tf_train_end_map, exec_lag_map)
@@ -359,7 +360,7 @@ def strategy_per_dfu_exec_lag(
 
     if exec_matched.empty:
         logger.warning("S3: no exec-lag-matched predictions; skipping")
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     logger.info(
         "S3 exec-lag matched: %d rows, %d DFUs (lag distribution: %s)",
@@ -408,7 +409,7 @@ def strategy_per_dfu_rolling_causal(
     - Directly comparable to S0 which also covers the full universe
     """
     if "timeframe_idx" not in predictions_df.columns:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     all_tf = sorted(predictions_df["timeframe_idx"].unique())
     if len(all_tf) < min_n + 1:
@@ -416,7 +417,7 @@ def strategy_per_dfu_rolling_causal(
             "S4: only %d timeframes available, need at least %d for rolling causal",
             len(all_tf), min_n + 1,
         )
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     # Full pool used for naive fallback when a DFU's best algo has no eval predictions
     full_pool = _best_lag_pool(predictions_df)
@@ -447,12 +448,12 @@ def strategy_per_dfu_rolling_causal(
             naive_fb = eval_pool[
                 (eval_pool["sku_ck"].isin(uncovered))
                 & (eval_pool["algorithm_id"] == "seasonal_naive")
-            ][["sku_ck", "startdate", "basefcst_pref"]]
+            ][["sku_ck", "startdate", FORECAST_QTY_COL]]
             if not naive_fb.empty:
                 routed = pd.concat([routed, naive_fb], ignore_index=True)
 
         if not routed.empty:
-            all_results.append(routed[["sku_ck", "startdate", "basefcst_pref"]])
+            all_results.append(routed[["sku_ck", "startdate", FORECAST_QTY_COL]])
 
         logger.info(
             "S4 tf=%d: %d DFUs routed (%d via history selection, %d naive fallback)",
@@ -464,7 +465,7 @@ def strategy_per_dfu_rolling_causal(
         n_evaluated += 1
 
     if not all_results:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     combined = (
         pd.concat(all_results, ignore_index=True)
@@ -527,7 +528,7 @@ def strategy_fixed_assignment(
                 break
             algo_preds = pool[
                 (pool["algorithm_id"] == algo) & (pool["sku_ck"].isin(remaining))
-            ][["sku_ck", "startdate", "basefcst_pref"]]
+            ][["sku_ck", "startdate", FORECAST_QTY_COL]]
             if not algo_preds.empty:
                 parts.append(algo_preds)
                 arch_covered.update(algo_preds["sku_ck"].unique())
@@ -540,7 +541,7 @@ def strategy_fixed_assignment(
         covered_skus.update(arch_covered)
 
     if not parts:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL])
 
     result = (
         pd.concat(parts, ignore_index=True)
@@ -581,7 +582,7 @@ def evaluate(
             "n_dfus": 0, "n_dfu_months": 0, "per_segment": {},
         }
 
-    abs_err = (merged["basefcst_pref"] - merged["qty"]).abs().sum()
+    abs_err = (merged[FORECAST_QTY_COL] - merged["qty"]).abs().sum()
     sum_act = abs(float(merged["qty"].sum()))
     wape = float(abs_err) / max(sum_act, 1.0) * 100
 
@@ -589,7 +590,7 @@ def evaluate(
     merged["archetype"] = merged["sku_ck"].map(seg_map).fillna("unknown")
     per_seg: dict[str, float] = {}
     for seg, grp in merged.groupby("archetype"):
-        ae = (grp["basefcst_pref"] - grp["qty"]).abs().sum()
+        ae = (grp[FORECAST_QTY_COL] - grp["qty"]).abs().sum()
         sa = abs(float(grp["qty"].sum()))
         per_seg[str(seg)] = round(100.0 - float(ae) / max(sa, 1.0) * 100, 2)
 
@@ -666,7 +667,7 @@ def run_analysis(results_dir: Path, min_history: int = 2) -> None:
         if insuff_fixed.empty:
             return preds
         combined = pd.concat(
-            [preds, insuff_fixed[["sku_ck", "startdate", "basefcst_pref"]]],
+            [preds, insuff_fixed[["sku_ck", "startdate", FORECAST_QTY_COL]]],
             ignore_index=True,
         )
         return combined.drop_duplicates(subset=["sku_ck", "startdate"]).reset_index(drop=True)

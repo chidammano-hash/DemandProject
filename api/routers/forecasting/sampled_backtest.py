@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from api.core import get_conn, set_cache
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,10 @@ def get_strata(response: FastAPIResponse) -> dict[str, Any]:
 
 
 @router.post("/lgbm-tuning/sampled/preview")
-def preview_sample(body: SamplePreviewBody) -> dict[str, Any]:
+def preview_sample(
+    body: SamplePreviewBody,
+    _: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Preview sample allocation without running a backtest.
 
     Returns per-cluster allocation and estimated accuracy deviation.
@@ -168,7 +172,10 @@ def preview_sample(body: SamplePreviewBody) -> dict[str, Any]:
 
 
 @router.post("/lgbm-tuning/sampled/run")
-def trigger_sampled_run(body: SampledRunBody) -> dict[str, Any]:
+def trigger_sampled_run(
+    body: SampledRunBody,
+    _: None = Depends(require_api_key),
+) -> dict[str, Any]:
     """Trigger a sampled backtest run.
 
     1. Computes stratified sample of DFUs.

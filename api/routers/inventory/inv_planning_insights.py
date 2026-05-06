@@ -10,7 +10,7 @@ inv_planning_*.py router pattern.
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Optional
 
 import psycopg
@@ -19,6 +19,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _s, get_conn, set_cache
+from common.core.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
 
@@ -1055,7 +1056,7 @@ def get_cash_flow_timeline(
     """Monthly cash outflow projection for the next N months."""
     set_cache(response, max_age=300)
 
-    today = date.today()
+    today = get_planning_date()
     # Build month buckets
     month_buckets: list[dict] = []
     for i in range(months_ahead):
@@ -1357,7 +1358,7 @@ def get_daily_briefing(
     """
     set_cache(response, max_age=120)
 
-    today = date.today()
+    today = get_planning_date()
     urgent_items: list[dict] = []
     this_week_items: list[dict] = []
     portfolio_items: list[dict] = []

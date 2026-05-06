@@ -639,6 +639,7 @@ def simulate_what_if(
     lt_change_days: float = Query(0, ge=-30, le=60),
     service_level_override: float | None = Query(None, ge=0.80, le=0.999),
     policy_version: str = Query("v1", max_length=20),
+    _: None = Depends(require_api_key),
 ) -> dict:
     """Simulate safety stock under modified parameters.
 

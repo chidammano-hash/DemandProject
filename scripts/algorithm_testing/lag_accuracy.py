@@ -18,6 +18,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,7 +103,7 @@ def compute_lag_accuracy(
     if predictions_df.empty or actuals_df.empty:
         return {"wape": float("nan"), "accuracy": float("nan"), "n_rows": 0, "n_dfus": 0}
 
-    merged = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].merge(
+    merged = predictions_df[["sku_ck", "startdate", FORECAST_QTY_COL]].merge(
         actuals_df[["sku_ck", "startdate", "qty"]].rename(columns={"qty": "actual"}),
         on=["sku_ck", "startdate"],
         how="inner",
@@ -109,7 +111,7 @@ def compute_lag_accuracy(
     if merged.empty:
         return {"wape": float("nan"), "accuracy": float("nan"), "n_rows": 0, "n_dfus": 0}
 
-    wape, accuracy = wape_accuracy(merged["basefcst_pref"], merged["actual"])
+    wape, accuracy = wape_accuracy(merged[FORECAST_QTY_COL], merged["actual"])
     return {
         "wape": wape,
         "accuracy": accuracy,
@@ -259,7 +261,7 @@ def compute_monthly_accuracy(
     elif "_month_str" in preds.columns:
         preds = preds.drop(columns=["_month_str"])
 
-    cols = ["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+    cols = ["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     merged = preds[cols].merge(
         actuals_df[["sku_ck", "startdate", "qty"]].rename(columns={"qty": "actual"}),
         on=["sku_ck", "startdate"],
@@ -274,7 +276,7 @@ def compute_monthly_accuracy(
     for month_str, month_df in merged.groupby("month_str"):
         algo_metrics: dict[str, Any] = {}
         for algo_id, algo_df in month_df.groupby("algorithm_id"):
-            sum_abs_err = float((algo_df["basefcst_pref"] - algo_df["actual"]).abs().sum())
+            sum_abs_err = float((algo_df[FORECAST_QTY_COL] - algo_df["actual"]).abs().sum())
             sum_actual = float(algo_df["actual"].sum())
             wape = sum_abs_err / max(abs(sum_actual), 1.0) * 100.0
             algo_metrics[str(algo_id)] = {

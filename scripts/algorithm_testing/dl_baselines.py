@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,7 +98,7 @@ def predict_dlinear(
     """
     if sales_df.empty:
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     prediction_length = len(predict_months)
@@ -114,7 +116,7 @@ def predict_dlinear(
             all_results.append({
                 "sku_ck": sku_ck,
                 "startdate": month,
-                "basefcst_pref": float(forecast[j]),
+                FORECAST_QTY_COL: float(forecast[j]),
                 "algorithm_id": "dlinear",
             })
 
@@ -139,7 +141,7 @@ def predict_nlinear(
     """
     if sales_df.empty:
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     prediction_length = len(predict_months)
@@ -157,7 +159,7 @@ def predict_nlinear(
             all_results.append({
                 "sku_ck": sku_ck,
                 "startdate": month,
-                "basefcst_pref": float(forecast[j]),
+                FORECAST_QTY_COL: float(forecast[j]),
                 "algorithm_id": "nlinear",
             })
 

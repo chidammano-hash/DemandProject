@@ -1,0 +1,13 @@
+# TEMPORARY allowlist — pinned existing date.today() violations as of restructure branch.
+# CLAUDE.md rule: date.today() forbidden outside common/core/planning_date.py.
+# Use get_planning_date() instead. Remove a line here when its file is fixed.
+# DO NOT add new entries — the gate exists to stop this list from growing.
+api/routers/core/dashboard.py
+api/routers/inventory/inv_planning_insights.py
+scripts/db/db_maintenance.py
+tests/api/test_dashboard.py
+tests/api/test_demand_plan.py
+tests/api/test_inv_planning_projection.py
+tests/api/test_planned_orders.py
+tests/unit/test_inventory_projection.py
+tests/unit/test_planning_date.py

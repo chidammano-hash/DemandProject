@@ -2,6 +2,7 @@
  * Generic model tuning API — CatBoost & XGBoost.
  * Reuses the same types as lgbm-tuning but points at model-specific prefixes.
  */
+import { fetchJson } from "./core";
 import type {
   TuningRun,
   TuningComparison,
@@ -22,6 +23,65 @@ const MODEL_PREFIX: Record<ModelType, string> = {
   catboost: "/catboost-tuning",
   xgboost: "/xgboost-tuning",
 };
+
+// Prefix for the unified /model-tuning/<model>/experiments endpoints used by ModelTuningTab.
+const MODEL_TUNING_EXPERIMENTS_PREFIX: Record<ModelType, string> = {
+  lgbm: "/model-tuning/lgbm",
+  catboost: "/model-tuning/catboost",
+  xgboost: "/model-tuning/xgboost",
+};
+
+export interface ModelExperimentsResponse {
+  experiments: TuningRun[];
+  total: number;
+}
+
+export interface ModelSummary {
+  best: number | null;
+  runs: number;
+  active: number;
+  promoted: number | null;
+}
+
+/** Fetch the experiments list for a tunable model with optional filters. */
+export async function fetchModelExperiments(
+  model: ModelType,
+  opts?: { limit?: number; status?: string; exec_lag?: number },
+): Promise<ModelExperimentsResponse> {
+  const sp = new URLSearchParams();
+  if (opts?.limit) sp.set("limit", String(opts.limit));
+  if (opts?.status && opts.status !== "all") sp.set("status", opts.status);
+  if (opts?.exec_lag !== undefined) sp.set("exec_lag", String(opts.exec_lag));
+  return fetchJson<ModelExperimentsResponse>(
+    `${MODEL_TUNING_EXPERIMENTS_PREFIX[model]}/experiments?${sp}`,
+    { cache: "no-cache" },
+  );
+}
+
+/** Compute a summary (best, runs, active, promoted) for a tunable model. */
+export async function fetchModelSummary(model: ModelType): Promise<ModelSummary> {
+  try {
+    const data = await fetchJson<ModelExperimentsResponse>(
+      `${MODEL_TUNING_EXPERIMENTS_PREFIX[model]}/experiments?limit=100`,
+      { cache: "no-cache" },
+    );
+    const exps: TuningRun[] = data.experiments ?? [];
+    const completed = exps.filter((e) => e.status === "completed" && e.accuracy_pct != null);
+    const best = completed.reduce<number | null>(
+      (acc, e) => (!acc || (e.accuracy_pct ?? 0) > acc ? (e.accuracy_pct ?? 0) : acc),
+      null,
+    );
+    const promoted = exps.find((e) => e.is_promoted)?.accuracy_pct ?? null;
+    return {
+      best,
+      runs: exps.length,
+      active: exps.filter((e) => e.status === "running").length,
+      promoted,
+    };
+  } catch {
+    return { best: null, runs: 0, active: 0, promoted: null };
+  }
+}
 
 // Query keys are now in unified-model-tuning.ts — modelTuningKeys removed to avoid conflict.
 

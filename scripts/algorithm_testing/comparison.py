@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +39,7 @@ def _compute_bias(sum_forecast: float, sum_actual: float) -> float:
 
 def _metrics_from_joined(
     joined: pd.DataFrame,
-    forecast_col: str = "basefcst_pref",
+    forecast_col: str = FORECAST_QTY_COL,
     actual_col: str = "qty",
 ) -> dict[str, float]:
     """Compute WAPE, accuracy, and bias from a joined forecast-vs-actual frame.
@@ -238,7 +240,7 @@ def compute_champion_accuracy(
         }
 
     # Compute absolute error per row
-    joined["abs_error"] = (joined["basefcst_pref"] - joined["qty"]).abs()
+    joined["abs_error"] = (joined[FORECAST_QTY_COL] - joined["qty"]).abs()
 
     # Oracle selection: for each (sku_ck, startdate), pick the model_id
     # with the lowest absolute error
@@ -321,7 +323,7 @@ def compute_golden_set_oracle_accuracy(
     preds = (
         all_predictions_df.groupby(
             ["sku_ck", "startdate", "algorithm_id"], sort=False
-        )["basefcst_pref"]
+        )[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -339,7 +341,7 @@ def compute_golden_set_oracle_accuracy(
             "n_dfu_months": 0, "n_dfus": 0, "per_segment": None,
         }
 
-    merged["abs_error"] = (merged["basefcst_pref"] - merged["qty"]).abs()
+    merged["abs_error"] = (merged[FORECAST_QTY_COL] - merged["qty"]).abs()
 
     # Oracle: lowest absolute error per (DFU, month) across all algorithms
     idx_best = merged.groupby(["sku_ck", "startdate"], sort=False)["abs_error"].idxmin()
@@ -430,7 +432,7 @@ def compute_causal_champion_accuracy(
             "n_dfu_months": 0, "n_dfus": 0, "per_segment": None,
         }
 
-    joined["abs_err"] = (joined["basefcst_pref"] - joined["qty"]).abs()
+    joined["abs_err"] = (joined[FORECAST_QTY_COL] - joined["qty"]).abs()
     # Sort ascending by startdate within each (sku_ck, model_id) group — required
     # for shift(1) to produce a strictly-causal lag (prior month's error).
     joined = joined.sort_values(["sku_ck", "model_id", "startdate"]).copy()
@@ -574,8 +576,8 @@ def compute_portfolio_predictions(
     )
 
     # Step 3: Identify DFU-months missing from the assigned algorithm
-    assigned = routed.dropna(subset=["basefcst_pref"])
-    missing_mask = routed["basefcst_pref"].isna()
+    assigned = routed.dropna(subset=[FORECAST_QTY_COL])
+    missing_mask = routed[FORECAST_QTY_COL].isna()
     n_missing = int(missing_mask.sum())
 
     if n_missing > 0:
@@ -628,7 +630,7 @@ def compute_portfolio_predictions(
                 part = algo_preds.merge(
                     pd.DataFrame({"sku_ck": list(remaining_intermittent)}),
                     on="sku_ck", how="inner",
-                )[["sku_ck", "startdate", "basefcst_pref"]]
+                )[["sku_ck", "startdate", FORECAST_QTY_COL]]
                 fallback_parts.append(part)
                 covered_skus.update(part["sku_ck"].unique())
 
@@ -645,7 +647,7 @@ def compute_portfolio_predictions(
                 part = algo_preds.merge(
                     pd.DataFrame({"sku_ck": list(remaining_smooth)}),
                     on="sku_ck", how="inner",
-                )[["sku_ck", "startdate", "basefcst_pref"]]
+                )[["sku_ck", "startdate", FORECAST_QTY_COL]]
                 fallback_parts.append(part)
                 covered_skus.update(part["sku_ck"].unique())
 
@@ -658,15 +660,15 @@ def compute_portfolio_predictions(
             )
             assigned = pd.concat(
                 [
-                    assigned[["sku_ck", "startdate", "basefcst_pref"]],
+                    assigned[["sku_ck", "startdate", FORECAST_QTY_COL]],
                     fallback,
                 ],
                 ignore_index=True,
             )
         else:
-            assigned = assigned[["sku_ck", "startdate", "basefcst_pref"]]
+            assigned = assigned[["sku_ck", "startdate", FORECAST_QTY_COL]]
     else:
-        assigned = assigned[["sku_ck", "startdate", "basefcst_pref"]]
+        assigned = assigned[["sku_ck", "startdate", FORECAST_QTY_COL]]
 
     # Deduplicate: if a DFU-month appears in both assigned and fallback
     # (shouldn't happen, but guard), keep the first (assigned takes priority)

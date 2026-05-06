@@ -30,6 +30,7 @@ import psycopg
 from common.core.constants import (
     ARCHIVE_COLS,
     CAT_FEATURES,
+    FORECAST_QTY_COL,
     LAG_RANGE,
     MAX_ARCHIVE_LAG,
     MIN_TRAINING_MONTHS,
@@ -822,7 +823,7 @@ def save_backtest_output(
 
     # Compute accuracy summary
     acc = compute_accuracy_metrics(
-        pd.to_numeric(out["basefcst_pref"], errors="coerce"),
+        pd.to_numeric(out[FORECAST_QTY_COL], errors="coerce"),
         pd.to_numeric(out["tothist_dmd"], errors="coerce"),
     )
     if acc["wape"] is not None:
@@ -848,7 +849,7 @@ def save_backtest_output(
             cohort_out = out[mask.values] if len(out) == len(mask) else out
             if cohort_counts[f"n_dfus_{cohort_name}"] > 0 and len(out) == len(mask):
                 cohort_acc = compute_accuracy_metrics(
-                    pd.to_numeric(cohort_out["basefcst_pref"], errors="coerce"),
+                    pd.to_numeric(cohort_out[FORECAST_QTY_COL], errors="coerce"),
                     pd.to_numeric(cohort_out["tothist_dmd"], errors="coerce"),
                 )
                 cohort_accuracy[f"accuracy_{cohort_name}"] = cohort_acc.get("accuracy_pct")
@@ -961,7 +962,7 @@ def _compute_step_wape(
     matched = predictions[predictions["sku_ck"].isin(actuals_lookup)]
     if matched.empty:
         return None
-    fcst = matched["basefcst_pref"].values
+    fcst = matched[FORECAST_QTY_COL].values
     actual = matched["sku_ck"].map(actuals_lookup).values
     total_actual = np.abs(np.nansum(actual))
     if total_actual == 0:
@@ -994,7 +995,7 @@ def _log_timeframe_accuracy(
     # Overall timeframe accuracy
     total_actual = float(np.abs(merged["qty"].sum()))
     if total_actual > 0:
-        total_error = float(np.abs(merged["basefcst_pref"] - merged["qty"]).sum())
+        total_error = float(np.abs(merged[FORECAST_QTY_COL] - merged["qty"]).sum())
         overall_wape = round(100.0 * total_error / total_actual, 2)
         overall_acc = round(100.0 - overall_wape, 2)
     else:
@@ -1009,7 +1010,7 @@ def _log_timeframe_accuracy(
     for cluster_label, grp in sorted(merged_c.groupby("ml_cluster", observed=True)):
         c_actual = float(np.abs(grp["qty"].sum()))
         if c_actual > 0:
-            c_error = float(np.abs(grp["basefcst_pref"] - grp["qty"]).sum())
+            c_error = float(np.abs(grp[FORECAST_QTY_COL] - grp["qty"]).sum())
             c_wape = round(100.0 * c_error / c_actual, 2)
             c_acc = round(100.0 - c_wape, 2)
         else:
@@ -1059,7 +1060,7 @@ def _compute_cluster_wape(
     total_actual = float(np.abs(merged["qty"].sum()))
     if total_actual == 0:
         return None
-    total_error = float(np.abs(merged["basefcst_pref"] - merged["qty"]).sum())
+    total_error = float(np.abs(merged[FORECAST_QTY_COL] - merged["qty"]).sum())
     return round(float(100.0 * total_error / total_actual), 2)
 
 
@@ -1117,10 +1118,10 @@ def _predict_single_month(
             m._months = pd.to_datetime(group["startdate"]).dt.month.tolist()
         preds = np.maximum(m.predict(group[cluster_feats]), 0)
         r = group[_PREDICT_META_COLS].copy()
-        r["basefcst_pref"] = preds
+        r[FORECAST_QTY_COL] = preds
         parts.append(r)
     if not parts:
-        return pd.DataFrame(columns=_PREDICT_META_COLS + ["basefcst_pref"])
+        return pd.DataFrame(columns=_PREDICT_META_COLS + [FORECAST_QTY_COL])
     return pd.concat(parts, ignore_index=True)
 
 
@@ -1538,7 +1539,7 @@ def run_tree_backtest(
                             _r_total = float(np.abs(_r_merged["qty"].sum()))
                             if _r_total > 0:
                                 retrain_overall_wape = round(
-                                    100.0 * float(np.abs(_r_merged["basefcst_pref"] - _r_merged["qty"]).sum()) / _r_total, 2
+                                    100.0 * float(np.abs(_r_merged[FORECAST_QTY_COL] - _r_merged["qty"]).sum()) / _r_total, 2
                                 )
 
                     if not orig_source.empty:
@@ -1551,7 +1552,7 @@ def run_tree_backtest(
                             _o_total = float(np.abs(_o_merged["qty"].sum()))
                             if _o_total > 0:
                                 orig_overall_wape = round(
-                                    100.0 * float(np.abs(_o_merged["basefcst_pref"] - _o_merged["qty"]).sum()) / _o_total, 2
+                                    100.0 * float(np.abs(_o_merged[FORECAST_QTY_COL] - _o_merged["qty"]).sum()) / _o_total, 2
                                 )
 
                     if (

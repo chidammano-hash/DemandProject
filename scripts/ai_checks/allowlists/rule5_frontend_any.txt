@@ -1,0 +1,5 @@
+# TEMPORARY allowlist — pinned existing 'any'-type violations in frontend/src/api/queries/.
+# CLAUDE.md rule: generate concrete types via 'npm run gen:types'.
+# DO NOT add new entries.
+frontend/src/api/queries/cluster-eda.ts
+frontend/src/api/queries/feature-lab.ts

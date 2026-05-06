@@ -42,6 +42,7 @@ from scripts.algorithm_testing.comparison import (  # noqa: E402
     format_comparison_summary,
 )
 from scripts.algorithm_testing.demand_classifier import classify_demand, get_segment_summary  # noqa: E402
+from common.core.constants import FORECAST_QTY_COL  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
 from scripts.algorithm_testing.golden_set import (  # noqa: E402
     create_golden_set,
@@ -505,7 +506,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         all_predictions_df = pd.concat(all_predictions, ignore_index=True)
     else:
         all_predictions_df = pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id", "timeframe_idx"],
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id", "timeframe_idx"],
         )
     logger.info(
         "Total predictions: %d rows across %d algorithms",
@@ -589,7 +590,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     # -- Step 9b: Per-DFU hybrid ensemble ------------------------------------
     hybrid_cfg = config.get("hybrid_ensemble", {})
     hybrid_preds = pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
     dfu_accuracy_matrix = pd.DataFrame(
         columns=["sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"]

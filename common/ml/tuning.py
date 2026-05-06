@@ -223,6 +223,56 @@ def best_rounds_to_n_estimators(
 # unused framework libraries out of the import chain at module load time.
 
 
+def _train_fold(
+    backend: str,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    cat_cols: list[str],
+    params: dict,
+    n_estimators_max: int,
+    early_stopping_rounds: int,
+    constructor_extras: dict,
+    lib_module: Any,
+) -> tuple[np.ndarray, int]:
+    """Shared per-fold trainer routed through model_registry.
+
+    Builds the estimator via :func:`build_tree_model` (no direct
+    ``LGBMRegressor`` / ``CatBoostRegressor`` / ``XGBRegressor`` instantiation
+    in this module) and fits it through :func:`fit_model` so the early-stopping
+    behaviour, eval-metric handling, and categorical-feature wiring exactly
+    match the production training path.
+    """
+    from common.ml.model_registry import build_tree_model, fit_model, get_best_iteration
+
+    full_params = {
+        "n_estimators": n_estimators_max,
+        **constructor_extras,
+        **params,
+    }
+    model = build_tree_model(backend, full_params)
+
+    feature_cols = list(X_train.columns)
+    fit_model(
+        model,
+        backend,
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        cat_cols,
+        feature_cols,
+        lib_module,
+        n_estimators_max,
+        early_stopping_rounds=early_stopping_rounds,
+    )
+
+    preds = np.maximum(model.predict(X_val), 0)
+    best_rounds = get_best_iteration(model, backend) or n_estimators_max
+    return preds, best_rounds
+
+
 def train_lgbm_fold(
     X_train: pd.DataFrame,
     y_train: pd.Series,
@@ -233,29 +283,25 @@ def train_lgbm_fold(
     n_estimators_max: int,
     early_stopping_rounds: int,
 ) -> tuple[np.ndarray, int]:
-    """Train LightGBM with early stopping on one CV fold. Returns (preds, best_rounds)."""
+    """Train LightGBM with early stopping on one CV fold. Returns (preds, best_rounds).
+
+    Routes through :func:`common.ml.model_registry.build_tree_model` and
+    :func:`common.ml.model_registry.fit_model` so the fit path matches
+    production.
+    """
     import lightgbm as lgb
 
-    model = lgb.LGBMRegressor(
-        n_estimators=n_estimators_max,
-        **params,
-        verbosity=-1,
-        random_state=42,
-        n_jobs=-1,
+    constructor_extras = {
+        "verbosity": -1,
+        "random_state": 42,
+        "n_jobs": -1,
+    }
+    return _train_fold(
+        "lgbm",
+        X_train, y_train, X_val, y_val,
+        cat_cols, params, n_estimators_max, early_stopping_rounds,
+        constructor_extras, lib_module=lgb,
     )
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        categorical_feature=cat_cols if cat_cols else "auto",
-        callbacks=[
-            lgb.early_stopping(early_stopping_rounds, verbose=False),
-            lgb.log_evaluation(0),
-        ],
-    )
-    preds = np.maximum(model.predict(X_val), 0)
-    from common.ml.model_registry import get_best_iteration
-    best_rounds = get_best_iteration(model, "lgbm") or n_estimators_max
-    return preds, best_rounds
 
 
 def train_catboost_fold(
@@ -268,28 +314,49 @@ def train_catboost_fold(
     n_estimators_max: int,
     early_stopping_rounds: int,
 ) -> tuple[np.ndarray, int]:
-    """Train CatBoost with early stopping on one CV fold. Returns (preds, best_rounds)."""
+    """Train CatBoost with early stopping on one CV fold. Returns (preds, best_rounds).
+
+    Routes through :func:`common.ml.model_registry.build_tree_model` and
+    :func:`common.ml.model_registry.fit_model`.  Note that ``fit_model`` uses
+    ``iterations`` (the native CatBoost name) — :func:`build_tree_model`
+    translates ``n_estimators`` -> ``iterations`` via the canonical mapping
+    layer.
+    """
     import catboost as cb
 
-    feature_cols = list(X_train.columns)
-    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
+    # CatBoost uses ``iterations`` not ``n_estimators``.  Pass canonical
+    # ``estimators`` so to_native_params translates it correctly per backend.
+    constructor_extras = {
+        "random_seed": 42,
+        "verbose": 0,
+        "loss_function": "RMSE",
+    }
+    # Build manually here to use 'iterations' kwarg directly (CatBoost native).
+    from common.ml.model_registry import build_tree_model, fit_model, get_best_iteration
 
-    model = cb.CatBoostRegressor(
-        iterations=n_estimators_max,
-        random_seed=42,
-        verbose=0,
-        loss_function="RMSE",
+    full_params = {
+        "iterations": n_estimators_max,
+        **constructor_extras,
         **params,
-    )
-    model.fit(
-        X_train, y_train,
-        cat_features=cat_indices,
-        eval_set=(X_val, y_val),
+    }
+    model = build_tree_model("catboost", full_params)
+
+    feature_cols = list(X_train.columns)
+    fit_model(
+        model,
+        "catboost",
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        cat_cols,
+        feature_cols,
+        cb,
+        n_estimators_max,
         early_stopping_rounds=early_stopping_rounds,
-        verbose=False,
     )
+
     preds = np.maximum(model.predict(X_val), 0)
-    from common.ml.model_registry import get_best_iteration
     best_rounds = get_best_iteration(model, "catboost") or n_estimators_max
     return preds, best_rounds
 
@@ -304,28 +371,28 @@ def train_xgboost_fold(
     n_estimators_max: int,
     early_stopping_rounds: int,
 ) -> tuple[np.ndarray, int]:
-    """Train XGBoost with early stopping on one CV fold. Returns (preds, best_rounds)."""
+    """Train XGBoost with early stopping on one CV fold. Returns (preds, best_rounds).
+
+    Routes through :func:`common.ml.model_registry.build_tree_model` and
+    :func:`common.ml.model_registry.fit_model`.  ``fit_model`` configures
+    ``early_stopping_rounds`` and the WAPE eval metric via ``set_params``;
+    the constructor only carries the static config defaults.
+    """
     import xgboost as xgb
 
-    model = xgb.XGBRegressor(
-        n_estimators=n_estimators_max,
-        early_stopping_rounds=early_stopping_rounds,
-        verbosity=0,
-        random_state=42,
-        n_jobs=-1,
-        enable_categorical=True,
-        tree_method="hist",
-        **params,
+    constructor_extras = {
+        "verbosity": 0,
+        "random_state": 42,
+        "n_jobs": -1,
+        "enable_categorical": True,
+        "tree_method": "hist",
+    }
+    return _train_fold(
+        "xgboost",
+        X_train, y_train, X_val, y_val,
+        cat_cols, params, n_estimators_max, early_stopping_rounds,
+        constructor_extras, lib_module=xgb,
     )
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=False,
-    )
-    preds = np.maximum(model.predict(X_val), 0)
-    from common.ml.model_registry import get_best_iteration
-    best_rounds = get_best_iteration(model, "xgboost") or n_estimators_max
-    return preds, best_rounds
 
 
 # Registry used by tune_hyperparams.py and tune_for_timeframe()

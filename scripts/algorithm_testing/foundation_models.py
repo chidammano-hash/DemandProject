@@ -14,6 +14,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,7 +142,7 @@ def _run_chronos(
     if not _check_chronos():
         logger.info("chronos-forecasting not installed; skipping Chronos")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     import torch
@@ -215,7 +217,7 @@ def _run_chronos(
             batch_dfs.append(pd.DataFrame({
                 "sku_ck": sku_rep,
                 "startdate": month_rep,
-                "basefcst_pref": fcst_flat,
+                FORECAST_QTY_COL: fcst_flat,
                 "algorithm_id": "chronos",
             }))
         except (RuntimeError, ValueError) as exc:
@@ -229,7 +231,7 @@ def _run_chronos(
             )
 
     result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
     logger.info("Chronos: %d predictions for %d DFUs", len(result),
                 result["sku_ck"].nunique() if not result.empty else 0)
@@ -254,7 +256,7 @@ def _run_chronos_bolt(
     if not _check_chronos():
         logger.info("chronos-forecasting not installed; skipping Chronos Bolt")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     import torch
@@ -330,7 +332,7 @@ def _run_chronos_bolt(
             batch_dfs.append(pd.DataFrame({
                 "sku_ck": np.repeat(batch_skus, n_months),
                 "startdate": np.tile(month_arr, n_batch),
-                "basefcst_pref": median_forecasts.ravel(),
+                FORECAST_QTY_COL: median_forecasts.ravel(),
                 "algorithm_id": "chronos_bolt",
             }))
         except (RuntimeError, ValueError) as exc:
@@ -348,7 +350,7 @@ def _run_chronos_bolt(
             )
 
     result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
     logger.info("Chronos Bolt: %d predictions for %d DFUs", len(result),
                 result["sku_ck"].nunique() if not result.empty else 0)
@@ -380,7 +382,7 @@ def _run_chronos2(
     if not _check_chronos2():
         logger.info("chronos-forecasting >= 2.0 not installed; skipping Chronos 2")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     import torch
@@ -424,7 +426,7 @@ def _run_chronos2(
 
     if not contexts:
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     logger.info("Chronos 2: predicting %d DFUs (batch_size=%d)...",
@@ -461,7 +463,7 @@ def _run_chronos2(
             batch_dfs.append(pd.DataFrame({
                 "sku_ck": sku_ck,
                 "startdate": month_arr[:len(preds)],
-                "basefcst_pref": preds,
+                FORECAST_QTY_COL: preds,
                 "algorithm_id": "chronos2",
             }))
 
@@ -469,7 +471,7 @@ def _run_chronos2(
                      min(c_end, len(valid_skus)), len(valid_skus))
 
     result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
     logger.info("Chronos 2: %d predictions for %d DFUs", len(result),
                 result["sku_ck"].nunique() if not result.empty else 0)
@@ -539,7 +541,7 @@ def _run_chronos2_enriched(
     if not _check_chronos2():
         logger.info("chronos-forecasting >= 2.0 not installed; skipping Chronos 2 Enriched")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     import torch
@@ -656,7 +658,7 @@ def _run_chronos2_enriched(
 
     if not valid_skus:
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     logger.info("Chronos 2 Enriched: predicting %d DFUs (batch_size=%d)...",
@@ -737,7 +739,7 @@ def _run_chronos2_enriched(
             batch_dfs.append(pd.DataFrame({
                 "sku_ck": sku_ck,
                 "startdate": month_arr[:len(preds)],
-                "basefcst_pref": preds,
+                FORECAST_QTY_COL: preds,
                 "algorithm_id": "chronos2_enriched",
             }))
 
@@ -750,7 +752,7 @@ def _run_chronos2_enriched(
         )
 
     result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
     logger.info("Chronos 2 Enriched: %d predictions for %d DFUs", len(result),
                 result["sku_ck"].nunique() if not result.empty else 0)
@@ -770,7 +772,7 @@ def _run_timesfm(
     if not _check_timesfm():
         logger.info("timesfm not installed; skipping TimesFM")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     import timesfm
@@ -806,7 +808,7 @@ def _run_timesfm(
                     all_results.append({
                         "sku_ck": sku_ck,
                         "startdate": month,
-                        "basefcst_pref": max(float(preds[j]), 0.0),
+                        FORECAST_QTY_COL: max(float(preds[j]), 0.0),
                         "algorithm_id": "timesfm",
                     })
         except (RuntimeError, ValueError) as exc:
@@ -831,14 +833,14 @@ def _run_timegpt(
     if not _check_nixtla():
         logger.info("nixtla not installed; skipping TimeGPT")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     api_key = os.environ.get("NIXTLA_API_KEY")
     if not api_key:
         logger.info("NIXTLA_API_KEY not set; skipping TimeGPT")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     from nixtla import NixtlaClient
@@ -866,11 +868,11 @@ def _run_timegpt(
         result = forecast_df.rename(columns={
             "unique_id": "sku_ck",
             "ds": "startdate",
-            "TimeGPT": "basefcst_pref",
+            "TimeGPT": FORECAST_QTY_COL,
         })
-        result["basefcst_pref"] = np.maximum(result["basefcst_pref"].values, 0.0)
+        result[FORECAST_QTY_COL] = np.maximum(result[FORECAST_QTY_COL].values, 0.0)
         result["algorithm_id"] = "timegpt"
-        result = result[["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]]
+        result = result[["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]]
 
         # Filter to requested predict months
         result["startdate"] = pd.to_datetime(result["startdate"])
@@ -884,7 +886,7 @@ def _run_timegpt(
     except (RuntimeError, ValueError) as exc:
         logger.warning("TimeGPT API call failed: %s", exc)
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
 
@@ -905,7 +907,7 @@ def _run_moirai(
     """
     if not _check_moirai():
         logger.info("uni2ts not installed; skipping Moirai. Install: pip install 'uni2ts[torch]'")
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     import torch
     from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
@@ -935,7 +937,7 @@ def _run_moirai(
         model.eval()
     except (RuntimeError, OSError) as exc:
         logger.warning("Moirai: failed to load model: %s", exc)
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     sku_list = list(sales_df["sku_ck"].unique())
     grouped = sales_df.groupby("sku_ck", sort=False)
@@ -989,7 +991,7 @@ def _run_moirai(
                     all_results.append({
                         "sku_ck": sku_ck,
                         "startdate": month,
-                        "basefcst_pref": max(float(medians[i, j]), 0.0),
+                        FORECAST_QTY_COL: max(float(medians[i, j]), 0.0),
                         "algorithm_id": "moirai",
                     })
         except (RuntimeError, ValueError) as exc:
@@ -1030,7 +1032,7 @@ def _run_lag_llama(
             "lag_llama not installed; skipping Lag-Llama. "
             "Install: pip install 'lag-llama @ git+https://github.com/time-series-foundation-models/lag-llama'"
         )
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     import torch
     from gluonts.dataset.common import ListDataset
@@ -1052,7 +1054,7 @@ def _run_lag_llama(
         model_kwargs = ckpt["hyper_parameters"]["model_kwargs"]
     except (OSError, KeyError) as exc:
         logger.warning("Lag-Llama: failed to load checkpoint: %s", exc)
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     logger.info("Lag-Llama: building estimator (device=%s)...", device)
     try:
@@ -1073,7 +1075,7 @@ def _run_lag_llama(
         )
     except (RuntimeError, TypeError) as exc:
         logger.warning("Lag-Llama: estimator build failed: %s", exc)
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     # Build GluonTS ListDataset — one entry per DFU, in sku_ck order
     sku_order: list[str] = []
@@ -1089,7 +1091,7 @@ def _run_lag_llama(
         })
 
     if not entries:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
 
     test_data = ListDataset(entries, freq="M")
 
@@ -1103,7 +1105,7 @@ def _run_lag_llama(
                     all_results.append({
                         "sku_ck": sku_ck,
                         "startdate": month,
-                        "basefcst_pref": max(float(median_preds[j]), 0.0),
+                        FORECAST_QTY_COL: max(float(median_preds[j]), 0.0),
                         "algorithm_id": "lag_llama",
                     })
     except (RuntimeError, StopIteration) as exc:
@@ -1162,7 +1164,7 @@ def run_foundation_models(
         DataFrame with columns: sku_ck, startdate, basefcst_pref, algorithm_id
     """
     empty = pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
 
     if not enabled_models:

@@ -17,6 +17,7 @@ from typing import Any
 
 import psycopg
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.utils import load_config, load_forecast_pipeline_config
 
@@ -275,8 +276,8 @@ def register_cluster_month_breakdowns(
         return
 
     logger.info("Computing cluster/month breakdowns from %s", csv_path)
-    df = pd.read_csv(csv_path, usecols=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd"])
-    df = df.dropna(subset=["basefcst_pref", "tothist_dmd"])
+    df = pd.read_csv(csv_path, usecols=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd"])
+    df = df.dropna(subset=[FORECAST_QTY_COL, "tothist_dmd"])
 
     if df.empty:
         logger.warning("No valid predictions — skipping breakdowns")
@@ -299,9 +300,9 @@ def register_cluster_month_breakdowns(
     df["cluster_assignment"] = df["cluster_assignment"].fillna("unknown")
 
     def _agg_accuracy(group: pd.DataFrame) -> dict[str, Any]:
-        forecast_sum = group["basefcst_pref"].sum()
+        forecast_sum = group[FORECAST_QTY_COL].sum()
         actual_sum = group["tothist_dmd"].sum()
-        abs_error = (group["basefcst_pref"] - group["tothist_dmd"]).abs().sum()
+        abs_error = (group[FORECAST_QTY_COL] - group["tothist_dmd"]).abs().sum()
         n_preds = len(group)
         n_dfus = group[["item_id", "loc"]].drop_duplicates().shape[0]
         if abs(actual_sum) < 1e-9:

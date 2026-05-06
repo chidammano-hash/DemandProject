@@ -24,6 +24,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Callable
 
+from common.core.sql_helpers import row_to_dict_from_cols
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -857,13 +859,13 @@ def _run_compute_variability(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Compute demand variability (CV, MAD) per DFU."""
-    if progress_cb:
-        progress_cb(pct=10, msg="Computing demand variability")
-    cmd = [_UV, "run", "python", "scripts/compute_demand_variability.py",
-           "--config", "config/forecasting/forecast_domain_config.yaml"]
-    output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
-    return {"output_log": output if output else "Demand variability computation completed"}
+    """Legacy variability pipeline — delegates to unified SKU features.
+
+    Variability metrics (CV, MAD, intermittency, classification) are now
+    produced as part of ``compute_sku_features``; the standalone
+    ``compute_demand_variability.py`` script has been removed.
+    """
+    return _run_compute_sku_features(params, progress_cb, cancel_event, job_id)
 
 
 def _run_compute_sku_features(
@@ -1409,21 +1411,27 @@ def _insert_tuning_chat_message(
 
 
 def _row_to_dict(cols: tuple[str, ...], row: tuple) -> dict[str, Any]:
-    """Convert a DB row tuple to a dictionary with proper JSON/datetime handling."""
-    d: dict[str, Any] = {}
-    for i, col in enumerate(cols):
-        val = row[i]
+    """Convert a job-table row to a dict with JSON/datetime/default handling.
+
+    Wraps the canonical :func:`row_to_dict_from_cols` helper and then applies
+    job-domain-specific coercions (deserialise ``params``/``result`` JSON,
+    normalise ``logs`` to a list, ISO-format timestamps, default
+    ``progress_pct`` to 0).
+    """
+    d = row_to_dict_from_cols(cols, row)
+    for col in cols:
+        val = d[col]
         if col in ("params", "result"):
             if isinstance(val, dict):
-                d[col] = val
-            elif val:
+                continue
+            if val:
                 d[col] = json.loads(val)
             else:
                 d[col] = {} if col == "params" else None
         elif col == "logs":
             if isinstance(val, list):
-                d[col] = val
-            elif val:
+                continue
+            if val:
                 d[col] = json.loads(val)
             else:
                 d[col] = []
@@ -1431,8 +1439,5 @@ def _row_to_dict(cols: tuple[str, ...], row: tuple) -> dict[str, Any]:
             d[col] = val.isoformat() if val else None
         elif col == "progress_pct":
             d[col] = val or 0
-        elif col == "pid":
-            d[col] = val  # int or None
-        else:
-            d[col] = val
+        # ``pid`` and other columns pass through unchanged from the helper.
     return d

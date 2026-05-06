@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 _HIER_AVAILABLE = False
@@ -68,18 +70,18 @@ def _reconcile_weighted(
     bu_weight: float = 0.6,
 ) -> pd.DataFrame:
     """Simple weighted average reconciliation."""
-    bu_agg = bu_preds.groupby(["item_id", "loc", "startdate"])["basefcst_pref"].sum().reset_index()
-    bu_agg = bu_agg.rename(columns={"basefcst_pref": "bu_fcst"})
+    bu_agg = bu_preds.groupby(["item_id", "loc", "startdate"])[FORECAST_QTY_COL].sum().reset_index()
+    bu_agg = bu_agg.rename(columns={FORECAST_QTY_COL: "bu_fcst"})
 
-    td = td_preds[["item_id", "loc", "startdate", "basefcst_pref"]].copy()
-    td = td.rename(columns={"basefcst_pref": "td_fcst"})
+    td = td_preds[["item_id", "loc", "startdate", FORECAST_QTY_COL]].copy()
+    td = td.rename(columns={FORECAST_QTY_COL: "td_fcst"})
 
     merged = bu_agg.merge(td, on=["item_id", "loc", "startdate"], how="outer")
     merged["bu_fcst"] = pd.to_numeric(merged["bu_fcst"], errors="coerce").fillna(0)
     merged["td_fcst"] = pd.to_numeric(merged["td_fcst"], errors="coerce").fillna(0)
 
     td_weight = 1.0 - bu_weight
-    merged["basefcst_pref"] = np.maximum(
+    merged[FORECAST_QTY_COL] = np.maximum(
         merged["bu_fcst"] * bu_weight + merged["td_fcst"] * td_weight,
         0.0,
     )
@@ -88,7 +90,7 @@ def _reconcile_weighted(
         "Weighted reconciliation: %s item×loc×months (BU=%.0f%%, TD=%.0f%%)",
         f"{len(merged):,}", bu_weight * 100, td_weight * 100,
     )
-    return merged[["item_id", "loc", "startdate", "basefcst_pref", "bu_fcst", "td_fcst"]]
+    return merged[["item_id", "loc", "startdate", FORECAST_QTY_COL, "bu_fcst", "td_fcst"]]
 
 
 def _reconcile_mint(
@@ -102,11 +104,11 @@ def _reconcile_mint(
     then applies MinTraceShrink to optimally blend BU and TD.
     """
     # Aggregate BU to item×loc
-    bu_agg = bu_preds.groupby(["item_id", "loc", "startdate"])["basefcst_pref"].sum().reset_index()
-    bu_agg = bu_agg.rename(columns={"basefcst_pref": "bu_fcst"})
+    bu_agg = bu_preds.groupby(["item_id", "loc", "startdate"])[FORECAST_QTY_COL].sum().reset_index()
+    bu_agg = bu_agg.rename(columns={FORECAST_QTY_COL: "bu_fcst"})
 
-    td = td_preds[["item_id", "loc", "startdate", "basefcst_pref"]].copy()
-    td = td.rename(columns={"basefcst_pref": "td_fcst"})
+    td = td_preds[["item_id", "loc", "startdate", FORECAST_QTY_COL]].copy()
+    td = td.rename(columns={FORECAST_QTY_COL: "td_fcst"})
 
     merged = bu_agg.merge(td, on=["item_id", "loc", "startdate"], how="outer")
     merged["bu_fcst"] = pd.to_numeric(merged["bu_fcst"], errors="coerce").fillna(0)
@@ -157,7 +159,7 @@ def _reconcile_mint(
                     "item_id": item_id,
                     "loc": loc,
                     "startdate": row["startdate"],
-                    "basefcst_pref": max(0, row["bu_fcst"] * w_bu + row["td_fcst"] * w_td),
+                    FORECAST_QTY_COL: max(0, row["bu_fcst"] * w_bu + row["td_fcst"] * w_td),
                     "bu_fcst": row["bu_fcst"],
                     "td_fcst": row["td_fcst"],
                 })
@@ -207,6 +209,6 @@ def reconcile_forecasts(
     method: str = "mint_shrink",
 ) -> pd.DataFrame:
     """Reconcile forecasts for product hierarchy coherence (legacy)."""
-    result = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
+    result = predictions_df[["sku_ck", "startdate", FORECAST_QTY_COL]].copy()
     result["adjustment_pct"] = 0.0
     return result

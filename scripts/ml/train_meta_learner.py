@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 from common.core.utils import load_forecast_pipeline_config, get_competing_model_ids
@@ -65,7 +66,7 @@ def _load_monthly_errors(
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
-    for col in ["basefcst_pref", "tothist_dmd", "abs_err"]:
+    for col in [FORECAST_QTY_COL, "tothist_dmd", "abs_err"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
@@ -123,7 +124,7 @@ def build_training_data(
 
     # Step 2: Compute per-model rolling performance (strictly prior)
     g = df.groupby(_DFU_MODEL_COLS, sort=False)
-    df["_bias_raw"] = df["basefcst_pref"] - df["tothist_dmd"]
+    df["_bias_raw"] = df[FORECAST_QTY_COL] - df["tothist_dmd"]
     df["_roll_abs_err"] = g["abs_err"].transform(
         lambda x: x.shift(1).rolling(window=performance_window, min_periods=1).sum()
     )

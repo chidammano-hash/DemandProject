@@ -6,10 +6,37 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any, Iterable, Sequence
 
 from common.core.domain_specs import DomainSpec
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Row -> dict conversion (canonical helpers)
+# ---------------------------------------------------------------------------
+
+
+def row_to_dict_from_cursor(cur: Any, row: Sequence[Any]) -> dict[str, Any]:
+    """Convert a DB row tuple to a dict using a cursor's ``description``.
+
+    Use this when the column list is naturally available from the cursor that
+    produced the row (e.g. immediately after ``cur.execute`` / ``fetchone``).
+    """
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
+
+
+def row_to_dict_from_cols(
+    cols: Iterable[str], row: Sequence[Any]
+) -> dict[str, Any]:
+    """Convert a DB row tuple to a dict using an explicit column list.
+
+    Use this when the column names are known statically (e.g. they were used
+    to build the SELECT statement) and the cursor is no longer in scope.
+    """
+    return dict(zip(tuple(cols), row))
 
 # ---------------------------------------------------------------------------
 # Magic-value constants (M1-M7)

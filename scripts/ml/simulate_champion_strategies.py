@@ -40,6 +40,7 @@ from common.ml.champion_strategies import (
     compute_ceiling,
     compute_strategy_accuracy,
 )
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
@@ -76,7 +77,7 @@ def load_monthly_errors(
         df = pd.read_sql(sql, conn, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["fcstdate"] = pd.to_datetime(df["fcstdate"])
-    df["basefcst_pref"] = pd.to_numeric(df["basefcst_pref"], errors="coerce")
+    df[FORECAST_QTY_COL] = pd.to_numeric(df[FORECAST_QTY_COL], errors="coerce")
     df["tothist_dmd"] = pd.to_numeric(df["tothist_dmd"], errors="coerce")
     df["abs_err"] = pd.to_numeric(df["abs_err"], errors="coerce")
     df["execution_lag"] = pd.to_numeric(df["execution_lag"], errors="coerce").fillna(0).astype(int)

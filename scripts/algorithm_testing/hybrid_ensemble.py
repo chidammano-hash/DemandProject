@@ -18,6 +18,7 @@ import logging
 
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from scripts.algorithm_testing.dfu_accuracy_matrix import compute_inverse_wape_blend
 from scripts.algorithm_testing.meta_router import MetaRouterModel, predict_meta_router
 
@@ -70,7 +71,7 @@ def compute_hybrid_predictions(
     if all_predictions_df.empty:
         logger.warning("compute_hybrid_predictions: all_predictions_df is empty")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     # ── Step 1: Get meta-router predictions ────────────────────────────────
@@ -94,7 +95,7 @@ def compute_hybrid_predictions(
     deduped = (
         all_predictions_df.groupby(
             ["sku_ck", "startdate", "algorithm_id"], sort=False
-        )["basefcst_pref"]
+        )[FORECAST_QTY_COL]
         .mean()
         .reset_index()
     )
@@ -143,7 +144,7 @@ def compute_hybrid_predictions(
             naive_fallback = all_predictions_df[
                 (all_predictions_df["algorithm_id"] == "seasonal_naive")
                 & (all_predictions_df["sku_ck"].isin(blend_skus))
-            ][["sku_ck", "startdate", "basefcst_pref"]].copy()
+            ][["sku_ck", "startdate", FORECAST_QTY_COL]].copy()
             if not naive_fallback.empty:
                 naive_fallback["algorithm_id"] = "hybrid"
                 parts.append(naive_fallback)
@@ -155,14 +156,14 @@ def compute_hybrid_predictions(
     if not parts:
         logger.warning("compute_hybrid_predictions: no predictions produced")
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
         )
 
     result = pd.concat(parts, ignore_index=True)
     # High-confidence assignment takes priority over blend for the same DFU-month
     result = result.drop_duplicates(subset=["sku_ck", "startdate"], keep="first")
     result["algorithm_id"] = "hybrid"
-    result["basefcst_pref"] = result["basefcst_pref"].clip(lower=0.0)
+    result[FORECAST_QTY_COL] = result[FORECAST_QTY_COL].clip(lower=0.0)
 
     n_total = result["sku_ck"].nunique()
     n_high = high_conf["sku_ck"].nunique()
@@ -207,8 +208,8 @@ def _route_single_algorithm(
         how="left",
     )
 
-    assigned = routed.dropna(subset=["basefcst_pref"])
-    missing_mask = routed["basefcst_pref"].isna()
+    assigned = routed.dropna(subset=[FORECAST_QTY_COL])
+    missing_mask = routed[FORECAST_QTY_COL].isna()
     n_missing = int(missing_mask.sum())
 
     if n_missing > 0:
@@ -217,12 +218,12 @@ def _route_single_algorithm(
             (all_predictions_df["algorithm_id"] == "seasonal_naive")
             & (all_predictions_df["sku_ck"].isin(missing_skus))
         ]
-        assigned_base = assigned[["sku_ck", "startdate", "basefcst_pref"]].assign(
+        assigned_base = assigned[["sku_ck", "startdate", FORECAST_QTY_COL]].assign(
             algorithm_id="hybrid"
         )
         if not naive.empty:
             naive_deduped = (
-                naive.groupby(["sku_ck", "startdate"])["basefcst_pref"]
+                naive.groupby(["sku_ck", "startdate"])[FORECAST_QTY_COL]
                 .mean()
                 .reset_index()
                 .assign(algorithm_id="hybrid")
@@ -235,7 +236,7 @@ def _route_single_algorithm(
             n_missing,
         )
     else:
-        result = assigned[["sku_ck", "startdate", "basefcst_pref"]].assign(
+        result = assigned[["sku_ck", "startdate", FORECAST_QTY_COL]].assign(
             algorithm_id="hybrid"
         )
 

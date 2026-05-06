@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.utils import load_config, load_forecast_pipeline_config
 
@@ -58,9 +59,9 @@ _TRAINING_KEYS = frozenset({
 
 def _compute_accuracy(df: pd.DataFrame) -> dict[str, Any]:
     """Compute WAPE, bias, accuracy_pct from forecast/actual columns."""
-    forecast_sum = df["basefcst_pref"].sum()
+    forecast_sum = df[FORECAST_QTY_COL].sum()
     actual_sum = df["tothist_dmd"].sum()
-    abs_error = (df["basefcst_pref"] - df["tothist_dmd"]).abs().sum()
+    abs_error = (df[FORECAST_QTY_COL] - df["tothist_dmd"]).abs().sum()
     n_preds = len(df)
     n_skus = df[["item_id", "loc"]].drop_duplicates().shape[0]
     if abs(actual_sum) < 1e-9:
@@ -131,9 +132,9 @@ def _insert_timeframe_rows(
         try:
             df = pd.read_csv(all_lags_path, usecols=[
                 "item_id", "loc", "startdate", "lag", "execution_lag",
-                "basefcst_pref", "tothist_dmd", "timeframe",
+                FORECAST_QTY_COL, "tothist_dmd", "timeframe",
             ])
-            df = df.dropna(subset=["basefcst_pref", "tothist_dmd"])
+            df = df.dropna(subset=[FORECAST_QTY_COL, "tothist_dmd"])
             # Filter to execution-lag rows only
             df["lag"] = pd.to_numeric(df["lag"], errors="coerce")
             df["execution_lag"] = pd.to_numeric(df["execution_lag"], errors="coerce")
@@ -185,9 +186,9 @@ def _insert_lag_rows(
 
     try:
         df = pd.read_csv(all_lags_path, usecols=[
-            "item_id", "loc", "lag", "basefcst_pref", "tothist_dmd",
+            "item_id", "loc", "lag", FORECAST_QTY_COL, "tothist_dmd",
         ])
-        df = df.dropna(subset=["basefcst_pref", "tothist_dmd"])
+        df = df.dropna(subset=[FORECAST_QTY_COL, "tothist_dmd"])
         df["lag"] = pd.to_numeric(df["lag"], errors="coerce")
     except (ValueError, KeyError) as exc:
         logger.warning("Could not read all-lags CSV: %s", exc)
@@ -227,9 +228,9 @@ def _insert_cluster_month_rows(
         return 0, 0
 
     df = pd.read_csv(pred_path, usecols=[
-        "item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd",
+        "item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd",
     ])
-    df = df.dropna(subset=["basefcst_pref", "tothist_dmd"])
+    df = df.dropna(subset=[FORECAST_QTY_COL, "tothist_dmd"])
     if df.empty:
         return 0, 0
 

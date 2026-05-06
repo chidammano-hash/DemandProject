@@ -181,9 +181,14 @@ class HealthStatus(BaseModel):
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
-def _get_runner(pool=Depends(_get_pool)) -> IntegrationRunner:
-    """Construct an IntegrationRunner bound to the shared connection pool."""
-    return IntegrationRunner(pool)
+def _get_runner() -> IntegrationRunner:
+    """Construct an IntegrationRunner bound to the shared connection pool.
+
+    Resolves the pool by calling ``_get_pool()`` directly rather than via
+    ``Depends(_get_pool)`` — FastAPI inspects MagicMock signatures of injected
+    dependencies and raises 422 in tests (per CLAUDE.md "DB & API Patterns").
+    """
+    return IntegrationRunner(_get_pool())
 
 
 def _cascade_map(pool: Any) -> dict[str, list[str]]:
@@ -400,9 +405,15 @@ def purge_jobs(
 
 
 @router.get("/domains", response_model=DomainListResponse)
-def list_domains(pool=Depends(_get_pool)) -> DomainListResponse:
-    """List known integration domains with partitioning + cascade-risk metadata."""
+def list_domains() -> DomainListResponse:
+    """List known integration domains with partitioning + cascade-risk metadata.
+
+    Resolves the pool via direct ``_get_pool()`` call rather than
+    ``Depends(_get_pool)`` (per CLAUDE.md "DB & API Patterns" — FastAPI's
+    inspection of MagicMock signatures raises 422 in tests).
+    """
     _ = PARTITION_SPECS  # surface import errors at route registration
+    pool = _get_pool()
     cascades = _cascade_map(pool)
     infos: list[DomainInfo] = []
     for name in KNOWN_DOMAINS:

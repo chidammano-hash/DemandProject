@@ -6,6 +6,10 @@ from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
 
+# The forecast quantity column in fact_external_forecast_monthly and
+# fact_production_forecast. Reference via this constant; never hardcode the string.
+FORECAST_QTY_COL = "basefcst_pref"
+
 # Feature engineering constants
 CAT_FEATURES = ["region", "brand", "abc_vol"]
 NUMERIC_SKU_FEATURES = ["execution_lag", "total_lt"]
@@ -121,14 +125,14 @@ DUPLICATE_FEATURE_ALIASES: dict[str, str] = {
 OUTPUT_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id",
+    FORECAST_QTY_COL, "tothist_dmd", "model_id",
 ]
 
 # Output column ordering for backtest_lag_archive
 ARCHIVE_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id", "timeframe",
+    FORECAST_QTY_COL, "tothist_dmd", "model_id", "timeframe",
 ]
 
 # Metadata columns excluded from feature set

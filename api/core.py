@@ -14,6 +14,7 @@ import json
 
 from fastapi import HTTPException
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.domain_specs import DomainSpec, get_spec
 
 # ---------------------------------------------------------------------------
@@ -82,7 +83,14 @@ def to_sql_col(spec: DomainSpec, col: str) -> str:
     return c
 
 
-def row_to_dict(spec: DomainSpec, row: tuple[Any, ...]) -> dict[str, Any]:
+def domain_row_to_dict(spec: DomainSpec, row: tuple[Any, ...]) -> dict[str, Any]:
+    """Convert a row to a dict using a :class:`DomainSpec` column list.
+
+    Domain-spec-aware: applies :func:`to_api_col` (e.g. ``class`` -> ``class_``)
+    so the resulting keys match the public API field names. Distinct from the
+    generic :func:`common.core.sql_helpers.row_to_dict_from_cols` helper
+    because of the spec-driven name translation.
+    """
     out: dict[str, Any] = {}
     for idx, name in enumerate(spec.columns_with_ck):
         out[to_api_col(name)] = row[idx]
@@ -312,7 +320,7 @@ def grouped_metric_expr_with_count(metric_col: str, count_col: str | None = None
     return f"coalesce(sum({qident(metric_col)}), 0)::double precision"
 
 
-def forecast_accuracy_expr(forecast_col: str = "basefcst_pref", actual_col: str = "tothist_dmd") -> str:
+def forecast_accuracy_expr(forecast_col: str = FORECAST_QTY_COL, actual_col: str = "tothist_dmd") -> str:
     return (
         "CASE WHEN abs(coalesce(sum("
         + qident(actual_col)
@@ -352,7 +360,7 @@ def compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float, d
 def build_agg_trend_source(spec: DomainSpec, trend_metrics: list[str], filters: str) -> tuple[str, str, str, list[Any], str | None] | None:
     agg_table_map = {
         "sales": ("agg_sales_monthly", {"qty_shipped", "qty_ordered", "qty"}),
-        "forecast": ("agg_forecast_monthly", {"basefcst_pref", "tothist_dmd", "accuracy_pct"}),
+        "forecast": ("agg_forecast_monthly", {FORECAST_QTY_COL, "tothist_dmd", "accuracy_pct"}),
     }
     if spec.name not in agg_table_map:
         return None
@@ -541,7 +549,7 @@ def fetch_page(
         cur.execute(data_sql, [*params, limit, offset])
         rows = cur.fetchall()
 
-    records = [row_to_dict(spec, r) for r in rows]
+    records = [domain_row_to_dict(spec, r) for r in rows]
     result: dict[str, Any] = {
         "total": total,
         "limit": limit,

@@ -2,11 +2,7 @@
 
 ## Project Overview
 
-**Supply Chain Command Center** is a unified supply chain planning and execution platform. It ingests sales, forecast, and inventory data, stores it in PostgreSQL, and serves a React UI for interactive analytics.
-
-**All code lives at the project root** with domain-based organization inside each top-level directory.
-
----
+**Supply Chain Command Center** is a unified supply chain planning and execution platform. It ingests sales, forecast, and inventory data, stores it in PostgreSQL, and serves a React UI for interactive analytics. **All code lives at the project root** with domain-based organization inside each top-level directory.
 
 ## Tech Stack
 
@@ -30,560 +26,269 @@
 
 ---
 
-## Project Structure
+## Top Critical Rules
 
-```
-api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts all routers, FastAPI lifespan handler opens pool + starts APScheduler
-├── core.py                  # SQL helpers, filtering, pagination
-├── pool.py                  # Connection pool management (delegates env-var defaults to common/core/db.py)
-├── llm.py                   # OpenAI client management
-└── routers/
-    ├── inventory/           # inv_planning_*, inv_backtest, lead_time_learning, inventory_main, sourcing, purchase_orders, demand_history, integrated_targets, inv_planning_algorithm_comparison, working_capital
-    ├── forecasting/         # accuracy*, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster*, clusters, competition, consensus_plan, expsys_accuracy, feature_lab, fva, lgbm_tuning, model_tuning, production_forecast, sampled_backtest, shap, sku_features, tuning_chat, unified_model_tuning, analysis
-    ├── operations/          # control_tower, echelon_planning, events, fill_rate, financial_plan, service_level, sop, supply, supply_scenarios
-    ├── platform/            # admin, auth_router, collaboration, config_manager, data_quality, medallion, notifications, reports, sql_runner, users, webhooks
-    ├── intelligence/        # ai_planner, customer_analytics, explain, external_signals, intel, storyboard
-    ├── core/                # dashboard, jobs
-    └── domains.py           # Catch-all generic domain endpoint (mounted LAST)
+Hard constraints. Violations cause bugs, test failures, or silent data corruption.
 
-All routers live in their domain subdir. The flat `api/routers/` root contains
-only `domains.py` and `__init__.py`. Backward-compat shims have been removed —
-import directly from the domain path: `from api.routers.inventory.inv_planning_eoq import router`.
+### Backend / Python
+- **`date.today()` forbidden outside `common/core/planning_date.py`.** Use `get_planning_date()`. Env overrides: `PLANNING_DATE`, `USE_SYSTEM_DATE`. **[FREQUENTLY VIOLATED]**
+- **`Path(__file__).resolve().parents[N]` forbidden at module level.** Allowed only in `if __name__ == "__main__"` bootstrap. Use `from common.core.paths import PROJECT_ROOT, CONFIG_DIR, DATA_DIR, SQL_DIR, SCRIPTS_DIR`. **[FREQUENTLY VIOLATED]**
+- **`except Exception` forbidden.** Catch specific (`psycopg.Error`, `ValueError`, …) and log via `logger.exception()`. `# noqa: BLE001 — <reason>` requires inline justification. **[FREQUENTLY VIOLATED]**
+- **`get_conn()` not `Depends(_get_pool)`** in `inv_planning_*.py` routers. `Depends(_get_pool)` causes 422 in tests because FastAPI inspects MagicMock signatures. **[FREQUENTLY VIOLATED]**
+- **psycopg3 uses `%s` placeholders** — never `$1`/`$2`. All SQL in scripts and routers. **[FREQUENTLY VIOLATED]**
+- **`domains.py` mounted LAST** in `api/main.py` — its catch-all `{domain}` shadows other routes.
+- **All routers MUST use `APIRouter(prefix="/...")`** plus short paths in `@router.get`/`.post`/etc. Never the full path inside the decorator.
+- **5xx responses never interpolate exception text.** Pattern: `logger.exception("...")` then `raise HTTPException(status_code=500, detail="<short verb-phrase>")`. No `f"...{exc}"`, no `str(exc)` in 500 details.
+- **Every write endpoint** (`@router.post`/`put`/`delete`/`patch`) **MUST have `dependencies=[Depends(require_api_key)]`** at router or per-route level.
+- **Identifier interpolation requires `psycopg.sql.Identifier`** — never f-string identifier interpolation in SQL. Values use `%s`.
+- **Pydantic v2 only** — `model_config = ConfigDict(...)`, never `class Config:`.
+- **No backward-compat shims.** When moving a module, rewrite all importers in the same change. Canonical: `from common.core.db import get_db_params`.
+- **Routers/modules > 800 LoC must split** by sub-feature into a domain folder.
+- **No `_row_to_dict` outside `common/core/sql_helpers.py`.** Import `row_to_dict_from_cursor` / `row_to_dict_from_cols`.
 
-common/                      # Shared Python modules — fully namespaced
-├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs, paths
-├── ml/                      # backtest_framework, model_registry, champion_strategies, tuning, shap, features
-│   ├── clustering/          # features.py, training.py, labeling.py, scenario.py
-│   └── sku_features/        # compute.py, classifiers.py — unified SKU feature computation
-├── engines/                 # dq_engine, exception_engine
-├── services/                # job_registry, job_scheduler, notifications, webhooks, cache
-├── ai/                      # ai_planner
-└── auth.py                  # Authentication helpers
+### ML / Forecasting
+- **All tree-model `.fit()` and instantiation goes through `common/ml/model_registry.py`** (`fit_model()`, `build_model()`). Direct `LGBMRegressor()` / `CatBoostRegressor()` / `XGBRegressor()` outside `model_registry.py` is a defect — applies to tuning, training, backtest, production, meta-learner.
+- **All ML hyperparameters live in `forecast_pipeline_config.yaml` `algorithms.<id>.params`.** No defaults like `kwargs.get("n_estimators", 200)` in Python.
+- **Forecast quantity column constant: `from common.core.constants import FORECAST_QTY_COL`.** Never the string literal `"basefcst_pref"`.
+- **Foundation-model loaders live in `common/ml/foundation_backtest.py`.** Never import from `scripts/algorithm_testing/`.
+- **`ml_cluster` is metadata, NOT a model feature.** Listed in `METADATA_COLS`, excluded by `get_feature_columns()`. Still merged via `build_feature_matrix()` for per-cluster partitioning.
 
-scripts/                     # Pipeline scripts
-├── etl/                     # normalize, load (13 scripts)
-├── ml/                      # backtest, clustering, tuning, champion (37 scripts)
-├── forecasting/             # production, quantile, blended, consensus (7 scripts)
-├── inventory/               # safety stock, eoq, replenishment, rebalancing (23 scripts)
-├── ops/                     # sop, health, dq fixes (8 scripts)
-├── algorithm_testing/       # algorithm comparison harnesses (23 scripts)
-├── tools/                   # developer utilities (3 scripts)
-├── db/                      # ad-hoc DB scripts (2 scripts)
-└── ai/                      # insights, embeddings (3 scripts)
+### Testing
+- **All API tests use `make_pool` from `tests/api/conftest.py`.** Hand-rolled `MagicMock` chains on `psycopg.connect` are forbidden. Use `httpx.AsyncClient(transport=ASGITransport(app))` with `patch("api.core._get_pool")`.
 
-frontend/                    # React + Vite + TypeScript
-├── src/tabs/                # 22 top-level tab components + sub-panel folders
-├── src/api/queries/         # 57 domain API query modules
-├── src/components/          # Shared UI components
-├── Dockerfile               # Nginx multi-stage build
-└── nginx.conf               # SPA fallback + API reverse proxy
+### Frontend
+- **Tab files MUST be < 600 lines.** Split into `frontend/src/tabs/<tab-name>/<Subpanel>.tsx`.
+- **All HTTP from frontend goes through `src/api/queries/<module>.ts` using `fetchJson`.** Never raw `fetch(` in tabs/components.
+- **No `: any`, `<any>`, or `as any` in `src/api/queries/`.** Mirror the backend Pydantic schema as a TS interface.
+- **Charts: never accept `theme` as a prop.** Read from `useThemeContext()` / `useChartColors()`. Inline hex colors are forbidden in `tabs/` and `components/`.
+- **New API path prefixes: add to BOTH `frontend/vite.config.ts` `API_PATH_PREFIXES` AND the barrel `frontend/src/api/queries/index.ts`** in the same change. Otherwise frontend gets HTML instead of JSON.
 
-config/                      # 42 YAML config files organized by concern:
-│   ├── etl_config.yaml                # ETL pipeline: domain load order, MV refresh, parallel workers
-│   ├── forecast_pipeline_config.yaml  # ML pipeline: algorithm roster + params, backtest, tuning, champion, forecast
-│   ├── shared_constants.yaml          # Shared constants (service levels, z-table, financial defaults, guard rails)
-│   ├── inventory_planning_config.yaml # Merged inventory planning (lead time, simulation, projection)
-│   ├── tune_strategies.yaml           # Merged tune strategies (LGBM, CatBoost, XGBoost)
-│   └── ...                            # ~30 more configs (inventory, ops, etc.)
-sql/                         # 132 DDL migration files
-tests/                       # 3977+ backend tests (api/ + unit/)
-docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
-data/                        # Generated ML artifacts + input CSVs (gitignored)
-├── input/                   # Raw source CSVs
-├── staged/                  # Normalized *_clean.csv files (output of normalize-all, input to load-all)
-├── backtest/                # Backtest predictions
-├── champion/                # Champion model assignments
-├── clustering/              # Clustering experiment outputs
-├── models/                  # Trained model artifacts
-└── tuning/                  # Hyperparameter tuning artifacts
-archive/                     # Archived reference materials
-```
-
-All paths relative to the project root. Use Glob/Grep to discover specific files.
+### Data Pipeline
+- **New data sources MUST extend the standard pipeline.** Add to `normalize-all` + `load-all` Make targets, register `DomainSpec` in `common/core/domain_specs.py`, add to `etl_config.yaml` `domain_order`. Never standalone.
+- **Forecast promotion**: predictions land in `fact_candidate_forecast`, are promoted to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion uses `data/champion/dfu_assignments.csv`.
 
 ---
 
-## Commands
+## File Placement
 
-All run from the project root.
-
-```bash
-# Setup
-make init              # Create .venv, install uv, sync deps
-make up                # Start Docker (Postgres, MLflow)
-make down              # Stop services
-make db-apply-sql      # Apply DDL schemas
-
-# Data Pipeline
-make normalize-all     # CSV → clean CSV (all 10 datasets)
-make load-all          # Clean CSV → Postgres + refresh views
-make load-forecast-replace  # Reload external forecast only
-make pipeline-full     # Full reload: normalize + load + refresh MVs
-make pipeline-refresh  # Incremental: detect changes, reload only deltas
-make pipeline-inventory        # Full reload inventory domain only
-make pipeline-inventory-refresh # Incremental inventory refresh only
-make normalize-customer-demand # Normalize customer demand CSVs
-make load-customer-demand      # Load customer demand (full replace)
-make load-customer-demand-month MONTH=YYYY-MM  # Reload single partition
-make pipeline-customer-demand  # Normalize + load customer demand
-
-# Run Services
-make api               # FastAPI on :8000
-make ui-init           # Install npm deps
-make ui                # React dev server on :5173
-# From frontend/ with API on :8000:
-#   npm run gen:types  # Regenerate src/api/generated/schema.ts from /openapi.json
-
-# ML Pipelines
-make cluster-all       # Unified clustering pipeline (creates experiment, runs features + training + labeling, auto-promotes)
-make backtest-all      # All backtests (tree + foundation models)
-make backtest-load-all # Load all backtest predictions into Postgres
-make backtest-load-all-bulk # Load all with single index cycle (~4x faster)
-make backtest-load-bulk # Load 4 core models in bulk (lgbm, catboost, xgboost, chronos)
-make backtest-load-main-only MODELS="..." # Load to main table only (skip archive)
-make backtest-load-archive-only MODELS="..." # Load to archive only (skip main)
-make backtest-chronos  # Chronos T5 (46M, ~2.5h)
-make backtest-bolt     # Chronos Bolt (205M, ~12min)
-make backtest-chronos2 # Chronos 2 zero-shot (821M, ~5.5h)
-make backtest-chronos2e # Chronos 2 Enriched with 31 covariates (~6h)
-make customer-features # Pre-compute 34 customer-derived features from customer demand
-make backtest-cust-enriched-all # LGBM/CatBoost/XGBoost with customer features
-make backtest-bolt-hier # Chronos Bolt hierarchical (customer bottom-up + reconciliation)
-make champion-all      # Meta-learner + simulate + champion select
-make tune-all          # Bayesian hyperparameter tuning (all models)
-make tune-cust-enriched-all # Bayesian tuning for customer-enriched tree models
-make tune-lgbm-clusters # Per-cluster Bayesian tuning for LGBM (tunes each ml_cluster independently)
-make tune-clusters     # Per-cluster tuning for all tree models
-make expert-panel      # Expert Panel algorithm selection test (5000 DFUs, ~30 min)
-make expert-panel-quick # Quick Expert Panel test (1000 DFUs, ~8 min)
-make features-compute  # Compute all SKU features (volume, trend, seasonality, variability, lifecycle)
-make seasonality-all   # Alias for features-compute (legacy compatibility)
-make variability-all   # Alias for features-compute (legacy compatibility)
-make forecast-generate # Production forecast inference
-
-# Testing
-make test              # Backend pytest (~0.7s, DB mocked)
-make ui-test           # Frontend vitest (~1.5s)
-make test-all          # Backend + frontend
-make test-cov          # Backend with coverage
-make e2e               # Playwright E2E (needs API on :8000)
-
-# Validation
-make check-all         # DB row counts + API health
-make ai-sync-check     # Verify Claude/Codex shared guidance wiring
-
-# Performance
-make perf-report           # Full system performance report with suggestions
-make perf-script SCRIPT=X  # Profile specific script (read-only, zero side effects)
-make perf-api              # API endpoint performance analysis
-make perf-pipeline         # ETL pipeline performance analysis
-
-# Full Pipeline (input CSVs -> ready app)
-make setup-all            # Everything: data + ML + planning + ops (~4-6 hours)
-make setup-data           # Data only: normalize + load all 11 domains (~30 min)
-make setup-planning       # Data + inventory planning, no ML (~1 hour)
-make setup-features       # Data + features-compute + cluster-all (SKU features then clustering)
-make setup-backtest       # Features + 3 backtests + champion selection
-make setup-inv-planning   # Inventory planning (SS, EOQ, policies, exceptions)
-make setup-demand-planning # Forecasts + projections + orders + replenishment
-make setup-ops            # S&OP + events + financial + storyboard + DQ
-
-# Convenience Aliases
-make dev                  # Start Docker + API + UI
-make test-quick           # Backend + frontend tests only
-make lint                 # Ruff lint check + fix
-make format               # Ruff format all Python
-make type-check           # Mypy type checking
-make health               # DB row counts + API health
-
-# Developer Tooling
-make audit-routers        # Check route consistency (main.py vs vite.config.ts)
-make new-router DOMAIN=forecasting NAME=my_feature  # Scaffold new router
-```
-
-See `Makefile` for the full list (130+ targets including one-time schema setup, inv-planning pipelines, cleanup utilities).
-
----
-
-## Architecture
-
-### Domain-Driven Generic Design
-
-All datasets extend a single `DomainSpec` dataclass in `common/core/domain_specs.py`. Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
-
-**11 Domains:** item, location, customer, time, sku (dimensions); sales, forecast, customer_demand (facts); inventory (dedicated pipeline); sourcing, purchase_order (procurement).
-
-All domains are loaded via `make load-all` (and normalized via `make normalize-all`). New data sources MUST be added to both `normalize-all` and `load-all` targets — never as standalone pipelines.
-
-### Data Flow
-
-```
-Source CSV → normalize_dataset_csv.py → data/staged/<name>_clean.csv → load_dataset_postgres.py → PostgreSQL → FastAPI → React UI
-```
-
-Normalized CSVs live under `data/staged/`. `DomainSpec.clean_file` values embed the `staged/` prefix (e.g. `clean_file="staged/itemdata_clean.csv"`), so `ROOT / "data" / spec.clean_file` resolves to the correct location without changes to resolver call sites.
-
-### API Pattern
-
-- Generic domains: `GET /domains/{domain}/rows`, `/search`, etc.
-- Inventory: dedicated `/inventory/*` endpoints
-- Pagination: offset/limit (50–1000 rows)
-- Auth: `require_api_key` dependency (disabled when `API_KEY` env var unset)
-- Reserved word: `class` column aliased as `class_` in responses
-
----
-
-## Data Models
-
-### Dimension Tables
-- Surrogate key `sk`, composite key `ck`, `load_ts`, `modified_ts`
-- Full-text search via `pg_trgm` trigram indexes
-
-### Fact Tables
-- `fact_sales_monthly`: grain = item + customer_group + location + month + type
-- `fact_external_forecast_monthly`: grain = item + loc + forecast_date + actual_month; tracks lag 0–4
-- `fact_inventory_snapshot`: grain = item_id + loc + snapshot_date (~198M rows); **monthly range-partitioned** by `snapshot_date`
-- `fact_customer_demand_monthly`: grain = item_id + customer_no + location_id + month; **monthly range-partitioned** by `startdate`
-- `fact_production_forecast`: grain = item_id + loc + plan_version + month
-- `fact_candidate_forecast`: grain = item_id + loc + model_id + forecast_month; staging area for all model predictions before promotion
-- `model_promotion_log`: audit trail for model promotions/demotions; tracks `is_active`, `promotion_type` (single/champion)
-
-### Archive Tables
-- `backtest_lag_archive`: All-lags (0–4) backtest predictions with `timeframe` column
-
-### Key Materialized Views
-- `agg_sales_monthly`, `agg_forecast_monthly` — pre-aggregated KPI queries
-- `agg_inventory_monthly` — EOM on-hand, sales, DOS, lead time
-- `mv_inventory_forecast_monthly` — inventory-forecast bridge for root cause attribution
-- `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout`, `mv_control_tower_kpis`, `mv_network_balance`
-
-See `sql/` for all DDL files.
-
----
-
-## Critical Rules
-
-These are hard constraints that cause bugs or test failures if violated.
-
-### DB & API Patterns
-
-- **`get_conn()` not `Depends(_get_pool)`** for all `inv_planning_*.py` routers. Using `Depends(_get_pool)` causes 422 errors in tests because FastAPI inspects MagicMock signatures.
-- **psycopg3 uses `%s` placeholders** — NOT `$1`, `$2`. All SQL in scripts and routers must use `%s`.
-- **Column names in fact tables**: All tables now use `item_id` (standardized from legacy `dmdunit`/`item_no`). Forecast qty column is `basefcst_pref` (not `qty`).
-- **`domains.py` mounted last** in `main.py` — it has catch-all `{domain}` path params that would shadow other routes.
-- **Shared test pool factory**: Import `from tests.api.conftest import make_pool as _make_pool`. For multi-fetchall endpoints use `cursor.fetchall.side_effect = [list1, list2]`; for single-call use `cursor.fetchall.return_value`.
-- **API test pattern**: Use inline `httpx.AsyncClient(transport=ASGITransport(app))` with `patch("api.core._get_pool")`.
-- **`POST /{model_id}/train` only accepts tree models** — foundation and `deep_learning` models return 400. Only `type === "tree"` models (lgbm, catboost, xgboost variants) support production training.
-- **Forecast promotion workflow**: All model predictions load to `fact_candidate_forecast` first. Only the promoted model's rows are copied to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion promotion uses DFU-level assignments from `data/champion/dfu_assignments.csv`.
-- **Admin endpoints (`/admin/*`)**: Platform-ops tooling lives in `api/routers/platform/admin.py`, guarded by `require_api_key`. `POST /admin/llm/reset` closes + clears the OpenAI/Anthropic client singletons so the next LLM call picks up rotated keys. `POST /admin/tuning/invalidate-stale` clears the `stale` flag on `cluster_tuning_profile` rows when the column exists; degrades to a logged no-op (status `noop`) when the column is absent or the DB returns `psycopg.Error`.
-- **`model_registry.build_model(algorithm_id, params=None)`**: Generic estimator factory. Reads the algorithm entry from `forecast_pipeline_config.yaml` `algorithms:`, translates canonical param names via `to_native_params()`, and returns a configured `LGBMRegressor` / `CatBoostRegressor` / `XGBRegressor` for tree models. Foundation / DL / statistical families return a lightweight `_FoundationStub` (real loaders still live in their `run_backtest_*` scripts). Unknown ids raise `UnknownAlgorithm` (a `ValueError` subclass).
-
-### Frontend Patterns
-
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. There are currently 50 proxy entries; consult `frontend/vite.config.ts` for the authoritative list rather than maintaining a duplicate here. Common prefixes include: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/sku-features`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/catboost-tuning`, `/xgboost-tuning`, `/model-tuning`, `/cluster-eda`, `/cluster-experiments`, `/champion-experiments`, `/feature-lab`, `/accuracy-budget`, `/demand-history`, `/demand-signals`, `/customer-analytics`, `/backtest-management`, `/integration`.
-- **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
-- **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
-
-### Code Patterns
-
-- **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common.core.utils`.
-- **Forecast pipeline master config**: `config/forecasting/forecast_pipeline_config.yaml` is the single source of truth for the ML forecast pipeline. It contains the algorithm roster with inline hyperparameters (under `algorithms.<model_id>.params`), backtest settings, tuning settings, champion selection, production forecast config, and run tracking. Use `load_forecast_pipeline_config()` from `common.core.utils` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. Use `get_algorithm_params(model_id)` to retrieve hyperparameters for a specific algorithm. The old separate configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been deleted -- all settings now live in the master config.
-- **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`.
-- **Clustering library in `common/ml/clustering/`**: All clustering library code lives in `common/ml/clustering/` — `features.py` (feature engineering), `training.py` (CORE_FEATURES, find_optimal_k, train_kmeans), `labeling.py` (assign_cluster_labels), `scenario.py` (promote_scenario, generate_scenario_id). Scripts in `scripts/ml/` are CLI entry-points that import directly from this package; they are not shims. `config/clustering_config.yaml` has been deleted — clustering params are stored in the `cluster_experiment` table (promoted row). `make cluster-all` goes through the unified experiment system (creates DB experiment, runs, auto-promotes). **Terminology**: Clustering operates on SKUs (item+location pairs), not DFUs. Use "SKU" when referring to the entities being clustered.
-- **Unified SKU feature computation**: All time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle) are computed once by `common/ml/sku_features/` and stored in `dim_sku`. Config: `config/forecasting/sku_features_config.yaml`. Clustering reads pre-computed features from `dim_sku` instead of computing from raw sales.
-- **Clustering master switch**: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common.core.utils`.
-- **Config `_includes` directive**: `load_config(name)` supports an `_includes` key at the top of any YAML file. Listed files are loaded first and merged as defaults, allowing shared constants (e.g., `shared_constants.yaml`) to be inherited without duplication.
-- **`cluster_strategy` resolution order**: `forecast_pipeline_config.yaml` algorithm entry (`algorithms.<name>.cluster_strategy`) > default `"per_cluster"`. Only tree/statistical models use this field; foundation/DL models always run globally.
-- **Backtest sampling config**: `forecast_pipeline_config.yaml` `backtest_sampling` section is the sole source for sampling settings (the legacy `backtest_sampling_config.yaml` has been deleted).
-- **DB params**: All scripts use `from common.core.db import get_db_params` — no inline connection helpers.
-- **Planning date**: All date-sensitive code uses `get_planning_date()` from `common.core.planning_date`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
-- **Timestamp helper**: Import `from common.core.utils import _ts` — no per-file `_ts()` definitions.
-- **`ml_cluster` is a metadata column, not a model feature** — Listed in `METADATA_COLS` (excluded from `feature_cols` by `get_feature_columns()`). Removed from `CAT_FEATURES` and `CROSS_DFU_FEATURES` to prevent data leakage (cluster assignments use full history). It is still merged into the feature grid via `build_feature_matrix()` for per-cluster model partitioning (one model per cluster), clustering UI, and inventory planning. See `docs/specs/01-foundation/08-known-gaps.md` §1.
-- **Multi-stage feature selection**: `shap_selector.py` runs 4 stages per timeframe: (0) duplicate alias removal, (1) near-zero variance filter, (2) correlation pre-filter, (3) SHAP cumulative selection. Configured via `correlation_filter`, `variance_filter` params in `forecast_pipeline_config.yaml`. **Per-cluster SHAP**: `compute_timeframe_shap_per_cluster()` runs SHAP independently per cluster, returning `dict[str, list[str]]` (cluster -> selected features). Sparse clusters with too few non-zero rows skip SHAP and keep all features. Stratified sampling (50/50 zero/non-zero) used for clusters with >50% zeros.
-- **Per-cluster tuning profiles**: `config/forecasting/cluster_tuning_profiles.yaml` defines per-cluster hyperparameter overrides. Profiles are matched in two phases: Phase 1 matches by `cluster_name` (exact match against `ml_cluster` label via `match_criteria.cluster_name`); Phase 2 falls back to statistical criteria (mean_demand, cv_demand, zero_demand_pct, etc.). First match wins per `_PROFILE_PRIORITY` order. Resolved via `resolve_cluster_params()` in `backtest_framework.py`.
-- **Intermittent cluster routing**: Clusters with >70% zero-demand rows (`intermittent_threshold`) are routed to rolling mean baseline instead of tree models during backtest. Configured via `backtest.baseline_intermittent` and `backtest.intermittent_threshold` in `forecast_pipeline_config.yaml`.
-- **Model registry for tree backtests**: Use `common/ml/model_registry.py` for all model-specific logic — `fit_model()`, `get_best_iteration()`, `to_native_params()`. Do NOT add new if/elif/else fit blocks in backtest scripts. Early stopping uses standardized 5% patience via `compute_early_stop_patience()` (10% for sparse/intermittent clusters).
-- **Stub table pattern**: When a materialized view depends on a future feature's table, create it with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN produces NULL → neutral scores until real data flows.
-- **No backward-compat shims**: When moving a module, rewrite all importers in the same change rather than leaving a shim that re-exports from the new location. Shims become permanent debt: every shim that's been added to this repo has had a clear "intent to remove" that nobody followed up on. Atomic migration is the rule. Imports are canonical: `from common.core.db import get_db_params`, never `from common.db import …`.
-- **Project-root paths**: Never recompute the project root with `Path(__file__).parents[N]`. Import from `common.core.paths`: `from common.core.paths import PROJECT_ROOT, CONFIG_DIR, DATA_DIR, SQL_DIR, SCRIPTS_DIR`. The `parents[N]` pattern is depth-dependent and breaks every time a file is moved between directories. The only exception is the `sys.path.insert` bootstrap in standalone CLI scripts that run as `python scripts/X.py` (rare).
-- **Structured logging**: Scripts use `logging.getLogger(__name__)` — no raw `print()`. `basicConfig()` only in `__main__` blocks.
-- **Exception handling**: Catch specific exceptions (`psycopg.Error`, `ValueError`) — never bare `except Exception`. Always log with `logger.exception()`.
-- **GPU acceleration**: `DEMAND_GPU` env var controls GPU usage in backtests (`on`/`off`/`auto`, default `auto`). Optional deps: `cupy` (Monte Carlo simulation GPU arrays), `numba` (seasonality JIT kernels). All scripts fall back gracefully when these are absent.
-
-### Performance Profiling
-
-- **Use `profiled_section()` for major stages**: New scripts should wrap major computation stages with `profiled_section()` from `common/services/perf_profiler.py` instead of raw `time.time()`.
-- **DB profiling is read-only**: `wrap_connection()` sets `default_transaction_read_only = true` and always rolls back. Safe for production.
-- **Config in YAML**: All perf thresholds in `config/platform/perf_config.yaml`. No hardcoded timing thresholds.
-
-### Config Documentation Rules
-
-- **All config YAML files MUST have inline comments** for every key explaining what it does, valid options, and defaults.
-- When adding a new key to any config file, add an inline comment on the same line or the line above.
-- When modifying a config value, update the comment if the explanation changes.
-- Use section headers (`# ═══ SECTION ═══`) for major groups in large config files.
-- Config files in `config/` are the source of truth — document them inline, not in separate docs.
-
-### File Placement Rules
-
-**Always place new files in the correct domain subdirectory. Never add files to a flat parent directory when a domain subdirectory exists.**
+Place new files in the correct domain subdirectory. Never add to a flat parent when a domain subdir exists.
 
 | New code type | Place in | Example |
 |---|---|---|
 | Inventory/supply router | `api/routers/inventory/` | `inv_planning_new_feature.py` |
-| Forecast/accuracy/cluster experiment router | `api/routers/forecasting/` | `forecast_ensemble.py`, `cluster_experiments.py` |
+| Forecast/accuracy/cluster router | `api/routers/forecasting/` | `forecast_ensemble.py` |
 | SOP/control tower router | `api/routers/operations/` | `supply_risk.py` |
 | Auth/config/admin router | `api/routers/platform/` | `audit_log.py` |
 | AI/chat/analysis router | `api/routers/intelligence/` | `anomaly_detect.py` |
 | Dashboard/jobs router | `api/routers/core/` | `system_metrics.py` |
-| Generic domain endpoint | `api/routers/domains.py` | Add to existing catch-all |
+| Generic domain endpoint | `api/routers/domains.py` | extend the catch-all |
 | DB/config/date utility | `common/core/` | `new_helper.py` |
 | ML algorithm/backtest | `common/ml/` | `ensemble_strategy.py` |
-| Clustering library code | `common/ml/clustering/` | `features.py`, `training.py` |
+| Clustering library | `common/ml/clustering/` | `features.py`, `training.py` |
 | SKU feature computation | `common/ml/sku_features/` | `compute.py`, `classifiers.py` |
 | DQ/exception engine | `common/engines/` | `alert_engine.py` |
-| Scheduler/cache/webhook | `common/services/` | `event_bus.py` |
+| Scheduler/cache/webhook | `common/services/` | `event_bus.py`, `perf_profiler.py` |
 | AI/LLM utility | `common/ai/` | `prompt_builder.py` |
-| ETL/data loading script | `scripts/etl/` | `load_new_source.py` |
-| ML training/tuning script | `scripts/ml/` | `train_new_model.py`, `tune_cluster_hyperparams.py` |
-| Forecast generation script | `scripts/forecasting/` | `run_ensemble.py` |
-| Inventory planning script | `scripts/inventory/` | `calculate_new_metric.py` |
-| Operations/SOP script | `scripts/ops/` | `generate_report.py` |
-| AI/embeddings script | `scripts/ai/` | `retrain_embeddings.py` |
-| Performance profiling | `common/services/` | `perf_profiler.py` |
+| ETL script | `scripts/etl/` | `load_new_source.py` |
+| ML training/tuning | `scripts/ml/` | `train_new_model.py` |
+| Forecast generation | `scripts/forecasting/` | `run_ensemble.py` |
+| Inventory planning | `scripts/inventory/` | `calculate_new_metric.py` |
+| Operations/SOP | `scripts/ops/` | `generate_report.py` |
+| AI/embeddings | `scripts/ai/` | `retrain_embeddings.py` |
 | Backend unit test | `tests/unit/test_<module>.py` | `test_new_helper.py` |
 | API endpoint test | `tests/api/test_<feature>.py` | `test_forecast_ensemble.py` |
 
-When adding a new router, also:
-1. Add the import and `app.include_router()` call in `api/main.py`
-2. Add the API path prefix to `frontend/vite.config.ts` proxy if it's a new prefix
-3. Mount `domains.py` LAST (move its mount if needed)
+When adding a router: (1) `app.include_router()` in `api/main.py` BEFORE `domains.py`, (2) add prefix to `frontend/vite.config.ts` proxy, (3) add to `frontend/src/api/queries/index.ts` barrel.
+
+---
+
+## Patterns & Pitfalls
+
+Each entry: **symptom → cause → fix**. File paths are anchors.
+
+### API & Routers
+- **422 in tests on `inv_planning_*` endpoints** → `Depends(_get_pool)` parameter inspected by FastAPI as MagicMock → use `get_conn()` directly.
+- **Mock tuples reject the response** → mock column count != SQL select column count → align mock tuple to exact column order/count of the query.
+- **Catch-all swallows a new route** → `domains.py` mounted before the new router → move `app.include_router(domains.router)` to be last in `api/main.py`.
+- **`POST /{model_id}/train` 400** → only `type === "tree"` models support production training; foundation/`deep_learning` rejected by design.
+- **Import error after restructure** → using a pre-restructure path (e.g. `common.<old>` instead of `common.core.<…>`) → use the canonical path: `from common.core.db import get_db_params`. Run `grep -rln "from common\.<old> " --include="*.py"` to find stragglers.
+- **Admin endpoints**: `api/routers/platform/admin.py`, `require_api_key` guarded. `POST /admin/llm/reset` clears OpenAI/Anthropic singletons. `POST /admin/tuning/invalidate-stale` clears `cluster_tuning_profile.stale`; logs `noop` if column absent or psycopg error.
+
+### Frontend
+- **"HTML instead of JSON"** → missing Vite proxy entry for new API prefix → add to `frontend/vite.config.ts` and `frontend/src/api/queries/index.ts` barrel; run `make audit-routers` to verify parity. See `frontend/vite.config.ts` for the authoritative proxy list.
+- **Test wrappers**: wrap with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for charts, `@tanstack/react-virtual` for virtualized rows.
+
+### ML & Forecasting
+- **Dimension mismatch in SHAP** → feature stripped from `feature_cols` but model trained with full set → pre-SHAP stages (duplicate/variance/correlation in `shap_selector.py`) prune the *selection pool* only; SHAP input must match the trained set.
+- **Cold-start DFU has no forecast** → < `cold_start_min_months` (3) months history → DFUs with 3–11 months route to `cold_start_model_id` (rolling_mean); < 3 months are skipped (absolute floor). Config: `forecast_pipeline_config.yaml` `production_forecast`.
+- **Multi-stage feature selection** (`shap_selector.py`): 4 stages per timeframe — (0) duplicate alias removal, (1) near-zero variance, (2) correlation pre-filter, (3) SHAP cumulative. Config keys: `correlation_filter`, `variance_filter`. **Per-cluster SHAP**: `compute_timeframe_shap_per_cluster()` returns `dict[str, list[str]]`. Sparse clusters skip SHAP. Stratified 50/50 sampling for >50% zeros.
+- **Cluster strategy resolution**: `algorithms.<name>.cluster_strategy` (default `"per_cluster"`). Tree/statistical only — foundation/DL always global.
+- **Clustering master switch**: `clustering.enabled` in `forecast_pipeline_config.yaml`. When `false`, all backtests fall back to `global` regardless of per-algorithm setting. Check via `is_clustering_enabled()` from `common.core.utils`.
+- **Per-cluster tuning profiles** (`config/forecasting/cluster_tuning_profiles.yaml`): Phase 1 matches by `match_criteria.cluster_name`, Phase 2 by statistical criteria (mean_demand, cv_demand, zero_demand_pct). First match wins per `_PROFILE_PRIORITY`. Resolved by `resolve_cluster_params()` in `backtest_framework.py`.
+- **Intermittent routing**: clusters with > 70% zero-demand rows (`backtest.intermittent_threshold`) → rolling mean baseline (`backtest.baseline_intermittent`). Early stopping uses 5% patience standard, 10% sparse/intermittent (`compute_early_stop_patience()`).
+- **Clustering library** lives in `common/ml/clustering/` — `features.py`, `training.py`, `labeling.py`, `scenario.py`. Params stored in `cluster_experiment` table (promoted row), NOT YAML. Operates on **SKUs** (item+location), not DFUs.
+- **SKU features** computed once in `common/ml/sku_features/` and stored in `dim_sku`; clustering reads pre-computed values. Config: `config/forecasting/sku_features_config.yaml`.
+- **`model_registry.build_model(algorithm_id, params=None)`**: reads `algorithms.<id>` entry, translates via `to_native_params()`, returns configured tree estimator. Foundation/DL/statistical → `_FoundationStub`. Unknown id → `UnknownAlgorithm` (subclass of `ValueError`).
 
 ### Data Loading
+- **Staged CSV convention**: normalized CSVs land in `data/staged/`. `DomainSpec.clean_file` embeds the prefix (`"staged/itemdata_clean.csv"`); resolution is `ROOT / "data" / spec.clean_file`. ML intermediates (`clustering_features.csv`, `seasonality_results.csv`) also live under `data/staged/`. No new normalized output at `data/` root.
+- **Null normalization**: `''`, `'null'`, `'none'`, `'NA'` → NULL during load.
+- **Type casting**: integer/float/date fields auto-cast with null coercion.
+- **Sales filtering**: only `TYPE=1` rows enter `fact_sales_monthly`.
+- **Time dimension**: auto-generated 2020–2035, not from a file.
+- **Forecast `model_id`**: default `'external'` for source-system feeds. `UNIQUE(forecast_ck, model_id)` prevents duplicates.
+- **Execution-lag loading**: dual-path insert with phase ordering — archive loaded BEFORE staging mutation. See `docs/specs/02-forecasting/03-backtest-framework.md`.
+- **Customer demand**: `site` → `location_id` via `dim_location.site_id`; `posting_prd` (YYYYMM) → `startdate` (YYYY-MM-01); `demand_qty = MAX(0, demand_cases)`; `sales_qty = MAX(0, demand_cases - oos_cases)`. Supports `--replace` and `--month YYYY-MM`.
 
-- **Staged CSV convention**: Normalized CSVs land in `data/staged/`. `DomainSpec.clean_file` values embed the `staged/` prefix (e.g. `clean_file="staged/itemdata_clean.csv"`), so the canonical resolution pattern remains `ROOT / "data" / spec.clean_file` without changes at call sites. ML intermediates such as `clustering_features.csv` and `seasonality_results.csv` also live under `data/staged/`. Do not place new normalized outputs at the `data/` root.
-- **Null normalization**: `''`, `'null'`, `'none'`, `'NA'` → NULL during load
-- **Type casting**: Integer/float/date fields auto-cast with null coercion
-- **Sales filtering**: Only `TYPE=1` rows loaded into `fact_sales_monthly`
-- **Time dimension**: Auto-generated 2020–2035, not from a file
-- **Forecast `model_id`**: Default `'external'` for source-system forecasts. `UNIQUE(forecast_ck, model_id)` prevents duplicates.
-- **Execution-lag loading**: Dual-path insert with phase ordering (archive loaded BEFORE staging mutation). See spec `02-forecasting/03-backtest-framework.md` for details.
-- **Customer demand**: source `site` column resolved to `location_id` via `dim_location.site_id` join; `posting_prd` (YYYYMM) converted to `startdate` (YYYY-MM-01); `demand_qty = MAX(0, demand_cases)`; `sales_qty = MAX(0, demand_cases - oos_cases)`; supports `--replace` (full) and `--month YYYY-MM` (single partition drop+reload)
-- **New data sources MUST be part of the standard pipeline**: Every new input file must be added to `normalize-all` and `load-all` Makefile targets, and to `etl_config.yaml` `domain_order`. Never create standalone pipelines — `make load-all` must load everything, `make db-truncate-data` must truncate everything, `make fresh-load` must reload everything from scratch.
+### MV & Performance
+- **Stale MV after refresh** → wrong order (dependent before source) → use tiered refresh; see `Makefile` `refresh-mvs-tiered`.
+- **Stub table pattern**: an MV depending on a future feature's table → create with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN yields NULL → neutral scores until real data flows.
+- **Connection pool exhaustion** → too many concurrent requests vs `max_size` (now 20) → set `POOL_MAX_SIZE`; check unclosed connections.
+- **Profiling**: wrap major stages with `profiled_section()` from `common/services/perf_profiler.py` instead of raw `time.time()`. `wrap_connection()` enforces `default_transaction_read_only = true` and rolls back. Thresholds in `config/platform/perf_config.yaml` — never hardcoded.
+- **GPU**: `DEMAND_GPU=on|off|auto` (default `auto`). `cupy` for Monte Carlo; `numba` for seasonality JIT. All scripts fall back gracefully.
+
+### Config
+- **All config in YAML**, loaded via `load_config(name)` from `common.core.utils`. No magic numbers. Forecast pipeline master config: `config/forecasting/forecast_pipeline_config.yaml` (algorithm roster + params, backtest, tuning, champion, forecast, run tracking). Helpers: `load_forecast_pipeline_config()`, `get_algorithm_roster(stage=…)`, `get_competing_model_ids()`, `get_forecastable_model_ids()`, `get_algorithm_params(model_id)`. Old configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`, `clustering_config.yaml`) deleted.
+- **`_includes` directive** at top of any YAML loads listed files first as defaults — used for `shared_constants.yaml` inheritance.
+- **Inline comments required** on every key in every config YAML — explanation, valid options, default. Use `# ═══ SECTION ═══` headers. Update comments when values change.
+
+### Code Quality
+- **DB params**: `from common.core.db import get_db_params`. No inline connection helpers.
+- **Timestamp helper**: `from common.core.utils import _ts`. No per-file `_ts()`.
+- **Structured logging**: `logging.getLogger(__name__)` — never raw `print()`. `basicConfig()` only in `__main__`.
 
 ### Formulas
-
 - **Accuracy**: `100 - (100 * SUM(ABS(F-A)) / ABS(SUM(A)))`
 - **Bias**: `(SUM(Forecast) / SUM(History)) - 1`
 - **WAPE**: `SUM(|F-A|) / |SUM(A)|`
 
 ---
 
-## Feature Integration Checklist
+## Commands Cheatsheet
 
-When adding a new feature end-to-end, follow these steps in order:
+The targets Claude actually invokes. For the full operator command list (~130 targets — pipelines, ML, fresh-load, perf, setup-*), see `docs/RUNBOOK.md` and `Makefile`.
 
-### 1. Database & Data Loading
-- [ ] Create DDL migration in `sql/` (next sequence number)
-- [ ] Add tables/MVs to `docs/RUNBOOK.md` cleanup section
-- [ ] Add `TRUNCATE` / `REFRESH` to Makefile `db-truncate-data` target
-- [ ] If new input data source: add normalize target to `normalize-all`, load target to `load-all`
-- [ ] If new input data source: register `DomainSpec` in `common/core/domain_specs.py`
-- [ ] If new input data source: add to `etl_config.yaml` `domain_order`
-- [ ] If new forecast table: follow the candidate -> production promotion pattern (`fact_candidate_forecast` -> `fact_production_forecast`)
+```bash
+# Run services
+make api               # FastAPI on :8000
+make ui                # React dev server on :5173 (npm install via `make ui-init`)
+make dev               # Docker + API + UI
 
-### 2. Backend
-- [ ] Create router in correct `api/routers/{domain}/` subdirectory
-- [ ] Use `get_conn()` pattern (not `Depends(_get_pool)` for inv_planning)
-- [ ] Use `%s` placeholders in all SQL
-- [ ] Add `app.include_router()` in `api/main.py` — **before** `domains.py`
-- [ ] Add auth guard (`dependencies=[Depends(require_api_key)]`) on write endpoints
-- [ ] Externalize config to `config/<name>.yaml` (exception: clustering params live in `cluster_experiment` table, not YAML)
+# Test
+make test              # Backend pytest (DB mocked, ~0.7s)
+make ui-test           # Frontend vitest (~1.5s)
+make test-all          # Backend + frontend
+make e2e               # Playwright E2E (needs API on :8000)
 
-### 3. Frontend
-- [ ] Add query module in `frontend/src/api/queries/`
-- [ ] Add Vite proxy entry in `frontend/vite.config.ts` for new API prefix
-- [ ] Create component(s) in `frontend/src/tabs/` or `frontend/src/components/`
-- [ ] Use `useThemeContext()` for theme — never pass as prop
+# Quality
+make lint              # Ruff lint check + fix
+make format            # Ruff format
+make type-check        # Mypy
 
-### 4. Testing
-- [ ] Backend test in `tests/api/test_<feature>.py`
-- [ ] Frontend test in `src/tabs/__tests__/<Tab>.test.tsx`
-- [ ] Run `make test-all` to verify
+# Routes
+make audit-routers     # Verify main.py ↔ vite.config.ts parity
+make new-router DOMAIN=forecasting NAME=my_feature  # Scaffold
 
-### 5. Documentation
-- [ ] Update `docs/ARCHITECTURE.md`
-- [ ] Update `docs/PLATFORM_GUIDE.md`
-- [ ] Create/update spec in `docs/specs/<domain>/`
-- [ ] Update `CLAUDE.md` if new critical rules apply
+# Data (incremental)
+make pipeline-refresh  # Detect changes, reload deltas
+make pipeline-inventory-refresh
 
-### 6. Verification
-- [ ] Run `make audit-routers` to check route consistency
-- [ ] Verify Vite proxy works (no "HTML instead of JSON" errors)
-- [ ] Run `make test-all` one final time
+# Health
+make health            # DB row counts + API health
+
+# Performance
+make perf-script SCRIPT=<name>  # Profile a script (read-only)
+```
+
+OpenAPI types: from `frontend/`, `npm run gen:types` regenerates `src/api/generated/schema.ts` from `/openapi.json` (API must be running).
 
 ---
 
-## Troubleshooting Common Errors
+## Project Structure
 
-### 422 Validation Error in Tests
-**Cause**: Using `Depends(_get_pool)` in `inv_planning_*.py` routers. FastAPI inspects MagicMock signatures and fails validation.
-**Fix**: Use `get_conn()` directly instead.
+```
+api/                  # FastAPI — main.py, core.py, pool.py, llm.py, routers/{inventory,forecasting,operations,platform,intelligence,core}/, domains.py (mounted LAST)
+common/               # Shared Python — core/, ml/{clustering,sku_features,…}, engines/, services/, ai/, auth.py
+scripts/              # Pipelines — etl/, ml/, forecasting/, inventory/, ops/, ai/, algorithm_testing/, tools/, db/
+frontend/             # React + Vite — src/tabs/, src/api/queries/, src/components/, vite.config.ts, nginx.conf
+config/               # ~42 YAML files; master forecast config: forecasting/forecast_pipeline_config.yaml
+sql/                  # 130+ DDL migrations (numeric prefix)
+tests/                # api/, unit/  (3900+ backend tests)
+docs/                 # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, ENTERPRISE_ARCHITECTURE, specs/
+data/                 # Generated artifacts (gitignored) — input/, staged/, backtest/, champion/, clustering/, models/, tuning/
+```
 
-### "HTML instead of JSON" in Frontend
-**Cause**: Missing Vite proxy entry for the API prefix.
-**Fix**: Add the prefix to `frontend/vite.config.ts` proxy config. Run `make audit-routers` to check.
-
-### Dimension Mismatch in SHAP
-**Cause**: A feature was stripped from `feature_cols` but the model was trained with it.
-**Fix**: Pre-SHAP stages (duplicate/variance/correlation) exclude features from the *selection pool* but SHAP extraction still uses the full feature set matching the trained model. Never strip features from the SHAP input that differ from the training set.
-
-### Import Errors After Restructure
-**Cause**: An importer is using the pre-restructure path (e.g., `from common.db import …` instead of `from common.core.db import …`), or a moved router is being imported from the flat `api/routers/` root.
-**Fix**: Update the importer to the canonical path. Run `grep -rln "from common\\.<old_name> " --include="*.py"` to find stragglers. Backward-compat shims are no longer maintained; the codebase expects atomic migration.
-
-### Tests Pass But API Fails
-**Cause**: Mock row tuple column count doesn't match actual table DDL.
-**Fix**: Verify mock tuples match the exact column count and order of the SQL query.
-
-### MV Refresh Stale Data
-**Cause**: Materialized views refreshed in wrong order (dependent MVs refresh before their sources).
-**Fix**: Follow tiered refresh order — base aggregates first, then derived MVs. See `Makefile` `refresh-mvs-tiered`.
-
-### Connection Pool Exhaustion
-**Cause**: Too many concurrent requests with `max_size=10` (now increased to 20).
-**Fix**: Set `POOL_MAX_SIZE` env var. Check for unclosed connections in scripts.
-
-### Cold-Start DFUs Get No Forecast
-**Cause**: DFU has fewer than `cold_start_min_months` (3) months of sales history and is skipped by the production forecast pipeline.
-**Fix**: Check `cold_start_min_months` and `min_history_months` in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`. DFUs with 3-11 months of history are routed to `cold_start_model_id` (rolling_mean). DFUs with fewer than 3 months are skipped (absolute floor).
+For full architecture, data flow, dimension/fact tables, and MV catalog, see `docs/ARCHITECTURE.md`.
 
 ---
 
-## Mandatory Testing Rules
+## Workflow & Hooks
 
-**Every new feature, endpoint, component, hook, or utility MUST include tests. Every removed feature MUST have its tests removed.**
+### Always-active automation (from `.claude/settings.json`)
+- **PostToolUse (Write/Edit)**: ruff on Python, anti-pattern checks on SQL, auto-runs edited test files.
+- **PreToolUse (Bash)**: blocks `git commit` if ruff or pytest fails.
 
-### What to test where:
-1. New Python `common/` module → `tests/unit/test_<module>.py`
-2. New API endpoint → `tests/api/test_<feature>.py` (httpx AsyncClient + ASGITransport)
-3. New React component → `src/components/__tests__/<Component>.test.tsx`
-4. New React hook → `src/hooks/__tests__/<hook>.test.ts`
-5. New tab component → `src/tabs/__tests__/<Tab>.test.tsx`
-6. New sidebar tab → E2E test in `frontend/e2e/tests/navigation.spec.ts`
+### Auto-trigger agents
+| Trigger | Agent | Skills |
+|---|---|---|
+| After Python changes | `python-reviewer` | `python-patterns`; routers also `api-design` + `backend-patterns`; SQL-heavy also `postgres-patterns` |
+| SQL/schema change | `database-reviewer` | verify `%s`, explicit columns, indexes |
+| New feature / bug fix | `tdd-guide` | `tdd-workflow` — write test FIRST (failing), then implement |
+| Before commit | `code-reviewer` | `security-review` (no secrets/injection/keys), `verification-loop` (build/types/lint/tests) |
+| Complex multi-file | `planner` | wait for user CONFIRM before editing |
+| New/modified pipeline script | — | run `make perf-script SCRIPT=<name>` |
 
-### Test patterns:
-- **Backend**: Mock DB via `make_pool()` factory in `tests/api/conftest.py`. No running server needed.
-- **Frontend**: Wrap with `QueryClientProvider` from test-utils. Mock API layer with `vi.mock`.
-- **E2E**: Semantic selectors (`getByRole`, `getByText`) — never CSS classes. Use `navigateToTab()` fixture.
+### Tests are mandatory (no exceptions)
+- New `common/` module → `tests/unit/test_<module>.py`
+- New API endpoint → `tests/api/test_<feature>.py` (httpx AsyncClient + ASGITransport, `make_pool` factory)
+- New React component → `src/components/__tests__/<Component>.test.tsx`
+- New React hook → `src/hooks/__tests__/<hook>.test.ts`
+- New tab → `src/tabs/__tests__/<Tab>.test.tsx`
+- New sidebar tab → `frontend/e2e/tests/navigation.spec.ts` (semantic selectors only — `getByRole`/`getByText`, never CSS classes; use `navigateToTab()` fixture)
+- Removed feature → remove its tests in the same change
+- Run `make test-all` after every change
 
-### Run `make test-all` after every change.
+### Feature integration checklist
+1. **DB**: DDL in `sql/` (next sequence); add to `db-truncate-data` + `refresh-mvs-tiered` Make targets and to `docs/RUNBOOK.md` cleanup section. New input source → register `DomainSpec`, add to `etl_config.yaml` `domain_order`, add to `normalize-all` + `load-all`. New forecast → use candidate→production promotion.
+2. **Backend**: router in correct `api/routers/<domain>/`, `get_conn()`, `%s`, `app.include_router()` BEFORE `domains.py`, `Depends(require_api_key)` on writes, config in YAML.
+3. **Frontend**: query module in `src/api/queries/`, Vite proxy entry, queries barrel entry, theme via context.
+4. **Tests**: backend + frontend per the table above, then `make test-all`.
+5. **Docs**: update `docs/ARCHITECTURE.md`, `docs/PLATFORM_GUIDE.md`, the relevant `docs/specs/<domain>/<spec>.md`, and `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features". `docs/ENTERPRISE_ARCHITECTURE.md` and `docs/RUNBOOK.md` carry inline self-update rules — follow them. Update this `CLAUDE.md` only if a new critical rule applies.
+6. **Verify**: `make audit-routers`, then `make test-all`.
 
----
-
-## Documentation Update Rules
-
-**When code is added, changed, or deleted, update these docs if affected:**
-
-1. `docs/ARCHITECTURE.md` — architecture, tables, data flow
-2. `docs/PLATFORM_GUIDE.md` — stack, datasets, features, quick start
-3. `docs/specs/<domain>/<spec>.md` — create/update the relevant design spec
-4. `docs/specs/01-foundation/01-infrastructure.md` — add to "Implemented Features" list
-5. `CLAUDE.md` (this file) — if critical rules, entry points, or commands change
-6. `docs/ENTERPRISE_ARCHITECTURE.md` — TOGAF-style enterprise architecture document. Update the relevant section(s) when:
-   - **New technology adopted** → update Section 6.1 (Technology Portfolio) and Section 12.2 (Technology Radar)
-   - **New API router or domain** → update Section 5.3 (Component Architecture) router table and Section 1.3 (Quantitative Scope)
-   - **Schema change (new table, MV, or fact)** → update Section 4.2 (Logical Data Model) and Section 4.4 (Data Governance)
-   - **New integration or external system** → update Section 7.4 (Integration Reference Architecture) and Section 6.4 (Network Topology)
-   - **Security change (auth, RBAC, rate limiting)** → update Section 8 (Security Architecture)
-   - **New ML model or AI agent** → update Section 7.3 (ML/AI Reference Architecture)
-   - **Architecture decision** → add new ADR in Section 9 (Architecture Decision Records)
-   - **New business capability** → update Section 3.1 (Business Capability Model)
-   - **Infrastructure change (Docker, deployment)** → update Section 6.2 (Infrastructure Architecture) and Section 6.3 (Docker Compose Services)
-   - **Gap closed from transition roadmap** → update Section 11 (Transition Architecture)
-7. `docs/RUNBOOK.md` "Database Cleanup & Fresh Recreate" + `Makefile` cleanup targets — when adding new tables, MVs, or pipeline steps:
-   - **New data table** → add `TRUNCATE TABLE <name> CASCADE;` to the correct FK group in RUNBOOK SQL + Makefile `db-truncate-data`
-   - **New materialized view** → add `REFRESH MATERIALIZED VIEW <name>;` to the correct tier in RUNBOOK Step 5 + Makefile `refresh-mvs-tiered`
-   - **New pipeline step** → add to the appropriate RUNBOOK step + Makefile `fresh-*` dependency chain
-   - **New config/preserved table** → add to the "Preserved Tables" list (do NOT add a TRUNCATE)
-
-**What requires updates**: New features, schema changes, new dependencies, new Make targets, pipeline changes, removals/renames.
-
-**What does NOT**: Bug fixes without interface changes, minor internal refactors, typo fixes.
-
----
-
-## Design Specs
-
-Located in `docs/specs/` — 8 domains, 86 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
-
-Domains: Foundation, Forecasting, Demand Intelligence, Inventory Planning, Operations, AI Platform, User Experience, Integration.
-
----
-
-## Automatic Quality Workflow
-
-These rules are ALWAYS active. Claude MUST follow them without explicit user request.
-
-### After Writing/Editing Python Code
-- Launch `python-reviewer` agent on the changed file(s) after completing a feature or fixing a bug
-- Apply `python-patterns` skill conventions (type hints, EAFP, comprehensions)
-- For API routers: also apply `api-design` and `backend-patterns` skills
-- For SQL-heavy code: also apply `postgres-patterns` skill
-
-### After Writing/Editing SQL or Schema Files
-- Launch `database-reviewer` agent for any SQL/schema change
-- Verify `%s` placeholders, explicit column lists, index coverage
-
-### When Implementing New Features
-- Launch `tdd-guide` agent — write tests FIRST, then implement
-- Apply `tdd-workflow` skill (Red-Green-Refactor cycle)
-- Every new endpoint must have a corresponding test in `tests/api/`
-- Every new `common/` module must have a test in `tests/unit/`
-- Every new React component must have a co-located test
-
-### Before Suggesting a Commit
-- Launch `code-reviewer` agent on all uncommitted changes
-- Apply `security-review` skill (no secrets, no injection, no hardcoded keys)
-- Apply `verification-loop` skill (build, types, lint, tests all pass)
-
-### When Starting Complex Multi-File Changes
-- Launch `planner` agent first to create implementation plan
-- Wait for user confirmation before proceeding
-
-### When Fixing Bugs
-- Write a test that reproduces the bug FIRST
-- Verify the test fails, then fix the bug, then verify the test passes
-- Run the full affected test suite
-
-### After Adding or Modifying Pipeline Scripts
-- Run `make perf-script SCRIPT=<name>` to profile the script
-- Review suggestions for N+1 queries, memory spikes, and unbatched inserts
-- Use `profiled_section()` for major computation stages in new scripts
-
-### Security Checks (Always Active)
-- Never commit files matching: `.env`, `credentials.*`, `*secret*`, `*.key`
-- Flag any hardcoded API keys, tokens, or passwords
-- Verify SQL queries use parameterized queries, never string interpolation
-
-### Agent Quick Reference
-| Agent | Auto-trigger |
-|---|---|
-| `python-reviewer` | After Python changes |
-| `code-reviewer` | Before commits, after features |
-| `database-reviewer` | SQL/schema changes |
-| `tdd-guide` | New features, bug fixes |
-| `planner` | Complex multi-file work |
-
-### Hooks (Configured in `.claude/settings.json`)
-- **PostToolUse (Write/Edit)**: Auto-runs `ruff check` on Python files, anti-pattern checks on SQL files, auto-runs edited test files
-- **PreToolUse (Bash)**: Blocks `git commit` if ruff lint or pytest fails
+What does **not** require doc updates: bug fixes without interface changes, internal refactors, typo fixes.
 
 ---
 
 ## Do Not
 
-- Do not commit `__pycache__/`, `.pyc` files, or `.venv/`
-- Do not modify `data/*.csv` files manually — they are generated by normalize scripts
-- Do not touch the `archive/reference/` directory — it is archived code
+### Files & directories
+- Do not commit `__pycache__/`, `.pyc`, `.venv/`, `.env`, `credentials.*`, `*secret*`, `*.key`.
+- Do not modify `data/*.csv` manually — they are generated by normalize scripts.
+- Do not touch `archive/reference/` — archived code.
+
+### Code drift
+- Do not add backward-compat shims when moving modules — rewrite all importers in the same change.
+- Do not recreate deleted configs (`clustering_config.yaml`, `model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`).
+- Do not put hardcoded API keys, tokens, passwords, or hex chart colors anywhere.
+- Do not use string interpolation for SQL values — always parameterized.
+
+### Don't fabricate
+- **Don't fabricate Make targets** — verify against `Makefile` before invoking.
+- **Don't fabricate router paths** — verify against `api/main.py` `include_router` calls.
+- **Don't fabricate column or table names** — query the schema before referencing.
+- **Don't fabricate Vite proxy prefixes** — read `frontend/vite.config.ts`.
+- **When a test fails, fix the code or honestly adjust expected values.** Never delete or weaken assertions to make a test pass.
+- **Don't invent config keys** — read the YAML before referencing.
+
+---
+
+## Detailed Reference (moved out)
+
+- **Architecture, data flow, dimension/fact tables, MV catalog** → `docs/ARCHITECTURE.md`
+- **Full Make command list (~130 targets), DB cleanup/fresh-recreate, runbooks** → `docs/RUNBOOK.md`
+- **Platform guide (stack details, datasets, quick start)** → `docs/PLATFORM_GUIDE.md`
+- **Design specs (8 domains, 80+ files)** → `docs/specs/README.md`
+- **Enterprise architecture (TOGAF-style, ADRs, transition roadmap)** → `docs/ENTERPRISE_ARCHITECTURE.md`
+- **Vite proxy authoritative list** → `frontend/vite.config.ts` (run `make audit-routers` for parity)
+- **Config inline comments** → each YAML in `config/` documents itself

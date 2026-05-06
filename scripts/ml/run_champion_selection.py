@@ -39,6 +39,7 @@ from common.ml.champion_strategies import (
     STRATEGY_REGISTRY,
     compute_strategy_accuracy,
 )
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
@@ -202,7 +203,7 @@ def load_monthly_errors_df(
         df = pd.read_sql(sql, conn, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["fcstdate"] = pd.to_datetime(df["fcstdate"])
-    for col in ["basefcst_pref", "tothist_dmd", "abs_err"]:
+    for col in [FORECAST_QTY_COL, "tothist_dmd", "abs_err"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["execution_lag"] = pd.to_numeric(df["execution_lag"], errors="coerce").fillna(0).astype(int)
     if "lag" in df.columns:
@@ -782,7 +783,7 @@ def _load_cached_winners(
     print(f"Loading cached winners from {csv_path}...")
     winners_df = pd.read_csv(csv_path, dtype={"item_id": str, "customer_group": str, "loc": str})
     winners_df["startdate"] = pd.to_datetime(winners_df["startdate"])
-    for col in ["basefcst_pref", "tothist_dmd", "prior_wape"]:
+    for col in [FORECAST_QTY_COL, "tothist_dmd", "prior_wape"]:
         if col in winners_df.columns:
             winners_df[col] = pd.to_numeric(winners_df[col], errors="coerce")
     winners = list(winners_df.itertuples(index=False, name=None))
@@ -988,7 +989,7 @@ def main() -> None:
                 winners,
                 columns=[
                     "item_id", "customer_group", "loc", "startdate",
-                    "model_id", "prior_wape", "basefcst_pref", "tothist_dmd",
+                    "model_id", "prior_wape", FORECAST_QTY_COL, "tothist_dmd",
                 ],
             )
             champ_merged = champ_df.merge(
@@ -1000,7 +1001,7 @@ def main() -> None:
                 ceiling_rows or [],
                 columns=[
                     "item_id", "customer_group", "loc", "startdate",
-                    "model_id", "abs_err", "basefcst_pref", "tothist_dmd",
+                    "model_id", "abs_err", FORECAST_QTY_COL, "tothist_dmd",
                 ],
             )
             ceil_merged = ceil_df.merge(

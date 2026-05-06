@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 from common.core.sql_helpers import (
@@ -334,8 +335,8 @@ def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
             {stg_alias}."lag"::integer,
             CASE WHEN lower(trim({stg_alias}."execution_lag")) IN ({NULL_SQL})
                  THEN NULL ELSE {stg_alias}."execution_lag"::integer END,
-            CASE WHEN lower(trim({stg_alias}."basefcst_pref")) IN ({NULL_SQL})
-                 THEN NULL ELSE {stg_alias}."basefcst_pref"::numeric END,
+            CASE WHEN lower(trim({stg_alias}."{FORECAST_QTY_COL}")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."{FORECAST_QTY_COL}"::numeric END,
             CASE WHEN lower(trim({stg_alias}."tothist_dmd")) IN ({NULL_SQL})
                  THEN NULL ELSE {stg_alias}."tothist_dmd"::numeric END,
             {stg_alias}."model_id",

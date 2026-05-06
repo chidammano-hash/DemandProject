@@ -260,6 +260,10 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
       families currently dispatch through their own script-level loaders
       (e.g. ``run_backtest_chronos.py``).
 
+    For callers that already have a fully-resolved param dict and just need a
+    raw tree estimator (e.g. hyperparameter tuning trials), see
+    :func:`build_tree_model` which skips the YAML config lookup.
+
     Raises:
         UnknownAlgorithm: if ``algorithm_id`` is not present in the config.
     """
@@ -285,25 +289,47 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
         resolved.update(params)
 
     if algo_type == "tree":
-        native = to_native_params(base_name, resolved)
-        if base_name == "lgbm":
-            from lightgbm import LGBMRegressor
-            return LGBMRegressor(**native)
-        if base_name == "catboost":
-            from catboost import CatBoostRegressor
-            # CatBoost ignores unknown kwargs via allow_writing_files style
-            # semantics but common unsupported keys should be dropped first.
-            return CatBoostRegressor(**native)
-        if base_name == "xgboost":
-            from xgboost import XGBRegressor
-            return XGBRegressor(**native)
-        raise UnknownAlgorithm(
-            f"Tree algorithm {algorithm_id!r} mapped to unknown backend {base_name!r}"
-        )
+        return build_tree_model(base_name, resolved)
 
     # Non-tree families: return a lightweight stub. Real loaders live in
     # scripts/run_backtest_<family>.py for now.
     return _FoundationStub(algorithm_id=algorithm_id, algo_type=algo_type, params=resolved)
+
+
+def build_tree_model(base_name: str, params: dict | None = None) -> Any:
+    """Construct a tree estimator from a backend base name and a complete param dict.
+
+    Unlike :func:`build_model`, this does NOT look up defaults in
+    ``forecast_pipeline_config.yaml`` — the caller is responsible for
+    providing the full param set.  This is the right entry point for
+    hyperparameter tuning trials, where every param (search-space suggestions
+    plus fixed_params plus n_estimators) is already known.
+
+    Canonical keys (``estimators``, ``max_depth``, ``l2_reg``, …) are
+    translated to each library's native names via :func:`to_native_params`.
+    Native keys are passed through unchanged.
+
+    Args:
+        base_name: One of ``"lgbm"``, ``"catboost"``, ``"xgboost"``.
+        params:    Resolved hyperparameters (canonical or native names).
+
+    Raises:
+        UnknownAlgorithm: if ``base_name`` is not a recognised tree backend.
+    """
+    resolved = dict(params or {})
+    native = to_native_params(base_name, resolved)
+    if base_name == "lgbm":
+        from lightgbm import LGBMRegressor
+        return LGBMRegressor(**native)
+    if base_name == "catboost":
+        from catboost import CatBoostRegressor
+        return CatBoostRegressor(**native)
+    if base_name == "xgboost":
+        from xgboost import XGBRegressor
+        return XGBRegressor(**native)
+    raise UnknownAlgorithm(
+        f"Unknown tree backend {base_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+    )
 
 
 class _FoundationStub:
@@ -340,6 +366,7 @@ def fit_model(
     early_stop_pct: float = EARLY_STOP_PCT,
     *,
     demand_pattern: str = "continuous",
+    early_stopping_rounds: int | None = None,
 ) -> None:
     """Fit a tree model with early stopping — single source of truth for all models.
 
@@ -360,9 +387,18 @@ def fit_model(
         demand_pattern: Cluster demand pattern ("continuous", "lumpy", or "intermittent").
             Sparse patterns get increased early stopping patience to compensate for
             noisy WAPE on validation sets with many zeros.
+        early_stopping_rounds: Optional explicit patience override.  When set,
+            the value is used directly instead of computing patience from
+            ``max_iterations`` and ``early_stop_pct``.  Hyperparameter tuning
+            uses this so the per-fold early stopping respects the configured
+            ``tuning.early_stopping_rounds`` rather than a derived percentage
+            of ``n_estimators_max``.
     """
-    is_sparse = demand_pattern in ("intermittent", "lumpy")
-    patience = compute_early_stop_patience(max_iterations, pct=early_stop_pct, sparse=is_sparse)
+    if early_stopping_rounds is not None:
+        patience = int(early_stopping_rounds)
+    else:
+        is_sparse = demand_pattern in ("intermittent", "lumpy")
+        patience = compute_early_stop_patience(max_iterations, pct=early_stop_pct, sparse=is_sparse)
 
     if model_name == "lgbm":
         # Use WAPE (not MAE) so early stopping optimises the same metric we report.

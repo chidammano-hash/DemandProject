@@ -15,6 +15,8 @@ import logging
 import pandas as pd
 import numpy as np
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +35,7 @@ def load_champion_residuals(conn, source_model_ids: list[str], lag: int = 0) -> 
     Uses psycopg3 %s placeholders.
     """
     if not source_model_ids:
-        return pd.DataFrame(columns=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
+        return pd.DataFrame(columns=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd", "model_id"])
 
     placeholders = ", ".join(["%s"] * len(source_model_ids))
     sql = f"""
@@ -51,9 +53,9 @@ def load_champion_residuals(conn, source_model_ids: list[str], lag: int = 0) -> 
         rows = cur.fetchall()
 
     if not rows:
-        return pd.DataFrame(columns=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
+        return pd.DataFrame(columns=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd", "model_id"])
 
-    return pd.DataFrame(rows, columns=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
+    return pd.DataFrame(rows, columns=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd", "model_id"])
 
 
 def compute_dfu_sigma(residuals: pd.DataFrame) -> pd.DataFrame:
@@ -73,7 +75,7 @@ def compute_dfu_sigma(residuals: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
 
     df = residuals.copy()
-    df["residual_sq"] = (df["basefcst_pref"] - df["tothist_dmd"]) ** 2
+    df["residual_sq"] = (df[FORECAST_QTY_COL] - df["tothist_dmd"]) ** 2
 
     grouped = df.groupby(["item_id", "loc"]).agg(
         rmse_sum=("residual_sq", "sum"),

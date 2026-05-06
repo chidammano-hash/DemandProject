@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from common.core.constants import FORECAST_QTY_COL
+
 
 @dataclass(frozen=True)
 class DomainSpec:
@@ -429,7 +431,7 @@ FORECAST_SPEC = DomainSpec(
         "startdate",
         "lag",
         "execution_lag",
-        "basefcst_pref",
+        FORECAST_QTY_COL,
         "tothist_dmd",
         "model_id",
     ],
@@ -437,7 +439,7 @@ FORECAST_SPEC = DomainSpec(
     clean_file="staged/sku_stat_fcst_clean.csv",
     search_fields=["item_id", "customer_group", "loc", "fcstdate", "startdate", "lag", "execution_lag", "model_id"],
     int_fields={"lag", "execution_lag"},
-    float_fields={"basefcst_pref", "tothist_dmd"},
+    float_fields={FORECAST_QTY_COL, "tothist_dmd"},
     date_fields={"fcstdate", "startdate"},
     default_sort="fcstdate",
     source_delimiter="|",

@@ -44,6 +44,10 @@ router = APIRouter(tags=["dashboard"])
 async def get_planning_date_info():
     """Return the current planning date and whether it is frozen (dev mode)."""
     planning = get_planning_date()
+    # noqa: this endpoint intentionally returns the literal OS "today" so the
+    # UI can compare against the (possibly frozen) planning date and surface
+    # `is_frozen` / `days_behind`. Substituting get_planning_date() here would
+    # collapse the comparison and is_frozen would always be False.
     system = date.today()
     return {
         "planning_date": planning.isoformat(),

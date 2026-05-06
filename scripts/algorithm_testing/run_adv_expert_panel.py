@@ -97,6 +97,7 @@ from scripts.algorithm_testing.lag_accuracy import (  # noqa: E402
 from scripts.algorithm_testing.statistical_upgrades import run_statistical_upgrades  # noqa: E402
 
 # --- Common utilities ---
+from common.core.constants import FORECAST_QTY_COL  # noqa: E402
 from common.ml.backtest_framework import generate_timeframes  # noqa: E402
 from common.ml.feature_engineering import (  # noqa: E402
     build_feature_matrix,
@@ -400,7 +401,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         all_predictions_df = pd.concat(all_predictions, ignore_index=True)
     else:
         all_predictions_df = pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id", "timeframe_idx"]
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id", "timeframe_idx"]
         )
     logger.info(
         "Total predictions: %d rows across %d algorithms",
@@ -478,7 +479,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     # -- Step 13b: Per-DFU hybrid ensemble ---------------------------------
     hybrid_cfg = config.get("hybrid_ensemble", {})
     hybrid_preds = pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
     dfu_accuracy_matrix = pd.DataFrame(
         columns=["sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"]

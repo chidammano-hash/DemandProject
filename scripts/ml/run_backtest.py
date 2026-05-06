@@ -36,7 +36,7 @@ from common.ml.backtest_framework import (
     resolve_cluster_params,
     run_tree_backtest,
 )
-from common.core.constants import compute_min_cluster_rows
+from common.core.constants import FORECAST_QTY_COL, compute_min_cluster_rows
 from common.ml.model_registry import (
     fit_model,
     get_best_iteration,
@@ -330,7 +330,7 @@ def _predict_seasonal_naive(
     result = pred_df[_BASELINE_META_COLS].copy()
 
     if len(train_df) == 0 or "qty" not in train_df.columns:
-        result["basefcst_pref"] = 0.0
+        result[FORECAST_QTY_COL] = 0.0
         return result
 
     dfu_key = ["item_id", "customer_group", "loc"]
@@ -363,14 +363,14 @@ def _predict_seasonal_naive(
     merged = pred.merge(latest_by_dfu_month, on=dfu_key + ["_month"], how="left")
     merged = merged.merge(dfu_means, on=dfu_key, how="left")
 
-    merged["basefcst_pref"] = (
+    merged[FORECAST_QTY_COL] = (
         merged["_seasonal_qty"]
         .fillna(merged["_dfu_mean"])
         .fillna(0.0)
     )
-    merged["basefcst_pref"] = np.maximum(merged["basefcst_pref"].values, 0.0)
+    merged[FORECAST_QTY_COL] = np.maximum(merged[FORECAST_QTY_COL].values, 0.0)
 
-    result["basefcst_pref"] = merged["basefcst_pref"].values
+    result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
     return result
 
 
@@ -391,7 +391,7 @@ def _predict_rolling_mean(
     result = pred_df[_BASELINE_META_COLS].copy()
 
     if len(train_df) == 0 or "qty" not in train_df.columns:
-        result["basefcst_pref"] = 0.0
+        result[FORECAST_QTY_COL] = 0.0
         return result
 
     dfu_key = ["item_id", "customer_group", "loc"]
@@ -410,9 +410,9 @@ def _predict_rolling_mean(
     pred = pred_df[_BASELINE_META_COLS].copy()
     merged = pred.merge(rolling_means, on=dfu_key, how="left")
     merged["_rolling_mean"] = merged["_rolling_mean"].fillna(0.0)
-    merged["basefcst_pref"] = np.maximum(merged["_rolling_mean"].values, 0.0)
+    merged[FORECAST_QTY_COL] = np.maximum(merged["_rolling_mean"].values, 0.0)
 
-    result["basefcst_pref"] = merged["basefcst_pref"].values
+    result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
     return result
 
 
@@ -553,7 +553,7 @@ def _train_single_cluster(
             logger.info("Cluster %d/%d '%s': skipped (train=%d < %d), marking %d predictions for fallback",
                         ci, n_clusters, cluster_label, len(train_c), min_rows, len(pred_c))
             result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-            result["basefcst_pref"] = 0.0  # placeholder — overwritten by fallback
+            result[FORECAST_QTY_COL] = 0.0  # placeholder — overwritten by fallback
             return cluster_label, result, None, "fallback_needed"
         return cluster_label, None, None, None
 
@@ -588,7 +588,7 @@ def _train_single_cluster(
         logger.info("Cluster %d/%d '%s': skipped (constant target=%.0f), using constant for %d predictions",
                     ci, n_clusters, cluster_label, const_val, len(pred_c))
         result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-        result["basefcst_pref"] = const_val
+        result[FORECAST_QTY_COL] = const_val
         return cluster_label, result, None, None
 
     # Per-cluster adaptive hyperparameter profiles: resolve cluster-specific
@@ -673,7 +673,7 @@ def _train_single_cluster(
             rm_by_sku = dict(zip(rm_merged["sku_ck"], rm_merged["_rm"].fillna(0.0)))
         model = _SeasonalNaiveModel(seasonal_map, rm_by_sku)
         val_wape = round(
-            float(100.0 * abs(result_df["basefcst_pref"].sum() - y_train.sum()) / max(abs(y_train.sum()), 1.0)),
+            float(100.0 * abs(result_df[FORECAST_QTY_COL].sum() - y_train.sum()) / max(abs(y_train.sum()), 1.0)),
             2,
         )
         val_accuracy = round(100.0 - val_wape, 2)
@@ -722,7 +722,7 @@ def _train_single_cluster(
     result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
     # Always clip predictions to non-negative (MAE/RMSE can produce negatives
     # and negative forecasts are nonsensical)
-    result["basefcst_pref"] = np.maximum(preds, 0)
+    result[FORECAST_QTY_COL] = np.maximum(preds, 0)
     n_est_used = get_best_iteration(model, model_name)
     if n_est_used is None:
         n_est_used = fit_params[iter_param]
@@ -768,7 +768,7 @@ def _compute_naive_fallback(
     result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
 
     if len(train_c) == 0 or "qty" not in train_c.columns:
-        result["basefcst_pref"] = 0.0
+        result[FORECAST_QTY_COL] = 0.0
         return result
 
     # Extract calendar month from startdate for both train and predict
@@ -783,7 +783,7 @@ def _compute_naive_fallback(
 
     # Map each prediction row to its monthly mean (or overall mean)
     fallback_values = pred_months.map(month_means).fillna(overall_mean).values
-    result["basefcst_pref"] = np.maximum(fallback_values, 0.0)
+    result[FORECAST_QTY_COL] = np.maximum(fallback_values, 0.0)
 
     return result
 
@@ -930,7 +930,7 @@ def train_and_predict_per_cluster(
                 all_results.append(fb_result)
                 logger.info("Cluster '%s': naive fallback applied to %d predictions "
                             "(mean basefcst_pref=%.2f)",
-                            cl, len(fb_result), float(fb_result["basefcst_pref"].mean()))
+                            cl, len(fb_result), float(fb_result[FORECAST_QTY_COL].mean()))
 
     no_cluster = predict_df[
         predict_df["ml_cluster"].isna() | (
@@ -940,7 +940,7 @@ def train_and_predict_per_cluster(
     if len(no_cluster) > 0:
         logger.info("%d predict rows with no cluster -> zeroing", len(no_cluster))
         result = no_cluster[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-        result["basefcst_pref"] = 0.0
+        result[FORECAST_QTY_COL] = 0.0
         all_results.append(result)
 
     return pd.concat(all_results, ignore_index=True), models, model_meta
@@ -1008,7 +1008,7 @@ def train_and_predict_global(
                 label, val_wape, n_est_used, f"{len(train_df):,}", f"{len(predict_df):,}")
 
     result = predict_df[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-    result["basefcst_pref"] = np.clip(preds, 0, None)
+    result[FORECAST_QTY_COL] = np.clip(preds, 0, None)
     global_meta = {"global": {"val_wape": val_wape, "train_rows": len(X_tr)}}
     return result, {"global": model}, global_meta
 

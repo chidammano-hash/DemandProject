@@ -33,6 +33,8 @@ from uuid import UUID
 
 import psycopg
 
+from common.core.sql_helpers import row_to_dict_from_cursor
+
 logger = logging.getLogger(__name__)
 
 _VALID_MODES = frozenset({"onetime", "delta", "file"})
@@ -74,8 +76,16 @@ def _to_iso(value: Any) -> Any:
 
 
 def _row_to_dict(cur: psycopg.Cursor, row: tuple[Any, ...]) -> dict[str, Any]:
-    cols = [d[0] for d in cur.description]
-    return {col: _to_iso(val) for col, val in zip(cols, row)}
+    """Convert an integration-job row to a dict with ISO/UUID coercion.
+
+    Wraps the canonical :func:`row_to_dict_from_cursor` helper and then
+    applies integration-domain-specific coercions for ``datetime`` and
+    ``UUID`` values.
+    """
+    return {
+        col: _to_iso(val)
+        for col, val in row_to_dict_from_cursor(cur, row).items()
+    }
 
 
 class IntegrationRunner:

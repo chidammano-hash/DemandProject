@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 _HEARTBEAT_INTERVAL = 30  # seconds between "still training" logs
@@ -184,7 +186,7 @@ def run_dl_models(
         DataFrame with columns: sku_ck, startdate, basefcst_pref, algorithm_id
     """
     empty = pd.DataFrame(
-        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
     )
 
     if not _check_neuralforecast():
@@ -256,9 +258,9 @@ def run_dl_models(
             result = result.rename(columns={
                 "unique_id": "sku_ck",
                 "ds": "startdate",
-                forecast_col: "basefcst_pref",
+                forecast_col: FORECAST_QTY_COL,
             })
-            raw_values = result["basefcst_pref"].values
+            raw_values = result[FORECAST_QTY_COL].values
             nan_count = int(np.isnan(raw_values).sum()) + int(np.isinf(raw_values).sum())
             if nan_count > 0:
                 logger.warning(
@@ -266,9 +268,9 @@ def run_dl_models(
                     model_id, nan_count, len(raw_values),
                 )
                 raw_values = np.nan_to_num(raw_values, nan=0.0, posinf=0.0, neginf=0.0)
-            result["basefcst_pref"] = np.maximum(raw_values, 0.0)
+            result[FORECAST_QTY_COL] = np.maximum(raw_values, 0.0)
             result["algorithm_id"] = model_id
-            result = result[["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]]
+            result = result[["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]]
 
             # Filter to only requested predict_months
             result["startdate"] = pd.to_datetime(result["startdate"])

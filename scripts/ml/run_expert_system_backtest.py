@@ -37,6 +37,7 @@ from scripts.algorithm_testing.tree_models import run_tree_models
 from scripts.algorithm_testing.dl_models import run_dl_models
 from scripts.algorithm_testing.foundation_models import run_foundation_models
 from scripts.algorithm_testing.statistical_upgrades import run_statistical_upgrades
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.feature_engineering import build_feature_matrix
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
@@ -57,7 +58,7 @@ _TREE_ALGOS: frozenset[str] = frozenset({"lgbm_cluster", "catboost_cluster", "xg
 _ARCHIVE_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id", "timeframe",
+    FORECAST_QTY_COL, "tothist_dmd", "model_id", "timeframe",
 ]
 _PROD_COLS = [
     "plan_version", "item_id", "loc", "forecast_month",
@@ -228,9 +229,9 @@ def _rolling_mean_preds(
         val = max(val, 0.0)
         for month in predict_months:
             rows.append({"sku_ck": sku_ck, "startdate": month,
-                         "basefcst_pref": val, "algorithm_id": "rolling_mean"})
+                         FORECAST_QTY_COL: val, "algorithm_id": "rolling_mean"})
     if not rows:
-        return pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        return pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
     return pd.DataFrame(rows)
 
 
@@ -273,7 +274,7 @@ def _run_model(
     cfg: dict[str, Any],
 ) -> pd.DataFrame:
     """Dispatch to the correct model runner."""
-    empty = pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+    empty = pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
     if sales_df.empty:
         return empty
     params = cfg.get(model_id, {})
@@ -322,7 +323,7 @@ def _run_cascade_group(
             from a non-main thread.  The next CPU fallback (rolling_mean)
             handles the remaining DFUs instead.
     """
-    empty = pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+    empty = pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
     target_skus = set(sku_list)
     cascade = [primary_algo] + fallback_map.get(primary_algo, default_fallbacks)
     # Deduplicate while preserving order
@@ -361,7 +362,7 @@ def _run_cascade_group(
                 naive_rows.append({
                     "sku_ck": sku_ck,
                     "startdate": month,
-                    "basefcst_pref": 0.0,
+                    FORECAST_QTY_COL: 0.0,
                     "algorithm_id": "naive_zero",
                 })
         if naive_rows:
@@ -510,7 +511,7 @@ def run_timeframe(
 
     if not all_parts:
         return pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id",
+            columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id",
                      "timeframe_label", "train_end"]
         )
 
@@ -644,7 +645,7 @@ def compute_lag_accuracy(
         logger.warning("No overlap between predictions and actuals for accuracy computation")
         return results
 
-    merged["abs_err"] = (merged["basefcst_pref"] - merged["qty"]).abs()
+    merged["abs_err"] = (merged[FORECAST_QTY_COL] - merged["qty"]).abs()
     merged["archetype"] = merged["sku_ck"].map(seg_map).fillna("unknown")
 
     for lag in range(_MAX_LAG + 1):
@@ -818,7 +819,7 @@ def load_production_forecast(
         exec_preds
         .groupby(["item_id", "loc", "forecast_month"], as_index=False)
         .agg(
-            forecast_qty=("basefcst_pref", "sum"),
+            forecast_qty=(FORECAST_QTY_COL, "sum"),
             horizon_months=("lag", lambda x: int(x.median()) + 1),
         )
     )

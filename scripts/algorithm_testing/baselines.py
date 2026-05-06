@@ -15,6 +15,8 @@ from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, RobustScaler
 
+from common.core.constants import FORECAST_QTY_COL
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,7 @@ def predict_seasonal_naive(
     if sales_df.empty:
         for m in predict_months:
             records.append(
-                {"sku_ck": None, "startdate": m, "basefcst_pref": 0.0}
+                {"sku_ck": None, "startdate": m, FORECAST_QTY_COL: 0.0}
             )
         out = pd.DataFrame(records)
         out["algorithm_id"] = "seasonal_naive"
@@ -73,12 +75,12 @@ def predict_seasonal_naive(
 
         forecast_vals = forecast_vals.fillna(0.0)
         month_df = pd.DataFrame(
-            {"sku_ck": forecast_vals.index, "startdate": m_ts, "basefcst_pref": forecast_vals.values}
+            {"sku_ck": forecast_vals.index, "startdate": m_ts, FORECAST_QTY_COL: forecast_vals.values}
         )
         records.append(month_df)
 
     result = pd.concat(records, ignore_index=True)
-    result["basefcst_pref"] = np.maximum(result["basefcst_pref"].values, 0.0)
+    result[FORECAST_QTY_COL] = np.maximum(result[FORECAST_QTY_COL].values, 0.0)
     result["algorithm_id"] = "seasonal_naive"
 
     logger.info(
@@ -113,7 +115,7 @@ def predict_rolling_mean(
     if sales_df.empty:
         out = pd.DataFrame(
             {"sku_ck": pd.Series(dtype="object"), "startdate": pd.Series(dtype="datetime64[ns]"),
-             "basefcst_pref": pd.Series(dtype="float64")}
+             FORECAST_QTY_COL: pd.Series(dtype="float64")}
         )
         out["algorithm_id"] = "rolling_mean"
         return out
@@ -130,9 +132,9 @@ def predict_rolling_mean(
         .groupby("sku_ck")
         .apply(lambda g: g.head(window)["qty"].mean(), include_groups=False)
         .reset_index()
-        .rename(columns={0: "basefcst_pref"})
+        .rename(columns={0: FORECAST_QTY_COL})
     )
-    rolling_means["basefcst_pref"] = rolling_means["basefcst_pref"].fillna(0.0)
+    rolling_means[FORECAST_QTY_COL] = rolling_means[FORECAST_QTY_COL].fillna(0.0)
 
     # Flat forecast: same value for every predict month
     frames: list[pd.DataFrame] = []
@@ -142,7 +144,7 @@ def predict_rolling_mean(
         frames.append(month_df)
 
     result = pd.concat(frames, ignore_index=True)
-    result["basefcst_pref"] = np.maximum(result["basefcst_pref"].values, 0.0)
+    result[FORECAST_QTY_COL] = np.maximum(result[FORECAST_QTY_COL].values, 0.0)
     result["algorithm_id"] = "rolling_mean"
 
     logger.info(
@@ -322,7 +324,7 @@ def predict_ridge(
         preds = np.clip(preds, 0.0, 1e9)
 
         cluster_result = pred_c[["sku_ck", "startdate"]].copy()
-        cluster_result["basefcst_pref"] = preds
+        cluster_result[FORECAST_QTY_COL] = preds
         all_preds.append(cluster_result)
 
     if all_preds:
@@ -331,7 +333,7 @@ def predict_ridge(
         result = pd.DataFrame(
             {"sku_ck": pd.Series(dtype="object"),
              "startdate": pd.Series(dtype="datetime64[ns]"),
-             "basefcst_pref": pd.Series(dtype="float64")}
+             FORECAST_QTY_COL: pd.Series(dtype="float64")}
         )
 
     result["algorithm_id"] = "ridge"
