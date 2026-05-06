@@ -6,11 +6,83 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 from common.core.domain_specs import DomainSpec
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Streaming/chunked SQL reads (memory-safety helpers for fact-table scans)
+# ---------------------------------------------------------------------------
+
+# Default rows-per-chunk for fact-table scans. 50k strikes a balance between
+# round-trip overhead and per-chunk memory footprint (~5-50 MB depending on
+# column count and dtype).
+DEFAULT_CHUNK_SIZE = 50_000
+
+
+def stream_query_in_chunks(
+    conn: Any,
+    sql: str,
+    params: Sequence[Any] | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Iterator[Any]:
+    """Yield pandas DataFrames of approximately *chunk_size* rows.
+
+    Use this for any pipeline query that scans a fact-table (sales, forecast,
+    inventory snapshots). At 40x scale, an unchunked ``pd.read_sql`` over a
+    fact table OOMs the worker; this helper bounds peak memory to a single
+    chunk plus whatever the caller is accumulating.
+
+    The caller is responsible for accumulating / aggregating across chunks.
+    For "I just need the full frame" callers, use :func:`read_sql_chunked`.
+
+    Args:
+        conn: An open psycopg/DBAPI connection.
+        sql: SQL with ``%s`` placeholders (psycopg3 style).
+        params: Bind parameters (list/tuple). ``None`` means no params.
+        chunk_size: Rows per yielded DataFrame.
+
+    Yields:
+        ``pandas.DataFrame`` objects, each with up to ``chunk_size`` rows.
+    """
+    import pandas as pd  # local import: keeps common.core import-cheap
+
+    # ``pd.read_sql(..., chunksize=N)`` returns an iterator of DataFrames.
+    # On psycopg3 it issues a single SELECT; pandas pulls rows in batches via
+    # the cursor. This avoids materialising the full result-set as one frame.
+    yield from pd.read_sql(sql, conn, params=params, chunksize=chunk_size)
+
+
+def read_sql_chunked(
+    conn: Any,
+    sql: str,
+    params: Sequence[Any] | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Any:
+    """Drop-in replacement for ``pd.read_sql`` that streams via a cursor.
+
+    Returns a single concatenated DataFrame, but pulls rows in chunks of
+    ``chunk_size`` so peak memory stays bounded during the fetch phase.
+    Output is identical to ``pd.read_sql(sql, conn, params=params)`` (same
+    columns, same dtypes -- pandas concat preserves both).
+
+    Use this when downstream code genuinely needs the full frame (e.g.
+    pivot/groupby/rolling); use :func:`stream_query_in_chunks` directly when
+    the work can be done incrementally.
+    """
+    import pandas as pd
+
+    chunks = list(stream_query_in_chunks(conn, sql, params=params, chunk_size=chunk_size))
+    if not chunks:
+        # Issue an empty query through pd.read_sql so callers still get the
+        # correct (zero-row) schema with the right column names.
+        return pd.read_sql(sql, conn, params=params)
+    if len(chunks) == 1:
+        return chunks[0]
+    return pd.concat(chunks, ignore_index=True, copy=False)
 
 
 # ---------------------------------------------------------------------------

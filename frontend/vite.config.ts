@@ -92,9 +92,6 @@ export default defineConfig({
           }
           if (id.includes("/@radix-ui/")) return "radix";
           if (id.includes("/recharts/") || id.includes("/d3-")) return "charts";
-          if (id.includes("/echarts/") || id.includes("/echarts-for-react/") || id.includes("/zrender/")) {
-            return "echarts";
-          }
           if (id.includes("/leaflet") || id.includes("/react-leaflet")) return "leaflet";
           if (id.includes("/lucide-react/")) return "icons";
           if (id.includes("/@tanstack/react-query")) return "query";

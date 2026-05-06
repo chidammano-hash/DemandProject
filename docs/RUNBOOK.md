@@ -47,8 +47,11 @@ Run once per machine / new environment.
 make init              # Create .venv, install uv, sync all dependencies
 
 # 2. Infrastructure (Docker)
-make up                # Start Postgres, MLflow
+make up                # Start Postgres, MLflow, Redis (cache + single-flight)
 make down              # Stop all services
+# Note: Redis is required for shared cache + stampede protection across gunicorn
+# workers. If Redis is unreachable, the cache layer falls back to per-process
+# in-memory automatically (with a logged warning) — tests + dev still work.
 
 # 3. Frontend dependencies
 make ui-init           # npm install for React dev server
@@ -2309,7 +2312,8 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | JWT auth returns 401 on all requests | Verify `JWT_SECRET` is set in `.env`; check token expiry; re-authenticate to get a fresh token |
 | `bcrypt` or `PyJWT` import error | Run `make init` or `uv sync` to install new dependencies |
 | Data quality checks return empty results | Run `make db-apply-sql` to ensure DDL 062-070 are applied; verify check catalog has entries via `GET /data-quality/catalog` |
-| Cache not working (stale data) | Check `CACHE_BACKEND` env var; for Redis, verify connectivity: `redis-cli ping`; InMemory cache clears on restart |
+| Cache not working (stale data) | Check `backend:` in `config/platform/cache_config.yaml`; for Redis, verify connectivity: `redis-cli ping` and `docker logs demandproject-redis-1`; InMemory cache clears on restart |
+| Redis unreachable / "falling back to in-memory" warning | Cache transparently falls back; check `docker ps \| grep redis`, `docker logs demandproject-redis-1`, and `REDIS_URL` env var. Multi-worker deployments lose cross-worker hit-rate + single-flight protection until Redis returns |
 | Notifications not sending | Verify channel is `enabled: true` in `config/platform/notification_config.yaml`; check SMTP credentials / Slack webhook URL |
 | Webhook deliveries failing | Check delivery history via `GET /webhooks/deliveries`; verify target URL is reachable; check HMAC signature validation on receiver |
 | Rate limiting too aggressive | Adjust limits in `config/api_governance_config.yaml`; increase `default_limit` or add per-endpoint overrides |

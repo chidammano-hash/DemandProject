@@ -80,10 +80,6 @@ vi.mock("@/api/queries/core", () => ({
   fetchShapSummary: vi.fn().mockResolvedValue({ model_id: "", total_features: 0, features: [] }),
 }));
 
-vi.mock("@/components/EChartContainer", () => ({
-  EChartContainer: () => <div data-testid="chart-mock" />,
-}));
-
 // Mock evolution queries used by BiasCorrectionsPanel
 vi.mock("@/api/queries/evolution", () => ({
   biasKeys: { corrections: (p: unknown) => ["bias-corr", p] },

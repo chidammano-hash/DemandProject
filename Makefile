@@ -984,6 +984,9 @@ test-cov:  ## Backend tests with coverage report
 
 test-all: test ui-test  ## Backend + frontend tests
 
+scale-test:  ## Run scale test suite (synthetic 100K rows by default; SCALE=10000000 for nightly)
+	$(UV) pytest tests/scale/ -v -m scale --override-ini="norecursedirs=" --scale=$${SCALE:-100000}
+
 check-all: check-db check-api  ## DB row counts + API health
 
 ai-sync-check:  ## Verify Claude/Codex shared guidance wiring

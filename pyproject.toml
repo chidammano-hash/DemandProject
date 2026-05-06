@@ -126,6 +126,16 @@ exclude = ["data/", "archive/", ".venv/"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Scale / load tests live in tests/scale/ and require a real Postgres + are
+# slow. They are excluded from the default `pytest tests/` run via the
+# `-m "not scale"` marker filter and via `norecursedirs` so collection never
+# even imports their conftest. Run them with `make scale-test` (which passes
+# the explicit path `tests/scale/` to pytest, bypassing both gates).
+addopts = "-m 'not scale'"
+markers = [
+  "scale: scale/load tests; excluded from default run (see tests/scale/README.md)",
+]
+norecursedirs = ["tests/scale"]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 # ---------------------------------------------------------------------------

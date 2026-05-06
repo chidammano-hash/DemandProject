@@ -1,7 +1,14 @@
 """Caching infrastructure for Supply Chain Command Center API (Spec 08-03).
 
-Two backends: Redis (when REDIS_URL set) and InMemory (fallback).
-@cached decorator for router handlers with TTL and invalidation support.
+Two backends:
+- RedisBackend (default): shared across gunicorn workers, supports single-flight
+  stampede protection via SETNX locks.
+- InMemoryBackend: per-process dict; used as automatic fallback when Redis is
+  unreachable, the redis package is missing, or backend=memory in config.
+
+@cached / @cached_sync decorators for router handlers with TTL and invalidation
+support. The selected backend is determined by config/platform/cache_config.yaml
+(backend: redis|memory). The REDIS_URL env var overrides the YAML redis_url.
 """
 from __future__ import annotations
 
@@ -51,6 +58,20 @@ class CacheBackend:
 
     def stats(self) -> dict:
         raise NotImplementedError
+
+    def get_or_compute(self, key: str, compute_func: Callable[[], Any], ttl: int = 120) -> Any:
+        """Cache-aside fetch with single-flight semantics where supported.
+
+        Default implementation is a plain cache-aside (compute on every miss).
+        RedisBackend overrides this with a SETNX-based single-flight that
+        prevents cache-stampede regeneration of popular expiring keys.
+        """
+        hit = self.get(key)
+        if hit is not None:
+            return hit
+        value = compute_func()
+        self.set(key, value, ttl)
+        return value
 
 
 class InMemoryBackend(CacheBackend):
@@ -108,18 +129,32 @@ class InMemoryBackend(CacheBackend):
 
 
 class RedisBackend(CacheBackend):
-    """Redis-based cache backend.
+    """Redis-based cache backend with single-flight stampede protection.
 
     All operations degrade to cache-miss/no-op on Redis errors rather than
     propagating exceptions. A flaky cache should never take down the API —
     requests should just hit the DB instead.
+
+    Single-flight: get_or_compute() uses a SETNX lock so only one worker
+    regenerates an expired key; others poll for the new value. This prevents
+    cache-stampede thundering herds when a popular key expires under load.
     """
 
-    def __init__(self, redis_url: str):
+    def __init__(
+        self,
+        redis_url: str,
+        *,
+        lock_ttl: int = 30,
+        poll_interval_ms: int = 50,
+        max_wait_ms: int = 5000,
+    ):
         import redis
         self._client = redis.from_url(redis_url, decode_responses=True)
         self._hits = 0
         self._misses = 0
+        self._lock_ttl = lock_ttl
+        self._poll_interval = poll_interval_ms / 1000.0
+        self._max_wait = max_wait_ms / 1000.0
         # Probe the connection up front so callers can fall back to
         # InMemoryBackend on bad URLs / unreachable Redis. Without this the
         # backend "succeeds" at init but every request later raises.
@@ -168,7 +203,8 @@ class RedisBackend(CacheBackend):
         try:
             info = self._client.info("memory")
             memory_mb = round(info.get("used_memory", 0) / 1024 / 1024, 2)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — INFO is non-critical; report 0 on any failure
+            logger.debug("Redis INFO failed: %s", exc)
             memory_mb = 0
         return {
             "backend": "redis",
@@ -178,6 +214,70 @@ class RedisBackend(CacheBackend):
             "memory_mb": memory_mb,
         }
 
+    # ------------------------------------------------------------------
+    # Single-flight stampede protection
+    # ------------------------------------------------------------------
+    def get_or_compute(
+        self,
+        key: str,
+        compute_func: Callable[[], Any],
+        ttl: int = 120,
+    ) -> Any:
+        """Cache-aside with single-flight regeneration.
+
+        On cache miss, only one worker (the SETNX lock holder) calls
+        compute_func; concurrent callers poll the cache until the holder
+        populates it, then read the fresh value. Followers that exceed
+        max_wait_ms fall back to computing the value themselves (graceful
+        degradation if the holder crashes or stalls).
+
+        Failure modes:
+        - Lock holder crashes: the SETNX lock has TTL=lock_ttl seconds; once it
+          expires, the next requester acquires the lock and retries.
+        - Lock TTL expires mid-compute: a second computer kicks off; both will
+          set the cache key; last writer wins. Worst case: 2x compute work.
+        - Followers exceed max_wait: they compute independently. Same 2x ceiling.
+        """
+        # Fast path — value already cached.
+        hit = self.get(key)
+        if hit is not None:
+            return hit
+
+        lock_key = f"{key}:lock"
+        # SET NX EX — atomic "set if not exists" with TTL. Returns True only
+        # for the lock holder; everyone else gets None.
+        try:
+            acquired = self._client.set(lock_key, "1", nx=True, ex=self._lock_ttl)
+        except Exception as exc:  # noqa: BLE001 — lock failure should not block the request
+            logger.warning("Redis SETNX failed for %s: %s", lock_key, exc)
+            acquired = False
+
+        if acquired:
+            try:
+                value = compute_func()
+                self.set(key, value, ttl)
+                return value
+            finally:
+                try:
+                    self._client.delete(lock_key)
+                except Exception as exc:  # noqa: BLE001 — lock will expire via TTL anyway
+                    logger.debug("Redis lock release failed for %s: %s", lock_key, exc)
+
+        # Follower path — poll until the holder publishes the value or we time out.
+        deadline = time.time() + self._max_wait
+        while time.time() < deadline:
+            time.sleep(self._poll_interval)
+            hit = self.get(key)
+            if hit is not None:
+                return hit
+        # Holder stalled / crashed — compute ourselves rather than 504 the request.
+        logger.warning(
+            "Single-flight follower timed out waiting for %s; computing locally", key
+        )
+        value = compute_func()
+        self.set(key, value, ttl)
+        return value
+
 
 # ---------------------------------------------------------------------------
 # Singleton cache layer (thread-safe via double-checked locking)
@@ -186,36 +286,83 @@ _backend: CacheBackend | None = None
 _backend_lock = threading.Lock()
 
 
+def _resolve_redis_url(cfg: dict) -> str:
+    """Pick a Redis URL from env var (highest precedence) or YAML config.
+
+    The YAML uses `${REDIS_URL:-redis://...}` syntax that common.core.utils may
+    or may not expand, so we resolve env-first explicitly.
+    """
+    env_url = os.getenv("REDIS_URL", "").strip()
+    if env_url:
+        return env_url
+    yaml_url = str(cfg.get("redis_url", "")).strip()
+    # Strip any unexpanded `${...}` placeholder; fall back to localhost default.
+    if yaml_url.startswith("${") or not yaml_url:
+        return "redis://localhost:6379/0"
+    return yaml_url
+
+
+def _build_redis_backend(cfg: dict) -> CacheBackend:
+    """Construct a RedisBackend or fall back to InMemoryBackend on failure.
+
+    Catches both ImportError (redis package missing) and connection-time
+    failures (ConnectionError, OSError, redis.RedisError) so test environments
+    and dev machines without Redis transparently degrade to per-process cache.
+    """
+    redis_url = _resolve_redis_url(cfg)
+    lock_ttl = int(cfg.get("single_flight_lock_ttl", 30))
+    poll_ms = int(cfg.get("single_flight_poll_interval_ms", 50))
+    max_wait_ms = int(cfg.get("single_flight_max_wait_ms", 5000))
+    try:
+        backend = RedisBackend(
+            redis_url,
+            lock_ttl=lock_ttl,
+            poll_interval_ms=poll_ms,
+            max_wait_ms=max_wait_ms,
+        )
+        logger.info("Cache: using Redis backend at %s", redis_url)
+        return backend
+    except ImportError as exc:
+        logger.warning(
+            "Cache: redis package not installed (%s); falling back to in-memory cache", exc
+        )
+    except (ConnectionError, OSError) as exc:
+        logger.warning(
+            "Cache: Redis unreachable at %s (%s); falling back to in-memory cache",
+            redis_url, exc,
+        )
+    except Exception as exc:  # noqa: BLE001 — redis.RedisError + auth/proto errors; never block startup
+        logger.warning(
+            "Cache: Redis init failed at %s (%s); falling back to in-memory cache",
+            redis_url, exc,
+        )
+    return InMemoryBackend()
+
+
 def get_cache() -> CacheBackend:
     global _backend
     if _backend is None:
         with _backend_lock:
             if _backend is None:
-                redis_url = os.getenv("REDIS_URL", "")
+                cfg = _load_config()
+                backend_name = str(cfg.get("backend", "redis")).lower()
                 env = os.getenv("ENVIRONMENT", "").lower()
                 workers = int(os.getenv("GUNICORN_WORKERS", "1"))
-                if redis_url:
-                    try:
-                        _backend = RedisBackend(redis_url)
-                        _backend.stats()  # Test connection
-                        logger.info("Cache: using Redis backend at %s", redis_url)
-                    except Exception as exc:
-                        logger.warning("Cache: Redis init failed (%s); falling back to in-memory", exc)
-                        _backend = InMemoryBackend()
+                if backend_name == "redis":
+                    _backend = _build_redis_backend(cfg)
                 else:
-                    # In-memory cache is per-worker — with N gunicorn workers
-                    # the cache hit rate degrades to ~1/N because each worker
-                    # has its own cache. Loud warning under multi-worker prod.
+                    # Explicit memory backend — warn loudly in multi-worker prod
+                    # because each worker has an isolated cache (hit rate ~1/N).
                     if env == "production" and workers > 1:
                         logger.error(
-                            "Cache: REDIS_URL not set under %d gunicorn workers in production. "
+                            "Cache: backend=memory under %d gunicorn workers in production. "
                             "Each worker has an isolated cache; hit rate will degrade ~%dx. "
-                            "Set REDIS_URL=redis://... to share cache across workers.",
+                            "Set backend=redis in cache_config.yaml to share cache across workers.",
                             workers, workers,
                         )
                     elif workers > 1:
                         logger.warning(
-                            "Cache: REDIS_URL not set under %d workers; cache is per-worker.",
+                            "Cache: backend=memory under %d workers; cache is per-worker.",
                             workers,
                         )
                     _backend = InMemoryBackend()
@@ -223,9 +370,28 @@ def get_cache() -> CacheBackend:
 
 
 def reset_cache():
-    """Reset the singleton — for tests."""
+    """Reset the cache layer — for tests.
+
+    Resets the singleton AND clears any persisted data in the underlying
+    backend so tests are truly isolated. Critical when backend=redis: the
+    Redis server outlives the singleton, so without an explicit FLUSHDB the
+    next test would see stale keys from the previous one.
+    """
     global _backend
     with _backend_lock:
+        # Best-effort flush of the existing backend's storage. Failures here
+        # are not fatal — we still drop the singleton so the next call rebuilds
+        # cleanly.
+        if _backend is not None:
+            client = getattr(_backend, "_client", None)
+            if client is not None:
+                try:
+                    client.flushdb()
+                except Exception as exc:  # noqa: BLE001 — flush is best-effort during teardown
+                    logger.debug("Cache flush during reset failed: %s", exc)
+            store = getattr(_backend, "_store", None)
+            if isinstance(store, dict):
+                store.clear()
         _backend = None
 
 

@@ -52,6 +52,7 @@ if str(ROOT) not in sys.path:
 
 from common.core.db import get_db_params
 from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.core.sql_helpers import read_sql_chunked
 from common.ml.forecast_ci import build_sigma_lookup, compute_ci_bounds
 from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
@@ -210,7 +211,10 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
         ORDER BY f.item_id, f.loc, f.startdate DESC
     """
 
-    df = pd.read_sql(sql, conn, params=params)
+    # Streamed: scans fact_external_forecast_monthly. DISTINCT ON shrinks the
+    # output to one row per (item_id, loc), but the underlying scan is still
+    # fact-table-sized.
+    df = read_sql_chunked(conn, sql, params=params)
     with_src = int(df["source_model_id"].notna().sum())
     logger.info("Champion assignments loaded: %s DFUs (%s with source_model_id)",
                 f"{len(df):,}", f"{with_src:,}")
@@ -258,7 +262,11 @@ def load_recent_sales(conn, item_id: str | None = None, loc: str | None = None,
         ORDER BY s.item_id, s.loc, s.startdate
     """
 
-    df = pd.read_sql(sql, conn, params=params)
+    # Streamed: this is the hot one -- fact_sales_monthly is the largest table
+    # in the system. At 40x scale, an unchunked read OOMs. Downstream
+    # build_sales_index() needs the full frame so we concat chunks but keep
+    # peak fetch memory bounded.
+    df = read_sql_chunked(conn, sql, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
     logger.info("Recent sales loaded: %s rows, %s DFUs",
@@ -292,7 +300,8 @@ def load_dfu_attrs(conn, item_id: str | None = None, loc: str | None = None) -> 
         {where_sql}
     """
 
-    df = pd.read_sql(sql, conn, params=params)
+    # dim_sku is dim-shaped but grows to ~10M rows at 40x; defensive stream.
+    df = read_sql_chunked(conn, sql, params=params)
     logger.info("DFU attributes loaded: %s rows", f"{len(df):,}")
     return df
 
@@ -306,7 +315,8 @@ def load_item_attrs(conn, item_id: str | None = None) -> pd.DataFrame:
         FROM dim_item
         {where_sql}
     """
-    df = pd.read_sql(sql, conn, params=params)
+    # dim_item is dim-shaped; streaming kept for consistency.
+    df = read_sql_chunked(conn, sql, params=params)
     df["bpc"] = pd.to_numeric(df["bpc"], errors="coerce").fillna(0)
     df["item_proof"] = pd.to_numeric(df["item_proof"], errors="coerce").fillna(0)
     df["case_weight"] = pd.to_numeric(df["case_weight"], errors="coerce").fillna(0)

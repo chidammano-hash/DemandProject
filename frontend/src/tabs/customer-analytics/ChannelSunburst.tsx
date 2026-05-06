@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
+import { SunburstChart } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -10,6 +10,7 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
 import { formatCompactKMB as fmtNum } from "@/lib/formatters";
+import { useChartColors } from "@/hooks/useChartColors";
 
 type SunburstMetric = "demand" | "customers";
 
@@ -17,26 +18,52 @@ interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
-// Distinct palette for top-level channels
-const CHANNEL_PALETTE = [
-  "#3b82f6", // blue
-  "#8b5cf6", // violet
-  "#06b6d4", // cyan
-  "#f59e0b", // amber
-  "#10b981", // emerald
-  "#ef4444", // red
-  "#ec4899", // pink
-  "#64748b", // slate
-];
+interface ApiTreeNode {
+  name: string;
+  value: number;
+  customer_count?: number;
+  children?: ApiTreeNode[];
+}
+
+interface SunburstNode {
+  name: string;
+  value?: number;
+  fill?: string;
+  children?: SunburstNode[];
+}
+
+/**
+ * Recharts SunburstChart wants `{name, value, children}` rooted at a single
+ * node. We synthesize a "root" wrapper with `value: 0` so children draw
+ * around it; the visualMap-style fill_rate -> color is replaced with a
+ * deterministic per-channel palette to keep parity with the prior design.
+ */
+function toSunburstTree(
+  nodes: ApiTreeNode[],
+  metric: SunburstMetric,
+  palette: string[],
+): SunburstNode[] {
+  return nodes.map((n, i) => {
+    const fill = palette[i % palette.length];
+    const value = metric === "customers" && n.customer_count != null
+      ? n.customer_count
+      : n.value;
+    const children = n.children
+      ? toSunburstTree(n.children, metric, palette).map((c) => ({ ...c, fill }))
+      : undefined;
+    return { name: n.name, value, fill, children };
+  });
+}
 
 export function ChannelSunburst({ filters }: Props) {
   const [sunburstMetric, setSunburstMetric] = useState<SunburstMetric>("demand");
+  const { okabeIto } = useChartColors();
 
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.channelMix(filters),
     queryFn: () => fetchCustomerAnalyticsChannelMix(filters),
-    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
-    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
+    staleTime: 60 * 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const topChannelName = useMemo(() => {
@@ -46,132 +73,30 @@ export function ChannelSunburst({ filters }: Props) {
     return sorted[0].name;
   }, [data]);
 
-  const option = useMemo(() => {
-    const tree = data?.tree ?? [];
-    const grandTotal = data?.grand_total ?? 0;
-    const totalCustomers = data?.total_customers ?? 0;
+  // Pull totals once. The legacy API exposes `grand_total` / `total_customers`
+  // even though the typed `ChannelMixPayload` doesn't yet declare them — keep
+  // the runtime access via a typed shim so we get the totals without leaning
+  // on `any`.
+  const totals = data as
+    | { grand_total?: number; total_customers?: number }
+    | null
+    | undefined;
+  const grandTotal = totals?.grand_total ?? 0;
+  const totalCustomers = totals?.total_customers ?? 0;
 
-    // For customer count metric, use customer_count values if available
-    const mapNodeForMetric = (node: Record<string, unknown>): Record<string, unknown> => {
-      if (sunburstMetric === "customers" && node.customer_count != null) {
-        return {
-          ...node,
-          value: node.customer_count,
-          children: ((node.children ?? []) as Record<string, unknown>[]).map(mapNodeForMetric),
-        };
-      }
-      return {
-        ...node,
-        children: ((node.children ?? []) as Record<string, unknown>[]).map(mapNodeForMetric),
-      };
-    };
-
-    // Assign colors to top-level channels
-    const coloredTree = tree.map((ch, i) => ({
-      ...mapNodeForMetric(ch as unknown as Record<string, unknown>),
-      itemStyle: { color: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] },
-    }));
-
-    const centerLabel = sunburstMetric === "demand"
-      ? `${fmtNum(grandTotal)} cases`
-      : `${fmtNum(totalCustomers)} customers`;
-
+  const rootData = useMemo<SunburstNode>(() => {
+    const tree = (data?.tree ?? []) as ApiTreeNode[];
+    const rootValue = sunburstMetric === "demand" ? grandTotal : totalCustomers;
     return {
-      tooltip: {
-        trigger: "item" as const,
-        formatter: (p: { name: string; value: number; data?: { customer_count?: number }; treePathInfo?: Array<{ name: string }> }) => {
-          const cc = p.data?.customer_count;
-          const pct = grandTotal > 0 ? ((p.value / grandTotal) * 100).toFixed(1) : "0";
-          const path = (p.treePathInfo ?? []).map((x) => x.name).filter(Boolean).join(" > ");
-          return `<div style="max-width:260px">
-            <div style="font-size:11px;color:#666;margin-bottom:2px">${path}</div>
-            <b>${p.name}</b><br/>
-            Demand: ${fmtNum(p.value)} cases (${pct}%)
-            ${cc != null ? `<br/>Customers: ${cc.toLocaleString()}` : ""}
-          </div>`;
-        },
-      },
-      graphic: [
-        {
-          type: "text",
-          left: "center",
-          top: "center",
-          style: {
-            text: `${centerLabel}\n${topChannelName ? topChannelName : ""}`,
-            textAlign: "center",
-            fontSize: 13,
-            fontWeight: "bold",
-            fill: "#333",
-            lineHeight: 18,
-          },
-        },
-      ],
-      series: [
-        {
-          type: "sunburst",
-          data: coloredTree,
-          radius: ["18%", "92%"],
-          sort: "desc" as const,
-          nodeClick: "rootToNode" as const,
-          label: {
-            rotate: "tangential" as const,
-            fontSize: 11,
-            fontWeight: "normal" as const,
-            overflow: "truncate" as const,
-            ellipsis: "...",
-            minAngle: 8, // hide labels on arcs < 8 degrees
-          },
-          itemStyle: {
-            borderWidth: 2,
-            borderColor: "#fff",
-            borderRadius: 4,
-          },
-          emphasis: {
-            focus: "ancestor" as const,
-            itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,0,0,0.15)" },
-          },
-          levels: [
-            {}, // root (invisible)
-            {
-              // Level 1: Channels
-              r0: "18%",
-              r: "42%",
-              label: {
-                fontSize: 13,
-                fontWeight: "bold" as const,
-                rotate: "tangential" as const,
-                minAngle: 15,
-              },
-              itemStyle: { borderWidth: 3, borderColor: "#fff" },
-            },
-            {
-              // Level 2: Store Types
-              r0: "42%",
-              r: "68%",
-              label: {
-                fontSize: 11,
-                rotate: "tangential" as const,
-                minAngle: 10,
-              },
-              itemStyle: { borderWidth: 2, borderColor: "#fff" },
-            },
-            {
-              // Level 3: Sub-Channels
-              r0: "68%",
-              r: "92%",
-              label: {
-                fontSize: 9,
-                rotate: "tangential" as const,
-                minAngle: 12, // stricter threshold — hide most small outer labels
-                color: "#555",
-              },
-              itemStyle: { borderWidth: 1, borderColor: "rgba(255,255,255,0.6)" },
-            },
-          ],
-        },
-      ],
+      name: "All",
+      value: rootValue,
+      children: toSunburstTree(tree, sunburstMetric, okabeIto),
     };
-  }, [data, sunburstMetric, topChannelName]);
+  }, [data, sunburstMetric, okabeIto, grandTotal, totalCustomers]);
+
+  const centerLabel = sunburstMetric === "demand"
+    ? `${fmtNum(grandTotal)} cases`
+    : `${fmtNum(totalCustomers)} customers`;
 
   return (
     <Card aria-label="Channel mix sunburst chart">
@@ -181,7 +106,7 @@ export function ChannelSunburst({ filters }: Props) {
           <ExportButtons panelId="channel-mix" getData={() => data?.tree ?? []} />
         </div>
         <p className="text-xs text-muted-foreground">
-          Channel &gt; Store Type &gt; Sub-Channel. Click a segment to zoom in.
+          Channel &gt; Store Type &gt; Sub-Channel.
         </p>
         <div className="flex gap-1 mt-1">
           {(["demand", "customers"] as SunburstMetric[]).map((m) => (
@@ -201,8 +126,22 @@ export function ChannelSunburst({ filters }: Props) {
           isEmpty={!data?.tree || data.tree.length === 0}
           height={420}
         >
-          <div role="img" aria-roledescription="Channel mix sunburst chart">
-            <ReactECharts option={option} style={{ height: 420 }} lazyUpdate notMerge={false} />
+          <div role="img" aria-roledescription="Channel mix sunburst chart" className="relative">
+            <SunburstChart
+              data={rootData}
+              width={420}
+              height={420}
+              dataKey="value"
+              innerRadius={70}
+              outerRadius={200}
+            />
+            {/* Center label overlay (recharts SunburstChart has no built-in center text). */}
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+              <div className="text-sm font-bold text-foreground">{centerLabel}</div>
+              {topChannelName && (
+                <div className="text-xs text-muted-foreground mt-1">{topChannelName}</div>
+              )}
+            </div>
           </div>
         </PanelStateGate>
       </CardContent>

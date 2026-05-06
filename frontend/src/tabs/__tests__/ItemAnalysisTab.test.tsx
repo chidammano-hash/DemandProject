@@ -83,10 +83,6 @@ vi.mock("@/api/queries", () => ({
   fetchCorrectionsByItem: vi.fn().mockResolvedValue({ corrections: [], total: 0 }),
 }));
 
-vi.mock("@/components/EChartContainer", () => ({
-  EChartContainer: () => <div data-testid="chart-mock" />,
-}));
-
 const { ItemAnalysisTab } = await import("@/tabs/ItemAnalysisTab");
 
 function makeFilterContext(): GlobalFilterContextValue {

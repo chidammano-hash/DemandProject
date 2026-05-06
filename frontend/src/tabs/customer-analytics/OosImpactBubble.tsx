@@ -1,6 +1,17 @@
 import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
+import {
+  ResponsiveContainer,
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  ZAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+  ReferenceLine,
+} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -9,6 +20,7 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { useChartColors } from "@/hooks/useChartColors";
 
 type Grain = "customer" | "state";
 
@@ -18,29 +30,52 @@ interface Props {
   onGrainChange: (g: Grain) => void;
 }
 
-const CHANNEL_COLORS: Record<string, string> = {
-  "On Premise": "#6366f1",
-  "Off Premise": "#f59e0b",
-  Unknown: "#94a3b8",
-  All: "#3b82f6",
-};
-
-function getColor(channel: string): string {
-  return CHANNEL_COLORS[channel] || `hsl(${Math.abs(hashCode(channel)) % 360}, 60%, 55%)`;
+interface ScatterPoint {
+  demand_qty: number;
+  fill_rate: number;
+  oos_qty: number;
+  label: string;
 }
 
-function hashCode(s: string): number {
+function getColor(channel: string, palette: string[]): string {
+  // Distribute channels deterministically across the palette so the same
+  // channel always gets the same color across re-renders.
   let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  return h;
+  for (let i = 0; i < channel.length; i++) {
+    h = (Math.imul(31, h) + channel.charCodeAt(i)) | 0;
+  }
+  return palette[Math.abs(h) % palette.length];
+}
+
+const formatK = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v));
+
+interface TooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: ScatterPoint; name?: string }>;
+}
+
+function CustomTooltip({ active, payload }: TooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const p = payload[0].payload;
+  const channel = payload[0].name ?? "";
+  return (
+    <div className="rounded-md border bg-background p-2 text-xs shadow-sm">
+      <div className="font-semibold">{p.label}</div>
+      <div>Channel: {channel}</div>
+      <div>Demand: {p.demand_qty.toLocaleString()}</div>
+      <div>Fill Rate: {p.fill_rate}%</div>
+      <div>OOS: {p.oos_qty.toLocaleString()}</div>
+    </div>
+  );
 }
 
 export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
+  const { okabeIto, chartColors } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.oosImpact(grain, filters),
     queryFn: () => fetchCustomerAnalyticsOosImpact(grain, filters),
-    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
-    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
+    staleTime: 60 * 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const totalOos = useMemo(() => {
@@ -48,80 +83,25 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
     return bubbles.reduce((sum, b) => sum + b.oos_qty, 0);
   }, [data]);
 
-  const option = useMemo(() => {
+  const { seriesByChannel, maxOos } = useMemo(() => {
     const bubbles = data?.bubbles ?? [];
-    if (!bubbles.length) return {};
-
-    const maxOos = Math.max(...bubbles.map((b) => b.oos_qty), 1);
-    const maxDemand = Math.max(...bubbles.map((b) => b.demand_qty), 1);
-    const midDemand = maxDemand / 2;
-
-    const seriesMap: Record<string, Array<[number, number, number, string]>> = {};
+    const byChannel: Record<string, ScatterPoint[]> = {};
+    let max = 1;
     for (const b of bubbles) {
       const ch = b.channel || "Unknown";
-      if (!seriesMap[ch]) seriesMap[ch] = [];
-      seriesMap[ch].push([b.demand_qty, b.fill_rate, b.oos_qty, b.label]);
+      if (!byChannel[ch]) byChannel[ch] = [];
+      byChannel[ch].push({
+        demand_qty: b.demand_qty,
+        fill_rate: b.fill_rate,
+        oos_qty: b.oos_qty,
+        label: b.label,
+      });
+      if (b.oos_qty > max) max = b.oos_qty;
     }
-
-    const scatterSeries = Object.entries(seriesMap).map(([ch, pts]) => ({
-      name: ch,
-      type: "scatter" as const,
-      data: pts,
-      symbolSize: (val: number[]) => 8 + 30 * Math.sqrt(val[2] / maxOos),
-      itemStyle: { color: getColor(ch), opacity: 0.7 },
-      emphasis: { itemStyle: { opacity: 1 } },
-    }));
-
-    return {
-      tooltip: {
-        formatter: (p: { value: [number, number, number, string]; seriesName: string }) => {
-          const [demand, fr, oos, label] = p.value;
-          return `<b>${label}</b><br/>Channel: ${p.seriesName}<br/>Demand: ${demand.toLocaleString()}<br/>Fill Rate: ${fr}%<br/>OOS: ${oos.toLocaleString()}`;
-        },
-      },
-      legend: { top: 5, type: "scroll" as const },
-      grid: { left: 60, right: 20, top: 40, bottom: 50 },
-      xAxis: {
-        name: "Demand (cases)",
-        nameLocation: "center" as const,
-        nameGap: 30,
-        type: "value" as const,
-        axisLabel: { formatter: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v) },
-      },
-      yAxis: { name: "Fill Rate %", nameLocation: "center" as const, nameGap: 40, type: "value" as const, min: 0, max: 105 },
-      series: [
-        // Quadrant shading: bottom-right = critical zone (high demand, low fill rate)
-        {
-          type: "scatter" as const,
-          data: [],
-          silent: true,
-          markArea: {
-            silent: true,
-            data: [
-              [
-                { xAxis: midDemand, yAxis: 0, itemStyle: { color: "rgba(239,68,68,0.08)" } },
-                { xAxis: maxDemand * 1.1, yAxis: 90 },
-              ],
-            ],
-            label: {
-              show: true,
-              position: "insideBottomRight" as const,
-              formatter: "Critical",
-              fontSize: 11,
-              color: "#dc2626",
-              fontStyle: "italic" as const,
-            },
-          },
-          markLine: {
-            silent: true,
-            lineStyle: { type: "dashed" as const, color: "#94a3b8" },
-            data: [{ yAxis: 90 }],
-          },
-        },
-        ...scatterSeries,
-      ],
-    };
+    return { seriesByChannel: byChannel, maxOos: max };
   }, [data]);
+
+  const channels = Object.keys(seriesByChannel);
 
   return (
     <Card aria-label="OOS impact bubble chart">
@@ -155,7 +135,54 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
           height={400}
         >
           <div role="img" aria-roledescription="OOS impact bubble scatter chart">
-            <ReactECharts option={option} style={{ height: 400 }} lazyUpdate notMerge={false} />
+            <ResponsiveContainer width="100%" height={400}>
+              <ScatterChart margin={{ top: 20, right: 20, bottom: 40, left: 50 }}>
+                <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" />
+                <XAxis
+                  type="number"
+                  dataKey="demand_qty"
+                  name="Demand"
+                  label={{ value: "Demand (cases)", position: "insideBottom", offset: -10, fontSize: 11 }}
+                  tickFormatter={formatK}
+                  tick={{ fontSize: 10, fill: chartColors.axis }}
+                  stroke={chartColors.axis}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="fill_rate"
+                  name="Fill Rate"
+                  domain={[0, 105]}
+                  label={{ value: "Fill Rate %", angle: -90, position: "insideLeft", fontSize: 11 }}
+                  tick={{ fontSize: 10, fill: chartColors.axis }}
+                  stroke={chartColors.axis}
+                />
+                <ZAxis
+                  type="number"
+                  dataKey="oos_qty"
+                  range={[40, 900]}
+                  domain={[0, maxOos]}
+                  name="OOS"
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {/* Critical fill-rate line at 90% (replaces ECharts markLine) */}
+                <ReferenceLine
+                  y={90}
+                  stroke={chartColors.axis}
+                  strokeDasharray="4 4"
+                  label={{ value: "90% target", position: "right", fontSize: 10, fill: chartColors.axis }}
+                />
+                {channels.map((ch) => (
+                  <Scatter
+                    key={ch}
+                    name={ch}
+                    data={seriesByChannel[ch]}
+                    fill={getColor(ch, okabeIto)}
+                    fillOpacity={0.7}
+                  />
+                ))}
+              </ScatterChart>
+            </ResponsiveContainer>
           </div>
         </PanelStateGate>
       </CardContent>

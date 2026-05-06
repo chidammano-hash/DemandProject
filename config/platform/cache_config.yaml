@@ -1,10 +1,19 @@
 # ═══ CACHE CONFIG ═══
 # API response caching configuration (Spec 08-03)
 # Used by: common/services/cache.py (@cached decorator), api middleware
-# Backends: InMemoryBackend (default) or Redis (when REDIS_URL set)
+# Backends: RedisBackend (default, multi-worker safe) or InMemoryBackend (per-process fallback)
+#
+# Fallback behavior: if backend=redis and the Redis server is unreachable
+# (connection refused, DNS failure, missing redis package), the cache layer
+# transparently falls back to InMemoryBackend with a logged warning. Tests and
+# environments without Redis still work — only the multi-worker hit-rate
+# guarantee + single-flight stampede protection are lost in that mode.
 
-backend: memory                          # Cache backend; options: 'memory' (in-process dict), 'redis' (requires Redis server)
-redis_url: ${REDIS_URL:-redis://localhost:6379/0}  # Redis connection URL (env var); only used when backend=redis
+backend: redis                           # Cache backend; options: 'redis' (default — shared, multi-worker, single-flight) or 'memory' (per-process dict, dev-only)
+redis_url: ${REDIS_URL:-redis://localhost:6379/0}  # Redis connection URL; env var REDIS_URL overrides; only used when backend=redis
+single_flight_lock_ttl: 30               # Single-flight lock TTL (seconds); only one worker regenerates an expired key, others poll for the new value
+single_flight_poll_interval_ms: 50       # Poll interval (ms) while waiting for the single-flight holder to populate the cache
+single_flight_max_wait_ms: 5000          # Max time (ms) a follower will poll before giving up and computing the value itself
 
 default_ttl_seconds: 120                 # Default cache TTL in seconds (2 minutes); used when no group_ttl matches
 max_memory_mb: 256                       # Max memory for in-memory cache (MB); LRU eviction when exceeded

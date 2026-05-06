@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:
 
 from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
+from common.core.sql_helpers import read_sql_chunked
 from common.services.perf_profiler import profiled_section
 from common.core.utils import load_forecast_pipeline_config, get_competing_model_ids
 
@@ -63,8 +64,12 @@ def _load_monthly_errors(
           AND tothist_dmd IS NOT NULL
         ORDER BY item_id, customer_group, loc, model_id, startdate
     """
+    # Strategy A: chunked read. fact_external_forecast_monthly is a large
+    # fact table; full-frame pd.read_sql OOMs at scale. Downstream
+    # build_training_data() needs the full frame (groupby/rolling/pivot), so
+    # we concat chunks but bound peak fetch memory to one chunk at a time.
     with psycopg.connect(**db) as conn:
-        df = pd.read_sql(sql, conn, params=params)
+        df = read_sql_chunked(conn, sql, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     for col in [FORECAST_QTY_COL, "tothist_dmd", "abs_err"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -81,8 +86,11 @@ def _load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
                peak_trough_ratio
         FROM dim_sku
     """
+    # dim_sku is dimension-shaped (one row per SKU) so it's much smaller than
+    # fact tables, but we still stream defensively: at 40x scale dim_sku
+    # crosses 10M rows in some deployments.
     with psycopg.connect(**db) as conn:
-        df = pd.read_sql(sql, conn)
+        df = read_sql_chunked(conn, sql)
     for col in ["ml_cluster", "abc_vol", "brand", "region", "seasonality_profile"]:
         if col in df.columns:
             df[col] = df[col].astype("category").cat.codes

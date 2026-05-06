@@ -15,6 +15,7 @@
 | Styling | Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 |
+| Cache | Redis 7 (shared across workers, single-flight stampede protection); falls back to per-process in-memory when Redis is unreachable. `make up` starts Redis alongside Postgres. |
 | ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn |
 | ML Tracking | MLflow |
 | Job Scheduling | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
@@ -132,6 +133,7 @@ Each entry: **symptom → cause → fix**. File paths are anchors.
 - **Clustering library** lives in `common/ml/clustering/` — `features.py`, `training.py`, `labeling.py`, `scenario.py`. Params stored in `cluster_experiment` table (promoted row), NOT YAML. Operates on **SKUs** (item+location), not DFUs.
 - **SKU features** computed once in `common/ml/sku_features/` and stored in `dim_sku`; clustering reads pre-computed values. Config: `config/forecasting/sku_features_config.yaml`.
 - **`model_registry.build_model(algorithm_id, params=None)`**: reads `algorithms.<id>` entry, translates via `to_native_params()`, returns configured tree estimator. Foundation/DL/statistical → `_FoundationStub`. Unknown id → `UnknownAlgorithm` (subclass of `ValueError`).
+- **Chunked fact-table reads**: production ML/forecasting scripts use `read_sql_chunked()` / `stream_query_in_chunks()` from `common.core.sql_helpers` for any query that scans a fact table (sales, forecast, inventory snapshots). Bare `pd.read_sql(...)` without `chunksize` over a fact table is a defect at 40× scale — it OOMs the worker. See `scripts/ml/train_meta_learner.py` and `scripts/forecasting/generate_production_forecasts.py` for the pattern.
 
 ### Data Loading
 - **Staged CSV convention**: normalized CSVs land in `data/staged/`. `DomainSpec.clean_file` embeds the prefix (`"staged/itemdata_clean.csv"`); resolution is `ROOT / "data" / spec.clean_file`. ML intermediates (`clustering_features.csv`, `seasonality_results.csv`) also live under `data/staged/`. No new normalized output at `data/` root.

@@ -1,7 +1,15 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ScatterChart,
+  Scatter,
+  ZAxis,
+  CartesianGrid,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -12,17 +20,44 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { useMemo } from "react";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
+interface ScatterPoint {
+  customer: string;
+  avg_interval: number;
+  cv: number;
+  total_orders: number;
+}
+
+interface TooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: ScatterPoint }>;
+}
+
+function ScatterTooltip({ active, payload }: TooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="rounded-md border bg-background p-2 text-xs shadow-sm">
+      <div className="font-semibold">{p.customer}</div>
+      <div>Avg interval: {p.avg_interval.toFixed(1)} months</div>
+      <div>CV: {p.cv.toFixed(2)}</div>
+      <div>Demand: {p.total_orders.toLocaleString()}</div>
+    </div>
+  );
+}
+
 export function OrderPatterns({ filters }: Props) {
+  const { okabeIto, chartColors } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.orderPatterns(filters),
     queryFn: () => fetchCustomerAnalyticsOrderPatterns(filters),
-    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
-    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
+    staleTime: 60 * 60_000,
+    placeholderData: keepPreviousData,
   });
 
   // Backend returns frequency_histogram: [{bucket, count, pct}] and
@@ -53,45 +88,19 @@ export function OrderPatterns({ filters }: Props) {
     [freqRaw],
   );
 
-  const scatterOption = useMemo(() => {
-    if (!data) return {};
-    const points = regRaw.map((p) => ({
+  const { scatterData, maxOrders } = useMemo(() => {
+    const points: ScatterPoint[] = regRaw.map((p) => ({
       customer: p.customer ?? p.customer_name ?? p.customer_no ?? "",
       avg_interval: p.avg_interval ?? p.avg_interval_months ?? 0,
       cv: p.cv ?? p.interval_cv ?? 0,
       total_orders: p.total_orders ?? p.total_demand ?? 0,
     }));
-    const maxOrders = points.length > 0 ? Math.max(...points.map((p) => p.total_orders), 1) : 1;
+    const max = points.length > 0 ? Math.max(...points.map((p) => p.total_orders), 1) : 1;
+    return { scatterData: points, maxOrders: max };
+  }, [regRaw]);
 
-    return {
-      tooltip: {
-        formatter: (p: { value: [number, number, number, string] }) => {
-          const [interval, cv, orders, name] = p.value;
-          return `<b>${name}</b><br/>Avg interval: ${interval.toFixed(1)} months<br/>CV: ${cv.toFixed(2)}<br/>Demand: ${orders.toLocaleString()}`;
-        },
-      },
-      grid: { left: 50, right: 20, top: 10, bottom: 40 },
-      xAxis: {
-        name: "Avg Interval (months)",
-        nameLocation: "center" as const,
-        nameGap: 25,
-        type: "value" as const,
-      },
-      yAxis: {
-        name: "CV (regularity)",
-        nameLocation: "center" as const,
-        nameGap: 35,
-        type: "value" as const,
-      },
-      series: [{
-        type: "scatter",
-        data: points.map((p) => [p.avg_interval, p.cv, p.total_orders, p.customer]),
-        symbolSize: (val: number[]) => 6 + 16 * Math.sqrt(val[2] / maxOrders),
-        itemStyle: { color: "#6366f1", opacity: 0.65 },
-        emphasis: { itemStyle: { opacity: 1 } },
-      }],
-    };
-  }, [data, regRaw]);
+  const barColor = okabeIto[3];
+  const scatterColor = okabeIto[3];
 
   return (
     <Card aria-label="Order patterns analysis">
@@ -116,14 +125,43 @@ export function OrderPatterns({ filters }: Props) {
                   <XAxis dataKey="bin" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip />
-                  <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill={barColor} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-1">Order Regularity</p>
               <div role="img" aria-roledescription="Order regularity scatter chart">
-                <ReactECharts option={scatterOption} style={{ height: 200 }} lazyUpdate notMerge={false} />
+                <ResponsiveContainer width="100%" height={200}>
+                  <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 40 }}>
+                    <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" />
+                    <XAxis
+                      type="number"
+                      dataKey="avg_interval"
+                      name="Avg Interval"
+                      label={{ value: "Avg Interval (months)", position: "insideBottom", offset: -10, fontSize: 10 }}
+                      tick={{ fontSize: 10, fill: chartColors.axis }}
+                      stroke={chartColors.axis}
+                    />
+                    <YAxis
+                      type="number"
+                      dataKey="cv"
+                      name="CV"
+                      label={{ value: "CV (regularity)", angle: -90, position: "insideLeft", fontSize: 10 }}
+                      tick={{ fontSize: 10, fill: chartColors.axis }}
+                      stroke={chartColors.axis}
+                    />
+                    <ZAxis
+                      type="number"
+                      dataKey="total_orders"
+                      range={[20, 400]}
+                      domain={[0, maxOrders]}
+                      name="Demand"
+                    />
+                    <Tooltip content={<ScatterTooltip />} cursor={{ strokeDasharray: "3 3" }} />
+                    <Scatter data={scatterData} fill={scatterColor} fillOpacity={0.65} />
+                  </ScatterChart>
+                </ResponsiveContainer>
               </div>
             </div>
           </div>
