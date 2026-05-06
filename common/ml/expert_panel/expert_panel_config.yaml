@@ -5,7 +5,7 @@ experiment:
   sampling_method: "proportional"   # proportional | equal | sqrt
   n_timeframes: 5                   # quick validation (not full 10)
   n_workers: 8                      # parallel workers for statistical models
-  output_dir: "scripts/algorithm_testing/results/expert_panel"
+  output_dir: "data/expert_panel/results/expert_panel"
   loc_filter: null                  # e.g. '1401-BULK' — runs all DFUs at that loc instead of sampling
 
 demand_classification:

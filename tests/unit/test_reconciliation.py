@@ -4,7 +4,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from scripts.algorithm_testing.reconciliation import reconcile_two_level
+from common.ml.expert_panel.reconciliation import reconcile_two_level
 
 
 @pytest.fixture

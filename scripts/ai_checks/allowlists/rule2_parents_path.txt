@@ -10,6 +10,9 @@ common/services/integration_scanner.py
 scripts/algorithm_testing/route_analysis.py
 scripts/algorithm_testing/run_adv_expert_panel.py
 scripts/algorithm_testing/run_expert_panel.py
+scripts/ml/expert_panel_route_analysis.py
+scripts/ml/run_adv_expert_panel.py
+scripts/ml/run_expert_panel.py
 scripts/etl/load.py
 scripts/etl/load_backtest_forecasts.py
 scripts/etl/load_customer_demand_postgres.py

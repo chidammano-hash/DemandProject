@@ -19,6 +19,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _s, get_conn, set_cache
+from common.core.constants import ABC_CLASSES
 from common.core.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
@@ -1507,10 +1508,10 @@ def get_daily_briefing(
                                AVG(h.health_score)::numeric(5,1) AS avg_score
                         FROM mv_inventory_health_score h
                         JOIN dim_sku d ON h.item_id = d.item_id AND h.loc = d.loc
-                        WHERE d.abc_vol IN ('A', 'B', 'C')
+                        WHERE d.abc_vol = ANY(%s)
                         GROUP BY d.abc_vol
                         ORDER BY d.abc_vol
-                    """)
+                    """, [list(ABC_CLASSES)])
                     for r in cur.fetchall():
                         abc_class = r[0]
                         score = float(r[1]) if r[1] is not None else 0

@@ -17,6 +17,7 @@ import psycopg
 
 from api.core import get_conn, set_cache
 from common.core.planning_date import get_planning_date
+from common.core.sql_helpers import EXTERNAL_MODEL_ID
 
 # Lazy-initialized US zip code geocoder (pgeocode downloads ~2MB file on first use)
 _nomi: pgeocode.Nominatim | None = None
@@ -277,7 +278,7 @@ def dashboard_alerts(
         sql = f"""
             SELECT COUNT(DISTINCT forecast_ck)
             FROM fact_external_forecast_monthly
-            WHERE model_id = 'external'
+            WHERE model_id = '{EXTERNAL_MODEL_ID}'
               AND tothist_dmd IS NOT NULL AND tothist_dmd != 0
               AND basefcst_pref IS NOT NULL
               AND startdate >= ('{pd}'::date - INTERVAL '3 months')
@@ -326,7 +327,7 @@ def dashboard_alerts(
             SELECT i.class, 100.0 * (SUM(f.basefcst_pref) / NULLIF(ABS(SUM(f.tothist_dmd)), 0) - 1) AS bias
             FROM fact_external_forecast_monthly f
             JOIN dim_item i ON f.item_id = i.item_id
-            WHERE f.model_id = 'external'
+            WHERE f.model_id = '{EXTERNAL_MODEL_ID}'
               AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0
               AND f.basefcst_pref IS NOT NULL
               AND f.startdate >= ('{pd}'::date - INTERVAL '3 months')

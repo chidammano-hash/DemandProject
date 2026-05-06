@@ -1,11 +1,11 @@
-"""Entry point for ``python -m scripts.algorithm_testing``.
+"""Entry point for ``python -m common.ml.expert_panel``.
 
 Sets macOS fork-safety BEFORE any torch/neuralforecast imports to prevent
 SIGSEGV in ProcessPoolExecutor children.
 
 Defaults to the advanced expert panel, since that is the path that needs
 the fork-safety setup. The base panel is invoked via the fully-qualified
-module path ``python -m scripts.algorithm_testing.run_expert_panel``.
+module path ``python -m common.ml.expert_panel.run_expert_panel``.
 """
 import multiprocessing
 import os
@@ -22,6 +22,6 @@ if sys.platform == "darwin":
         pass
 
 # Now safe to import and run
-from scripts.algorithm_testing.run_adv_expert_panel import main  # noqa: E402
+from scripts.ml.run_adv_expert_panel import main  # noqa: E402
 
 main()

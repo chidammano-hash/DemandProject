@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Advanced Expert Panel Algorithm Selection — extended test.
 
-Extends the base Expert Panel (scripts.algorithm_testing) with:
+Extends the base Expert Panel (common.ml.expert_panel) with:
 - 6 statistical upgrades (AutoCES, DynamicTheta, IMAPA, TSB, ADIDA, MSTL)
 - 8 deep learning models (N-BEATS, N-HiTS, TFT, DeepAR, TiDE, TCN, PatchTST, iTransformer)
 - 5 foundation models (Chronos, TimesFM, Moirai, TimeGPT, Lag-Llama)
@@ -9,8 +9,8 @@ Extends the base Expert Panel (scripts.algorithm_testing) with:
 - Cross-sectional hierarchical reconciliation
 
 Usage:
-    python -m scripts.algorithm_testing.run_adv_expert_panel
-    python -m scripts.algorithm_testing.run_adv_expert_panel --n-dfus 1000 --n-timeframes 3
+    python -m common.ml.expert_panel.run_adv_expert_panel
+    python -m common.ml.expert_panel.run_adv_expert_panel --n-dfus 1000 --n-timeframes 3
 """
 
 import argparse
@@ -38,63 +38,63 @@ import pandas as pd
 import yaml
 
 # Ensure project root is on sys.path
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]  # scripts/ml/<file>.py -> project root
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# --- Base scripts.algorithm_testing modules (reused) ---
-from scripts.algorithm_testing.affinity_matrix import (  # noqa: E402
+# --- Base common.ml.expert_panel modules (reused) ---
+from common.ml.expert_panel.affinity_matrix import (  # noqa: E402
     build_affinity_matrix,
     compute_ceiling_accuracy,
     format_affinity_heatmap,
 )
-from scripts.algorithm_testing.baselines import (  # noqa: E402
+from common.ml.expert_panel.baselines import (  # noqa: E402
     predict_ridge,
     predict_rolling_mean,
     predict_seasonal_naive,
 )
-from scripts.algorithm_testing.comparison import (  # noqa: E402
+from common.ml.expert_panel.comparison import (  # noqa: E402
     compare_all,
     compute_portfolio_predictions,
     format_comparison_summary,
 )
-from scripts.algorithm_testing.demand_classifier import (  # noqa: E402
+from common.ml.expert_panel.demand_classifier import (  # noqa: E402
     classify_demand,
     get_segment_summary,
 )
-from scripts.algorithm_testing.golden_set import (  # noqa: E402
+from common.ml.expert_panel.golden_set import (  # noqa: E402
     create_golden_set,
     create_loc_golden_set,
     load_existing_predictions,
     load_external_forecast,
     load_golden_set_data,
 )
-from scripts.algorithm_testing.portfolio_optimizer import (  # noqa: E402
+from common.ml.expert_panel.portfolio_optimizer import (  # noqa: E402
     compute_portfolio_accuracy,
     format_portfolio_summary,
     optimize_constrained,
     optimize_greedy,
 )
-from scripts.algorithm_testing.dfu_accuracy_matrix import build_dfu_accuracy_matrix  # noqa: E402
-from scripts.algorithm_testing.hybrid_ensemble import compute_hybrid_predictions  # noqa: E402
-from scripts.algorithm_testing.meta_router import predict_meta_router, train_meta_router  # noqa: E402
-from scripts.algorithm_testing.statistical_models import run_statistical_models  # noqa: E402
-from scripts.algorithm_testing.tree_models import run_tree_models  # noqa: E402
+from common.ml.expert_panel.dfu_accuracy_matrix import build_dfu_accuracy_matrix  # noqa: E402
+from common.ml.expert_panel.hybrid_ensemble import compute_hybrid_predictions  # noqa: E402
+from common.ml.expert_panel.meta_router import predict_meta_router, train_meta_router  # noqa: E402
+from common.ml.expert_panel.statistical_models import run_statistical_models  # noqa: E402
+from common.ml.expert_panel.tree_models import run_tree_models  # noqa: E402
 
 # --- Advanced modules (NEW) ---
-from scripts.algorithm_testing.dl_baselines import (  # noqa: E402
+from common.ml.expert_panel.dl_baselines import (  # noqa: E402
     predict_dlinear,
     predict_nlinear,
 )
-from scripts.algorithm_testing.dl_models import run_dl_models  # noqa: E402
-from scripts.algorithm_testing.foundation_models import run_foundation_models  # noqa: E402
-from scripts.algorithm_testing.lag_accuracy import (  # noqa: E402
+from common.ml.expert_panel.dl_models import run_dl_models  # noqa: E402
+from common.ml.expert_panel.foundation_models import run_foundation_models  # noqa: E402
+from common.ml.expert_panel.lag_accuracy import (  # noqa: E402
     add_lag_columns,
     compute_monthly_accuracy,
     compute_overall_monthly_accuracy,
     compute_rolling_window_accuracy,
 )
-from scripts.algorithm_testing.statistical_upgrades import run_statistical_upgrades  # noqa: E402
+from common.ml.expert_panel.statistical_upgrades import run_statistical_upgrades  # noqa: E402
 
 # --- Common utilities ---
 from common.core.constants import FORECAST_QTY_COL  # noqa: E402
@@ -111,7 +111,7 @@ logger = logging.getLogger(__name__)
 def load_experiment_config(config_path: Path | None = None) -> dict[str, Any]:
     """Load experiment configuration from YAML."""
     if config_path is None:
-        config_path = Path(__file__).parent / "adv_expert_panel_config.yaml"
+        config_path = ROOT / "common" / "ml" / "expert_panel" / "adv_expert_panel_config.yaml"
     with open(config_path) as f:
         return yaml.safe_load(f)
 
@@ -549,7 +549,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
 
     # Inject hybrid ensemble metrics into the comparison dict
     if not hybrid_preds.empty:
-        from scripts.algorithm_testing.comparison import compute_baseline_accuracy  # noqa: E402
+        from common.ml.expert_panel.comparison import compute_baseline_accuracy  # noqa: E402
         import numpy as np  # noqa: E402
         hybrid_metrics = compute_baseline_accuracy(
             hybrid_preds, actuals_df, "hybrid", classification_df
@@ -721,7 +721,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     report_lines.append("")
 
     if monthly_accuracy:
-        from scripts.algorithm_testing.report import _format_monthly_accuracy_section
+        from common.ml.expert_panel.report import _format_monthly_accuracy_section
         report_lines.append("-" * 70)
         report_lines.append(
             "MONTHLY ACCURACY — execution-lag-matched, full-coverage months only"

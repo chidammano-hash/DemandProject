@@ -58,5 +58,35 @@ export default tseslint.config(
         },
       ],
     },
+  },
+
+  // Ban raw `fetch(...)` outside src/api/. All HTTP calls must go through the
+  // typed query layer in src/api/queries/. Files under src/api/ are explicitly
+  // allowed below. Currently `warn` to avoid blocking in-flight branches —
+  // TODO: tighten to `error` once existing offenders are migrated.
+  {
+    files: [
+      "src/components/**/*.{ts,tsx}",
+      "src/tabs/**/*.{ts,tsx}",
+      "src/hooks/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-globals": [
+        "warn",
+        {
+          name: "fetch",
+          message:
+            "Do not call fetch() directly outside src/api/. Use a typed query function from src/api/queries/. See frontend/CONTRIBUTING.md.",
+        },
+      ],
+    },
+  },
+
+  // src/api/ is the only place allowed to call fetch directly.
+  {
+    files: ["src/api/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-globals": "off",
+    },
   }
 );

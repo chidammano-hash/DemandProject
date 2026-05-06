@@ -11,16 +11,16 @@ PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 # ---------------------------------------------------------------------------
 # Convenience aliases
 # ---------------------------------------------------------------------------
-dev: up api ui
-fresh: fresh-all
-test-quick: test ui-test
-lint:
+dev: up api ui  ## Start Docker + API + UI for local dev
+fresh: fresh-all  ## Alias for fresh-all (full reset + reload)
+test-quick: test ui-test  ## Backend + frontend tests only (fast)
+lint:  ## Run ruff lint with --fix on api/ common/ scripts/
 	$(UV) ruff check api/ common/ scripts/ --fix
-format:
+format:  ## Run ruff format on api/ common/ scripts/
 	$(UV) ruff format api/ common/ scripts/
-type-check:
+type-check:  ## Run mypy on api/ and common/
 	$(UV) mypy api/ common/ --ignore-missing-imports
-health: check-all
+health: check-all  ## Alias for check-all (DB row counts + API health)
 
 # ---------------------------------------------------------------------------
 # Deploy — see docs at the bottom of each step's @echo line.
@@ -139,7 +139,7 @@ deploy-smoke:
 # ---------------------------------------------------------------------------
 # Developer tooling
 # ---------------------------------------------------------------------------
-audit-routers:
+audit-routers:  ## Verify router files match main.py mounts and vite proxy entries
 	@echo "=== Router Audit ==="
 	@echo "Router files in api/routers/:"
 	@find api/routers -name '*.py' ! -name '__init__.py' | wc -l
@@ -153,8 +153,11 @@ audit-routers:
 new-router:
 	@python3 scripts/tools/scaffold_router.py --domain $(DOMAIN) --name $(NAME)
 
-help:
-	@echo "Targets:"
+help:  ## Auto-generated from `## ...` annotations on target lines
+	@echo "Most-used targets (annotated with '##'):"
+	@grep -hE '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-25s %s\n",$$1,$$2}' | sort -u
+	@echo ""
+	@echo "Legacy hand-written list (full target catalog):"
 	@echo "  init                 - copy env, create uv env, install deps"
 	@echo "  up/down/logs         - manage docker services (Postgres, MLflow)"
 	@echo "  db-apply-sql         - apply dataset DDL into running Postgres"
@@ -297,7 +300,7 @@ help:
 	@echo "  refresh-mvs-tiered   - refresh all MVs in dependency order"
 	@echo "  refresh-accuracy-mvs - refresh accuracy MVs (after backtest load)"
 
-init:
+init:  ## Create .venv, install uv, sync deps
 	@if [ ! -f .env ]; then cp .env.example .env; fi
 	@command -v uv >/dev/null 2>&1 || { \
 		echo "uv is not installed."; \
@@ -313,12 +316,12 @@ init-pip:
 	python3 -m venv .venv
 	. .venv/bin/activate && pip install --upgrade pip && pip install fastapi uvicorn pydantic psycopg[binary] python-dotenv pytest
 
-up:
+up:  ## Start Docker services (Postgres, MLflow) + apply DDL
 	$(DC) up -d
 	$(MAKE) db-apply-sql
 
 
-db-apply-sql:
+db-apply-sql:  ## Apply all sql/*.sql migration files to Postgres
 	$(PG_EXEC) sh -lc '\
 		until pg_isready -U demand -d demand_mvp >/dev/null 2>&1; do \
 			sleep 1; \
@@ -330,10 +333,10 @@ db-apply-sql:
 	$(PSQL) -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
 	@echo "Applied $$(ls sql/*.sql | wc -l | tr -d ' ') SQL migration files"
 
-down:
+down:  ## Stop Docker services
 	$(DC) down
 
-logs:
+logs:  ## Tail Docker service logs
 	$(DC) logs -f
 
 normalize-item:
@@ -366,7 +369,7 @@ normalize-sourcing:
 normalize-purchase-order:
 	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset purchase_order
 
-normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-sourcing normalize-purchase-order normalize-customer-demand
+normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-sourcing normalize-purchase-order normalize-customer-demand  ## Normalize all input CSVs
 
 load-item:
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset item
@@ -420,7 +423,7 @@ load-customer-demand-month:  ## Load single month: make load-customer-demand-mon
 
 pipeline-customer-demand: normalize-customer-demand load-customer-demand  ## Full customer demand pipeline
 
-load-all:
+load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset item
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset location
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset customer
@@ -446,13 +449,13 @@ refresh-agg-inventory:
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
-api:
+api:  ## Run FastAPI on :8000 with --reload
 	$(UV) uvicorn api.main:app --reload --port 8000
 
-ui-init:
+ui-init:  ## Install npm deps for frontend
 	cd frontend && npm install
 
-ui:
+ui:  ## Run React dev server on :5173
 	cd frontend && [ -x node_modules/.bin/vite ] || npm install
 	cd frontend && npm run dev -- --host --port 5173
 
@@ -741,7 +744,7 @@ backtest-nbeats-full: backtest-nbeats backtest-load-nbeats
 
 backtest-baselines: backtest-seasonal-naive backtest-rolling-mean
 
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos backtest-bolt backtest-chronos2 backtest-chronos2e
+backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos backtest-bolt backtest-chronos2 backtest-chronos2e  ## Run all backtests sequentially (tree + foundation models)
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
@@ -887,37 +890,37 @@ lgbm-auto-tune-list:
 
 # ── Expert Panel Algorithm Selection ────────────────────────────────────────
 expert-panel:            ## Run Expert Panel test (5000 DFUs, 5 timeframes, ~30 min)
-	$(UV) python -m scripts.algorithm_testing.run_expert_panel
+	$(UV) python -m scripts.ml.run_expert_panel
 
 expert-panel-quick:      ## Quick Expert Panel test (1000 DFUs, 3 timeframes, ~8 min)
-	$(UV) python -m scripts.algorithm_testing.run_expert_panel --n-dfus 1000 --n-timeframes 3
+	$(UV) python -m scripts.ml.run_expert_panel --n-dfus 1000 --n-timeframes 3
 
 expert-panel-mini:       ## Minimal Expert Panel test (200 DFUs, 2 timeframes, ~2 min)
-	$(UV) python -m scripts.algorithm_testing.run_expert_panel --n-dfus 200 --n-timeframes 2
+	$(UV) python -m scripts.ml.run_expert_panel --n-dfus 200 --n-timeframes 2
 
 expert-panel-loc:        ## Run Expert Panel for all DFUs at a specific location: make expert-panel-loc LOC=1401-BULK
 	@if [ -z "$(LOC)" ]; then echo "Usage: make expert-panel-loc LOC=1401-BULK"; exit 1; fi
-	$(UV) python -m scripts.algorithm_testing.run_expert_panel --loc $(LOC)
+	$(UV) python -m scripts.ml.run_expert_panel --loc $(LOC)
 
 # ── Advanced Expert Panel (Foundation Models + Deep Learning) ───────────────
 adv-expert-panel:        ## Advanced Expert Panel (5000 DFUs, 10 TFs, execution-lag accuracy, foundation+DL+stat upgrades)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --n-timeframes 10
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --n-timeframes 10
 
 adv-expert-panel-quick:  ## Quick Advanced Expert Panel (1000 DFUs, 5 TFs, execution-lag accuracy)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --n-dfus 1000 --n-timeframes 5
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --n-dfus 1000 --n-timeframes 5
 
 adv-expert-panel-mini:   ## Minimal Advanced Expert Panel (200 DFUs, 2 TFs)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --n-dfus 200 --n-timeframes 2
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --n-dfus 200 --n-timeframes 2
 
 adv-expert-panel-loc:    ## Advanced Expert Panel for all DFUs at a specific location: make adv-expert-panel-loc LOC=1401-BULK
 	@if [ -z "$(LOC)" ]; then echo "Usage: make adv-expert-panel-loc LOC=1401-BULK"; exit 1; fi
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --loc $(LOC)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --loc $(LOC)
 
 route-analysis:          ## Compare per-DFU routing strategies on saved predictions (no retraining, ~2 min)
-	$(UV) python -m scripts.algorithm_testing.route_analysis
+	$(UV) python -m scripts.ml.expert_panel_route_analysis
 
 route-analysis-min3:     ## Same as route-analysis but require 3+ timeframes of history per DFU
-	$(UV) python -m scripts.algorithm_testing.route_analysis --min-history 3
+	$(UV) python -m scripts.ml.expert_panel_route_analysis --min-history 3
 
 # ── Expert System Backtest (full population, segment-assigned algorithm) ─────
 expsys-backtest:         ## Full ExpSys backtest: all DFUs, 10 TFs, loads to DB (~4-5h)
@@ -933,23 +936,23 @@ commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
 	git add -A && (git diff --staged --quiet || git commit -m "$(MSG)") && git push -u origin HEAD
 
-test:
+test:  ## Backend pytest (~0.7s, DB mocked)
 	$(UV) pytest tests/ -v --tb=short
 
-test-unit:
+test-unit:  ## Run only Python unit tests
 	$(UV) pytest tests/unit/ -v --tb=short
 
-test-api:
+test-api:  ## Run only Python API tests
 	$(UV) pytest tests/api/ -v --tb=short
 
-test-cov:
+test-cov:  ## Backend tests with coverage report
 	$(UV) pytest tests/ --cov=api --cov=common --cov-report=term-missing
 
-test-all: test ui-test
+test-all: test ui-test  ## Backend + frontend tests
 
-check-all: check-db check-api
+check-all: check-db check-api  ## DB row counts + API health
 
-ai-sync-check:
+ai-sync-check:  ## Verify Claude/Codex shared guidance wiring
 	bash scripts/ai_checks/sync_check.sh
 
 # ---------------------------------------------------------------------------
@@ -1072,7 +1075,7 @@ train-production: ## Train a single model on full history: make train-production
 train-production-all: ## Train all forecastable tree models on full history
 	$(UV) python scripts/ml/train_production_models.py --all
 
-forecast-generate:
+forecast-generate:  ## Generate production forecast inference rows
 	$(UV) python scripts/forecasting/generate_production_forecasts.py
 
 forecast-generate-dfu:
@@ -1385,13 +1388,13 @@ dq-all: dq-schema dq-populate dq-run
 
 # ── Unified Pipeline Orchestrator ──────────────────────────────
 
-pipeline-full:
+pipeline-full:  ## Full ETL pipeline (normalize + load + refresh MVs, parallel)
 	$(UV) python scripts/etl/run_pipeline.py --mode full --parallel
 
-pipeline-refresh:
+pipeline-refresh:  ## Incremental ETL refresh (detect changes, reload only deltas)
 	$(UV) python scripts/etl/run_pipeline.py --mode refresh
 
-pipeline-inventory:
+pipeline-inventory:  ## Full inventory-domain ETL pipeline only
 	$(UV) python scripts/etl/run_pipeline.py --mode full --domains inventory
 
 pipeline-inventory-refresh:

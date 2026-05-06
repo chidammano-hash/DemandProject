@@ -15,6 +15,11 @@ if ! ~/.local/bin/uv run ruff check api/ common/ scripts/ --select E,F 2>&1 | ta
   echo "BLOCKED: Fix Ruff issues before committing"
   exit 1
 fi
+echo "--- Unenforced CLAUDE.md rules ---"
+if ! bash "$ROOT_DIR/scripts/ai_checks/check_unenforced_rules.sh"; then
+  echo "BLOCKED: Fix CLAUDE.md unenforced-rule violations before committing"
+  exit 1
+fi
 echo "--- Backend tests ---"
 if ! ~/.local/bin/uv run pytest tests/ -q --tb=line 2>&1 | tail -10; then
   echo "BLOCKED: Fix test failures before committing"

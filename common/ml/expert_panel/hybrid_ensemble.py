@@ -19,8 +19,8 @@ import logging
 import pandas as pd
 
 from common.core.constants import FORECAST_QTY_COL
-from scripts.algorithm_testing.dfu_accuracy_matrix import compute_inverse_wape_blend
-from scripts.algorithm_testing.meta_router import MetaRouterModel, predict_meta_router
+from common.ml.expert_panel.dfu_accuracy_matrix import compute_inverse_wape_blend
+from common.ml.expert_panel.meta_router import MetaRouterModel, predict_meta_router
 
 logger = logging.getLogger(__name__)
 

@@ -226,7 +226,7 @@ def strategy_hybrid_meta_router(
 ) -> pd.DataFrame:
     """Confidence-gated hybrid: meta-router prediction OR inverse-WAPE blend.
 
-    Ports the scripts.algorithm_testing hybrid ensemble approach into the champion
+    Ports the common.ml.expert_panel hybrid ensemble approach into the champion
     framework with full execution-lag causality.
 
     For each DFU-month:

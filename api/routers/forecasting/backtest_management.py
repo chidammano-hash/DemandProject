@@ -23,6 +23,7 @@ from api.auth import require_api_key
 from api.core import get_conn
 from common.ai.decision_ledger import DecisionRecord, append_decision
 from common.ai.lineage import emit_event as emit_lineage_event
+from common.core.constants import CHAMPION_MODEL_ID
 from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
@@ -846,7 +847,7 @@ def promote_model(
     DFU coverage against the currently active champion. Every allow/reject
     is recorded to the AI decision ledger.
     """
-    is_champion = model_id == "champion"
+    is_champion = model_id == CHAMPION_MODEL_ID
     plan_version = datetime.now(UTC).strftime("%Y-%m")
     run_id_str = str(uuid.uuid4())
     champion_experiment_id: int | None = None
@@ -975,7 +976,7 @@ def promote_model(
                      source_model_id)
                 SELECT
                     %s, s.item_id, s.loc, s.forecast_month, s.forecast_qty,
-                    s.forecast_qty_lower, s.forecast_qty_upper, 'champion', s.cluster_id,
+                    s.forecast_qty_lower, s.forecast_qty_upper, %s, s.cluster_id,
                     s.horizon_months, s.is_recursive, s.lag_source, s.generated_at, %s::uuid,
                     s.model_id
                 FROM fact_production_forecast_staging s
@@ -983,7 +984,7 @@ def promote_model(
                   ON c.item_id = s.item_id
                  AND c.loc = s.loc
                  AND c.winning_model_id = s.model_id
-            """, (plan_version, run_id_str))
+            """, (plan_version, CHAMPION_MODEL_ID, run_id_str))
         else:
             # Single model: copy only that model's staged rows
             cur.execute("""

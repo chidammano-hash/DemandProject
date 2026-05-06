@@ -1,6 +1,13 @@
 """Minimal OpenLineage emission.
 
-Gen-4 Stream G / AI-10 (scaffold).
+Gen-4 Stream G / AI-10 (scaffold module — but ACTIVELY IMPORTED).
+
+NOTE: Sibling Gen-4 stubs were moved to ``archive/scaffolds/`` on
+2026-05-05; this module was kept in place because
+``api/routers/forecasting/backtest_management.py`` calls ``emit_event``
+in production. Either graduate this scaffold to a full implementation
+or extract the emission contract into a dedicated production module
+and re-archive this file.
 
 Writes events to ``fact_lineage_event`` using the OpenLineage-inspired
 event shape: ``{kind, job_id, run_id, inputs, outputs, facets, ts}``.

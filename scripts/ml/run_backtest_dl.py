@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.algorithm_testing.dl_models import run_dl_models
+from common.ml.expert_panel.dl_models import run_dl_models
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.ml.backtest_framework import (

@@ -5,7 +5,7 @@ experiment:
   sampling_method: "proportional"
   n_timeframes: 10
   n_workers: 14
-  output_dir: "scripts/algorithm_testing/results/adv_expert_panel"
+  output_dir: "data/expert_panel/results/adv_expert_panel"
   loc_filter: null                  # e.g. '1401-BULK' — runs all DFUs at that loc instead of sampling
 
 demand_classification:
@@ -14,7 +14,7 @@ demand_classification:
   high_volume_percentile: 90
   min_history_months: 6
 
-# --- Inherited from base expert panel (algorithm_testing) ---
+# --- Inherited from base expert panel (expert_panel) ---
 statistical_models:
   holt_winters:
     enabled: true

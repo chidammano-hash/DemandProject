@@ -1,6 +1,6 @@
 """Tests for the Chronos foundation model backtest integration.
 
-Tests the Chronos prediction pipeline from scripts.algorithm_testing/foundation_models.py:
+Tests the Chronos prediction pipeline from common.ml.expert_panel/foundation_models.py:
 - Output format (sku_ck, startdate, basefcst_pref, algorithm_id)
 - Non-negative predictions
 - NaN/Inf handling
@@ -23,7 +23,7 @@ import pandas as pd
 import pytest
 import torch
 
-from scripts.algorithm_testing.foundation_models import (
+from common.ml.expert_panel.foundation_models import (
     _run_chronos,
     run_foundation_models,
     _FOUNDATION_DISPATCH,
@@ -114,7 +114,7 @@ def _chronos_env(pipeline_mock: MagicMock):
     """
     with (
         patch(
-            "scripts.algorithm_testing.foundation_models._check_chronos",
+            "common.ml.expert_panel.foundation_models._check_chronos",
             return_value=True,
         ),
         patch(
@@ -122,7 +122,7 @@ def _chronos_env(pipeline_mock: MagicMock):
             return_value=pipeline_mock,
         ),
         patch(
-            "scripts.algorithm_testing.foundation_models._resolve_device",
+            "common.ml.expert_panel.foundation_models._resolve_device",
             return_value="cpu",
         ),
     ):
@@ -323,7 +323,7 @@ class TestChronosEmptyInput:
     def test_chronos_not_installed_returns_empty(self):
         """When chronos is not installed, return empty DF with correct columns."""
         with patch(
-            "scripts.algorithm_testing.foundation_models._check_chronos",
+            "common.ml.expert_panel.foundation_models._check_chronos",
             return_value=False,
         ):
             result = _run_chronos(
@@ -418,18 +418,18 @@ class TestDeviceResolution:
     """Test _resolve_device helper."""
 
     def test_explicit_cpu(self):
-        from scripts.algorithm_testing.foundation_models import _resolve_device
+        from common.ml.expert_panel.foundation_models import _resolve_device
         assert _resolve_device("cpu") == "cpu"
 
     def test_explicit_mps(self):
-        from scripts.algorithm_testing.foundation_models import _resolve_device
+        from common.ml.expert_panel.foundation_models import _resolve_device
         assert _resolve_device("mps") == "mps"
 
     def test_explicit_cuda(self):
-        from scripts.algorithm_testing.foundation_models import _resolve_device
+        from common.ml.expert_panel.foundation_models import _resolve_device
         assert _resolve_device("cuda") == "cuda"
 
     @patch.dict("os.environ", {"DEMAND_GPU": "off"})
     def test_auto_with_gpu_off(self):
-        from scripts.algorithm_testing.foundation_models import _resolve_device
+        from common.ml.expert_panel.foundation_models import _resolve_device
         assert _resolve_device("auto") == "cpu"

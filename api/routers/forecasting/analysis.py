@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
+from common.core.sql_helpers import EXTERNAL_MODEL_ID
 
 router = APIRouter(tags=["dfu-analysis"])
 
@@ -106,7 +107,7 @@ def sku_analysis(
 
         # 2b. Actual demand — deduplicated via single model per DFU
         #     FIX: parameterized query instead of f-string interpolation
-        dedup_model = "external" if "external" in model_set else (sorted(model_set)[0] if model_set else None)
+        dedup_model = EXTERNAL_MODEL_ID if EXTERNAL_MODEL_ID in model_set else (sorted(model_set)[0] if model_set else None)
         dedup_clause = ""
         dedup_params: list[Any] = []
         if dedup_model:

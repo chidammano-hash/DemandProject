@@ -154,6 +154,30 @@ while IFS= read -r f; do
 done <<< "$RULE5_HITS"
 
 # ---------------------------------------------------------------------------
+# Rule 6: f-string SQL execute calls — psycopg3 requires %s parameterised queries.
+# Detected by scripts/tools/check_fstring_sql.py. Allowlist pins EXISTING files;
+# any NEW file with f-string interpolation inside cur.execute() fails the gate.
+# ---------------------------------------------------------------------------
+echo "[Rule 6] f-string SQL inside cur.execute() — use %s parameterised queries"
+RULE6_ALLOW=$(read_allowlist "$ALLOW_DIR/rule6_fstring_sql.txt")
+# scripts/tools/check_fstring_sql.py prints lines like 'path/to/file.py:LINE: ...'
+# and exits non-zero if any violations exist. We harvest the file paths and
+# diff against the allowlist; existing offenders are silenced, new ones fail.
+RULE6_OUTPUT=$(python3 scripts/tools/check_fstring_sql.py 2>/dev/null || true)
+RULE6_RAW=$(echo "$RULE6_OUTPUT" \
+  | grep -E "^[a-zA-Z_/].*\.py:[0-9]+:" \
+  | awk -F: '{print $1}' \
+  | sort -u)
+
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if ! echo "$RULE6_ALLOW" | grep -Fxq "$f"; then
+    LN=$(echo "$RULE6_OUTPUT" | grep -E "^${f}:[0-9]+:" | head -1)
+    violation "$LN  use %s parameterised queries — psycopg3 requires it (see CLAUDE.md Critical Rules)"
+  fi
+done <<< "$RULE6_RAW"
+
+# ---------------------------------------------------------------------------
 echo
 if [[ "$FAIL" -gt 0 ]]; then
   echo "BLOCKED: $FAIL new violation(s) of unenforced CLAUDE.md rules."
@@ -161,5 +185,5 @@ if [[ "$FAIL" -gt 0 ]]; then
   echo "         $ALLOW_DIR/ pin EXISTING violations only and are not for new code."
   exit 1
 fi
-echo "OK: no new violations of the 5 CLAUDE.md unenforced rules."
+echo "OK: no new violations of the 6 CLAUDE.md unenforced rules."
 exit 0

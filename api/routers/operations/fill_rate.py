@@ -15,6 +15,7 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 from common.core.service_levels import load_sl_targets_by_abc
+from common.core.sql_helpers import EXTERNAL_MODEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -459,7 +460,7 @@ def get_fill_rate_gap_analysis(
                 ON f.item_id = ivf.item_id
                AND f.loc = ivf.loc
                AND f.month_start = ivf.month_start
-               AND ivf.model_id = 'external'
+               AND ivf.model_id = '{EXTERNAL_MODEL_ID}'
             {where_sql}
         )
         SELECT

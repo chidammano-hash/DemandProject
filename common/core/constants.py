@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 # fact_production_forecast. Reference via this constant; never hardcode the string.
 FORECAST_QTY_COL = "basefcst_pref"
 
+# Model identifier constants
+# (EXTERNAL_MODEL_ID lives in common/core/sql_helpers.py for legacy reasons.)
+CHAMPION_MODEL_ID = "champion"  # Promoted single-best model
+BLENDED_MODEL_ID = "blended"    # Multi-model meta-blend
+ABC_CLASSES = ("A", "B", "C")   # ABC velocity classes
+
 # Feature engineering constants
 CAT_FEATURES = ["region", "brand", "abc_vol"]
 NUMERIC_SKU_FEATURES = ["execution_lag", "total_lt"]

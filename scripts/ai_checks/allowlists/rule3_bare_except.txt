@@ -5,6 +5,7 @@
 api/routers/forecasting/backtest_management.py
 api/routers/forecasting/champion_experiments.py
 api/routers/forecasting/cluster_experiments.py
+api/routers/forecasting/competition.py
 api/routers/forecasting/lgbm_tuning.py
 api/routers/forecasting/model_tuning.py
 api/routers/forecasting/production_forecast.py
@@ -20,6 +21,7 @@ common/engines/exception_engine.py
 common/engines/sop_decisions.py
 common/ml/backtest_framework.py
 common/ml/clustering/scenario.py
+common/ml/expert_panel/statistical_upgrades.py
 common/ml/foundation_backtest.py
 common/ml/mlflow_utils.py
 common/ml/shap_selector.py

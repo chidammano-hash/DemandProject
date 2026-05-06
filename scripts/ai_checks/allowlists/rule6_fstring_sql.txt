@@ -1,0 +1,55 @@
+# TEMPORARY allowlist — pinned existing f-string SQL execute call violations.
+# CLAUDE.md rule: psycopg3 uses %s placeholders. f-strings inside cur.execute() must use parameterised queries.
+# Detected by scripts/tools/check_fstring_sql.py.
+# DO NOT add new entries.
+api/pool.py
+api/routers/domains.py
+api/routers/forecasting/bias_corrections.py
+api/routers/forecasting/blended_forecast.py
+api/routers/forecasting/champion_experiments.py
+api/routers/forecasting/competition.py
+api/routers/forecasting/consensus_plan.py
+api/routers/forecasting/fva.py
+api/routers/forecasting/production_forecast.py
+api/routers/forecasting/sku_features.py
+api/routers/intelligence/external_signals.py
+api/routers/inventory/inv_planning_insights.py
+api/routers/inventory/inv_planning_rebalancing.py
+api/routers/inventory/lead_time_learning.py
+api/routers/inventory/purchase_orders.py
+api/routers/inventory/sourcing.py
+api/routers/operations/echelon_planning.py
+api/routers/operations/events.py
+api/routers/operations/service_level.py
+api/routers/operations/sop.py
+api/routers/operations/supply.py
+api/routers/operations/supply_scenarios.py
+api/routers/platform/data_quality.py
+api/routers/platform/notifications.py
+api/routers/platform/sql_runner.py
+api/routers/platform/users.py
+api/routers/platform/webhooks.py
+common/ai/memory.py
+common/engines/dq_engine.py
+common/ml/clustering/scenario.py
+common/services/job_state.py
+scripts/db/db_maintenance.py
+scripts/etl/load.py
+scripts/etl/load_backtest_forecasts.py
+scripts/etl/load_customer_demand_postgres.py
+scripts/etl/load_dataset_postgres.py
+scripts/etl/load_ext_ml_forecasts.py
+scripts/etl/run_pipeline.py
+scripts/forecasting/apply_event_adjustments.py
+scripts/forecasting/compute_blended_forecast.py
+scripts/inventory/compute_echelon_targets.py
+scripts/inventory/compute_rebalancing.py
+scripts/inventory/refresh_health_scores.py
+scripts/inventory/run_supply_chain_scenario.py
+scripts/inventory/update_lead_time_actuals.py
+scripts/ml/fit_elasticity.py
+scripts/ml/generate_customer_features.py
+scripts/ml/run_clustering_scenario.py
+scripts/ml/run_expert_system_backtest.py
+scripts/ops/fix_dq_issues.py
+scripts/ops/run_sop_cycle.py

@@ -14,6 +14,7 @@ from fastapi.responses import Response as FastAPIResponse
 import psycopg
 
 from api.core import get_conn, set_cache
+from common.core.constants import ABC_CLASSES
 
 logger = logging.getLogger(__name__)
 
@@ -259,9 +260,9 @@ def accuracy_budget_decomposition(
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
-                  AND COALESCE(d.abc_vol, '') = 'A'
+                  AND COALESCE(d.abc_vol, '') = %s
                   AND EXTRACT(QUARTER FROM f.startdate) = 4
-            """, [model_id])
+            """, [model_id, ABC_CLASSES[0]])
             a_q4_row = cur.fetchone()
             a_q4_bias = _round_or_none(
                 _bias(

@@ -58,7 +58,7 @@ line-length = 100
 extend-exclude = [".venv", "data/", "archive/"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "N", "B", "C4", "RUF", "UP"]
+select = ["E", "W", "F", "I", "N", "B", "C4", "RUF", "UP", "BLE"]
 ignore = [
   "E501",   # line too long — handled by formatter
   "B008",   # function call in default argument (FastAPI Depends)
@@ -66,6 +66,40 @@ ignore = [
   "N803",   # argument name should be lowercase (common in ML formulas)
   "RUF012", # mutable class variable — too noisy for dataclasses
 ]
+
+# TODO: cleanup — BLE001 (bare except Exception) is enforced via the
+# scripts/ai_checks/check_unenforced_rules.sh allowlist gate for NEW code.
+# These per-file ignores pin EXISTING violations so ruff stays usable until
+# they are migrated to specific exceptions or annotated with
+# `# noqa: BLE001 — <reason>`.
+[tool.ruff.lint.per-file-ignores]
+"api/routers/forecasting/backtest_management.py" = ["BLE001"]
+"api/routers/forecasting/champion_experiments.py" = ["BLE001"]
+"api/routers/forecasting/cluster_experiments.py" = ["BLE001"]
+"api/routers/forecasting/production_forecast.py" = ["BLE001"]
+"api/routers/inventory/inv_planning_policy.py" = ["BLE001"]
+"api/routers/inventory/inv_planning_simulation.py" = ["BLE001"]
+"common/ai/ai_planner.py" = ["BLE001"]
+"common/ai/tuning_advisor.py" = ["BLE001"]
+"common/auth.py" = ["BLE001"]
+"common/core/utils.py" = ["BLE001"]
+"common/engines/exception_engine.py" = ["BLE001"]
+"common/engines/sop_decisions.py" = ["BLE001"]
+"common/ml/backtest_framework.py" = ["BLE001"]
+"common/ml/clustering/scenario.py" = ["BLE001"]
+"common/ml/mlflow_utils.py" = ["BLE001"]
+"common/ml/shap_selector.py" = ["BLE001"]
+"common/ml/tuning.py" = ["BLE001"]
+"common/services/cache.py" = ["BLE001"]
+"common/services/job_registry.py" = ["BLE001"]
+"common/services/job_state.py" = ["BLE001"]
+"common/services/notification_engine.py" = ["BLE001"]
+"common/services/perf_profiler.py" = ["BLE001"]
+"common/services/query_tracker.py" = ["BLE001"]
+"common/services/webhook_dispatcher.py" = ["BLE001"]
+"common/ml/expert_panel/**" = ["BLE001"]
+"scripts/**" = ["BLE001"]
+"tests/**" = ["BLE001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["api", "common", "scripts"]
