@@ -397,7 +397,7 @@ async def test_create_experiment_lgbm():
             "common.services.job_registry.JobManager",
             return_value=mock_jm,
         ),
-        patch("api.routers.forecasting.unified_model_tuning._build_temp_config",
+        patch("api.routers.forecasting.tuning._helpers._build_temp_config",
               return_value="/tmp/fake_config.yaml"),
     ):
         from api.main import app
@@ -441,7 +441,7 @@ async def test_create_experiment_catboost():
             "common.services.job_registry.JobManager",
             return_value=mock_jm,
         ),
-        patch("api.routers.forecasting.unified_model_tuning._build_temp_config",
+        patch("api.routers.forecasting.tuning._helpers._build_temp_config",
               return_value="/tmp/fake_config.yaml"),
     ):
         from api.main import app
@@ -820,10 +820,10 @@ async def test_promote_run():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("builtins.open", mock_open(read_data="algorithms:\n  lgbm:\n    n_estimators: 1500")),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.safe_load",
+        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
               return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.dump"),
-        patch("api.routers.forecasting.unified_model_tuning.shutil.copy2"),
+        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
+        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -865,10 +865,10 @@ async def test_promote_clears_previous():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("builtins.open", mock_open(read_data="")),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.safe_load",
+        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
               return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.dump"),
-        patch("api.routers.forecasting.unified_model_tuning.shutil.copy2"),
+        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
+        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -896,10 +896,10 @@ async def test_promote_creates_audit_log():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("builtins.open", mock_open(read_data="")),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.safe_load",
+        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
               return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.dump"),
-        patch("api.routers.forecasting.unified_model_tuning.shutil.copy2"),
+        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
+        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -944,10 +944,10 @@ async def test_promote_catboost_run():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("builtins.open", mock_open(read_data="")),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.safe_load",
+        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
               return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.dump"),
-        patch("api.routers.forecasting.unified_model_tuning.shutil.copy2"),
+        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
+        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -975,10 +975,10 @@ async def test_promote_xgboost_run():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("builtins.open", mock_open(read_data="")),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.safe_load",
+        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
               return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.unified_model_tuning.yaml.dump"),
-        patch("api.routers.forecasting.unified_model_tuning.shutil.copy2"),
+        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
+        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -1086,7 +1086,7 @@ async def test_get_templates_lgbm():
             "common.core.utils.load_config",
             return_value=templates_config,
         ),
-        patch("api.routers.forecasting.unified_model_tuning._load_live_params",
+        patch("api.routers.forecasting.tuning.templates._load_live_params",
               return_value={"n_estimators": 1500, "learning_rate": 0.02}),
     ):
         from api.main import app
@@ -1129,7 +1129,7 @@ async def test_get_templates_catboost():
             "common.core.utils.load_config",
             return_value=templates_config,
         ),
-        patch("api.routers.forecasting.unified_model_tuning._load_live_params",
+        patch("api.routers.forecasting.tuning.templates._load_live_params",
               return_value={"iterations": 3000, "learning_rate": 0.008}),
     ):
         from api.main import app
@@ -1460,7 +1460,7 @@ async def test_create_experiment_with_cluster_source_production():
             "common.services.job_registry.JobManager",
             return_value=mock_jm,
         ),
-        patch("api.routers.forecasting.unified_model_tuning._build_temp_config",
+        patch("api.routers.forecasting.tuning._helpers._build_temp_config",
               return_value="/tmp/fake_config.yaml"),
     ):
         from api.main import app
@@ -1506,7 +1506,7 @@ async def test_create_experiment_with_cluster_source_experimental():
             "common.services.job_registry.JobManager",
             return_value=mock_jm,
         ),
-        patch("api.routers.forecasting.unified_model_tuning._build_temp_config",
+        patch("api.routers.forecasting.tuning._helpers._build_temp_config",
               return_value="/tmp/fake_config.yaml"),
     ):
         from api.main import app

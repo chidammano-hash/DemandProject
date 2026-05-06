@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
+from common.ml.champion import STRATEGY_REGISTRY as _STRAT_REG
 from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config, reset_config
 
 router = APIRouter(tags=["competition"])
@@ -287,7 +287,7 @@ def run_competition():
     """
     from datetime import datetime
 
-    from common.ml.champion_strategies import (
+    from common.ml.champion import (
         STRATEGY_REGISTRY,
         compute_ceiling,
         compute_strategy_accuracy,

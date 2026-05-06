@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from datetime import date
 
-from common.ml.champion_strategies import (
+from common.ml.champion import (
     STRATEGY_REGISTRY,
     compute_ceiling,
     compute_strategy_accuracy,

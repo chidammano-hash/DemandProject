@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
-from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
+from common.ml.champion import STRATEGY_REGISTRY as _STRAT_REG
 from common.core.utils import reset_config
 
 logger = logging.getLogger(__name__)
