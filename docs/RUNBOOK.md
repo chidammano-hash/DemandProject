@@ -1614,6 +1614,9 @@ make db-drop-unused-indexes EXECUTE=1   # Actually drop unused indexes
 make db-retention                       # Show data retention actions (dry-run)
 make db-retention EXECUTE=1             # Apply retention policies (drop old partitions, delete old rows)
 make db-maintain                        # Routine: ANALYZE + health report
+make auto-create-partitions             # Create next 12 months of partitions (idempotent)
+make auto-create-partitions HORIZON=24  # Create next 24 months
+make auto-create-partitions-dry-run     # Print partition DDL without executing
 ```
 
 ### Recommended Schedule
@@ -1625,6 +1628,24 @@ make db-maintain                        # Routine: ANALYZE + health report
 | Drop unused indexes | Monthly | `make db-drop-unused-indexes EXECUTE=1` |
 | Retention policy | Monthly | `make db-retention EXECUTE=1` |
 | Full maintenance | Weekly | `make db-maintain` |
+| Auto-create future partitions | Monthly (cron) **or** before any backfill | `make auto-create-partitions` |
+
+### Partition Auto-Creation (`auto-create-partitions`)
+
+`scripts/db/auto_create_partitions.py` provisions the next N monthly partitions
+(default 12) for every RANGE-partitioned fact table:
+`fact_inventory_snapshot`, `fact_customer_demand_monthly`,
+`fact_external_signal`. The script uses `CREATE TABLE IF NOT EXISTS ... PARTITION OF`,
+so it is fully idempotent — re-running is always safe.
+
+Run it monthly via cron, or manually before any large backfill that may write
+rows beyond the last hardcoded partition. Without this, future-dated rows fall
+into the DEFAULT partition and the planner cannot prune them. Example crontab
+entry (1st of every month at 02:00):
+
+```cron
+0 2 1 * *  cd /path/to/DemandProject && make auto-create-partitions >> /var/log/demand_partitions.log 2>&1
+```
 
 ### PostgreSQL Configuration (docker-compose.yml)
 

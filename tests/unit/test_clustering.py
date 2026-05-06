@@ -18,17 +18,21 @@ class TestPackageImports:
     """Verify the clustering __init__.py re-exports everything."""
 
     def test_all_public_symbols_importable(self):
-        from common.ml.clustering import (
-            CORE_FEATURES,
-            LOG_TRANSFORM_FEATURES,
-            assign_cluster_labels,
-            compute_time_series_features,
-            find_optimal_k,
+        # Lightweight constants live at the package root.
+        from common.ml.clustering import CORE_FEATURES, LOG_TRANSFORM_FEATURES
+
+        # Heavy helpers (training/labeling/scenario) are imported from their
+        # submodules directly so the package init stays free of matplotlib /
+        # sklearn / scipy. See common/ml/clustering/__init__.py docstring.
+        from common.ml.clustering.features import compute_time_series_features
+        from common.ml.clustering.labeling import assign_cluster_labels
+        from common.ml.clustering.scenario import (
             generate_scenario_id,
             get_scenario_result,
-            merge_small_clusters,
             promote_scenario,
         )
+        from common.ml.clustering.training import find_optimal_k, merge_small_clusters
+
         # Smoke: make sure they are callable / iterable
         assert len(CORE_FEATURES) > 0
         assert len(LOG_TRANSFORM_FEATURES) > 0
@@ -272,12 +276,12 @@ class TestCoreFeatures:
     """Tests for CORE_FEATURES and LOG_TRANSFORM_FEATURES."""
 
     def test_core_features_count(self):
-        from common.ml.clustering.training import CORE_FEATURES
+        from common.ml.clustering.constants import CORE_FEATURES
 
         assert len(CORE_FEATURES) == 14
 
     def test_log_transform_features_all_in_expected_set(self):
-        from common.ml.clustering.training import LOG_TRANSFORM_FEATURES
+        from common.ml.clustering.constants import LOG_TRANSFORM_FEATURES
 
         expected = {
             "mean_demand", "median_demand", "std_demand",

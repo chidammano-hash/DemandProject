@@ -8,7 +8,7 @@
  * The "Tune" stage shows only tunable models with experiment UI.
  * The "Forecast" stage triggers production forecast generation.
  */
-import { useMemo, useReducer, useState } from "react";
+import { lazy, Suspense, useMemo, useReducer, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
 
@@ -21,16 +21,34 @@ import {
   pipelineConfigKeys,
 } from "@/api/queries/unified-model-tuning";
 
-import { ClusterExperimentsPanel } from "./clusters/ClusterExperimentsPanel";
-import { ChampionExperimentsPanel } from "./champion/ChampionExperimentsPanel";
-import { ForecastPanel } from "./forecast/ForecastPanel";
-
+// Lazy: heavy stage panels — only the active stage's chunk is fetched.
+const ClusterExperimentsPanel = lazy(() =>
+  import("./clusters/ClusterExperimentsPanel").then((m) => ({ default: m.ClusterExperimentsPanel })),
+);
+const ChampionExperimentsPanel = lazy(() =>
+  import("./champion/ChampionExperimentsPanel").then((m) => ({ default: m.ChampionExperimentsPanel })),
+);
+const ForecastPanel = lazy(() =>
+  import("./forecast/ForecastPanel").then((m) => ({ default: m.ForecastPanel })),
+);
+const BacktestStagePanel = lazy(() =>
+  import("./model-tuning/BacktestStagePanel").then((m) => ({ default: m.BacktestStagePanel })),
+);
+const TuneStagePanel = lazy(() =>
+  import("./model-tuning/TuneStagePanel").then((m) => ({ default: m.TuneStagePanel })),
+);
+// Lazy: modal/slide-over overlays — chunk only fetched once user opens them.
+const ExperimentBuilder = lazy(() =>
+  import("./model-tuning/ExperimentBuilder").then((m) => ({ default: m.ExperimentBuilder })),
+);
+const LogViewer = lazy(() =>
+  import("./model-tuning/LogViewer").then((m) => ({ default: m.LogViewer })),
+);
+const EnhancedPromoteModal = lazy(() =>
+  import("./model-tuning/EnhancedPromoteModal").then((m) => ({ default: m.EnhancedPromoteModal })),
+);
+// Eager: small floating button always visible.
 import { AIAdvisorFAB } from "./model-tuning/AIAdvisorFAB";
-import { BacktestStagePanel } from "./model-tuning/BacktestStagePanel";
-import { EnhancedPromoteModal } from "./model-tuning/EnhancedPromoteModal";
-import { ExperimentBuilder } from "./model-tuning/ExperimentBuilder";
-import { LogViewer } from "./model-tuning/LogViewer";
-import { TuneStagePanel } from "./model-tuning/TuneStagePanel";
 import {
   DEFAULT_MODELS,
   INITIAL_STATE,
@@ -39,6 +57,14 @@ import {
   tabReducer,
 } from "./model-tuning/_helpers";
 import type { PipelineStage } from "./model-tuning/_types";
+
+function StageLoader() {
+  return (
+    <div className="flex items-center justify-center text-sm text-muted-foreground rounded-md border border-dashed h-64">
+      Loading...
+    </div>
+  );
+}
 
 export default function ModelTuningTab() {
   useChartColors(); // ensure theme context
@@ -117,92 +143,101 @@ export default function ModelTuningTab() {
         ))}
       </div>
 
-      {/* Clustering stage */}
-      {stage === "clustering" && <ClusterExperimentsPanel />}
+      {/* Stage panels — Suspense boundary fetches the active stage's chunk on demand. */}
+      <Suspense fallback={<StageLoader />}>
+        {/* Clustering stage */}
+        {stage === "clustering" && <ClusterExperimentsPanel />}
 
-      {/* Champion stage */}
-      {stage === "champion" && <ChampionExperimentsPanel />}
+        {/* Champion stage */}
+        {stage === "champion" && <ChampionExperimentsPanel />}
 
-      {/* Forecast stage */}
-      {stage === "forecast" && <ForecastPanel />}
+        {/* Forecast stage */}
+        {stage === "forecast" && <ForecastPanel />}
 
-      {/* Backtest stage -- ALL models with run/load actions */}
-      {stage === "backtest" && (
-        <BacktestStagePanel
-          models={ALL_MODELS}
-          selectedModelId={selectedModelId}
-          selectedModelInfo={selectedModelInfo}
-          onSelectModel={(modelId) => dispatch({ type: "SELECT_MODEL", modelId })}
-        />
-      )}
+        {/* Backtest stage -- ALL models with run/load actions */}
+        {stage === "backtest" && (
+          <BacktestStagePanel
+            models={ALL_MODELS}
+            selectedModelId={selectedModelId}
+            selectedModelInfo={selectedModelInfo}
+            onSelectModel={(modelId) => dispatch({ type: "SELECT_MODEL", modelId })}
+          />
+        )}
 
-      {/* Tune stage -- tunable models only with experiment UI */}
-      {stage === "tune" && (
-        <TuneStagePanel
-          models={ALL_MODELS}
-          selectedModelId={selectedModelId}
-          selectedModelInfo={selectedModelInfo}
-          selectedModel={selectedModel}
-          isTunable={isTunable}
-          modelDetailTab={modelDetailTab}
-          baselineId={baselineId}
-          candidateId={candidateId}
-          page={page}
-          sortCol={sortCol}
-          sortDir={sortDir}
-          statusFilter={statusFilter}
-          execLag={execLag}
-          setExecLag={setExecLag}
-          onSelectModel={(modelId) => dispatch({ type: "SELECT_MODEL", modelId })}
-          onSetDetailTab={(tab) => dispatch({ type: "SET_DETAIL_TAB", tab })}
-          onSetStatusFilter={(filter) => dispatch({ type: "SET_STATUS_FILTER", filter })}
-          onSelectRow={(runId) => dispatch({ type: "SELECT_ROW", runId })}
-          onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
-          onToggleSort={(col) => dispatch({ type: "TOGGLE_SORT", col })}
-          onSetPage={(p) => dispatch({ type: "SET_PAGE", page: p })}
-          onShowLogs={(runId) => dispatch({ type: "SET_LOGS", runId })}
-          onPromote={(run) => dispatch({ type: "SET_PROMOTE", run })}
-          onOpenBuilder={() => dispatch({ type: "SET_BUILDER", open: true })}
-        />
-      )}
+        {/* Tune stage -- tunable models only with experiment UI */}
+        {stage === "tune" && (
+          <TuneStagePanel
+            models={ALL_MODELS}
+            selectedModelId={selectedModelId}
+            selectedModelInfo={selectedModelInfo}
+            selectedModel={selectedModel}
+            isTunable={isTunable}
+            modelDetailTab={modelDetailTab}
+            baselineId={baselineId}
+            candidateId={candidateId}
+            page={page}
+            sortCol={sortCol}
+            sortDir={sortDir}
+            statusFilter={statusFilter}
+            execLag={execLag}
+            setExecLag={setExecLag}
+            onSelectModel={(modelId) => dispatch({ type: "SELECT_MODEL", modelId })}
+            onSetDetailTab={(tab) => dispatch({ type: "SET_DETAIL_TAB", tab })}
+            onSetStatusFilter={(filter) => dispatch({ type: "SET_STATUS_FILTER", filter })}
+            onSelectRow={(runId) => dispatch({ type: "SELECT_ROW", runId })}
+            onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
+            onToggleSort={(col) => dispatch({ type: "TOGGLE_SORT", col })}
+            onSetPage={(p) => dispatch({ type: "SET_PAGE", page: p })}
+            onShowLogs={(runId) => dispatch({ type: "SET_LOGS", runId })}
+            onPromote={(run) => dispatch({ type: "SET_PROMOTE", run })}
+            onOpenBuilder={() => dispatch({ type: "SET_BUILDER", open: true })}
+          />
+        )}
+      </Suspense>
 
-      {/* ---- Experiment Builder Modal ---- */}
-      {isTunable && (
-        <ExperimentBuilder
-          model={selectedModel}
-          open={showBuilder}
-          onClose={() => dispatch({ type: "SET_BUILDER", open: false })}
-          onSubmitted={() => {
-            dispatch({ type: "SET_BUILDER", open: false });
-            queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
-            queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
-          }}
-        />
+      {/* ---- Experiment Builder Modal — only mount when actually open so its chunk loads on first use. ---- */}
+      {isTunable && showBuilder && (
+        <Suspense fallback={null}>
+          <ExperimentBuilder
+            model={selectedModel}
+            open={showBuilder}
+            onClose={() => dispatch({ type: "SET_BUILDER", open: false })}
+            onSubmitted={() => {
+              dispatch({ type: "SET_BUILDER", open: false });
+              queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
+              queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ---- Log Viewer Slide-Over ---- */}
-      {isTunable && (
-        <LogViewer
-          model={selectedModel}
-          runId={selectedRunForLogs ?? 0}
-          open={selectedRunForLogs !== null}
-          onClose={() => dispatch({ type: "SET_LOGS", runId: null })}
-        />
+      {isTunable && selectedRunForLogs !== null && (
+        <Suspense fallback={null}>
+          <LogViewer
+            model={selectedModel}
+            runId={selectedRunForLogs ?? 0}
+            open={selectedRunForLogs !== null}
+            onClose={() => dispatch({ type: "SET_LOGS", runId: null })}
+          />
+        </Suspense>
       )}
 
       {/* ---- Enhanced Promote Modal ---- */}
       {selectedRunForPromote && isTunable && (
-        <EnhancedPromoteModal
-          model={selectedModel}
-          run={selectedRunForPromote}
-          open={true}
-          onClose={() => dispatch({ type: "SET_PROMOTE", run: null })}
-          onPromoted={() => {
-            dispatch({ type: "SET_PROMOTE", run: null });
-            queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
-            queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
-          }}
-        />
+        <Suspense fallback={null}>
+          <EnhancedPromoteModal
+            model={selectedModel}
+            run={selectedRunForPromote}
+            open={true}
+            onClose={() => dispatch({ type: "SET_PROMOTE", run: null })}
+            onPromoted={() => {
+              dispatch({ type: "SET_PROMOTE", run: null });
+              queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
+              queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ---- Floating AI Tuning Advisor ---- */}

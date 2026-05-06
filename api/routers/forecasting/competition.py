@@ -267,14 +267,36 @@ def _count_model_wins(df: pd.DataFrame) -> dict[str, int]:
     return dict(sorted(wins.items(), key=lambda x: -x[1]))
 
 
-def _refresh_forecast_views() -> None:
-    """Refresh materialized views that depend on forecast data."""
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SET maintenance_work_mem = '512MB'")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
-        conn.commit()
+def _enqueue_forecast_view_refresh() -> str | None:
+    """Submit a background job that refreshes forecast-dependent MVs.
+
+    The actual REFRESH was previously executed synchronously inside the
+    request handler. At production scale this exceeded the 30s
+    ``statement_timeout`` and held ACCESS EXCLUSIVE locks that blocked other
+    readers. Moving the work to ``job_registry`` runs it on the APScheduler
+    pool with ``REFRESH ... CONCURRENTLY``, so the API returns immediately and
+    callers can poll ``GET /jobs/{id}`` for completion.
+
+    Returns the job_id string when the job was submitted, or ``None`` when the
+    scheduler is unavailable (e.g. unit-test environments without
+    APScheduler) — in which case the refresh is silently skipped rather than
+    blocking the request.
+    """
+    try:
+        from common.services.job_registry import JobManager
+
+        return JobManager().submit_job(
+            job_type="refresh_forecast_views",
+            params={},
+            label="Forecast MV refresh (post-competition)",
+            triggered_by="competition_run",
+        )
+    except Exception:
+        # Scheduler not available (tests) or DB-side failure — degrade
+        # gracefully. The next regular MV refresh job will pick up the data.
+        logger = __import__("logging").getLogger(__name__)
+        logger.exception("Failed to enqueue forecast view refresh job")
+        return None
 
 
 @router.post("/competition/run", dependencies=[Depends(require_api_key)])
@@ -339,7 +361,7 @@ def run_competition():
     if not ceiling_df.empty:
         ceiling_inserted = _insert_pick_winners(ceiling_df, ceiling_id, "ceiling_winners")
 
-    _refresh_forecast_views()
+    mv_refresh_job_id = _enqueue_forecast_view_refresh()
 
     # Build summary
     n_unique_dfus = (
@@ -364,6 +386,7 @@ def run_competition():
         "overall_champion_wape": champion_acc.get("wape"),
         "overall_champion_accuracy_pct": champion_acc.get("accuracy_pct"),
         "run_ts": datetime.now(UTC).isoformat(),
+        "mv_refresh_job_id": mv_refresh_job_id,
     }
 
     if not ceiling_df.empty:

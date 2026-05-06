@@ -6,7 +6,7 @@
  * Added: Insights group (7 new panels), role-based view presets, progressive disclosure.
  */
 
-import { useState, useMemo, useCallback, Fragment } from "react";
+import { lazy, Suspense, useState, useMemo, useCallback, Fragment } from "react";
 import { cn } from "@/lib/utils";
 import { InvPlanningNavProvider } from "@/context/InvPlanningNavContext";
 import {
@@ -54,43 +54,126 @@ import {
 
 import { Button } from "@/components/ui/button";
 
+// TodaysPlanBanner is rendered eagerly (always visible at top of tab).
 import { TodaysPlanBanner } from "./inv-planning/TodaysPlanBanner";
-import { ExceptionQueuePanel } from "./inv-planning/ExceptionQueuePanel";
-import { PortfolioHealthPanel } from "./inv-planning/PortfolioHealthPanel";
-import { EoqPanel } from "./inv-planning/EoqPanel";
-import { PolicyManagementPanel } from "./inv-planning/PolicyManagementPanel";
-import { FillRatePanel } from "./inv-planning/FillRatePanel";
-import { AbcXyzPanel } from "./inv-planning/AbcXyzPanel";
-import { SupplierPanel } from "./inv-planning/SupplierPanel";
-import { IntramonthPanel } from "./inv-planning/IntramonthPanel";
-import { SafetyStockPanel } from "./inv-planning/SafetyStockPanel";
-import { VariabilityPanel } from "./inv-planning/VariabilityPanel";
-import { LeadTimePanel } from "./inv-planning/LeadTimePanel";
-import { DemandSignalsPanel } from "./inv-planning/DemandSignalsPanel";
-import { SimulationPanel } from "./inv-planning/SimulationPanel";
-import { InvestmentPanel } from "./inv-planning/InvestmentPanel";
-import { DemandIntelligencePanel } from "./inv-planning/DemandIntelligencePanel";
-import { OverrideQueuePanel } from "./inv-planning/OverrideQueuePanel";
-import { ProcurementPanel } from "./inv-planning/ProcurementPanel";
-import { OpenPOPanel } from "./inv-planning/OpenPOPanel";
-import { ProjectionPanel } from "./inv-planning/ProjectionPanel";
-import { PlannedOrdersPanel } from "./inv-planning/PlannedOrdersPanel";
-import { EchelonPanel } from "./inv-planning/EchelonPanel";
-import { FinancialPlanPanel } from "./inv-planning/FinancialPlanPanel";
-import { EventCalendarPanel } from "./inv-planning/EventCalendarPanel";
-import { ScenarioPlanningPanel } from "./inv-planning/ScenarioPlanningPanel";
-import { ReplenishmentPlanPanel } from "./inv-planning/ReplenishmentPlanPanel";
-import { RebalancingPanel } from "./inv-planning/RebalancingPanel";
+
+// All panels are lazy-loaded — only the active panel's chunk is fetched.
+// Sub-panel files use named exports, hence the `.then((m) => ({ default: m.X }))`
+// shape required by React.lazy.
+const ExceptionQueuePanel = lazy(() =>
+  import("./inv-planning/ExceptionQueuePanel").then((m) => ({ default: m.ExceptionQueuePanel })),
+);
+const PortfolioHealthPanel = lazy(() =>
+  import("./inv-planning/PortfolioHealthPanel").then((m) => ({ default: m.PortfolioHealthPanel })),
+);
+const EoqPanel = lazy(() =>
+  import("./inv-planning/EoqPanel").then((m) => ({ default: m.EoqPanel })),
+);
+const PolicyManagementPanel = lazy(() =>
+  import("./inv-planning/PolicyManagementPanel").then((m) => ({ default: m.PolicyManagementPanel })),
+);
+const FillRatePanel = lazy(() =>
+  import("./inv-planning/FillRatePanel").then((m) => ({ default: m.FillRatePanel })),
+);
+const AbcXyzPanel = lazy(() =>
+  import("./inv-planning/AbcXyzPanel").then((m) => ({ default: m.AbcXyzPanel })),
+);
+const SupplierPanel = lazy(() =>
+  import("./inv-planning/SupplierPanel").then((m) => ({ default: m.SupplierPanel })),
+);
+const IntramonthPanel = lazy(() =>
+  import("./inv-planning/IntramonthPanel").then((m) => ({ default: m.IntramonthPanel })),
+);
+const SafetyStockPanel = lazy(() =>
+  import("./inv-planning/SafetyStockPanel").then((m) => ({ default: m.SafetyStockPanel })),
+);
+const VariabilityPanel = lazy(() =>
+  import("./inv-planning/VariabilityPanel").then((m) => ({ default: m.VariabilityPanel })),
+);
+const LeadTimePanel = lazy(() =>
+  import("./inv-planning/LeadTimePanel").then((m) => ({ default: m.LeadTimePanel })),
+);
+const DemandSignalsPanel = lazy(() =>
+  import("./inv-planning/DemandSignalsPanel").then((m) => ({ default: m.DemandSignalsPanel })),
+);
+const SimulationPanel = lazy(() =>
+  import("./inv-planning/SimulationPanel").then((m) => ({ default: m.SimulationPanel })),
+);
+const InvestmentPanel = lazy(() =>
+  import("./inv-planning/InvestmentPanel").then((m) => ({ default: m.InvestmentPanel })),
+);
+const DemandIntelligencePanel = lazy(() =>
+  import("./inv-planning/DemandIntelligencePanel").then((m) => ({ default: m.DemandIntelligencePanel })),
+);
+const OverrideQueuePanel = lazy(() =>
+  import("./inv-planning/OverrideQueuePanel").then((m) => ({ default: m.OverrideQueuePanel })),
+);
+const ProcurementPanel = lazy(() =>
+  import("./inv-planning/ProcurementPanel").then((m) => ({ default: m.ProcurementPanel })),
+);
+const OpenPOPanel = lazy(() =>
+  import("./inv-planning/OpenPOPanel").then((m) => ({ default: m.OpenPOPanel })),
+);
+const ProjectionPanel = lazy(() =>
+  import("./inv-planning/ProjectionPanel").then((m) => ({ default: m.ProjectionPanel })),
+);
+const PlannedOrdersPanel = lazy(() =>
+  import("./inv-planning/PlannedOrdersPanel").then((m) => ({ default: m.PlannedOrdersPanel })),
+);
+const EchelonPanel = lazy(() =>
+  import("./inv-planning/EchelonPanel").then((m) => ({ default: m.EchelonPanel })),
+);
+const FinancialPlanPanel = lazy(() =>
+  import("./inv-planning/FinancialPlanPanel").then((m) => ({ default: m.FinancialPlanPanel })),
+);
+const EventCalendarPanel = lazy(() =>
+  import("./inv-planning/EventCalendarPanel").then((m) => ({ default: m.EventCalendarPanel })),
+);
+const ScenarioPlanningPanel = lazy(() =>
+  import("./inv-planning/ScenarioPlanningPanel").then((m) => ({ default: m.ScenarioPlanningPanel })),
+);
+const ReplenishmentPlanPanel = lazy(() =>
+  import("./inv-planning/ReplenishmentPlanPanel").then((m) => ({ default: m.ReplenishmentPlanPanel })),
+);
+const RebalancingPanel = lazy(() =>
+  import("./inv-planning/RebalancingPanel").then((m) => ({ default: m.RebalancingPanel })),
+);
 // Expert panel enhancements — 7 new insight panels
-import { ActionFeedPanel } from "./inv-planning/ActionFeedPanel";
-import { NetworkHeatmapPanel } from "./inv-planning/NetworkHeatmapPanel";
-import { SegmentDashboardPanel } from "./inv-planning/SegmentDashboardPanel";
-import { PlanningScorecardPanel } from "./inv-planning/PlanningScorecardPanel";
-import { CashFlowPanel } from "./inv-planning/CashFlowPanel";
-import { ServiceLevelWaterfallPanel } from "./inv-planning/ServiceLevelWaterfallPanel";
-import { ConstrainedOptPanel } from "./inv-planning/ConstrainedOptPanel";
-import { SourcingPanel } from "./inv-planning/SourcingPanel";
-import { PurchaseOrdersPanel } from "./inv-planning/PurchaseOrdersPanel";
+const ActionFeedPanel = lazy(() =>
+  import("./inv-planning/ActionFeedPanel").then((m) => ({ default: m.ActionFeedPanel })),
+);
+const NetworkHeatmapPanel = lazy(() =>
+  import("./inv-planning/NetworkHeatmapPanel").then((m) => ({ default: m.NetworkHeatmapPanel })),
+);
+const SegmentDashboardPanel = lazy(() =>
+  import("./inv-planning/SegmentDashboardPanel").then((m) => ({ default: m.SegmentDashboardPanel })),
+);
+const PlanningScorecardPanel = lazy(() =>
+  import("./inv-planning/PlanningScorecardPanel").then((m) => ({ default: m.PlanningScorecardPanel })),
+);
+const CashFlowPanel = lazy(() =>
+  import("./inv-planning/CashFlowPanel").then((m) => ({ default: m.CashFlowPanel })),
+);
+const ServiceLevelWaterfallPanel = lazy(() =>
+  import("./inv-planning/ServiceLevelWaterfallPanel").then((m) => ({ default: m.ServiceLevelWaterfallPanel })),
+);
+const ConstrainedOptPanel = lazy(() =>
+  import("./inv-planning/ConstrainedOptPanel").then((m) => ({ default: m.ConstrainedOptPanel })),
+);
+const SourcingPanel = lazy(() =>
+  import("./inv-planning/SourcingPanel").then((m) => ({ default: m.SourcingPanel })),
+);
+const PurchaseOrdersPanel = lazy(() =>
+  import("./inv-planning/PurchaseOrdersPanel").then((m) => ({ default: m.PurchaseOrdersPanel })),
+);
+
+function PanelLoader() {
+  return (
+    <div className="flex items-center justify-center text-sm text-muted-foreground rounded-md border border-dashed h-64">
+      Loading...
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Role-based view presets (Expert #13 — Rachel Kim)
@@ -573,8 +656,10 @@ export function InvPlanningTab() {
           )}
         </div>
 
-        {/* Panel body */}
+        {/* Panel body — Suspense boundary lets the active panel's chunk load
+            without blocking the rest of the tab shell. */}
         <div className="flex-1 p-5">
+          <Suspense fallback={<PanelLoader />}>
           {activePanel === "exceptions"    && <ExceptionQueuePanel />}
           {activePanel === "health"        && <PortfolioHealthPanel />}
           {activePanel === "eoq"           && <EoqPanel />}
@@ -611,6 +696,7 @@ export function InvPlanningTab() {
           {activePanel === "cashflow"     && <CashFlowPanel />}
           {activePanel === "waterfall"    && <ServiceLevelWaterfallPanel />}
           {activePanel === "budgetopt"    && <ConstrainedOptPanel />}
+          </Suspense>
         </div>
       </div>
     </div>

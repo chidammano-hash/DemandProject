@@ -1,6 +1,7 @@
 """Customer lifecycle and demand-at-risk endpoints."""
 from __future__ import annotations
 
+import concurrent.futures
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -16,6 +17,20 @@ from ._helpers import (
 )
 
 router = APIRouter(tags=["customer-analytics"])
+
+
+def _run_query(sql: str, params: list[Any]) -> list[tuple]:
+    """Execute a single SELECT in its own pooled connection.
+
+    Used to fan out the cohort + waterfall queries in /lifecycle across two
+    pool connections so they overlap on the database side instead of running
+    sequentially on one connection. Each invocation acquires + releases a
+    pool slot so we never hold connections idle while the other query is in
+    flight.
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -130,11 +145,17 @@ def customer_analytics_lifecycle(
         ORDER BY m.month
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(cohort_sql, params)
-        cohort_rows = cur.fetchall()
-        cur.execute(waterfall_sql, params2)
-        waterfall_rows = cur.fetchall()
+    # Run cohort + waterfall in parallel on separate pool connections.
+    # Both are multi-second queries against fact_customer_demand_monthly /
+    # mv_customer_activity_monthly with no shared state — running them
+    # concurrently roughly halves wall-clock time for the endpoint. Pool
+    # max_size is 50 (api/pool.py) so 2 connections per request is fine
+    # even with the 13-endpoint Customer Analytics tab fan-out.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        cohort_future = pool.submit(_run_query, cohort_sql, params)
+        waterfall_future = pool.submit(_run_query, waterfall_sql, params2)
+        cohort_rows = cohort_future.result()
+        waterfall_rows = waterfall_future.result()
 
     # Build cohort response
     cohort_map: dict[str, dict[str, Any]] = {}
@@ -178,6 +199,42 @@ def customer_analytics_demand_at_risk(
     """Waterfall breakdown of demand risk categories."""
     set_cache(response, max_age=300)
     params: list[Any] = []
+
+    # Fast path: default 12-month window + no item filter — read precomputed
+    # per-customer scores from mv_ca_demand_at_risk. This collapses the 4-CTE
+    # subquery (concentration, OOS, churn) over millions of rows to a single
+    # 4-aggregate SELECT against ~33K rows. Falls back to the fact-table path
+    # when item_id is set OR a custom date range is requested (the MV is
+    # built for the default 12-month window only).
+    if item_id is None and not (date_from or "").strip() and not (date_to or "").strip():
+        sql_mv = """
+            SELECT COALESCE(SUM(demand_qty), 0)                                                              AS total_demand,
+                   COALESCE(SUM(demand_qty) FILTER (WHERE is_concentration_risk), 0)                          AS concentration_risk,
+                   COALESCE(SUM(oos_loss_qty), 0)                                                             AS oos_loss,
+                   COALESCE(SUM(demand_qty) FILTER (WHERE is_churn_risk), 0)                                  AS churn_risk
+            FROM mv_ca_demand_at_risk
+        """
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql_mv)
+            row = cur.fetchone()
+
+        if not row:
+            return {"waterfall": []}
+
+        total = float(row[0] or 0)
+        conc = float(row[1] or 0)
+        oos = float(row[2] or 0)
+        churn = float(row[3] or 0)
+        secure = max(total - conc - oos - churn, 0)
+        waterfall = [
+            {"category": "total_demand", "value": round(total, 1)},
+            {"category": "concentration_risk", "value": round(conc, 1)},
+            {"category": "oos_loss", "value": round(oos, 1)},
+            {"category": "churn_risk", "value": round(churn, 1)},
+            {"category": "secure_demand", "value": round(secure, 1)},
+        ]
+        return {"waterfall": waterfall}
+
     where = _build_where(params, item_id, date_from, date_to, None, None)
 
     sql = f"""

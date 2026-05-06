@@ -1,0 +1,32 @@
+-- 170: Enable pg_stat_statements for query-level performance monitoring.
+--
+-- pg_stat_statements aggregates execution stats (calls, total/mean time, rows,
+-- shared blocks read/hit/dirtied) per normalized SQL statement. It is the
+-- primary tool used by `make perf-api` and `scripts/db/db_maintenance.py` to
+-- identify the heaviest queries hitting the database.
+--
+-- IMPORTANT: CREATE EXTENSION alone is NOT sufficient. The extension must
+-- ALSO be loaded via `shared_preload_libraries` in postgresql.conf and the
+-- Postgres server must be RESTARTED for tracking to begin. After the restart,
+-- query stats start accumulating in `pg_stat_statements`.
+--
+-- One-time server-side configuration (perform on the host, then restart):
+--   ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements';
+--   ALTER SYSTEM SET pg_stat_statements.max = 10000;
+--   ALTER SYSTEM SET pg_stat_statements.track = 'all';
+--   -- then `pg_ctl restart` (or `docker compose restart postgres`).
+--
+-- Verify after restart:
+--   SELECT count(*) FROM pg_stat_statements;     -- > 0 once traffic flows
+--   SELECT name, setting FROM pg_settings
+--     WHERE name LIKE 'pg_stat_statements%';
+--
+-- To reset accumulated stats (e.g. after a config change):
+--   SELECT pg_stat_statements_reset();
+
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+-- Sanity comment: this DDL only registers the extension's SQL surface (views
+-- and functions). Without `shared_preload_libraries='pg_stat_statements'` in
+-- postgresql.conf followed by a server restart, the view will exist but stay
+-- empty because the underlying shared-memory tracker is not loaded.

@@ -6,7 +6,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain
+.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run refresh-customer-filter-options
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -97,6 +97,20 @@ deploy-sql:
 refresh-customer-mv:
 	@echo "Refreshing mv_customer_activity_monthly CONCURRENTLY..."
 	@$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_customer_activity_monthly;"
+	@echo "  OK"
+
+# Customer-analytics specialized MVs (Item 20 of perf roadmap).
+# Refresh nightly after `make load-customer-demand`. Each MV powers one of
+# the heavy panels in the Customer Analytics tab — collapsing per-request
+# fact-table aggregations to single indexed lookups at 40x scale.
+refresh-ca-mvs:                       ## Refresh customer-analytics specialized MVs
+	@echo "Refreshing customer-analytics MVs CONCURRENTLY..."
+	@for mv in mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns; do \
+	  echo "  Refreshing $$mv ..."; \
+	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
+	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \
+	    || echo "    WARN: $$mv skipped (does not exist — apply sql/180-182_*.sql)"; \
+	done
 	@echo "  OK"
 
 # Step 5: frontend bundle.
@@ -379,6 +393,15 @@ load-location:
 
 load-customer:
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset customer
+	@$(MAKE) refresh-customer-filter-options
+
+# One-shot MV refresh — call after dim_customer reloads. Backs the
+# /customer-analytics/filter-options endpoint (sql/173).
+refresh-customer-filter-options:
+	@echo "Refreshing mv_customer_filter_options CONCURRENTLY..."
+	@$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_customer_filter_options;" 2>/dev/null \
+		|| $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW mv_customer_filter_options;"
+	@echo "  OK"
 
 load-time:
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset time
@@ -417,9 +440,13 @@ normalize-customer-demand:  ## Normalize customer demand CSVs
 
 load-customer-demand:  ## Load customer demand (full replace)
 	$(UV) python scripts/etl/load_customer_demand_postgres.py --replace
+	$(MAKE) refresh-customer-mv
+	$(MAKE) refresh-ca-mvs
+	@$(MAKE) refresh-customer-mv
 
 load-customer-demand-month:  ## Load single month: make load-customer-demand-month MONTH=2026-01
 	$(UV) python scripts/etl/load_customer_demand_postgres.py --month $(MONTH)
+	@$(MAKE) refresh-customer-mv
 
 pipeline-customer-demand: normalize-customer-demand load-customer-demand  ## Full customer demand pipeline
 
@@ -438,14 +465,17 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(MAKE) refresh-agg
 
 refresh-agg-sales:
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_sales_monthly;" >/dev/null
+	# CONCURRENTLY safe: uq_agg_sales_item_loc_month (sql/119) is the required unique index.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly;" >/dev/null
 
 refresh-agg-forecast:
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
+	# CONCURRENTLY safe: uq_agg_forecast_item_loc_month_model (sql/119) is the required unique index.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly;" >/dev/null
 
 refresh-agg-inventory:
+	# CONCURRENTLY safe: uq_agg_inv_item_loc_month (sql/119) is the required unique index.
 	$(PSQL) \
-		-c "REFRESH MATERIALIZED VIEW agg_inventory_monthly;"
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;"
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
@@ -492,8 +522,9 @@ db-apply-jobs:
 	$(PSQL) < sql/021_alter_job_history_scheduling.sql
 
 refresh-inv-backtest:
+	# CONCURRENTLY safe: uq_inv_fcst_item_loc_month_model (sql/119) is the required unique index.
 	$(PSQL) \
-		-c "REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly;"
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_forecast_monthly;"
 
 inventory-pipeline: normalize-inventory load-inventory
 
@@ -809,8 +840,11 @@ forecast-clean-list:
 	$(UV) python scripts/ml/clean_forecasts_by_date.py --list
 
 accuracy-slice-refresh:
+	# CONCURRENTLY safe: uq_agg_accuracy_dim, uq_agg_accuracy_lag_archive,
+	# uq_dfu_coverage_model_lag_dfu, and uq_dfu_coverage_lag_archive (sql/119)
+	# back the four MVs respectively.
 	$(PSQL) -v ON_ERROR_STOP=1 \
-		-c "REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW agg_dfu_coverage; REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive;"
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive;"
 
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
@@ -1589,7 +1623,9 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
 	  agg_accuracy_by_dim agg_dfu_coverage \
 	  mv_inventory_health_score mv_control_tower_kpis \
-	  mv_integrated_planning_targets; do \
+	  mv_integrated_planning_targets \
+	  mv_customer_activity_monthly \
+	  mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns; do \
 	  echo "  Refreshing $$mv ..."; \
 	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
 	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \
@@ -1661,3 +1697,18 @@ db-optimize: db-analyze db-drop-unused-indexes  ## Full optimization: ANALYZE + 
 
 db-maintain: db-analyze db-health      ## Routine maintenance: ANALYZE + health report
 	@echo "✓ Maintenance complete."
+
+# ---------------------------------------------------------------------------
+# Partition Management
+# ---------------------------------------------------------------------------
+# Idempotently provisions the next N monthly partitions for every
+# RANGE-partitioned fact table (fact_inventory_snapshot,
+# fact_customer_demand_monthly, fact_external_signal). Run monthly via cron
+# OR manually before any large backfill that may write rows into a future
+# month. CREATE TABLE IF NOT EXISTS makes re-runs cheap.
+
+auto-create-partitions:                ## Create the next 12 monthly partitions for every partitioned fact table (idempotent)
+	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py --horizon $(or $(HORIZON),12)
+
+auto-create-partitions-dry-run:        ## Print partition DDL without executing
+	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py --horizon $(or $(HORIZON),12) --dry-run

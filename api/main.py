@@ -13,11 +13,12 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.pool import open_pool, close_pool
+from common.services.rate_limiter import get_rate_limiter
 
 
 logger = logging.getLogger("api.access")
@@ -91,7 +92,11 @@ async def lifespan(app: FastAPI):
         logger.info("DB connection pool closed on shutdown")
 
 
-app = FastAPI(title="Demand Unified MVP API", lifespan=lifespan)
+app = FastAPI(
+    title="Demand Unified MVP API",
+    lifespan=lifespan,
+    default_response_class=ORJSONResponse,
+)
 
 # --- Middleware (outermost first) ---
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -107,7 +112,6 @@ app.add_middleware(
 async def rate_limit_middleware(request: Request, call_next):
     """Rate limit write endpoints (POST/PUT/DELETE) to prevent abuse."""
     if request.method in ("POST", "PUT", "DELETE"):
-        from common.services.rate_limiter import get_rate_limiter
         limiter = get_rate_limiter()
         client_ip = request.client.host if request.client else "unknown"
         limit = limiter.get_tier_limit("standard")

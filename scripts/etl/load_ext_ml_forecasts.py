@@ -503,6 +503,11 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
         print(f"  Committed. model_id='{model_id}' loaded successfully.")
 
     # Refresh downstream materialized views (separate connection after commit).
+    # All five MVs have unique indexes (sql/119_concurrent_mv_refresh.sql), so
+    # CONCURRENTLY refresh is safe and avoids taking AccessExclusive locks
+    # against the read-side. Note: REFRESH MATERIALIZED VIEW CONCURRENTLY
+    # requires the MV to already be populated; for first-time refresh after
+    # CREATE MATERIALIZED VIEW WITH NO DATA, drop the CONCURRENTLY keyword.
     print("  Refreshing forecast materialized views...")
     with profiled_section("refresh_forecast_views"):
         t0 = time.time()
@@ -511,23 +516,23 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
                 cur.execute("SET maintenance_work_mem = '512MB'")
 
                 t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
+                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly")
                 print(f"    agg_forecast_monthly refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
+                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim")
                 print(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
+                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage")
                 print(f"    agg_dfu_coverage refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
+                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive")
                 print(f"    agg_accuracy_lag_archive refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
+                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive")
                 print(f"    agg_dfu_coverage_lag_archive refreshed ({time.time() - t1:.1f}s)")
 
             conn.commit()

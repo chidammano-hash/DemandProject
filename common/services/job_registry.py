@@ -77,6 +77,7 @@ from common.services.job_state import (
     _run_load_backtest_model,
     _run_load_backtest_results,
     _run_model_tuning_experiment,
+    _run_refresh_forecast_views,
     _run_refresh_health_scores,
     _run_refresh_intramonth,
     _run_seasonality,
@@ -401,6 +402,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="inventory",
         callable=_run_refresh_intramonth,
         params_schema={},
+    ),
+    "refresh_forecast_views": JobTypeDef(
+        type_id="refresh_forecast_views",
+        label="Refresh Forecast Views",
+        description="Refresh customer-analytics + forecast MVs concurrently (background)",
+        group="forecast",
+        callable=_run_refresh_forecast_views,
+        params_schema={"mvs": None},
     ),
     "run_ss_simulation": JobTypeDef(
         type_id="run_ss_simulation",

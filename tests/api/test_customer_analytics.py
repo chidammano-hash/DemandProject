@@ -586,12 +586,14 @@ async def test_demand_flow_returns_sankey():
 
 @pytest.mark.asyncio
 async def test_filter_options_returns_lists():
+    # Endpoint now reads from mv_customer_filter_options (sql/173): one row
+    # per category, value column is a TEXT[] of distinct values.
     pool, _, cursor = _make_pool()
-    cursor.fetchone.return_value = (
-        ["Off Premise", "On Premise"],
-        ["Bar", "Grocery", "Restaurant"],
-        ["CA", "FL", "TX"],
-    )
+    cursor.fetchall.return_value = [
+        ("channels", ["Off Premise", "On Premise"]),
+        ("store_types", ["Bar", "Grocery", "Restaurant"]),
+        ("states", ["CA", "FL", "TX"]),
+    ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -606,8 +608,14 @@ async def test_filter_options_returns_lists():
 
 @pytest.mark.asyncio
 async def test_filter_options_empty():
+    # MV returns three rows even when dim_customer is empty (NULLs coalesced
+    # to empty arrays at MV-build time).
     pool, _, cursor = _make_pool()
-    cursor.fetchone.return_value = (None, None, None)
+    cursor.fetchall.return_value = [
+        ("channels", []),
+        ("store_types", []),
+        ("states", []),
+    ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)

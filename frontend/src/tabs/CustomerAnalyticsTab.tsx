@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { LazyPanel } from "@/components/LazyPanel";
 import {
   customerAnalyticsKeys,
   fetchCustomerAnalyticsItems,
@@ -303,68 +304,88 @@ function CustomerAnalyticsContent() {
         <CustomerTreemap filters={filters} />
       </div>
 
-      {/* 4. Heatmap | Sunburst */}
+      {/* 4. Heatmap | Sunburst — viewport-gated: useQuery only fires when scrolled into view */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Suspense fallback={<PanelFallback height={400} />}>
-          <CustomerHeatmap filters={filters} metric="demand_qty" topN={25} />
-        </Suspense>
-        <Suspense fallback={<PanelFallback height={420} />}>
-          <ChannelSunburst filters={filters} />
-        </Suspense>
+        <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
+          <Suspense fallback={<PanelFallback height={400} />}>
+            <CustomerHeatmap filters={filters} metric="demand_qty" topN={25} />
+          </Suspense>
+        </LazyPanel>
+        <LazyPanel fallback={<PanelFallback height={420} />} minHeight={420}>
+          <Suspense fallback={<PanelFallback height={420} />}>
+            <ChannelSunburst filters={filters} />
+          </Suspense>
+        </LazyPanel>
       </div>
 
       {/* 5. Sparklines | OOS Bubble */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Suspense fallback={<PanelFallback height={300} />}>
-          <SegmentSparklines
-            filters={filters}
-            segmentBy={segmentBy}
-            onSegmentByChange={setSegmentBy}
-          />
-        </Suspense>
-        <Suspense fallback={<PanelFallback height={400} />}>
-          <OosImpactBubble
-            filters={filters}
-            grain={oosGrain}
-            onGrainChange={setOosGrain}
-          />
-        </Suspense>
+        <LazyPanel fallback={<PanelFallback height={300} />} minHeight={300}>
+          <Suspense fallback={<PanelFallback height={300} />}>
+            <SegmentSparklines
+              filters={filters}
+              segmentBy={segmentBy}
+              onSegmentByChange={setSegmentBy}
+            />
+          </Suspense>
+        </LazyPanel>
+        <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
+          <Suspense fallback={<PanelFallback height={400} />}>
+            <OosImpactBubble
+              filters={filters}
+              grain={oosGrain}
+              onGrainChange={setOosGrain}
+            />
+          </Suspense>
+        </LazyPanel>
       </div>
 
       {/* 6. Full-width ranking */}
-      <Suspense fallback={<PanelFallback height={400} />}>
-        <CustomerRanking
-          filters={filters}
-          sort={rankSort}
-          topN={20}
-          onSortChange={setRankSort}
-        />
-      </Suspense>
+      <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
+        <Suspense fallback={<PanelFallback height={400} />}>
+          <CustomerRanking
+            filters={filters}
+            sort={rankSort}
+            topN={20}
+            onSortChange={setRankSort}
+          />
+        </Suspense>
+      </LazyPanel>
 
       {/* 7. Lifecycle | Demand at Risk */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Suspense fallback={<PanelFallback />}>
-          <CustomerLifecycle filters={filters} />
-        </Suspense>
-        <Suspense fallback={<PanelFallback />}>
-          <DemandAtRisk filters={filters} />
-        </Suspense>
+        <LazyPanel fallback={<PanelFallback />} minHeight={300}>
+          <Suspense fallback={<PanelFallback />}>
+            <CustomerLifecycle filters={filters} />
+          </Suspense>
+        </LazyPanel>
+        <LazyPanel fallback={<PanelFallback />} minHeight={300}>
+          <Suspense fallback={<PanelFallback />}>
+            <DemandAtRisk filters={filters} />
+          </Suspense>
+        </LazyPanel>
       </div>
 
       {/* 8. Affinity | Order Patterns */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Suspense fallback={<PanelFallback height={400} />}>
-          <CustomerItemAffinity filters={filters} />
-        </Suspense>
-        <Suspense fallback={<PanelFallback />}>
-          <OrderPatterns filters={filters} />
-        </Suspense>
+        <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
+          <Suspense fallback={<PanelFallback height={400} />}>
+            <CustomerItemAffinity filters={filters} />
+          </Suspense>
+        </LazyPanel>
+        <LazyPanel fallback={<PanelFallback />} minHeight={300}>
+          <Suspense fallback={<PanelFallback />}>
+            <OrderPatterns filters={filters} />
+          </Suspense>
+        </LazyPanel>
       </div>
 
       {/* 9. Full-width Demand Flow Sankey */}
-      <Suspense fallback={<PanelFallback height={500} />}>
-        <DemandFlowSankey filters={filters} />
-      </Suspense>
+      <LazyPanel fallback={<PanelFallback height={500} />} minHeight={500}>
+        <Suspense fallback={<PanelFallback height={500} />}>
+          <DemandFlowSankey filters={filters} />
+        </Suspense>
+      </LazyPanel>
     </div>
   );
 }

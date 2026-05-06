@@ -28,10 +28,9 @@ if str(ROOT) not in sys.path:
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
+from common.ml.clustering.constants import CORE_FEATURES, LOG_TRANSFORM_FEATURES
 from common.ml.clustering.features import compute_time_series_features
 from common.ml.clustering.training import (
-    CORE_FEATURES,
-    LOG_TRANSFORM_FEATURES,
     find_optimal_k,
     merge_small_clusters,
 )

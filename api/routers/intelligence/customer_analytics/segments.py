@@ -7,8 +7,20 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
+from common.services.cache import cached_sync
 
-from ._helpers import _CA_CACHE, _build_where
+from ._helpers import (
+    _CA_CACHE,
+    _build_where,
+    _build_where_mv,
+    _customer_activity_source,
+    _default_date_range,
+)
+
+# dim_customer reloads at most daily — a 24h TTL kills nearly all repeat
+# fetches (every tab open, every filter-bar mount) without risking stale
+# enums between loads.
+_CA_FILTER_OPTIONS_CACHE = cached_sync(ttl=86400, group="customer_analytics")
 
 router = APIRouter(tags=["customer-analytics"])
 
@@ -29,25 +41,32 @@ def customer_analytics_channel_mix(
     """Channel/store-type/sub-channel sunburst hierarchy."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, None, None)
+    # Route through MV when no item filter — the MV inlines rpt_channel_desc,
+    # store_type_desc, rpt_sub_channel_desc, and state. Eliminates the
+    # fact x dim_customer JOIN.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    dim_alias = "f" if uses_mv else "c"
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, None, None)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, None, None)
     if state:
-        where += " AND c.state = %s"
+        where += f" AND {dim_alias}.state = %s"
         params.append(state)
 
     # Cap groups: the rendered sunburst only keeps the top channels with
     # 12 store-types x 15 sub-channels each. A 1000-row LIMIT is far above
     # that and prevents a runaway when a tenant has thousands of sub-channels.
     sql = f"""
-        SELECT COALESCE(c.rpt_channel_desc, 'Unknown') AS channel,
-               COALESCE(c.store_type_desc, 'Unknown') AS store_type,
-               COALESCE(c.rpt_sub_channel_desc, 'Unknown') AS sub_channel,
-               COUNT(DISTINCT c.customer_no) AS customer_count,
+        SELECT COALESCE({dim_alias}.rpt_channel_desc, 'Unknown') AS channel,
+               COALESCE({dim_alias}.store_type_desc, 'Unknown') AS store_type,
+               COALESCE({dim_alias}.rpt_sub_channel_desc, 'Unknown') AS sub_channel,
+               COUNT(DISTINCT {dim_alias}.customer_no) AS customer_count,
                COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
                COALESCE(SUM(f.sales_qty), 0) AS sales_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        FROM {source_from}
         WHERE {where}
-        GROUP BY c.rpt_channel_desc, c.store_type_desc, c.rpt_sub_channel_desc
+        GROUP BY {dim_alias}.rpt_channel_desc, {dim_alias}.store_type_desc, {dim_alias}.rpt_sub_channel_desc
         ORDER BY SUM(f.demand_qty) DESC
         LIMIT 1000
     """
@@ -169,38 +188,72 @@ def customer_analytics_segment_trends(
     """Monthly demand trends grouped by segment dimension."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, None, None)
 
-    seg_col = f"c.{segment_by}" if segment_by != "state" else "c.state"
-
-    # Pre-rank segments so we only return monthly rows for the top 30 we
-    # actually render (was returning every segment x month combination).
-    sql = f"""
-        WITH agg AS (
-            SELECT {seg_col} AS segment,
-                   f.startdate,
-                   COUNT(DISTINCT c.customer_no) AS customer_count,
-                   COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
-                   COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
-                   COALESCE(SUM(f.oos_qty), 0) AS oos_qty
-            FROM fact_customer_demand_monthly f
-            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
-            WHERE {where}
-              AND {seg_col} IS NOT NULL AND TRIM({seg_col}) != ''
-            GROUP BY {seg_col}, f.startdate
-        ),
-        top_segments AS (
-            SELECT segment
-            FROM agg
-            GROUP BY segment
-            ORDER BY SUM(demand_qty) DESC
-            LIMIT 30
-        )
-        SELECT a.segment, a.startdate, a.customer_count, a.demand_qty, a.sales_qty, a.oos_qty
-        FROM agg a
-        JOIN top_segments ts ON ts.segment = a.segment
-        ORDER BY a.segment, a.startdate
-    """
+    # Fastest path: when no item filter, read mv_ca_segment_trends which is
+    # pre-aggregated to (segment_dim, segment_value, startdate). This skips the
+    # COUNT(DISTINCT customer_no) over ~400K customer-month rows that even the
+    # mv_customer_activity_monthly path can't avoid. The MV holds all 4
+    # segment_dim values in a single tall table.
+    if item_id is None:
+        df, dt = _default_date_range()
+        actual_from = (date_from or "").strip() or df
+        actual_to = (date_to or "").strip() or dt
+        sql = """
+            WITH agg AS (
+                SELECT segment_value AS segment,
+                       startdate,
+                       customer_count,
+                       demand_qty,
+                       sales_qty,
+                       oos_qty
+                FROM mv_ca_segment_trends
+                WHERE segment_dim = %s
+                  AND startdate >= %s AND startdate < %s
+            ),
+            top_segments AS (
+                SELECT segment
+                FROM agg
+                GROUP BY segment
+                ORDER BY SUM(demand_qty) DESC
+                LIMIT 30
+            )
+            SELECT a.segment, a.startdate, a.customer_count, a.demand_qty, a.sales_qty, a.oos_qty
+            FROM agg a
+            JOIN top_segments ts ON ts.segment = a.segment
+            ORDER BY a.segment, a.startdate
+        """
+        params = [segment_by, actual_from, actual_to]
+    else:
+        # Fact-table fallback when an item_id filter is supplied — the MV is
+        # item-aggregated by design.
+        where = _build_where(params, item_id, date_from, date_to, None, None)
+        seg_col = f"c.{segment_by}"
+        sql = f"""
+            WITH agg AS (
+                SELECT {seg_col} AS segment,
+                       f.startdate,
+                       COUNT(DISTINCT c.customer_no) AS customer_count,
+                       COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
+                       COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
+                       COALESCE(SUM(f.oos_qty), 0) AS oos_qty
+                FROM fact_customer_demand_monthly f
+                JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+                WHERE {where}
+                  AND {seg_col} IS NOT NULL AND TRIM({seg_col}) != ''
+                GROUP BY {seg_col}, f.startdate
+            ),
+            top_segments AS (
+                SELECT segment
+                FROM agg
+                GROUP BY segment
+                ORDER BY SUM(demand_qty) DESC
+                LIMIT 30
+            )
+            SELECT a.segment, a.startdate, a.customer_count, a.demand_qty, a.sales_qty, a.oos_qty
+            FROM agg a
+            JOIN top_segments ts ON ts.segment = a.segment
+            ORDER BY a.segment, a.startdate
+        """
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
@@ -249,32 +302,34 @@ def customer_analytics_segment_trends(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/filter-options")
+@_CA_FILTER_OPTIONS_CACHE
 def customer_analytics_filter_options(
     response: FastAPIResponse,
 ):
-    """Distinct dropdown values for channel, store type, state."""
+    """Distinct dropdown values for channel, store type, state.
+
+    Reads from ``mv_customer_filter_options`` (sql/173) — a 3-row MV that
+    pre-aggregates the three DISTINCT scans over the 1M-row ``dim_customer``
+    table. Refresh the MV after dim_customer reloads via
+    ``make refresh-customer-filter-options`` (also chained into ``load-customer``).
+    """
     # Filter enums change at most when dim_customer is reloaded (~daily).
     # Long browser cache (1h) + 6h stale-while-revalidate eliminates the
     # repeat fetch on every tab switch / tab reopen.
     set_cache(response, max_age=3600, stale_while_revalidate=21600)
 
     sql = """
-        SELECT
-            ARRAY_AGG(DISTINCT c.rpt_channel_desc ORDER BY c.rpt_channel_desc)
-                FILTER (WHERE c.rpt_channel_desc IS NOT NULL AND TRIM(c.rpt_channel_desc) != ''),
-            ARRAY_AGG(DISTINCT c.store_type_desc ORDER BY c.store_type_desc)
-                FILTER (WHERE c.store_type_desc IS NOT NULL AND TRIM(c.store_type_desc) != ''),
-            ARRAY_AGG(DISTINCT c.state ORDER BY c.state)
-                FILTER (WHERE c.state IS NOT NULL AND TRIM(c.state) != '')
-        FROM dim_customer c
+        SELECT category, values
+        FROM mv_customer_filter_options
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql)
-        row = cur.fetchone()
+        rows = cur.fetchall()
 
-    channels = row[0] if row and row[0] else []
-    store_types = row[1] if row and row[1] else []
-    states = row[2] if row and row[2] else []
-
-    return {"channels": channels, "store_types": store_types, "states": states}
+    by_category: dict[str, list[str]] = {row[0]: list(row[1] or []) for row in rows}
+    return {
+        "channels": by_category.get("channels", []),
+        "store_types": by_category.get("store_types", []),
+        "states": by_category.get("states", []),
+    }

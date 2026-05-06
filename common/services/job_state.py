@@ -941,6 +941,62 @@ def _run_refresh_intramonth(
     return {"output_log": output if output else "Intramonth stockout view refreshed"}
 
 
+def _run_refresh_forecast_views(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Refresh the customer-analytics + forecast materialized views concurrently.
+
+    Moved out of the API request thread (was inline in
+    ``api/routers/forecasting/competition.py``). At 40x scale the synchronous
+    refresh exceeds the 30s ``statement_timeout`` and holds ACCESS EXCLUSIVE
+    locks blocking other readers — running it as a background job avoids both
+    issues. ``REFRESH ... CONCURRENTLY`` lets readers continue during the
+    refresh.
+
+    Returns a dict with ``refreshed`` and ``failed`` lists of MV names.
+    """
+    import psycopg
+    from psycopg import sql
+
+    mvs = ("agg_forecast_monthly", "agg_accuracy_by_dim", "agg_dfu_coverage")
+    refreshed: list[str] = []
+    failed: list[str] = []
+
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Refreshing {len(mvs)} forecast materialized views")
+
+    # autocommit=True (default for _get_conn) is required: REFRESH MATERIALIZED
+    # VIEW CONCURRENTLY cannot run inside a transaction block.
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SET maintenance_work_mem = '512MB'")
+            except psycopg.Error:
+                logger.exception("Failed to set maintenance_work_mem")
+            for idx, mv in enumerate(mvs, start=1):
+                if cancel_event and cancel_event.is_set():
+                    raise RuntimeError("Job cancelled by user")
+                if progress_cb:
+                    pct = int(5 + (idx - 1) / len(mvs) * 90)
+                    progress_cb(pct=pct, msg=f"Refreshing {mv}")
+                stmt = sql.SQL("REFRESH MATERIALIZED VIEW CONCURRENTLY {}").format(
+                    sql.Identifier(mv)
+                )
+                try:
+                    cur.execute(stmt)
+                    refreshed.append(mv)
+                except psycopg.Error:
+                    logger.exception("Failed to refresh %s", mv)
+                    failed.append(mv)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Refreshed {len(refreshed)}/{len(mvs)} views")
+    return {"refreshed": refreshed, "failed": failed}
+
+
 def _run_ss_simulation(
     params: dict[str, Any],
     progress_cb: Callable | None = None,

@@ -130,13 +130,15 @@ def _build_where_mv(
     date_to: str | None,
     channel: str | None,
     store_type: str | None,
+    state: str | None = None,
 ) -> str:
     """Variant of _build_where for queries that hit mv_customer_activity_monthly.
 
     The MV has the dim_customer columns inlined under the same `f` alias used
-    by the original queries, so callers can swap source tables with minimal
-    changes. No item_id filter — the MV is item-aggregated by design (use the
-    raw fact table when an item filter is required).
+    by the original queries (channel, sub_channel, store_type, state, city,
+    zip, customer_name, chain_type, location_id), so callers can swap source
+    tables with minimal changes. No item_id filter — the MV is item-aggregated
+    by design (use the raw fact table when an item filter is required).
     """
     df, dt = _default_date_range()
     actual_from = (date_from or "").strip() or df
@@ -151,6 +153,9 @@ def _build_where_mv(
     if store_type:
         clauses.append("f.store_type_desc = %s")
         params.append(store_type)
+    if state:
+        clauses.append("UPPER(f.state) = %s")
+        params.append(state.strip().upper())
     return " AND ".join(clauses)
 
 

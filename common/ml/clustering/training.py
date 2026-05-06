@@ -27,42 +27,9 @@ from sklearn.metrics import calinski_harabasz_score, silhouette_score
 
 logger = logging.getLogger(__name__)
 
-# ── Feature groups ──────────────────────────────────────────────────────────
-# Core features that drive business-meaningful clusters for tree models.
-# Covers volume, trend, seasonality, periodicity, intermittency, and lifecycle.
-CORE_FEATURES = [
-    # Volume (log-transformed)
-    "mean_demand",
-    "cv_demand",
-    "iqr_demand",
-    # Trend (scale-invariant)
-    "trend_slope_norm",
-    "trend_r2",
-    "cagr",
-    # Seasonality
-    "seasonal_amplitude",
-    "seasonal_r2",
-    "yoy_correlation",
-    # Periodicity
-    "periodicity_strength",
-    # Intermittency
-    "zero_demand_pct",
-    "adi",
-    # Lifecycle
-    "months_available",
-    "recency_ratio",
-]
-
-# Features that get log1p-transformed (highly skewed, spans orders of magnitude)
-LOG_TRANSFORM_FEATURES = [
-    "mean_demand",
-    "median_demand",
-    "std_demand",
-    "total_demand",
-    "max_demand",
-    "iqr_demand",
-    "adi",
-]
+# Feature constants live in `constants.py` (no heavy imports). Import-only
+# consumers (e.g. API routers) should import directly from
+# `common.ml.clustering.constants` to avoid loading matplotlib/sklearn.
 
 
 def merge_small_clusters(

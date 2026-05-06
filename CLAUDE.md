@@ -30,6 +30,9 @@
 
 Hard constraints. Violations cause bugs, test failures, or silent data corruption.
 
+### Workflow (applies to every change)
+- **Review + refactor at each step.** Before reporting any change as complete: re-read your own diff, fix anything you'd flag in code review, refactor for clarity if the diff is messy. In multi-step plans (parallel agents, multi-file refactors), each step ends with this self-pass — don't defer it to the end. **[FREQUENTLY VIOLATED]**
+
 ### Backend / Python
 - **`date.today()` forbidden outside `common/core/planning_date.py`.** Use `get_planning_date()`. Env overrides: `PLANNING_DATE`, `USE_SYSTEM_DATE`. **[FREQUENTLY VIOLATED]**
 - **`Path(__file__).resolve().parents[N]` forbidden at module level.** Allowed only in `if __name__ == "__main__"` bootstrap. Use `from common.core.paths import PROJECT_ROOT, CONFIG_DIR, DATA_DIR, SQL_DIR, SCRIPTS_DIR`. **[FREQUENTLY VIOLATED]**
@@ -223,6 +226,15 @@ For full architecture, data flow, dimension/fact tables, and MV catalog, see `do
 ---
 
 ## Workflow & Hooks
+
+### Review + refactor at each step (workflow contract)
+Before declaring any change "done":
+1. **Re-read your diff.** Imagine someone else wrote it — what would you flag?
+2. **Fix what you'd flag.** Naming, dead code, duplicated helpers, leaky abstractions, unclear branches.
+3. **Refactor for clarity if messy.** Don't ship a working-but-ugly diff just because tests pass.
+4. **Then verify** (tests + lint + gates) and only then report complete.
+
+Multi-step plans: this pass happens at **each** step, not only the end. Multi-agent batches: each agent reviews + refactors its own diff before reporting; the orchestrator does a cross-cutting review of the merged result. The auto-trigger `code-reviewer` agent (below) backstops this for commits — but Claude must self-review before invoking the reviewer; otherwise the reviewer becomes a crutch.
 
 ### Always-active automation (from `.claude/settings.json`)
 - **PostToolUse (Write/Edit)**: ruff on Python, anti-pattern checks on SQL, auto-runs edited test files.

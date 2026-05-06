@@ -8,7 +8,12 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
 
-from ._helpers import _CA_CACHE, _build_where
+from ._helpers import (
+    _CA_CACHE,
+    _build_where,
+    _build_where_mv,
+    _customer_activity_source,
+)
 
 router = APIRouter(tags=["customer-analytics"])
 
@@ -33,22 +38,35 @@ def customer_analytics_ranking(
     """Top/bottom customer ranking by demand or fill rate."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+    # Route through the MV when no item filter is set — the MV inlines all
+    # the dim_customer attributes we group on, so no JOIN required.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, channel, store_type)
+        cust_no_col = "f.customer_no"
+        cust_name_col = "f.customer_name"
+        state_col = "f.state"
+        channel_col = "f.rpt_channel_desc"
+    else:
+        where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+        cust_no_col = "c.customer_no"
+        cust_name_col = "c.customer_name"
+        state_col = "c.state"
+        channel_col = "c.rpt_channel_desc"
 
     order = "SUM(f.demand_qty) DESC" if sort == "demand_desc" else "CASE WHEN SUM(f.demand_qty) > 0 THEN SUM(f.sales_qty)::float / SUM(f.demand_qty) ELSE 1 END ASC"
 
     sql = f"""
-        SELECT c.customer_no,
-               c.customer_name,
-               c.state,
-               COALESCE(c.rpt_channel_desc, 'Unknown') AS channel,
+        SELECT {cust_no_col},
+               {cust_name_col},
+               {state_col},
+               COALESCE({channel_col}, 'Unknown') AS channel,
                COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
                COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
                COALESCE(SUM(f.oos_qty), 0) AS oos_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        FROM {source_from}
         WHERE {where}
-        GROUP BY c.customer_no, c.customer_name, c.state, c.rpt_channel_desc
+        GROUP BY {cust_no_col}, {cust_name_col}, {state_col}, {channel_col}
         HAVING SUM(f.demand_qty) >= %s
         ORDER BY {order}
         LIMIT %s
@@ -96,24 +114,33 @@ def customer_analytics_oos_impact(
     """Bubble chart data: demand vs fill rate, bubble size = OOS qty."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, None)
+    # Route through MV when no item filter — the MV inlines customer_name,
+    # state, and rpt_channel_desc.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    dim_alias = "f" if uses_mv else "c"
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, channel, None)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, channel, None)
 
     if grain == "customer":
-        group = "c.customer_no, c.customer_name, c.state, c.rpt_channel_desc"
-        select_extra = "c.customer_no, c.customer_name, c.state, COALESCE(c.rpt_channel_desc, 'Unknown') AS channel"
+        group = f"{dim_alias}.customer_no, {dim_alias}.customer_name, {dim_alias}.state, {dim_alias}.rpt_channel_desc"
+        select_extra = (
+            f"{dim_alias}.customer_no, {dim_alias}.customer_name, {dim_alias}.state, "
+            f"COALESCE({dim_alias}.rpt_channel_desc, 'Unknown') AS channel"
+        )
     else:
-        group = "c.state"
-        select_extra = "c.state, c.state AS label, c.state AS state_col, 'All' AS channel"
+        group = f"{dim_alias}.state"
+        select_extra = f"{dim_alias}.state, {dim_alias}.state AS label, {dim_alias}.state AS state_col, 'All' AS channel"
 
     sql = f"""
         SELECT {select_extra},
                COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
                COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
                COALESCE(SUM(f.oos_qty), 0) AS oos_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        FROM {source_from}
         WHERE {where}
-          AND c.state IS NOT NULL AND TRIM(c.state) != ''
+          AND {dim_alias}.state IS NOT NULL AND TRIM({dim_alias}.state) != ''
         GROUP BY {group}
         HAVING SUM(f.demand_qty) > 0
         ORDER BY SUM(f.demand_qty) DESC
@@ -244,7 +271,38 @@ def customer_analytics_order_patterns(
     """Frequency histogram + regularity scatter for ordering cadence."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, None, None)
+
+    # Fastest path: default 12-month window + no item filter — read precomputed
+    # cadence stats directly from mv_ca_order_patterns. Each customer's
+    # AVG(gap_months) and STDDEV are pre-baked, so the request collapses to
+    # SELECT ... ORDER BY total_demand DESC LIMIT 200 against ~33K rows.
+    # Returns the same 6-column tuple shape (customer_no, customer_name,
+    # avg_interval, cv, order_count, total_demand) the existing post-processing
+    # expects. Falls back to the fact/MV-join path when item_id is set or a
+    # custom date range is supplied.
+    if item_id is None and not (date_from or "").strip() and not (date_to or "").strip():
+        sql_mv = """
+            SELECT customer_no, customer_name,
+                   avg_interval_months, interval_cv, order_count,
+                   total_demand
+            FROM mv_ca_order_patterns
+            ORDER BY total_demand DESC
+            LIMIT 200
+        """
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql_mv)
+            rows = cur.fetchall()
+        return _format_order_patterns(rows)
+
+    # Route through mv_customer_activity_monthly when no item filter — the MV
+    # has customer_name inlined and is already aggregated per (customer_no,
+    # site, location_id, month).
+    source_from, uses_mv = _customer_activity_source(item_id)
+    dim_alias = "f" if uses_mv else "c"
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, None, None)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, None, None)
 
     # Two-stage shape: rank customers by total demand FIRST, keep only the
     # top ~1000, then run the expensive STDDEV/window work on that bounded
@@ -255,13 +313,12 @@ def customer_analytics_order_patterns(
     sql = f"""
         WITH base AS (
             SELECT f.customer_no,
-                   c.customer_name,
+                   {dim_alias}.customer_name,
                    f.startdate,
                    SUM(f.demand_qty) AS demand_qty
-            FROM fact_customer_demand_monthly f
-            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            FROM {source_from}
             WHERE {where}
-            GROUP BY f.customer_no, c.customer_name, f.startdate
+            GROUP BY f.customer_no, {dim_alias}.customer_name, f.startdate
         ),
         cust_total AS (
             SELECT customer_no,
@@ -308,6 +365,15 @@ def customer_analytics_order_patterns(
         cur.execute(sql, params)
         rows = cur.fetchall()
 
+    return _format_order_patterns(rows)
+
+
+def _format_order_patterns(rows: list) -> dict[str, Any]:
+    """Convert (customer_no, customer_name, avg_interval, cv, order_count,
+    total_demand) tuples into the {frequency_histogram, regularity_scatter}
+    response shape. Shared by the mv_ca_order_patterns fast path and the
+    fact-table fallback so both code paths produce identical responses.
+    """
     buckets = {"monthly": 0, "bimonthly": 0, "quarterly": 0, "sporadic": 0}
     scatter: list[dict[str, Any]] = []
 

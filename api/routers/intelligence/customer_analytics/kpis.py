@@ -8,7 +8,13 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
 
-from ._helpers import _CA_CACHE, _build_where, _default_date_range
+from ._helpers import (
+    _CA_CACHE,
+    _build_where,
+    _build_where_mv,
+    _customer_activity_source,
+    _default_date_range,
+)
 
 router = APIRouter(tags=["customer-analytics"])
 
@@ -18,6 +24,7 @@ router = APIRouter(tags=["customer-analytics"])
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/items")
+@_CA_CACHE
 def customer_analytics_items(
     response: FastAPIResponse,
     search: str = Query(default="", min_length=0),
@@ -86,8 +93,27 @@ def customer_analytics_kpis(
     computed from the latest two months in the range."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
+    # Route through mv_customer_activity_monthly when no item filter is set
+    # (the common dashboard load). The MV pre-joins fact x dim_customer and
+    # aggregates to (customer_no, site, location_id, startdate), which cuts
+    # /kpis from ~10.8s on the raw join to ~63ms (Item 8 of perf roadmap).
+    source_from, uses_mv = _customer_activity_source(item_id)
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, channel, store_type, state=state)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
 
+    # Single-pass rewrite of the previous 4-CTE (totals, cur, prev, top10)
+    # comma-join. The old shape forced 4 separate scans of `base`. Here we
+    # collapse to:
+    #   1. `base`     — one scan of source rows
+    #   2. `per_cust` — one aggregate per customer (drives top10 + cust counts)
+    #   3. final SELECT — one pass that uses FILTER (...) to compute totals,
+    #      cur-month, and prev-month aggregates from the same row stream.
+    # Top10 is computed via a small lateral subquery against per_cust, which
+    # is already aggregated to one row per customer (~33K rows max), so the
+    # ORDER BY ... LIMIT 10 is cheap.
+    #
     # Values use full-range totals so they line up with the map / treemap /
     # other panels on this dashboard. Deltas are still month-over-month
     # (latest available month vs prior month) — that's the only meaningful
@@ -100,8 +126,7 @@ def customer_analytics_kpis(
                    f.demand_qty,
                    f.sales_qty,
                    f.oos_qty
-            FROM fact_customer_demand_monthly f
-            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            FROM {source_from}
             WHERE {where}
         ),
         bounds AS (
@@ -109,44 +134,41 @@ def customer_analytics_kpis(
                    MAX(startdate) - INTERVAL '1 month' AS prev_month
             FROM base
         ),
-        totals AS (
-            SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
-                   COALESCE(SUM(b.sales_qty), 0) AS sales,
-                   COALESCE(SUM(b.oos_qty), 0) AS oos,
-                   COUNT(DISTINCT b.customer_no) AS active_cust
-            FROM base b
-        ),
-        cur AS (
-            SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
-                   COALESCE(SUM(b.sales_qty), 0) AS sales,
-                   COALESCE(SUM(b.oos_qty), 0) AS oos,
-                   COUNT(DISTINCT b.customer_no) AS active_cust
-            FROM base b, bounds
-            WHERE b.startdate = bounds.cur_month
-        ),
-        prev AS (
-            SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
-                   COALESCE(SUM(b.sales_qty), 0) AS sales,
-                   COALESCE(SUM(b.oos_qty), 0) AS oos,
-                   COUNT(DISTINCT b.customer_no) AS active_cust
-            FROM base b, bounds
-            WHERE b.startdate = bounds.prev_month
+        per_cust AS (
+            SELECT customer_no, SUM(demand_qty) AS cust_demand
+            FROM base
+            GROUP BY customer_no
         ),
         top10 AS (
-            SELECT COALESCE(SUM(sub.demand), 0) AS top10_demand
+            SELECT COALESCE(SUM(cust_demand), 0) AS top10_demand
             FROM (
-                SELECT b.customer_no, SUM(b.demand_qty) AS demand
-                FROM base b
-                GROUP BY b.customer_no
-                ORDER BY SUM(b.demand_qty) DESC
+                SELECT cust_demand
+                FROM per_cust
+                ORDER BY cust_demand DESC
                 LIMIT 10
-            ) sub
+            ) t
+        ),
+        agg AS (
+            SELECT
+                COALESCE(SUM(b.demand_qty), 0)                                                       AS t_demand,
+                COALESCE(SUM(b.sales_qty), 0)                                                        AS t_sales,
+                COALESCE(SUM(b.oos_qty), 0)                                                          AS t_oos,
+                COUNT(DISTINCT b.customer_no)                                                        AS t_cust,
+                COALESCE(SUM(b.demand_qty) FILTER (WHERE b.startdate = bnd.cur_month), 0)            AS c_demand,
+                COALESCE(SUM(b.sales_qty)  FILTER (WHERE b.startdate = bnd.cur_month), 0)            AS c_sales,
+                COALESCE(SUM(b.oos_qty)    FILTER (WHERE b.startdate = bnd.cur_month), 0)            AS c_oos,
+                COUNT(DISTINCT b.customer_no) FILTER (WHERE b.startdate = bnd.cur_month)             AS c_cust,
+                COALESCE(SUM(b.demand_qty) FILTER (WHERE b.startdate = bnd.prev_month), 0)           AS p_demand,
+                COALESCE(SUM(b.sales_qty)  FILTER (WHERE b.startdate = bnd.prev_month), 0)           AS p_sales,
+                COALESCE(SUM(b.oos_qty)    FILTER (WHERE b.startdate = bnd.prev_month), 0)           AS p_oos,
+                COUNT(DISTINCT b.customer_no) FILTER (WHERE b.startdate = bnd.prev_month)            AS p_cust
+            FROM base b CROSS JOIN bounds bnd
         )
-        SELECT totals.demand, totals.sales, totals.oos, totals.active_cust,
-               cur.demand, cur.sales, cur.oos, cur.active_cust,
-               prev.demand, prev.sales, prev.oos, prev.active_cust,
+        SELECT agg.t_demand, agg.t_sales, agg.t_oos, agg.t_cust,
+               agg.c_demand, agg.c_sales, agg.c_oos, agg.c_cust,
+               agg.p_demand, agg.p_sales, agg.p_oos, agg.p_cust,
                top10.top10_demand
-        FROM totals, cur, prev, top10
+        FROM agg, top10
     """
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -256,15 +278,16 @@ def customer_analytics_alerts(
     """
 
     # 3) churn rate > 10% MoM + 4) demand surge > 30% MoM
+    # MoM aggregates are item-agnostic and only need (customer_no, startdate,
+    # demand_qty) — route through the MV to avoid the fact x dim_customer JOIN.
     params3: list[Any] = []
-    where3 = _build_where(params3, None, date_from, date_to, None, None)
+    where3 = _build_where_mv(params3, date_from, date_to, None, None)
     mom_sql = f"""
         WITH base AS (
             SELECT f.startdate,
                    COUNT(DISTINCT f.customer_no) AS active_cust,
                    SUM(f.demand_qty) AS demand
-            FROM fact_customer_demand_monthly f
-            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            FROM mv_customer_activity_monthly f
             WHERE {where3}
             GROUP BY f.startdate
             ORDER BY f.startdate

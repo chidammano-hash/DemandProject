@@ -16,6 +16,8 @@ from ._helpers import (
     _STATE_CENTROIDS,
     _add_state_coords,
     _build_where,
+    _build_where_mv,
+    _customer_activity_source,
     _get_nomi,
 )
 
@@ -42,22 +44,32 @@ def customer_analytics_map(
     """Demand-aware customer map with metric selection."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
+    # Route through MV when no item filter — the MV inlines state, city,
+    # and zip from dim_customer.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    dim_alias = "f" if uses_mv else "c"
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, channel, store_type, state=state)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
 
-    geo_col = {"state": "c.state", "city": "c.city", "zip": "c.zip"}[group_by]
+    geo_col = {
+        "state": f"{dim_alias}.state",
+        "city": f"{dim_alias}.city",
+        "zip": f"{dim_alias}.zip",
+    }[group_by]
 
     sql = f"""
         SELECT {geo_col} AS geo_label,
-               {'c.state AS state_col,' if group_by != 'state' else ''}
-               COUNT(DISTINCT c.customer_no) AS customer_count,
+               {f'{dim_alias}.state AS state_col,' if group_by != 'state' else ''}
+               COUNT(DISTINCT {dim_alias}.customer_no) AS customer_count,
                COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
                COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
                COALESCE(SUM(f.oos_qty), 0) AS oos_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        FROM {source_from}
         WHERE {where}
           AND {geo_col} IS NOT NULL AND TRIM({geo_col}) != ''
-        GROUP BY {geo_col} {',' + 'c.state' if group_by != 'state' else ''}
+        GROUP BY {geo_col} {',' + f'{dim_alias}.state' if group_by != 'state' else ''}
         ORDER BY SUM(f.demand_qty) DESC
         LIMIT %s
     """
@@ -146,20 +158,26 @@ def customer_analytics_treemap(
     """Hierarchical treemap: State > Channel > Customer."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+    # Route through MV when no item filter — the MV inlines state,
+    # rpt_channel_desc, customer_name.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    dim_alias = "f" if uses_mv else "c"
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, channel, store_type)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, channel, store_type)
 
     sql = f"""
-        SELECT c.state,
-               COALESCE(c.rpt_channel_desc, 'Unknown') AS channel,
-               c.customer_name,
-               c.customer_no,
+        SELECT {dim_alias}.state,
+               COALESCE({dim_alias}.rpt_channel_desc, 'Unknown') AS channel,
+               {dim_alias}.customer_name,
+               {dim_alias}.customer_no,
                COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
                COALESCE(SUM(f.sales_qty), 0) AS sales_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        FROM {source_from}
         WHERE {where}
-          AND c.state IS NOT NULL AND TRIM(c.state) != ''
-        GROUP BY c.state, c.rpt_channel_desc, c.customer_name, c.customer_no
+          AND {dim_alias}.state IS NOT NULL AND TRIM({dim_alias}.state) != ''
+        GROUP BY {dim_alias}.state, {dim_alias}.rpt_channel_desc, {dim_alias}.customer_name, {dim_alias}.customer_no
         ORDER BY SUM(f.demand_qty) DESC
         LIMIT 500
     """
@@ -319,17 +337,24 @@ def customer_analytics_demand_flow(
     """Sankey nodes + links: warehouse -> state -> channel."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, None, None)
+    # Route through MV when no item filter — the MV grain now includes
+    # location_id and inlines state + rpt_channel_desc, which is exactly the
+    # 3-tuple this endpoint groups on.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    dim_alias = "f" if uses_mv else "c"
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, None, None)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, None, None)
 
     sql = f"""
         SELECT f.location_id,
-               COALESCE(c.state, 'Unknown') AS state,
-               COALESCE(c.rpt_channel_desc, 'Unknown') AS channel,
+               COALESCE({dim_alias}.state, 'Unknown') AS state,
+               COALESCE({dim_alias}.rpt_channel_desc, 'Unknown') AS channel,
                COALESCE(SUM(f.demand_qty), 0) AS demand_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        FROM {source_from}
         WHERE {where}
-        GROUP BY f.location_id, c.state, c.rpt_channel_desc
+        GROUP BY f.location_id, {dim_alias}.state, {dim_alias}.rpt_channel_desc
         HAVING SUM(f.demand_qty) > 0
         ORDER BY SUM(f.demand_qty) DESC
         LIMIT 500

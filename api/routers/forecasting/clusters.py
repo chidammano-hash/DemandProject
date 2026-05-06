@@ -176,10 +176,12 @@ def dfu_seasonality_profiles():
 
 
 # ---------------------------------------------------------------------------
-# Core features list (single source: common.ml.clustering.training)
+# Core features list (single source: common.ml.clustering.constants)
+# Imported from `constants` (lightweight) rather than `training` so the router
+# does not pull in matplotlib/sklearn/scipy at app boot.
 # ---------------------------------------------------------------------------
 
-from common.ml.clustering.training import CORE_FEATURES  # noqa: E402
+from common.ml.clustering.constants import CORE_FEATURES  # noqa: E402
 
 
 @router.get("/clustering/core-features")

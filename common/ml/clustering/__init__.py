@@ -1,27 +1,15 @@
-"""Clustering library — feature engineering, training, labeling, and scenario management."""
+"""Clustering library — feature engineering, training, labeling, and scenario management.
 
-from common.ml.clustering.features import compute_time_series_features
-from common.ml.clustering.training import (
-    CORE_FEATURES,
-    LOG_TRANSFORM_FEATURES,
-    find_optimal_k,
-    merge_small_clusters,
-)
-from common.ml.clustering.labeling import assign_cluster_labels
-from common.ml.clustering.scenario import (
-    generate_scenario_id,
-    promote_scenario,
-    get_scenario_result,
-)
+Only lightweight constants are re-exported at the package level. Heavy
+training / labeling / scenario helpers must be imported from their
+submodules directly so that consumers needing only the constants (e.g. the
+``/clustering/core-features`` API endpoint) don't pay the cost of importing
+matplotlib + sklearn + scipy at app boot.
+"""
+
+from common.ml.clustering.constants import CORE_FEATURES, LOG_TRANSFORM_FEATURES
 
 __all__ = [
-    "compute_time_series_features",
     "CORE_FEATURES",
     "LOG_TRANSFORM_FEATURES",
-    "find_optimal_k",
-    "merge_small_clusters",
-    "assign_cluster_labels",
-    "generate_scenario_id",
-    "promote_scenario",
-    "get_scenario_result",
 ]
