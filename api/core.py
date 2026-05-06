@@ -8,6 +8,8 @@ Connection pool and OpenAI client are implemented in dedicated sub-modules
 """
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 from datetime import date
 import json
@@ -20,8 +22,16 @@ from common.core.domain_specs import DomainSpec, get_spec
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules (backward compatibility)
 # ---------------------------------------------------------------------------
-from api.pool import _get_pool  # noqa: F401
+from api.pool import (  # noqa: F401
+    _get_async_pool,
+    _get_async_read_pool,
+    _get_pool,
+    _get_read_pool,
+    _read_replica_configured,
+)
 from api.llm import get_openai  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 
 def get_conn():
@@ -31,6 +41,74 @@ def get_conn():
     in tests correctly intercepts the pool used by this function.
     """
     return _get_pool().connection()
+
+
+@contextmanager
+def get_read_only_conn():
+    """Yield a sync connection for read-only analytics queries.
+
+    Routes to the read replica pool when ``READ_REPLICA_URL`` is configured;
+    otherwise falls back to the primary pool — the env-unset code path is
+    behaviour-identical to ``get_conn()``.
+
+    Sets ``SET TRANSACTION READ ONLY`` at the session level as a safety net
+    so a caller that accidentally issues a write gets a clear error rather
+    than silently succeeding on the primary fallback. If setting the flag
+    fails (rare; e.g. mock pools in tests), we log + continue rather than
+    fail the request — read-only is a defensive guard, not a correctness
+    requirement.
+
+    Lag awareness: read replicas can lag the primary by seconds. Use ONLY
+    for queries that tolerate eventual consistency (analytics dashboards,
+    long-window aggregates). Do NOT use for read-after-write flows where
+    the user expects to see their own write reflected.
+
+    For async handlers use :func:`get_async_read_only_conn` instead.
+    """
+    pool = _get_read_pool() if _read_replica_configured() else _get_pool()
+    with pool.connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET TRANSACTION READ ONLY")
+        except Exception as exc:  # noqa: BLE001 — defensive, never block the request
+            logger.debug("Could not set TRANSACTION READ ONLY (likely a mock pool): %s", exc)
+        yield conn
+
+
+@asynccontextmanager
+async def get_async_read_only_conn():
+    """Async sibling of :func:`get_read_only_conn`.
+
+    Routes to the async read-replica pool when ``READ_REPLICA_URL`` is set;
+    otherwise falls back to the primary async pool. The env-unset code path
+    is behaviour-identical to ``get_async_conn()`` so existing handlers can
+    opt in by swapping the helper name and nothing else.
+
+    Same lag-awareness contract as :func:`get_read_only_conn`: callers MUST
+    only use this for queries that tolerate eventual consistency.
+    """
+    pool = _get_async_read_pool() if _read_replica_configured() else _get_async_pool()
+    async with pool.connection() as conn:
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute("SET TRANSACTION READ ONLY")
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.debug("Could not set TRANSACTION READ ONLY on async conn: %s", exc)
+        yield conn
+
+
+def get_async_conn():
+    """Return an async connection context manager from the async pool.
+
+    Used by handlers converted to ``async def`` (Item 19 pilot —
+    customer_analytics + GET endpoints in inv_planning_insights).
+
+    Defined here (not re-exported) so that
+    ``patch("api.core._get_async_pool")`` in tests correctly intercepts the
+    pool used by this function. Returns the value of ``pool.connection()``
+    directly — caller uses ``async with get_async_conn() as conn:``.
+    """
+    return _get_async_pool().connection()
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import pgeocode
 from dateutil.relativedelta import relativedelta
 
 from common.core.planning_date import get_planning_date
-from common.services.cache import cached_sync
+from common.services.cache import cached_async
 
 # All customer-analytics aggregates hit fact_customer_demand_monthly with
 # the same join pattern. They are heavy (single-digit to ~16 second queries
@@ -23,7 +23,10 @@ from common.services.cache import cached_sync
 # server-side cache turns repeat hits — which dominate dashboard usage —
 # into millisecond responses. Invalidate via the "customer_analytics" group
 # after a customer demand reload.
-_CA_CACHE = cached_sync(ttl=300, group="customer_analytics")
+#
+# Item 19 pilot: handlers are ``async def`` so this uses ``cached_async``
+# (the async sibling of ``cached_sync``) which awaits the wrapped coroutine.
+_CA_CACHE = cached_async(ttl=300, group="customer_analytics")
 
 logger = logging.getLogger(__name__)
 

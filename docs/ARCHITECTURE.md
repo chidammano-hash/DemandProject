@@ -254,6 +254,12 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - `InMemoryBackend` cache in `common/services/cache.py` with configurable TTL per endpoint
    - Query performance tracking: slow query detection, response time histograms
    - Config: `config/platform/cache_config.yaml` (TTL, max entries, eviction policy)
+   - Read-replica routing (Item 24): selected analytics endpoints opt in via
+     `get_async_read_only_conn()` in `api/core.py`. Routes to a Postgres read
+     replica when `READ_REPLICA_URL` is set; otherwise falls back to the primary
+     pool (no behaviour change). Currently routed: 7 customer-analytics
+     endpoints (kpis, map, treemap, heatmap, channel-mix, segment-trends,
+     ranking). See `docs/RUNBOOK.md` "Read Replica Deployment" for setup.
 6e. Notifications & Alerting:
    - `NotificationEngine` in `common/services/notification_engine.py` with pluggable adapter pattern
    - 4 adapters: Slack, Teams, Email (SMTP), PagerDuty

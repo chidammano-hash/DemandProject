@@ -450,6 +450,35 @@ def cached_sync(ttl: int = 300, group: str = "default", skip_kwargs: tuple[str, 
     return decorator
 
 
+def cached_async(
+    ttl: int = 300,
+    group: str = "default",
+    skip_kwargs: tuple[str, ...] = ("response",),
+):
+    """Cache decorator for ``async def`` FastAPI route handlers.
+
+    Mirrors :func:`cached_sync` but awaits the wrapped coroutine. Used by
+    routers converted to ``async def`` (Item 19 pilot — customer_analytics).
+
+    FastAPI injects its ``Response`` object via kwargs; exclude it (and any
+    other non-hashable injectables) from the cache key via ``skip_kwargs``.
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            backend = get_cache()
+            cache_kwargs = {k: v for k, v in kwargs.items() if k not in skip_kwargs}
+            key = cache_key_for(f"{group}:{func.__name__}", cache_kwargs or None)
+            hit = backend.get(key)
+            if hit is not None:
+                return hit
+            result = await func(*args, **kwargs)
+            backend.set(key, result, ttl)
+            return result
+        return wrapper
+    return decorator
+
+
 def invalidate_group(group: str) -> int:
     """Invalidate all cache entries in a group."""
     return get_cache().invalidate(f"ds:{group}:*")

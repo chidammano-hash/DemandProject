@@ -17,7 +17,15 @@ from fastapi.responses import JSONResponse, ORJSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.pool import open_pool, close_pool
+from api.pool import (
+    close_async_pool,
+    close_async_read_pool,
+    close_pool,
+    close_read_pool,
+    open_async_pool,
+    open_async_read_pool,
+    open_pool,
+)
 from common.services.rate_limiter import get_rate_limiter
 
 
@@ -56,6 +64,27 @@ async def lifespan(app: FastAPI):
     except RuntimeError as exc:
         logger.warning("DB pool not opened on startup: %s", exc)
 
+    # Async DB pool — used by routers converted to async def (Item 19 pilot).
+    # Best-effort: failure to open the async pool should not abort startup
+    # because sync handlers can still serve traffic.
+    try:
+        await open_async_pool()
+        logger.info("Async DB connection pool opened on startup")
+    except (RuntimeError, Exception) as exc:  # noqa: BLE001 — best effort
+        logger.warning("Async DB pool not opened on startup: %s", exc)
+
+    # Read-replica async pool (Item 24) — opened only when READ_REPLICA_URL is
+    # set. open_async_read_pool() is a no-op (returns None) when the env var
+    # is unset, so this block is free in single-node deployments. Failure to
+    # open the replica pool is logged but never aborts startup; analytics
+    # endpoints fall through to the primary async pool.
+    try:
+        replica = await open_async_read_pool()
+        if replica is not None:
+            logger.info("Async read-replica pool opened on startup")
+    except Exception as exc:  # noqa: BLE001 — best effort
+        logger.warning("Async read-replica pool not opened on startup: %s", exc)
+
     # Reap orphan integration jobs from any prior crashed/killed API process.
     # Safe to do unconditionally: this fresh process has no live workers, so any
     # row in 'queued'/'running' is provably abandoned.
@@ -89,6 +118,17 @@ async def lifespan(app: FastAPI):
             except Exception as exc:  # noqa: BLE001 — shutdown cleanup
                 logger.warning("Scheduler shutdown raised: %s", exc)
         close_pool()
+        # Read replica pools (Item 24) — both no-op if the corresponding
+        # READ_REPLICA_URL pool was never opened.
+        close_read_pool()
+        try:
+            await close_async_pool()
+        except Exception as exc:  # noqa: BLE001 — shutdown cleanup
+            logger.warning("Async DB pool shutdown raised: %s", exc)
+        try:
+            await close_async_read_pool()
+        except Exception as exc:  # noqa: BLE001 — shutdown cleanup
+            logger.warning("Async read-replica pool shutdown raised: %s", exc)
         logger.info("DB connection pool closed on shutdown")
 
 

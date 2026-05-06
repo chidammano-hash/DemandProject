@@ -1,4 +1,7 @@
-"""Customer-level analytics — ranking, OOS impact, affinity, order patterns."""
+"""Customer-level analytics — ranking, OOS impact, affinity, order patterns.
+
+Item 19 pilot: handlers are ``async def`` and use ``get_async_conn``.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import get_async_conn, get_async_read_only_conn, set_cache
 
 from ._helpers import (
     _CA_CACHE,
@@ -24,7 +27,7 @@ router = APIRouter(tags=["customer-analytics"])
 
 @router.get("/customer-analytics/ranking")
 @_CA_CACHE
-def customer_analytics_ranking(
+async def customer_analytics_ranking(
     response: FastAPIResponse,
     sort: str = Query(default="demand_desc", pattern="^(demand_desc|fill_rate_asc)$"),
     top_n: int = Query(default=20, ge=5, le=50),
@@ -73,9 +76,11 @@ def customer_analytics_ranking(
     """
     params.extend([min_demand, top_n])
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    # Read-only customer ranking aggregate — replica-safe (Item 24).
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     customers: list[dict[str, Any]] = []
     for cno, cname, state, ch, demand, sales, oos in rows:
@@ -103,7 +108,7 @@ def customer_analytics_ranking(
 
 @router.get("/customer-analytics/oos-impact")
 @_CA_CACHE
-def customer_analytics_oos_impact(
+async def customer_analytics_oos_impact(
     response: FastAPIResponse,
     grain: str = Query(default="customer", pattern="^(customer|state)$"),
     item_id: str | None = Query(default=None),
@@ -147,9 +152,10 @@ def customer_analytics_oos_impact(
         LIMIT 200
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     bubbles: list[dict[str, Any]] = []
     for r in rows:
@@ -185,7 +191,7 @@ def customer_analytics_oos_impact(
 
 @router.get("/customer-analytics/affinity")
 @_CA_CACHE
-def customer_analytics_affinity(
+async def customer_analytics_affinity(
     response: FastAPIResponse,
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -233,9 +239,10 @@ def customer_analytics_affinity(
     """
     params.extend([top_n, top_n])
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     cust_set: dict[str, str] = {}
     item_set: dict[str, str] = {}
@@ -262,7 +269,7 @@ def customer_analytics_affinity(
 
 @router.get("/customer-analytics/order-patterns")
 @_CA_CACHE
-def customer_analytics_order_patterns(
+async def customer_analytics_order_patterns(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -289,9 +296,10 @@ def customer_analytics_order_patterns(
             ORDER BY total_demand DESC
             LIMIT 200
         """
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql_mv)
-            rows = cur.fetchall()
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql_mv)
+                rows = await cur.fetchall()
         return _format_order_patterns(rows)
 
     # Route through mv_customer_activity_monthly when no item filter — the MV
@@ -361,9 +369,10 @@ def customer_analytics_order_patterns(
         LIMIT 200
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     return _format_order_patterns(rows)
 

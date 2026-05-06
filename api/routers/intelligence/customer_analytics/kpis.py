@@ -1,4 +1,10 @@
-"""Customer-analytics summary endpoints — KPIs, item picker, alerts."""
+"""Customer-analytics summary endpoints — KPIs, item picker, alerts.
+
+Item 19 pilot: handlers are ``async def`` and use ``get_async_conn`` so the
+13-endpoint Customer Analytics fan-out is no longer capped by the anyio
+threadpool ceiling. Each handler awaits a real psycopg ``AsyncConnection``
+from the dedicated async pool.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import get_async_conn, get_async_read_only_conn, set_cache
 
 from ._helpers import (
     _CA_CACHE,
@@ -25,7 +31,7 @@ router = APIRouter(tags=["customer-analytics"])
 
 @router.get("/customer-analytics/items")
 @_CA_CACHE
-def customer_analytics_items(
+async def customer_analytics_items(
     response: FastAPIResponse,
     search: str = Query(default="", min_length=0),
     date_from: str | None = Query(default=None),
@@ -66,9 +72,10 @@ def customer_analytics_items(
 
     base_sql += " ORDER BY i.item_id LIMIT 50"
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(base_sql, query_params)
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(base_sql, query_params)
+            rows = await cur.fetchall()
 
     items = [{"item_id": r[0], "item_desc": r[1] or r[0]} for r in rows]
     return {"items": items}
@@ -80,7 +87,7 @@ def customer_analytics_items(
 
 @router.get("/customer-analytics/kpis")
 @_CA_CACHE
-def customer_analytics_kpis(
+async def customer_analytics_kpis(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -103,22 +110,6 @@ def customer_analytics_kpis(
     else:
         where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
 
-    # Single-pass rewrite of the previous 4-CTE (totals, cur, prev, top10)
-    # comma-join. The old shape forced 4 separate scans of `base`. Here we
-    # collapse to:
-    #   1. `base`     — one scan of source rows
-    #   2. `per_cust` — one aggregate per customer (drives top10 + cust counts)
-    #   3. final SELECT — one pass that uses FILTER (...) to compute totals,
-    #      cur-month, and prev-month aggregates from the same row stream.
-    # Top10 is computed via a small lateral subquery against per_cust, which
-    # is already aggregated to one row per customer (~33K rows max), so the
-    # ORDER BY ... LIMIT 10 is cheap.
-    #
-    # Values use full-range totals so they line up with the map / treemap /
-    # other panels on this dashboard. Deltas are still month-over-month
-    # (latest available month vs prior month) — that's the only meaningful
-    # comparison for monthly-grain data and matches how planners read the
-    # arrows ("did things move this month?").
     sql = f"""
         WITH base AS (
             SELECT f.startdate,
@@ -171,9 +162,12 @@ def customer_analytics_kpis(
         FROM agg, top10
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        row = cur.fetchone()
+    # Read-only KPI aggregate — replica-safe (Item 24). Falls back to the
+    # primary async pool when READ_REPLICA_URL is unset.
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            row = await cur.fetchone()
 
     if not row:
         return {"kpis": []}
@@ -220,7 +214,7 @@ def customer_analytics_kpis(
 
 @router.get("/customer-analytics/alerts")
 @_CA_CACHE
-def customer_analytics_alerts(
+async def customer_analytics_alerts(
     response: FastAPIResponse,
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -305,13 +299,14 @@ def customer_analytics_alerts(
         LIMIT 1
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(fr_sql, params)
-        fr_rows = cur.fetchall()
-        cur.execute(hhi_sql, params2)
-        hhi_rows = cur.fetchall()
-        cur.execute(mom_sql, params3)
-        mom_row = cur.fetchone()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(fr_sql, params)
+            fr_rows = await cur.fetchall()
+            await cur.execute(hhi_sql, params2)
+            hhi_rows = await cur.fetchall()
+            await cur.execute(mom_sql, params3)
+            mom_row = await cur.fetchone()
 
     alerts: list[dict[str, Any]] = []
 

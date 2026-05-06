@@ -49,6 +49,7 @@ Hard constraints. Violations cause bugs, test failures, or silent data corruptio
 - **No backward-compat shims.** When moving a module, rewrite all importers in the same change. Canonical: `from common.core.db import get_db_params`.
 - **Routers/modules > 800 LoC must split** by sub-feature into a domain folder.
 - **No `_row_to_dict` outside `common/core/sql_helpers.py`.** Import `row_to_dict_from_cursor` / `row_to_dict_from_cols`.
+- **Read-only analytics endpoints opt into `get_async_read_only_conn()`** (or sync sibling `get_read_only_conn()`). Routes to a Postgres read replica when `READ_REPLICA_URL` is set; otherwise falls back to the primary pool with no behaviour change. Use ONLY for queries that tolerate replica lag — never for read-after-write flows. Currently used by 7 customer-analytics endpoints. See `docs/RUNBOOK.md` "Read Replica Deployment".
 
 ### ML / Forecasting
 - **All tree-model `.fit()` and instantiation goes through `common/ml/model_registry.py`** (`fit_model()`, `build_model()`). Direct `LGBMRegressor()` / `CatBoostRegressor()` / `XGBRegressor()` outside `model_registry.py` is a defect — applies to tuning, training, backtest, production, meta-learner.

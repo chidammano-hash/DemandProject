@@ -1,4 +1,7 @@
-"""Geographic customer-analytics endpoints — map, treemap, heatmap, demand flow."""
+"""Geographic customer-analytics endpoints — map, treemap, heatmap, demand flow.
+
+Item 19 pilot: handlers are ``async def`` and use ``get_async_conn``.
+"""
 from __future__ import annotations
 
 import math
@@ -7,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import get_async_conn, get_async_read_only_conn, set_cache
 
 from ._helpers import (
     _CA_CACHE,
@@ -30,7 +33,7 @@ router = APIRouter(tags=["customer-analytics"])
 
 @router.get("/customer-analytics/map")
 @_CA_CACHE
-def customer_analytics_map(
+async def customer_analytics_map(
     response: FastAPIResponse,
     metric: str = Query(default="demand_qty", pattern="^(customer_count|demand_qty|sales_qty|oos_qty|fill_rate)$"),
     group_by: str = Query(default="state", pattern="^(state|city|zip)$"),
@@ -75,9 +78,11 @@ def customer_analytics_map(
     """
     params.append(_MARKER_LIMIT_STATE if group_by == "state" else _MARKER_LIMIT_CITY_ZIP)
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    # Read-only geo aggregate — replica-safe (Item 24).
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     locations: list[dict[str, Any]] = []
     for r in rows:
@@ -147,7 +152,7 @@ def customer_analytics_map(
 
 @router.get("/customer-analytics/treemap")
 @_CA_CACHE
-def customer_analytics_treemap(
+async def customer_analytics_treemap(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -182,9 +187,11 @@ def customer_analytics_treemap(
         LIMIT 500
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    # Read-only treemap aggregate — replica-safe (Item 24).
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     # Build hierarchy: state -> channel -> customer
     states: dict[str, dict[str, Any]] = {}
@@ -233,7 +240,7 @@ def customer_analytics_treemap(
 
 @router.get("/customer-analytics/heatmap")
 @_CA_CACHE
-def customer_analytics_heatmap(
+async def customer_analytics_heatmap(
     response: FastAPIResponse,
     metric: str = Query(default="demand_qty", pattern="^(demand_qty|customer_count|fill_rate)$"),
     top_n: int = Query(default=25, ge=5, le=100),
@@ -286,9 +293,11 @@ def customer_analytics_heatmap(
     """
     params.append(top_n)
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    # Read-only heatmap aggregate — replica-safe (Item 24).
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     # SQL already filtered to top_n items × top 30 states. Just compute axis
     # ordering from the returned rows (no second top-N pass).
@@ -328,7 +337,7 @@ def customer_analytics_heatmap(
 
 @router.get("/customer-analytics/demand-flow")
 @_CA_CACHE
-def customer_analytics_demand_flow(
+async def customer_analytics_demand_flow(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -360,9 +369,10 @@ def customer_analytics_demand_flow(
         LIMIT 500
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     node_set: set[str] = set()
     links_wh_state: dict[tuple[str, str], float] = {}

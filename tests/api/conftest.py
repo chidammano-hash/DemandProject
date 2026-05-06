@@ -9,6 +9,27 @@ import httpx
 from httpx import ASGITransport
 
 
+def _make_async_cm(value):
+    """Wrap a value in an awaitable async-context-manager that yields it.
+
+    psycopg-pool's ``AsyncConnectionPool.connection()`` returns an async
+    context manager — same shape for both pool.connection() and
+    conn.cursor(). MagicMock can't fake that natively, so we wire up a tiny
+    helper that exposes ``__aenter__``/``__aexit__`` returning ``value``.
+    """
+    cm = MagicMock()
+
+    async def _aenter(_self):
+        return value
+
+    async def _aexit(_self, exc_type, exc, tb):
+        return False
+
+    cm.__aenter__ = _aenter
+    cm.__aexit__ = _aexit
+    return cm
+
+
 def make_pool(
     fetchall_return=None,
     fetchone_return=None,
@@ -57,6 +78,57 @@ def make_pool(
 
     pool = MagicMock()
     pool.connection.return_value = conn
+    return pool, conn, cursor
+
+
+def make_async_pool(
+    fetchall_return=None,
+    fetchone_return=None,
+    *,
+    fetchall_returns=None,
+    fetchone_returns=None,
+):
+    """Async sibling of :func:`make_pool`.
+
+    Builds a mock pool whose ``connection()`` returns an async context
+    manager yielding a connection whose ``cursor()`` is also an async
+    context manager. ``cur.execute`` / ``cur.fetchone`` / ``cur.fetchall``
+    are :class:`AsyncMock` so awaiting them works as expected.
+
+    The (cursor, conn, pool) triple is returned in the same order as
+    :func:`make_pool` so test code reads the same way.
+
+    Behaviour:
+        * Default ``fetchall`` -> ``[]``; default ``fetchone`` -> ``(0,)``
+        * ``fetchall_returns`` / ``fetchone_returns`` set ``side_effect`` so
+          per-call values are returned (mirrors the sync helper).
+    """
+    cursor = MagicMock()
+    cursor.execute = AsyncMock(return_value=None)
+
+    if fetchall_returns is not None:
+        cursor.fetchall = AsyncMock(side_effect=list(fetchall_returns))
+    else:
+        cursor.fetchall = AsyncMock(
+            return_value=fetchall_return if fetchall_return is not None else []
+        )
+
+    if fetchone_returns is not None:
+        cursor.fetchone = AsyncMock(side_effect=list(fetchone_returns))
+    else:
+        cursor.fetchone = AsyncMock(
+            return_value=fetchone_return if fetchone_return is not None else (0,)
+        )
+
+    cursor.description = [("col",)]
+    cursor.rowcount = 1
+
+    conn = MagicMock()
+    conn.cursor = MagicMock(return_value=_make_async_cm(cursor))
+    conn.commit = AsyncMock(return_value=None)
+
+    pool = MagicMock()
+    pool.connection = MagicMock(return_value=_make_async_cm(conn))
     return pool, conn, cursor
 
 

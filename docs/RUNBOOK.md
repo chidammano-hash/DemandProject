@@ -1602,6 +1602,115 @@ make e2e-report        # Open HTML report from last run
 
 ---
 
+## pg-queue (Postgres-Backed Job Queue)
+
+A minimal Postgres-backed job queue runs **alongside** APScheduler for jobs that
+must survive API restarts, span multiple workers, or run for many hours
+without blocking the API thread pool. Item 22 introduces this as a pilot:
+exactly one job — `refresh_intramonth` — has been migrated. Remaining
+APScheduler jobs are unchanged.
+
+### Architecture
+
+| Component | Purpose | File |
+|---|---|---|
+| `job_queue` table | Persistent queue rows; status transitions tracked here | `sql/183_create_pg_queue.sql` |
+| `common.services.pg_queue` | Public API: `enqueue_job`, `claim_next_job`, `mark_*`, `requeue_failed_with_backoff`, `get_queue_depth` | `common/services/pg_queue.py` |
+| `scripts/ops/pg_queue_worker.py` | Long-running worker: claims, executes, transitions state | `scripts/ops/pg_queue_worker.py` |
+
+Claim semantics use `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1` so multiple
+workers race safely. Failures auto-retry with exponential backoff
+(60s → 120s → 240s → ... capped at 1 h) up to `max_attempts` (default 3).
+
+### Daily Operations
+
+```bash
+make pg-queue-worker                   # Run a worker (long-running; one process)
+make pg-queue-enqueue-recurring        # Enqueue refresh_intramonth (cron entry-point)
+make pg-queue-depth                    # Inspect queue depth by status
+```
+
+A typical production setup runs ONE `pg-queue-worker` as a systemd unit (or
+docker container) and triggers `pg-queue-enqueue-recurring` from cron / a
+lightweight APScheduler "enqueue-only" job once per day.
+
+### When to Migrate a Job From APScheduler to pg-queue
+
+Use pg-queue when the job:
+
+* runs for **>15 min** (long-running jobs hold APScheduler thread pool slots);
+* must **survive an API restart** without losing in-flight state;
+* is safe to run from a **separate process** (i.e. doesn't depend on in-process
+  globals owned by the API);
+* benefits from being **horizontally scalable** (multiple workers).
+
+Keep on APScheduler when the job:
+
+* completes in seconds and is fired by a UI action;
+* relies on `JobManager`'s per-group concurrency contract or the threading
+  primitives in `job_state.py`;
+* is interactively cancellable from the Jobs tab.
+
+### Migration Recipe (per job)
+
+1. **Add a handler** in `scripts/ops/pg_queue_worker.py` `HANDLERS` mapping
+   the new `job_type` to its callable. Reuse the existing `_run_*` runner
+   from `common/services/job_state.py` so the queue path is byte-for-byte
+   equivalent.
+2. **Drop the APScheduler schedule** (delete the row in `job_schedule` or
+   remove the `schedule_recurring` call). Manual triggering of the same
+   `job_type` via `JobManager.submit_job` still works.
+3. **Wire enqueue** — add a Make target that calls `enqueue_job(...)` and
+   trigger it from cron. Or keep a tiny APScheduler job whose only side
+   effect is to enqueue.
+4. **Run a worker** — `make pg-queue-worker` (one instance per box).
+5. **Watch** — `make pg-queue-depth` in CI / dashboards. Set up an alert on
+   `failed > 0` after `max_attempts` exhausted (dead-letter).
+
+### Operational Concerns
+
+* **Monitoring queue depth**: poll `get_queue_depth()` every minute. Alert
+  on `pending > N` (saturation) or any `failed` row older than 1 h.
+* **Dead-letter handling**: jobs that exhaust `max_attempts` stay in
+  `status='failed'` forever. Triage manually:
+  ```sql
+  SELECT id, job_type, attempts, last_error, completed_at
+  FROM job_queue WHERE status = 'failed'
+  ORDER BY completed_at DESC;
+  ```
+  Reset for re-run with: `UPDATE job_queue SET status='pending', attempts=0,
+  run_at=NOW() WHERE id = <id>;`
+* **Worker crash recovery**: if a worker dies between `mark_running` and
+  `mark_completed`, the row sits in `status='running'`. A future cleanup job
+  can re-enqueue any `running` rows whose `started_at` is older than
+  expected. (Not implemented in the pilot; documented as follow-up.)
+* **DDL**: `sql/183_create_pg_queue.sql` is idempotent (`CREATE TABLE IF NOT
+  EXISTS`). Apply via `make db-apply-sql`.
+
+### Pilot Cutover: refresh_intramonth
+
+`refresh_intramonth` (the `mv_intramonth_stockout` refresh, flagged as
+7-20 h at 40× scale) is the proof-point. Its `JobTypeDef` remains in
+`JOB_TYPE_REGISTRY` so the manual "Run now" UI button still works, but the
+**recurring** path now goes through pg-queue. To complete the cutover in a
+deployed environment:
+
+```bash
+# 1. Apply schema (one-time)
+make db-apply-sql
+
+# 2. If a job_schedule row exists for refresh_intramonth, delete it
+psql "$DATABASE_URL" -c "DELETE FROM job_schedule WHERE job_type='refresh_intramonth';"
+
+# 3. Run the worker (systemd / docker)
+make pg-queue-worker
+
+# 4. Wire daily enqueue (cron, e.g. 02:00 UTC)
+0 2 * * * cd /app && make pg-queue-enqueue-recurring
+```
+
+---
+
 ## Database Maintenance & Optimization
 
 Routine maintenance procedures to keep PostgreSQL healthy as data grows.
@@ -1635,20 +1744,143 @@ make auto-create-partitions-dry-run     # Print partition DDL without executing
 
 ### Partition Auto-Creation (`auto-create-partitions`)
 
-`scripts/db/auto_create_partitions.py` provisions the next N monthly partitions
+`scripts/db/auto_create_partitions.py` provisions the next N partitions
 (default 12) for every RANGE-partitioned fact table:
 `fact_inventory_snapshot`, `fact_customer_demand_monthly`,
 `fact_external_signal`. The script uses `CREATE TABLE IF NOT EXISTS ... PARTITION OF`,
 so it is fully idempotent — re-running is always safe.
 
-Run it monthly via cron, or manually before any large backfill that may write
-rows beyond the last hardcoded partition. Without this, future-dated rows fall
-into the DEFAULT partition and the planner cannot prune them. Example crontab
-entry (1st of every month at 02:00):
+Each registry entry in the script picks an `interval` of `month` (default) or
+`week`. Weekly partitions use ISO-8601 numbering (Mon–Sun) and are named
+`<prefix>_YYYYwWW`. The base `make auto-create-partitions` target picks up the
+correct interval per table; `make auto-create-partitions-weekly` restricts the
+run to weekly tables only (useful right after the weekly cutover migrations).
+
+Run it on a schedule (monthly for monthly tables, weekly for weekly tables),
+or manually before any large backfill that may write rows beyond the last
+hardcoded partition. Without this, future-dated rows fall into the DEFAULT
+partition and the planner cannot prune them. Example crontab (1st of every
+month at 02:00 + every Monday at 02:30):
 
 ```cron
-0 2 1 * *  cd /path/to/DemandProject && make auto-create-partitions >> /var/log/demand_partitions.log 2>&1
+0  2 1 * *  cd /path/to/DemandProject && make auto-create-partitions          >> /var/log/demand_partitions.log 2>&1
+30 2 * * 1  cd /path/to/DemandProject && make auto-create-partitions-weekly   >> /var/log/demand_partitions.log 2>&1
 ```
+
+### Sub-monthly partitioning cutover
+
+The cutover migrations `sql/184_partition_inventory_snapshot_weekly_cutover.sql`
+and `sql/185_partition_customer_demand_weekly_cutover.sql` switch the rolling
+window of `fact_inventory_snapshot` and `fact_customer_demand_monthly` from
+monthly to weekly partitioning. Both files start with a
+`!! REVIEW BEFORE RUN !!` banner — they are NOT picked up by `make
+db-apply-sql` automatically.
+
+**When to do it:** when single-partition scan cost on the inventory or
+customer-demand fact becomes the dominant query latency (for inventory, that's
+roughly when monthly partitions exceed ~30M rows; we expect this around the
+40× scaling milestone). Weekly partitioning roughly halves the per-partition
+scan and improves vacuum/analyze concurrency.
+
+**Strategy:** the migrations KEEP every existing monthly partition (which is
+already populated and indexed) and ADD weekly partitions for the next 12
+weeks only. Partition pruning still works because monthly and weekly ranges
+don't overlap. After cutover, `auto_create_partitions.py`'s registered
+`interval` for the affected table is flipped from `"month"` to `"week"` so
+the rolling window provisions weekly going forward.
+
+**Estimated downtime:**
+
+| Step | Wall-clock |
+|---|---|
+| Pause ETL writers | seconds (job graceful stop) |
+| `DETACH PARTITION default` (empty default) | < 1 s |
+| `DETACH PARTITION default` (~30 M rows) | 2–5 min |
+| 12 × `CREATE TABLE ... PARTITION OF` | 5–30 s total |
+| `RENAME` + new empty default | < 1 s |
+| Resume ETL writers | seconds |
+| **Realistic total — `fact_inventory_snapshot`** | **5–30 min** |
+| **Realistic total — `fact_customer_demand_monthly`** | **2–10 min** |
+
+The wide range reflects whether the existing default partition is empty.
+Drain the default beforehand to land at the low end.
+
+**Pre-flight:**
+
+1. Confirm no long-running transactions are touching the parent table:
+   ```sql
+   SELECT pid, mode, granted, query_start
+     FROM pg_locks l
+     JOIN pg_stat_activity a USING (pid)
+    WHERE l.relation = 'fact_inventory_snapshot'::regclass;
+   ```
+2. Verify default partition is empty (or accept the longer DETACH cost):
+   ```sql
+   SELECT COUNT(*) FROM fact_inventory_snapshot_default;
+   ```
+3. Verify the most recent monthly partition's `TO` bound is on a Monday — or
+   accept the gap days will sit in the default partition until the next
+   monthly partition's range covers them.
+4. Take a fresh schema-only `pg_dump` of the partitioned table for rollback
+   reference.
+
+**Order of operations:**
+
+1. **Stop ETL.** Pause the inventory loader (`load_inventory_postgres.py`)
+   and customer-demand loader (`load_customer_demand_postgres.py`). Disable
+   APScheduler jobs for these via the Jobs tab.
+2. **Edit and apply the migration.** Open
+   `sql/184_partition_inventory_snapshot_weekly_cutover.sql`, replace the
+   `<YYYYwWW_n>` and `<YYYY-MM-DD_mon_n>` placeholders with the actual ISO
+   week numbers and Monday dates for the next 12 weeks, then run via
+   `psql … -f sql/184_partition_inventory_snapshot_weekly_cutover.sql`.
+   Repeat for `sql/185_…` if cutting over customer-demand at the same time.
+3. **Update the auto-create registry.** In
+   `scripts/db/auto_create_partitions.py`, change the migrated table's entry
+   from `interval="month"` to `interval="week"`.
+4. **Extend the rolling window.** Run `make auto-create-partitions-weekly` to
+   add any further weeks beyond the 12 already created by the migration.
+5. **Restart ETL.** Re-enable the loaders and APScheduler jobs.
+
+**Verification:**
+
+```sql
+-- 1. Partition count and shape
+SELECT relname, pg_size_pretty(pg_total_relation_size(c.oid)) AS size
+  FROM pg_inherits i
+  JOIN pg_class c ON c.oid = i.inhrelid
+ WHERE i.inhparent = 'fact_inventory_snapshot'::regclass
+ ORDER BY relname;
+
+-- 2. New weekly partitions populating as data lands
+SELECT relname, COUNT(*) FROM (
+    SELECT c.relname, p.snapshot_date
+      FROM fact_inventory_snapshot p
+      JOIN pg_class c ON c.oid = p.tableoid
+     WHERE c.relname LIKE 'fact_inventory_snapshot_2026w%'
+) t GROUP BY relname ORDER BY relname;
+
+-- 3. Planner is pruning correctly (only the matching partition appears)
+EXPLAIN SELECT COUNT(*) FROM fact_inventory_snapshot
+ WHERE snapshot_date BETWEEN DATE '2026-05-04' AND DATE '2026-05-10';
+```
+
+**Rollback (if cutover goes wrong):**
+
+1. `ALTER TABLE fact_inventory_snapshot DETACH PARTITION fact_inventory_snapshot_<YYYYwWW>;`
+   for every weekly partition just created.
+2. `DROP TABLE` each detached weekly partition (they are empty if cutover
+   happened with ETL paused).
+3. `ALTER TABLE fact_inventory_snapshot DETACH PARTITION fact_inventory_snapshot_default;`
+   then re-attach the previous default
+   (`fact_inventory_snapshot_default_premigration`) as DEFAULT, and drop the
+   new empty one.
+4. Revert the registry entry in `scripts/db/auto_create_partitions.py` to
+   `interval="month"`.
+5. Restart ETL.
+
+The rollback SQL is intentionally NOT shipped as a file — the safe path is to
+run it interactively while watching `pg_locks` and partition row counts.
 
 ### PostgreSQL Configuration (docker-compose.yml)
 
@@ -2250,6 +2482,95 @@ Accepted date formats: `YYYY-MM-DD`, `YYYY-MM`, `MM/DD/YYYY` (all normalized to 
 After any cleanup that affects champion/ceiling rows, re-run `make champion-select`.
 
 ---
+
+## Read Replica Deployment (Item 24)
+
+The API supports opt-in routing of read-only analytics queries to a Postgres
+read replica. This is a SCAFFOLD: the application picks up the replica when
+configured, but provisioning the actual replica is the operator's job.
+
+### When to use it
+
+Useful when the Customer Analytics tab (or other analytics-heavy reads) starts
+contending with primary writes — typically once concurrent planner sessions
+exceed ~20 or backtest loads run alongside the dashboard. A single read
+replica typically doubles available analytics capacity without touching the
+write path.
+
+### Configuration
+
+Set `READ_REPLICA_URL` in the API process environment:
+
+```bash
+READ_REPLICA_URL=postgres://reader:secret@replica.example.com:5433/demand_mvp
+```
+
+Optional sizing knobs (default to the primary pool's values):
+
+- `READ_POOL_MIN_SIZE` (default `POOL_MIN_SIZE`, fallback `5`)
+- `READ_POOL_MAX_SIZE` (default `POOL_MAX_SIZE`, fallback `50`)
+
+When `READ_REPLICA_URL` is unset (the default), every endpoint falls through to
+the primary pool — i.e. the configured-off code path is bit-for-bit identical
+to having no replica code at all.
+
+### Currently routed endpoints
+
+The following endpoints opt in via `get_async_read_only_conn()`:
+
+- `GET /customer-analytics/kpis`
+- `GET /customer-analytics/map`
+- `GET /customer-analytics/treemap`
+- `GET /customer-analytics/heatmap`
+- `GET /customer-analytics/channel-mix`
+- `GET /customer-analytics/segment-trends`
+- `GET /customer-analytics/ranking`
+
+These are all read-only aggregates that tolerate eventual consistency. Other
+read-only endpoints can be migrated incrementally as load shifts.
+
+### Provisioning the replica
+
+1. Create a streaming-replication standby on a separate host. See the Postgres
+   docs: <https://www.postgresql.org/docs/16/warm-standby.html#STREAMING-REPLICATION>
+2. Create a read-only role: `CREATE ROLE reader LOGIN PASSWORD '...' ;`
+3. `GRANT CONNECT ON DATABASE demand_mvp TO reader; GRANT USAGE ON SCHEMA public TO reader; GRANT SELECT ON ALL TABLES IN SCHEMA public TO reader;`
+4. Set `READ_REPLICA_URL` in the API environment, restart the API.
+5. Verify analytics endpoints route via replica: tail API logs for
+   `"Async read-replica pool opened on startup"`.
+
+### Monitoring replication lag
+
+```sql
+-- On the primary:
+SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn
+FROM pg_stat_replication;
+
+-- On the replica:
+SELECT pg_last_xact_replay_timestamp() AS last_replayed,
+       NOW() - pg_last_xact_replay_timestamp() AS lag;
+```
+
+Lag under ~30s is acceptable for the analytics endpoints listed above. If the
+replica falls behind, set `READ_REPLICA_URL=` (empty) and restart the API to
+fail back to the primary.
+
+### When NOT to use the replica
+
+Do NOT migrate endpoints that the user expects to reflect their own writes
+immediately after a `POST` / `PUT` (e.g. saving a plan and refreshing the
+view). The replica can lag the primary by seconds, so read-after-write flows
+will appear to "lose" the update. The customer-analytics endpoints currently
+routed are safe because they aggregate over months of history.
+
+### Failure modes
+
+- Replica unreachable on startup: warning logged, all endpoints fall back to
+  the primary pool. App still serves traffic.
+- `READ_REPLICA_URL` unparseable: warning logged, treated as unset.
+- Replica falls behind during traffic: each query that lands on the replica
+  returns slightly stale data — acceptable for analytics. To force traffic
+  back to the primary, unset the env var and restart.
 
 ## Troubleshooting
 

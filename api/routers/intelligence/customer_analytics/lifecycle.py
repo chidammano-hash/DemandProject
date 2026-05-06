@@ -1,13 +1,21 @@
-"""Customer lifecycle and demand-at-risk endpoints."""
+"""Customer lifecycle and demand-at-risk endpoints.
+
+Item 19 pilot: handlers are ``async def``. The /lifecycle endpoint
+previously fanned cohort + waterfall queries out across a
+:class:`concurrent.futures.ThreadPoolExecutor`; now they run via
+:func:`asyncio.gather` against the async pool, freeing two anyio
+threadpool tokens per request and shaving the threadpool-acquisition
+overhead.
+"""
 from __future__ import annotations
 
-import concurrent.futures
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import get_async_conn, set_cache
 
 from ._helpers import (
     _CA_CACHE,
@@ -19,18 +27,18 @@ from ._helpers import (
 router = APIRouter(tags=["customer-analytics"])
 
 
-def _run_query(sql: str, params: list[Any]) -> list[tuple]:
-    """Execute a single SELECT in its own pooled connection.
+async def _run_query(sql: str, params: list[Any]) -> list[tuple]:
+    """Execute a single SELECT in its own pooled async connection.
 
-    Used to fan out the cohort + waterfall queries in /lifecycle across two
-    pool connections so they overlap on the database side instead of running
-    sequentially on one connection. Each invocation acquires + releases a
-    pool slot so we never hold connections idle while the other query is in
-    flight.
+    Each invocation acquires + releases a pool slot so concurrent gather()
+    callers run their queries on independent backend connections without
+    holding any idle. The cursor is also async-context-managed so it's
+    closed even if the surrounding gather raises.
     """
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        return cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            return await cur.fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +47,7 @@ def _run_query(sql: str, params: list[Any]) -> list[tuple]:
 
 @router.get("/customer-analytics/lifecycle")
 @_CA_CACHE
-def customer_analytics_lifecycle(
+async def customer_analytics_lifecycle(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -145,17 +153,18 @@ def customer_analytics_lifecycle(
         ORDER BY m.month
     """
 
-    # Run cohort + waterfall in parallel on separate pool connections.
+    # Run cohort + waterfall in parallel on separate async-pool connections.
     # Both are multi-second queries against fact_customer_demand_monthly /
     # mv_customer_activity_monthly with no shared state — running them
     # concurrently roughly halves wall-clock time for the endpoint. Pool
     # max_size is 50 (api/pool.py) so 2 connections per request is fine
-    # even with the 13-endpoint Customer Analytics tab fan-out.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        cohort_future = pool.submit(_run_query, cohort_sql, params)
-        waterfall_future = pool.submit(_run_query, waterfall_sql, params2)
-        cohort_rows = cohort_future.result()
-        waterfall_rows = waterfall_future.result()
+    # even with the 13-endpoint Customer Analytics tab fan-out. Replaces the
+    # previous ThreadPoolExecutor-based fan-out — asyncio.gather is more
+    # idiomatic for async handlers and frees up two anyio threadpool tokens.
+    cohort_rows, waterfall_rows = await asyncio.gather(
+        _run_query(cohort_sql, params),
+        _run_query(waterfall_sql, params2),
+    )
 
     # Build cohort response
     cohort_map: dict[str, dict[str, Any]] = {}
@@ -190,7 +199,7 @@ def customer_analytics_lifecycle(
 
 @router.get("/customer-analytics/demand-at-risk")
 @_CA_CACHE
-def customer_analytics_demand_at_risk(
+async def customer_analytics_demand_at_risk(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -214,9 +223,10 @@ def customer_analytics_demand_at_risk(
                    COALESCE(SUM(demand_qty) FILTER (WHERE is_churn_risk), 0)                                  AS churn_risk
             FROM mv_ca_demand_at_risk
         """
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql_mv)
-            row = cur.fetchone()
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql_mv)
+                row = await cur.fetchone()
 
         if not row:
             return {"waterfall": []}
@@ -308,9 +318,10 @@ def customer_analytics_demand_at_risk(
         FROM totals t, conc_risk cr, oos_loss ol, churn_risk chr
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        row = cur.fetchone()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            row = await cur.fetchone()
 
     if not row:
         return {"waterfall": []}

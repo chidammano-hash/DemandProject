@@ -1,4 +1,7 @@
-"""Customer-analytics segmentation endpoints — channel mix, segment trends, filter options."""
+"""Customer-analytics segmentation endpoints — channel mix, segment trends, filter options.
+
+Item 19 pilot: handlers are ``async def`` and use ``get_async_conn``.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,8 +9,8 @@ from typing import Any
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
-from common.services.cache import cached_sync
+from api.core import get_async_conn, get_async_read_only_conn, set_cache
+from common.services.cache import cached_async
 
 from ._helpers import (
     _CA_CACHE,
@@ -20,7 +23,7 @@ from ._helpers import (
 # dim_customer reloads at most daily — a 24h TTL kills nearly all repeat
 # fetches (every tab open, every filter-bar mount) without risking stale
 # enums between loads.
-_CA_FILTER_OPTIONS_CACHE = cached_sync(ttl=86400, group="customer_analytics")
+_CA_FILTER_OPTIONS_CACHE = cached_async(ttl=86400, group="customer_analytics")
 
 router = APIRouter(tags=["customer-analytics"])
 
@@ -31,7 +34,7 @@ router = APIRouter(tags=["customer-analytics"])
 
 @router.get("/customer-analytics/channel-mix")
 @_CA_CACHE
-def customer_analytics_channel_mix(
+async def customer_analytics_channel_mix(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
@@ -71,9 +74,11 @@ def customer_analytics_channel_mix(
         LIMIT 1000
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    # Read-only channel-mix aggregate — replica-safe (Item 24).
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     # Build hierarchy: channel -> store_type -> sub_channel
     # Clean null/unknown labels and compute grand total for threshold
@@ -178,7 +183,7 @@ def customer_analytics_channel_mix(
 
 @router.get("/customer-analytics/segment-trends")
 @_CA_CACHE
-def customer_analytics_segment_trends(
+async def customer_analytics_segment_trends(
     response: FastAPIResponse,
     segment_by: str = Query(default="rpt_channel_desc", pattern="^(rpt_channel_desc|store_type_desc|chain_type_desc|state)$"),
     item_id: str | None = Query(default=None),
@@ -255,9 +260,11 @@ def customer_analytics_segment_trends(
             ORDER BY a.segment, a.startdate
         """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    # Read-only segment-trends aggregate — replica-safe (Item 24).
+    async with get_async_read_only_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
 
     # Group by segment
     segments: dict[str, dict[str, Any]] = {}
@@ -303,7 +310,7 @@ def customer_analytics_segment_trends(
 
 @router.get("/customer-analytics/filter-options")
 @_CA_FILTER_OPTIONS_CACHE
-def customer_analytics_filter_options(
+async def customer_analytics_filter_options(
     response: FastAPIResponse,
 ):
     """Distinct dropdown values for channel, store type, state.
@@ -323,9 +330,10 @@ def customer_analytics_filter_options(
         FROM mv_customer_filter_options
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql)
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql)
+            rows = await cur.fetchall()
 
     by_category: dict[str, list[str]] = {row[0]: list(row[1] or []) for row in rows}
     return {

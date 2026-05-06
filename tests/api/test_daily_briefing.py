@@ -10,7 +10,7 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
-from tests.api.conftest import make_pool as _make_pool
+from tests.api.conftest import make_async_pool as _make_pool
 
 # ---------------------------------------------------------------------------
 # GET /inv-planning/daily-briefing — returns 200 with expected structure
@@ -48,7 +48,7 @@ async def test_daily_briefing_200():
         ],
     ]
 
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -111,7 +111,7 @@ async def test_daily_briefing_empty_db():
         [],  # 4. No actions
     ]
 
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -166,7 +166,7 @@ async def test_daily_briefing_partial_failure():
         [],              # 4. No actions
     ]
 
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

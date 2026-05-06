@@ -1,4 +1,9 @@
-"""Tests for customer analytics endpoints — /customer-analytics/*."""
+"""Tests for customer analytics endpoints — /customer-analytics/*.
+
+Item 19 pilot: handlers were converted to ``async def`` and use
+``api.core._get_async_pool``. Tests therefore use :func:`make_async_pool`
+(awaitable cursor methods) and patch the async pool getter.
+"""
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -7,7 +12,7 @@ from datetime import date
 import httpx
 from httpx import ASGITransport
 
-from tests.api.conftest import make_pool as _make_pool
+from tests.api.conftest import make_async_pool as _make_pool
 from common.services.cache import reset_cache
 
 
@@ -44,7 +49,7 @@ async def test_map_returns_locations():
         ("CA", 50, 10000.0, 9000.0, 1000.0),
         ("TX", 30, 8000.0, 7500.0, 500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date(), _patch_nomi():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -67,7 +72,7 @@ async def test_map_with_item_filter():
     cursor.fetchall.return_value = [
         ("NY", 10, 5000.0, 4500.0, 500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date(), _patch_nomi():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -82,7 +87,7 @@ async def test_map_with_item_filter():
 async def test_map_empty_result():
     pool, _, cursor = _make_pool()
     cursor.fetchall.return_value = []
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date(), _patch_nomi():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -106,7 +111,7 @@ async def test_treemap_returns_hierarchy():
         ("CA", "Off Premise", "Beta LLC", "C002", 3000.0, 2800.0),
         ("TX", "On Premise", "Gamma Inc", "C003", 2000.0, 1900.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -133,7 +138,7 @@ async def test_heatmap_returns_matrix():
         ("ITEM001", "Widget A", "TX", 15, 3000.0, 2900.0),
         ("ITEM002", "Gadget B", "CA", 10, 2000.0, 1900.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -160,7 +165,7 @@ async def test_channel_mix_returns_tree():
         ("On Premise", "Bar", "Sports Bar", 20, 4000.0, 3800.0),
         ("Off Premise", "Grocery", "Chain", 50, 12000.0, 11500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -185,7 +190,7 @@ async def test_segment_trends_returns_sparklines():
         ("Off Premise", date(2026, 1, 1), 200, 10000.0, 9500.0, 500.0),
         ("Off Premise", date(2026, 2, 1), 210, 10500.0, 10000.0, 500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -213,7 +218,7 @@ async def test_ranking_demand_desc():
         ("C001", "Acme Corp", "CA", "On Premise", 10000.0, 9000.0, 1000.0),
         ("C002", "Beta LLC", "TX", "Off Premise", 8000.0, 7500.0, 500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -233,7 +238,7 @@ async def test_ranking_fill_rate_asc():
     cursor.fetchall.return_value = [
         ("C003", "Low Service", "FL", "On Premise", 5000.0, 3500.0, 1500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -255,7 +260,7 @@ async def test_oos_impact_customer_grain():
         ("C001", "Acme Corp", "CA", "On Premise", 10000.0, 9000.0, 1000.0),
         ("C002", "Beta LLC", "TX", "Off Premise", 5000.0, 2500.0, 2500.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -275,7 +280,7 @@ async def test_oos_impact_state_grain():
     cursor.fetchall.return_value = [
         ("CA", "CA", "CA", "All", 15000.0, 13000.0, 2000.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -298,7 +303,7 @@ async def test_items_search():
         ("ITEM001", "Widget A"),
         ("ITEM002", "Widget B"),
     ]
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -314,7 +319,7 @@ async def test_items_search():
 async def test_items_empty_search():
     pool, _, cursor = _make_pool()
     cursor.fetchall.return_value = [("ITEM001", "Widget A")]
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -331,7 +336,7 @@ async def test_items_empty_search():
 @pytest.mark.asyncio
 async def test_map_invalid_metric():
     pool, _, cursor = _make_pool()
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -342,7 +347,7 @@ async def test_map_invalid_metric():
 @pytest.mark.asyncio
 async def test_map_invalid_group_by():
     pool, _, cursor = _make_pool()
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -353,7 +358,7 @@ async def test_map_invalid_group_by():
 @pytest.mark.asyncio
 async def test_ranking_invalid_sort():
     pool, _, cursor = _make_pool()
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -376,7 +381,7 @@ async def test_kpis_returns_six_metrics():
         8000.0, 7000.0, 1000.0, 45,    # prev month
         4000.0,                        # top10 demand (full range)
     )
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -404,7 +409,7 @@ async def test_kpis_returns_six_metrics():
 async def test_kpis_empty():
     pool, _, cursor = _make_pool()
     cursor.fetchone.return_value = None
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -433,7 +438,7 @@ async def test_lifecycle_returns_cohorts_and_waterfall():
         (date(2025, 7, 1), 5, 2),
     ]
     cursor.fetchall.side_effect = [cohort_rows, waterfall_rows]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -459,7 +464,7 @@ async def test_demand_at_risk_waterfall():
     pool, _, cursor = _make_pool()
     # Row: total_demand, concentration_risk, oos_loss, churn_risk
     cursor.fetchone.return_value = (100000.0, 20000.0, 5000.0, 3000.0)
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -480,7 +485,7 @@ async def test_demand_at_risk_waterfall():
 async def test_demand_at_risk_empty():
     pool, _, cursor = _make_pool()
     cursor.fetchone.return_value = None
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -502,7 +507,7 @@ async def test_affinity_returns_matrix():
         ("C001", "Acme Corp", "ITEM002", "Gadget B", 3000.0),
         ("C002", "Beta LLC", "ITEM001", "Widget A", 2000.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -532,7 +537,7 @@ async def test_order_patterns_returns_histogram_and_scatter():
         ("C002", "Beta LLC", 3.0, 0.5, 4, 20000.0),
         ("C003", "Gamma Inc", 6.0, 1.2, 2, 5000.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -561,7 +566,7 @@ async def test_demand_flow_returns_sankey():
         ("LOC01", "TX", "Off Premise", 3000.0),
         ("LOC02", "CA", "On Premise", 2000.0),
     ]
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -594,7 +599,7 @@ async def test_filter_options_returns_lists():
         ("store_types", ["Bar", "Grocery", "Restaurant"]),
         ("states", ["CA", "FL", "TX"]),
     ]
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -616,7 +621,7 @@ async def test_filter_options_empty():
         ("store_types", []),
         ("states", []),
     ]
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_async_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -640,7 +645,7 @@ async def test_alerts_returns_low_fill_rate():
     hhi_rows = []
     cursor.fetchall.side_effect = [fr_rows, hhi_rows]
     cursor.fetchone.return_value = None  # mom query
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -665,7 +670,7 @@ async def test_alerts_hhi_and_churn():
     # mom: startdate, cur_cust, prev_cust, cur_demand, prev_demand
     # churn = (100-70)/100 = 30% > 10% => alert
     cursor.fetchone.return_value = (date(2026, 2, 1), 70, 100, 50000.0, 35000.0)
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)
@@ -685,7 +690,7 @@ async def test_alerts_no_alerts():
     pool, _, cursor = _make_pool()
     cursor.fetchall.side_effect = [[], []]  # no fill-rate or hhi alerts
     cursor.fetchone.return_value = None
-    with patch("api.core._get_pool", return_value=pool), \
+    with patch("api.core._get_async_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
         transport = ASGITransport(app=app)

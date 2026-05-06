@@ -4,8 +4,13 @@ Inventory Planning Insights — Expert-recommended aggregate views.
 Provides cross-domain aggregation endpoints that combine data from multiple
 inventory planning subsystems into unified, actionable views.
 
-All endpoints use get_conn() directly (not Depends), matching the
+All endpoints use get_async_conn() directly (not Depends), matching the
 inv_planning_*.py router pattern.
+
+Item 19 pilot: GET endpoints converted to ``async def`` against the async
+DB pool so this hot router no longer consumes anyio threadpool tokens. The
+file currently contains GETs only; if write endpoints land later they may
+remain sync until separately migrated.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ import psycopg
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _s, get_conn, set_cache
+from api.core import _s, get_async_conn, set_cache
 from common.core.constants import ABC_CLASSES
 from common.core.planning_date import get_planning_date
 
@@ -95,7 +100,7 @@ def _severity_from_urgency(score: float) -> str:
 
 
 @router.get("/inv-planning/action-feed")
-def get_action_feed(
+async def get_action_feed(
     response: FastAPIResponse,
     limit: int = Query(20, ge=1, le=100),
     urgency: str = Query("all"),
@@ -124,11 +129,11 @@ def get_action_feed(
     actions: list[dict] = []
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # --- Source 1: Open exceptions by financial impact ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT 'exception' AS source,
                                item_id, loc, exception_type AS action_type,
                                CASE severity
@@ -145,7 +150,7 @@ def get_action_feed(
                         ORDER BY urgency_score DESC, financial_impact DESC NULLS LAST
                         LIMIT %s
                     """, [limit * 2])
-                    for r in cur.fetchall():
+                    for r in await cur.fetchall():
                         actions.append({
                             "source": r[0],
                             "item_id": r[1],
@@ -161,7 +166,7 @@ def get_action_feed(
 
                 # --- Source 2: Pending planned orders ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT 'planned_order' AS source,
                                item_id, loc, 'approve_order' AS action_type,
                                CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
@@ -173,7 +178,7 @@ def get_action_feed(
                         ORDER BY urgency_score DESC, order_value DESC NULLS LAST
                         LIMIT %s
                     """, [limit * 2])
-                    for r in cur.fetchall():
+                    for r in await cur.fetchall():
                         actions.append({
                             "source": r[0],
                             "item_id": r[1],
@@ -190,7 +195,7 @@ def get_action_feed(
                 # --- Source 3: High-risk items (stockout risk >= 60) ---
                 # Exclude items that already have an open exception to avoid duplicates
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT 'stockout_risk' AS source,
                                t.item_id, t.loc, 'review_risk' AS action_type,
                                t.stockout_risk_score / 100.0 AS urgency_score,
@@ -208,7 +213,7 @@ def get_action_feed(
                         ORDER BY t.stockout_risk_score DESC, financial_impact DESC NULLS LAST
                         LIMIT %s
                     """, [limit * 2])
-                    for r in cur.fetchall():
+                    for r in await cur.fetchall():
                         actions.append({
                             "source": r[0],
                             "item_id": r[1],
@@ -276,7 +281,7 @@ def get_action_feed(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/exceptions/{item_id}/{loc}/root-cause")
-def get_exception_root_cause(
+async def get_exception_root_cause(
     item_id: str,
     loc: str,
 ) -> dict:
@@ -284,11 +289,11 @@ def get_exception_root_cause(
     causes: list[dict] = []
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # --- Recent demand signals ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT signal_type, signal_strength, alert_priority,
                                projected_stockout, signal_date
                         FROM fact_demand_signals
@@ -296,7 +301,7 @@ def get_exception_root_cause(
                         ORDER BY signal_date DESC
                         LIMIT 5
                     """, [item_id, loc])
-                    rows = cur.fetchall()
+                    rows = await cur.fetchall()
                     if rows:
                         latest = rows[0]
                         sev = "high" if latest[2] == "urgent" else ("medium" if latest[2] == "watch" else "low")
@@ -317,7 +322,7 @@ def get_exception_root_cause(
 
                 # --- Forecast accuracy ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT
                             SUM(basefcst_pref) AS total_fcst,
                             SUM(tothist_dmd)   AS total_actual
@@ -326,7 +331,7 @@ def get_exception_root_cause(
                           AND model_id = 'external'
                           AND month_start >= (CURRENT_DATE - INTERVAL '6 months')
                     """, [item_id, loc])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] is not None and row[1] is not None:
                         fcst, actual = float(row[0]), float(row[1])
                         if abs(actual) > 0:
@@ -346,7 +351,7 @@ def get_exception_root_cause(
                 # --- Supplier lead time reliability ---
                 # Gen-4 Roadmap 1.6 — switched to mv_supplier_po_performance.
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT supplier_id AS supplier_no,
                                supplier_name,
                                avg_lead_time_days AS avg_lt_mean_days,
@@ -363,7 +368,7 @@ def get_exception_root_cause(
                         )
                         LIMIT 1
                     """, [item_id])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row:
                         cv = _safe_float(row[3])
                         sev = "high" if (cv or 0) > 0.3 else ("medium" if (cv or 0) > 0.15 else "low")
@@ -384,7 +389,7 @@ def get_exception_root_cause(
 
                 # --- Open exceptions (current state) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT status, exception_type, severity,
                                current_qty_on_hand, ss_combined, reorder_point,
                                recommended_order_qty
@@ -394,7 +399,7 @@ def get_exception_root_cause(
                         ORDER BY exception_date DESC
                         LIMIT 3
                     """, [item_id, loc])
-                    rows = cur.fetchall()
+                    rows = await cur.fetchall()
                     if rows:
                         causes.append({
                             "factor": "open_exceptions",
@@ -422,7 +427,7 @@ def get_exception_root_cause(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/segment-dashboard")
-def get_segment_dashboard(
+async def get_segment_dashboard(
     response: FastAPIResponse,
     segment: str = Query(..., max_length=10, description="ABC-XYZ segment, e.g. AX, CZ"),
 ) -> dict:
@@ -439,23 +444,23 @@ def get_segment_dashboard(
     }
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # --- DFU count & basic stats ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) AS dfu_count
                         FROM dim_sku
                         WHERE abc_xyz_segment = %s
                     """, [segment])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     result["dfu_count"] = int(row[0]) if row and row[0] else 0
                 except psycopg.Error as e:
                     logger.exception("DB error fetching DFU segment count: %s", e)
 
                 # --- Health score KPIs ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT
                             AVG(health_score)  AS avg_health_score,
                             AVG(score_dos_target) AS avg_dos_score
@@ -463,7 +468,7 @@ def get_segment_dashboard(
                         JOIN dim_sku d ON h.item_id = d.item_id AND h.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                     """, [segment])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row:
                         result["kpis"]["avg_health_score"] = _safe_float(row[0])
                         result["kpis"]["avg_dos_score"] = _safe_float(row[1])
@@ -472,14 +477,14 @@ def get_segment_dashboard(
 
                 # --- Fill rate ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT AVG(fill_rate) AS avg_fill_rate
                         FROM mv_fill_rate_monthly f
                         JOIN dim_sku d ON f.item_id = d.item_id AND f.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                           AND f.month_start >= (CURRENT_DATE - INTERVAL '3 months')
                     """, [segment])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row:
                         result["kpis"]["avg_fill_rate"] = _safe_float(row[0])
                 except psycopg.Error as e:
@@ -487,33 +492,33 @@ def get_segment_dashboard(
 
                 # --- Below-SS count ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) FROM fact_safety_stock_targets s
                         JOIN dim_sku d ON s.item_id = d.item_id AND s.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                           AND s.is_below_ss = TRUE
                           AND s.policy_version = 'v1'
                     """, [segment])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     result["kpis"]["below_ss_count"] = int(row[0]) if row and row[0] else 0
                 except psycopg.Error as e:
                     logger.exception("DB error fetching SS below count for segment: %s", e)
 
                 # --- Exception count ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) FROM fact_replenishment_exceptions e
                         JOIN dim_sku d ON e.item_id = d.item_id AND e.loc = d.loc
                         WHERE d.abc_xyz_segment = %s AND e.status = 'open'
                     """, [segment])
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     result["kpis"]["open_exception_count"] = int(row[0]) if row and row[0] else 0
                 except psycopg.Error as e:
                     logger.exception("DB error fetching exception count for segment: %s", e)
 
                 # --- Policy distribution ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT p.policy_id, COUNT(*) AS cnt
                         FROM fact_dfu_policy_assignment p
                         JOIN dim_sku d ON p.item_id = d.item_id AND p.loc = d.loc
@@ -523,14 +528,14 @@ def get_segment_dashboard(
                         ORDER BY cnt DESC
                     """, [segment])
                     result["policy_distribution"] = {
-                        r[0]: int(r[1]) for r in cur.fetchall()
+                        r[0]: int(r[1]) for r in await cur.fetchall()
                     }
                 except psycopg.Error as e:
                     logger.exception("DB error fetching policy distribution for segment: %s", e)
 
                 # --- Top exceptions ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT e.item_id, e.loc, e.exception_type, e.severity,
                                e.estimated_order_value
                         FROM fact_replenishment_exceptions e
@@ -547,7 +552,7 @@ def get_segment_dashboard(
                             "exception_type": r[2], "severity": r[3],
                             "estimated_order_value": _safe_float(r[4]),
                         }
-                        for r in cur.fetchall()
+                        for r in await cur.fetchall()
                     ]
                 except psycopg.Error as e:
                     logger.exception("DB error fetching top exceptions for segment: %s", e)
@@ -563,7 +568,7 @@ def get_segment_dashboard(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/ss-cost-benefit")
-def get_ss_cost_benefit(
+async def get_ss_cost_benefit(
     response: FastAPIResponse,
     item: Optional[str] = Query(None, max_length=120),
     loc: Optional[str] = Query(None, max_length=120),
@@ -595,24 +600,25 @@ def get_ss_cost_benefit(
     where_sql = " AND ".join(where_parts)
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # Count total
-                cur.execute(f"""
+                await cur.execute(f"""
                     SELECT COUNT(*)
                     FROM fact_safety_stock_targets s
                     WHERE {where_sql}
                       AND s.ss_combined IS NOT NULL
                       AND s.ss_combined > 0
                 """, params)
-                total = int(cur.fetchone()[0])
+                _row = await cur.fetchone()
+                total = int(_row[0])
                 if total == 0:
                     return empty
 
                 # Fetch page — use demand_mean_monthly as proxy for unit_cost
                 # since unit_cost is not on this table. We estimate holding with
                 # a notional unit cost of 1.0 and scale by demand magnitude.
-                cur.execute(f"""
+                await cur.execute(f"""
                     SELECT s.item_id, s.loc, s.ss_combined,
                            s.demand_mean_monthly, s.service_level_target,
                            s.ss_coverage, s.is_below_ss, s.abc_vol,
@@ -625,7 +631,7 @@ def get_ss_cost_benefit(
                     LIMIT %s OFFSET %s
                 """, params + [limit, offset])
 
-                rows = cur.fetchall()
+                rows = await cur.fetchall()
 
                 items = []
                 total_holding = 0.0
@@ -692,7 +698,7 @@ def get_ss_cost_benefit(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/service-level-waterfall")
-def get_service_level_waterfall(
+async def get_service_level_waterfall(
     response: FastAPIResponse,
 ) -> dict:
     """Service level waterfall showing each inventory lever's contribution."""
@@ -702,12 +708,12 @@ def get_service_level_waterfall(
     achieved_csl = 0.0
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # --- Base forecast accuracy ---
                 base_accuracy = 0.0
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT
                             CASE WHEN ABS(SUM(tothist_dmd)) > 0
                                  THEN 100.0 - (100.0 * SUM(ABS(basefcst_pref - tothist_dmd))
@@ -717,7 +723,7 @@ def get_service_level_waterfall(
                         WHERE model_id = 'external'
                           AND month_start >= (CURRENT_DATE - INTERVAL '6 months')
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] is not None:
                         base_accuracy = max(0.0, min(100.0, float(row[0])))
                 except psycopg.Error as e:
@@ -736,13 +742,13 @@ def get_service_level_waterfall(
                 # --- Safety stock buffer ---
                 ss_contribution = 0.0
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT AVG(ss_coverage) AS avg_coverage
                         FROM fact_safety_stock_targets
                         WHERE policy_version = 'v1'
                           AND ss_combined > 0
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] is not None:
                         avg_cov = float(row[0])
                         # SS coverage > 1.0 means well stocked; contributes up to ~25%
@@ -762,14 +768,14 @@ def get_service_level_waterfall(
                 # Gen-4 Roadmap 1.6 — switched to mv_supplier_po_performance.
                 lt_contribution = 0.0
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT AVG(1.0 - LEAST(
                             CASE WHEN avg_lead_time_days > 0
                                  THEN stddev_lead_time_days / avg_lead_time_days END,
                             1.0)) AS reliability
                         FROM mv_supplier_po_performance
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] is not None:
                         # More reliable LT → more contribution, up to ~10%
                         lt_contribution = float(row[0]) * 10.0
@@ -787,14 +793,14 @@ def get_service_level_waterfall(
                 # --- Demand sensing adjustment ---
                 sensing_contribution = 0.0
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT
                             COUNT(*) FILTER (WHERE signal_type = 'on_plan') AS on_plan,
                             COUNT(*) AS total
                         FROM fact_demand_signals
                         WHERE signal_date = (SELECT MAX(signal_date) FROM fact_demand_signals)
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[1] and int(row[1]) > 0:
                         on_plan_pct = int(row[0]) / int(row[1])
                         # On-plan signals contribute up to ~5%
@@ -823,7 +829,7 @@ def get_service_level_waterfall(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/network-heatmap")
-def get_network_heatmap(
+async def get_network_heatmap(
     response: FastAPIResponse,
 ) -> dict:
     """Location x category DOS heatmap from latest inventory snapshot."""
@@ -832,9 +838,9 @@ def get_network_heatmap(
     empty: dict = {"locations": [], "categories": [], "cells": []}
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
                     WITH latest AS (
                         SELECT MAX(snapshot_date) AS sd
                         FROM fact_inventory_snapshot
@@ -862,7 +868,7 @@ def get_network_heatmap(
                     GROUP BY s.loc, s.category
                     ORDER BY s.loc, s.category
                 """)
-                rows = cur.fetchall()
+                rows = await cur.fetchall()
                 if not rows:
                     return empty
 
@@ -899,7 +905,7 @@ def get_network_heatmap(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/planning-scorecard")
-def get_planning_scorecard(
+async def get_planning_scorecard(
     response: FastAPIResponse,
 ) -> dict:
     """Trailing effectiveness scorecard with trend analysis."""
@@ -908,11 +914,11 @@ def get_planning_scorecard(
     metrics: list[dict] = []
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # --- Forecast accuracy trend (last 6 months) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT month_start,
                                CASE WHEN ABS(SUM(tothist_dmd)) > 0
                                     THEN 100.0 - 100.0 * SUM(ABS(basefcst_pref - tothist_dmd))
@@ -924,7 +930,7 @@ def get_planning_scorecard(
                         GROUP BY month_start
                         ORDER BY month_start
                     """)
-                    rows = cur.fetchall()
+                    rows = await cur.fetchall()
                     sparkline = [round(float(r[1]), 2) if r[1] is not None else 0.0 for r in rows]
                     current = sparkline[-1] if sparkline else None
                     prior = sparkline[-2] if len(sparkline) >= 2 else None
@@ -940,7 +946,7 @@ def get_planning_scorecard(
 
                 # --- Fill rate trend ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT month_start,
                                AVG(fill_rate) AS avg_fill_rate
                         FROM mv_fill_rate_monthly
@@ -948,7 +954,7 @@ def get_planning_scorecard(
                         GROUP BY month_start
                         ORDER BY month_start
                     """)
-                    rows = cur.fetchall()
+                    rows = await cur.fetchall()
                     sparkline = [round(float(r[1]), 4) if r[1] is not None else 0.0 for r in rows]
                     current = sparkline[-1] if sparkline else None
                     prior = sparkline[-2] if len(sparkline) >= 2 else None
@@ -964,7 +970,7 @@ def get_planning_scorecard(
 
                 # --- Exception resolution avg days ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT
                             AVG(EXTRACT(epoch FROM (resolved_ts - load_ts)) / 86400.0)
                                 FILTER (WHERE status = 'resolved'
@@ -977,7 +983,7 @@ def get_planning_scorecard(
                                 AS prior_avg_days
                         FROM fact_replenishment_exceptions
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     cur_val = _safe_float(row[0]) if row else None
                     pri_val = _safe_float(row[1]) if row else None
                     # For resolution time, lower is better → invert trend
@@ -999,11 +1005,11 @@ def get_planning_scorecard(
 
                 # --- SS optimization (total SS change) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT SUM(ss_combined) FROM fact_safety_stock_targets
                         WHERE policy_version = 'v1'
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     ss_total = _safe_float(row[0]) if row else None
                     metrics.append({
                         "name": "total_safety_stock_units",
@@ -1017,14 +1023,14 @@ def get_planning_scorecard(
 
                 # --- On-time PO % (based on exception ordered vs resolved) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT
                             COUNT(*) FILTER (WHERE status = 'resolved') AS resolved,
                             COUNT(*) FILTER (WHERE status IN ('ordered', 'resolved')) AS total_ordered
                         FROM fact_replenishment_exceptions
                         WHERE load_ts >= (CURRENT_DATE - INTERVAL '3 months')
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[1] and int(row[1]) > 0:
                         pct = round(100.0 * int(row[0]) / int(row[1]), 1)
                     else:
@@ -1050,7 +1056,7 @@ def get_planning_scorecard(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/cash-flow-timeline")
-def get_cash_flow_timeline(
+async def get_cash_flow_timeline(
     response: FastAPIResponse,
     months_ahead: int = Query(6, ge=1, le=24),
 ) -> dict:
@@ -1075,11 +1081,11 @@ def get_cash_flow_timeline(
     month_index = {k: i for i, k in enumerate(month_keys)}
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # --- Committed POs (ordered exceptions with expected receipt) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT TO_CHAR(expected_receipt_date, 'YYYY-MM') AS month,
                                COALESCE(SUM(estimated_order_value), 0) AS total_value
                         FROM fact_replenishment_exceptions
@@ -1089,7 +1095,7 @@ def get_cash_flow_timeline(
                         GROUP BY 1
                     """, [month_buckets[0]["month"] + "-01",
                           month_buckets[-1]["month"] + "-28"])
-                    for r in cur.fetchall():
+                    for r in await cur.fetchall():
                         idx = month_index.get(r[0])
                         if idx is not None:
                             month_buckets[idx]["po_committed"] = round(float(r[1]), 2)
@@ -1098,7 +1104,7 @@ def get_cash_flow_timeline(
 
                 # --- Planned orders (open exceptions with recommended order) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT TO_CHAR(recommended_order_by, 'YYYY-MM') AS month,
                                COALESCE(SUM(estimated_order_value), 0) AS total_value
                         FROM fact_replenishment_exceptions
@@ -1108,7 +1114,7 @@ def get_cash_flow_timeline(
                         GROUP BY 1
                     """, [month_buckets[0]["month"] + "-01",
                           month_buckets[-1]["month"] + "-28"])
-                    for r in cur.fetchall():
+                    for r in await cur.fetchall():
                         idx = month_index.get(r[0])
                         if idx is not None:
                             month_buckets[idx]["planned_orders"] = round(float(r[1]), 2)
@@ -1117,13 +1123,13 @@ def get_cash_flow_timeline(
 
                 # --- SS investment required (gap * unit_cost proxy) ---
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COALESCE(SUM(GREATEST(-ss_gap, 0)), 0) AS total_gap
                         FROM fact_safety_stock_targets
                         WHERE policy_version = 'v1'
                           AND ss_gap < 0
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0]:
                         # Spread SS investment across first 3 months
                         ss_total = float(row[0])
@@ -1149,7 +1155,7 @@ def get_cash_flow_timeline(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/constrained-optimization")
-def get_constrained_optimization(
+async def get_constrained_optimization(
     response: FastAPIResponse,
     budget: float = Query(..., gt=0, description="Max inventory investment budget ($)"),
 ) -> dict:
@@ -1166,10 +1172,10 @@ def get_constrained_optimization(
     }
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
                 # Fetch items below SS with their gap and service level info
-                cur.execute("""
+                await cur.execute("""
                     SELECT item_id, loc, ss_combined, current_qty_on_hand,
                            service_level_target, demand_mean_monthly, ss_gap
                     FROM fact_safety_stock_targets
@@ -1179,7 +1185,7 @@ def get_constrained_optimization(
                       AND demand_mean_monthly > 0
                     ORDER BY ABS(COALESCE(ss_gap, 0)) DESC
                 """)
-                rows = cur.fetchall()
+                rows = await cur.fetchall()
 
                 if not rows:
                     return result
@@ -1248,7 +1254,7 @@ def get_constrained_optimization(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/proactive-rebalancing")
-def get_proactive_rebalancing(
+async def get_proactive_rebalancing(
     response: FastAPIResponse,
     dos_low_threshold: float = Query(10.0, ge=0),
     dos_high_threshold: float = Query(45.0, ge=0),
@@ -1260,9 +1266,9 @@ def get_proactive_rebalancing(
     empty: dict = {"opportunities": [], "total_opportunities": 0}
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
                     WITH latest AS (
                         SELECT MAX(snapshot_date) AS sd
                         FROM fact_inventory_snapshot
@@ -1314,7 +1320,7 @@ def get_proactive_rebalancing(
                       dos_low_threshold, dos_high_threshold,
                       limit])
 
-                rows = cur.fetchall()
+                rows = await cur.fetchall()
                 opportunities = []
                 for r in rows:
                     from_dos = _safe_float(r[3])
@@ -1348,7 +1354,7 @@ def get_proactive_rebalancing(
 # ───────────────────────────────────────────────────────────────────────────
 
 @router.get("/inv-planning/daily-briefing")
-def get_daily_briefing(
+async def get_daily_briefing(
     response: FastAPIResponse,
 ) -> dict:
     """Auto-generated daily planner briefing.
@@ -1374,14 +1380,14 @@ def get_daily_briefing(
     }
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
 
                 # ── Section 1: Urgent items (act within 24 hours) ──
 
                 # 1a. Critical/high open exceptions with stockout risk
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) AS cnt,
                                COALESCE(SUM(
                                    COALESCE(financial_impact_total, estimated_order_value, 0)
@@ -1390,7 +1396,7 @@ def get_daily_briefing(
                         WHERE status = 'open'
                           AND severity IN ('critical', 'high')
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] and int(row[0]) > 0:
                         cnt = int(row[0])
                         val = _safe_float(row[1]) or 0.0
@@ -1405,14 +1411,14 @@ def get_daily_briefing(
 
                 # 1b. Past-due planned orders
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) AS cnt,
                                COALESCE(SUM(order_value), 0) AS total_value
                         FROM fact_planned_orders
                         WHERE status = 'proposed'
                           AND is_past_due = TRUE
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] and int(row[0]) > 0:
                         cnt = int(row[0])
                         val = _safe_float(row[1]) or 0.0
@@ -1428,7 +1434,7 @@ def get_daily_briefing(
 
                 # 2a. Items below safety stock
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) AS cnt,
                                COALESCE(SUM(
                                    GREATEST(0, safety_stock_qty - current_qty_on_hand)
@@ -1437,7 +1443,7 @@ def get_daily_briefing(
                         FROM mv_integrated_planning_targets
                         WHERE is_below_ss = TRUE
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] and int(row[0]) > 0:
                         cnt = int(row[0])
                         val = _safe_float(row[1]) or 0.0
@@ -1452,7 +1458,7 @@ def get_daily_briefing(
 
                 # 2b. Items with high forecast miss (WAPE > 20% in recent period)
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) AS cnt
                         FROM (
                             SELECT item_id, loc,
@@ -1466,7 +1472,7 @@ def get_daily_briefing(
                                        / NULLIF(ABS(SUM(tothist_dmd)), 0) > 0.20
                         ) sub
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] and int(row[0]) > 0:
                         cnt = int(row[0])
                         this_week_items.append({
@@ -1480,12 +1486,12 @@ def get_daily_briefing(
 
                 # 3a. Overall health score + trend
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT AVG(health_score)::numeric(5,1) AS avg_score,
                                COUNT(*) AS total_skus
                         FROM mv_inventory_health_score
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row and row[0] is not None:
                         avg_score = float(row[0])
                         total_skus = int(row[1]) if row[1] else 0
@@ -1503,7 +1509,7 @@ def get_daily_briefing(
 
                 # 3b. Health by ABC class
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT d.abc_vol,
                                AVG(h.health_score)::numeric(5,1) AS avg_score
                         FROM mv_inventory_health_score h
@@ -1512,7 +1518,7 @@ def get_daily_briefing(
                         GROUP BY d.abc_vol
                         ORDER BY d.abc_vol
                     """, [list(ABC_CLASSES)])
-                    for r in cur.fetchall():
+                    for r in await cur.fetchall():
                         abc_class = r[0]
                         score = float(r[1]) if r[1] is not None else 0
                         status = "good" if score >= 70 else ("attention" if score >= 50 else "critical")
@@ -1525,13 +1531,13 @@ def get_daily_briefing(
 
                 # 3c. Excess inventory stats
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         SELECT COUNT(*) AS cnt,
                                COALESCE(SUM(excess_value_usd), 0) AS total_excess
                         FROM mv_integrated_planning_targets
                         WHERE excess_qty > 0
                     """)
-                    row = cur.fetchone()
+                    row = await cur.fetchone()
                     if row:
                         stats["excess_count"] = int(row[0]) if row[0] else 0
                         stats["total_excess_value"] = round(float(row[1]), 2) if row[1] else 0.0
@@ -1541,7 +1547,7 @@ def get_daily_briefing(
                 # ── Section 4: Top 3 recommended actions ──
                 # Re-use the action-feed logic but just pull top 3 by urgency
                 try:
-                    cur.execute("""
+                    await cur.execute("""
                         (
                             SELECT 'exception' AS source,
                                    item_id, loc,
@@ -1579,7 +1585,8 @@ def get_daily_briefing(
                         ORDER BY urgency_score DESC, impact DESC
                         LIMIT 3
                     """)
-                    for i, r in enumerate(cur.fetchall(), start=1):
+                    _action_rows = await cur.fetchall()
+                    for i, r in enumerate(_action_rows, start=1):
                         impact_val = _safe_float(r[4]) or 0
                         impact_str = (
                             f"${impact_val / 1000:.0f}K"

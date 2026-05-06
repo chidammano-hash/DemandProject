@@ -6,7 +6,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run refresh-customer-filter-options
+.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run auto-create-partitions-weekly auto-create-partitions-weekly-dry-run refresh-customer-filter-options
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -1497,6 +1497,21 @@ perf-pipeline:                         ## ETL pipeline performance analysis (rea
 perf-clean:                            ## Truncate all perf profiling history from DB
 	psql "$(DATABASE_URL)" -c "TRUNCATE perf_suggestion, perf_query, perf_section, perf_run CASCADE;"
 
+# ── pg-queue (Item 22 pilot) ─────────────────────────────────────────────────
+# Postgres-backed queue alongside APScheduler. Pilot job: refresh_intramonth.
+# See common/services/pg_queue.py and scripts/ops/pg_queue_worker.py.
+
+pg-queue-worker:                        ## Run a pg-queue worker (long-running; handles refresh_intramonth)
+	$(UV) python scripts/ops/pg_queue_worker.py
+
+pg-queue-enqueue-recurring:             ## Enqueue the recurring refresh_intramonth job (cron entry-point)
+	@$(UV) python -c "from common.services.pg_queue import enqueue_job; \
+print('enqueued job_id =', enqueue_job('refresh_intramonth'))"
+
+pg-queue-depth:                         ## Show pg-queue depth grouped by status
+	@$(UV) python -c "from common.services.pg_queue import get_queue_depth; \
+import json; print(json.dumps(get_queue_depth(), indent=2))"
+
 # ── Database Cleanup & Fresh Recreate ────────────────────────────────────────
 # Full wipe-and-reload: clears non-config data/history, reloads from data/input/,
 # and refreshes the core ML + baseline planning outputs while preserving configs.
@@ -1704,14 +1719,21 @@ db-maintain: db-analyze db-health      ## Routine maintenance: ANALYZE + health 
 # ---------------------------------------------------------------------------
 # Partition Management
 # ---------------------------------------------------------------------------
-# Idempotently provisions the next N monthly partitions for every
-# RANGE-partitioned fact table (fact_inventory_snapshot,
-# fact_customer_demand_monthly, fact_external_signal). Run monthly via cron
+# Idempotently provisions the next N partitions for every RANGE-partitioned
+# fact table. Each registry entry chooses an interval (month or week); the
+# script honors that, so the same target works for monthly and weekly tables.
+# Run on a schedule (monthly for monthly tables, weekly for weekly tables)
 # OR manually before any large backfill that may write rows into a future
-# month. CREATE TABLE IF NOT EXISTS makes re-runs cheap.
+# window. CREATE TABLE IF NOT EXISTS makes re-runs cheap.
 
-auto-create-partitions:                ## Create the next 12 monthly partitions for every partitioned fact table (idempotent)
-	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py --horizon $(or $(HORIZON),12)
+auto-create-partitions:                ## Create the next N partitions for every partitioned fact table (idempotent). Per-table interval (month/week) is picked up from the registry.
+	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py $(if $(HORIZON),--horizon $(HORIZON))
 
 auto-create-partitions-dry-run:        ## Print partition DDL without executing
-	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py --horizon $(or $(HORIZON),12) --dry-run
+	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py $(if $(HORIZON),--horizon $(HORIZON)) --dry-run
+
+auto-create-partitions-weekly:         ## Create only weekly-interval partitions (rolling 12 weeks default). Use after the weekly cutover migrations.
+	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py --interval week $(if $(HORIZON),--horizon $(HORIZON))
+
+auto-create-partitions-weekly-dry-run: ## Print weekly-interval partition DDL without executing
+	PYTHONPATH=. $(UV) python scripts/db/auto_create_partitions.py --interval week $(if $(HORIZON),--horizon $(HORIZON)) --dry-run
