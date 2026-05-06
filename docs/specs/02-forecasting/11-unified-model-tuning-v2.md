@@ -8,10 +8,10 @@
 | **Replaces** | Feature 45 (Model Tuning) — full rewrite of UI, API, and job integration |
 | **UI Tab** | Model Tuning (sidebar: Demand section) |
 | **API Prefix** | `/model-tuning/{model}` (model = lgbm, catboost, xgboost) |
-| **Router** | `api/routers/forecasting/unified_model_tuning.py` |
+| **Router** | `api/routers/forecasting/tuning/` (15-module package; `__init__.py` re-exports the unified router for `api/main.py` to mount) |
 | **Frontend** | `frontend/src/api/queries/unified-model-tuning.ts`, `frontend/src/tabs/LgbmTuningTab.tsx` |
 | **Tests** | `tests/api/test_unified_model_tuning.py` (40 tests), `frontend/src/tabs/__tests__/ModelTuningTab.test.tsx` |
-| **Key Files** | `api/routers/forecasting/unified_model_tuning.py`, `frontend/src/tabs/LgbmTuningTab.tsx`, `frontend/src/api/queries/unified-model-tuning.ts` |
+| **Key Files** | `api/routers/forecasting/tuning/` (split from the legacy 1,798-LoC `unified_model_tuning.py` -- see [Router Layout](#router-layout)), `frontend/src/tabs/LgbmTuningTab.tsx`, `frontend/src/api/queries/unified-model-tuning.ts` |
 | **Depends On** | Feature 3 (Backtest Framework), Feature 44 (Resilient Jobs), Feature 45 (Tuning Registry) |
 
 ---
@@ -742,6 +742,30 @@ Tuning experiments appear in the Jobs tab with clear differentiation:
 Replace the current split between `lgbm_tuning.py` and `model_tuning.py` with a single parametrized router.
 
 **Path prefix:** `/model-tuning/{model}` where `model` is one of `lgbm`, `catboost`, `xgboost`.
+
+#### Router Layout
+
+The router has been split from the legacy 1,798-LoC `api/routers/forecasting/unified_model_tuning.py` into a 15-module package at `api/routers/forecasting/tuning/`. All 15 endpoints below are preserved at the same `/model-tuning/{model}/*` paths -- the package's `__init__.py` re-exports a single `router` for `api/main.py` to mount.
+
+| Sub-module | Endpoints owned |
+|------------|------------------|
+| `__init__.py` | Aggregates sub-routers, exposes the unified `router` symbol |
+| `_helpers.py` | Shared helpers (model whitelist, run lookup, exec-lag filter SQL, JSON shaping) |
+| `list.py` | `GET /experiments` |
+| `detail.py` | `GET /experiments/{run_id}` |
+| `create.py` | `POST /experiments` (create + launch) |
+| `compare.py` | `GET /compare` |
+| `cluster.py` | `GET /experiments/{run_id}/clusters` |
+| `lag.py` | `GET /experiments/{run_id}/lags` |
+| `logs.py` | `GET /experiments/{run_id}/logs` |
+| `month.py` | `GET /experiments/{run_id}/months` |
+| `promote.py` | `POST /experiments/{run_id}/promote` |
+| `promote_results.py` | `GET /promoted` |
+| `cancel_delete.py` | `POST /experiments/{run_id}/cancel`, `DELETE /experiments/{run_id}` |
+| `templates.py` | `GET /templates` |
+| `promotions.py` | `GET /promotions`, `POST /promotions/rollback` |
+
+Importers should reference the package, not the module: `from api.routers.forecasting.tuning import router`. The legacy single-file path is no longer importable.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -1777,7 +1801,7 @@ vi.mock("@/api/queries", () => ({
 
 ### Phase 1: Schema + API (Backend)
 1. Create SQL migration `sql/099_unified_model_tuning.sql` with new tables
-2. Create unified router `api/routers/forecasting/unified_model_tuning.py`
+2. Create unified router package `api/routers/forecasting/tuning/` (15 modules; see [Router Layout](#router-layout))
 3. Register new job type `model_tuning_run` in `job_registry.py`
 4. Implement job callable `_run_model_tuning_experiment` in `job_state.py`
 5. Create `config/forecasting/tuning_templates.yaml`
@@ -1842,7 +1866,7 @@ vi.mock("@/api/queries", () => ({
 | New File | Location | Purpose |
 |----------|----------|---------|
 | `sql/099_unified_model_tuning.sql` | `sql/` | New tables: lgbm_tuning_lag, tuning_promotion_log, alter lgbm_tuning_run |
-| `api/routers/forecasting/unified_model_tuning.py` | `api/routers/forecasting/` | Unified /model-tuning/{model}/* router |
+| `api/routers/forecasting/tuning/` | `api/routers/forecasting/` | Unified /model-tuning/{model}/* router package (15 modules: list, detail, create, compare, cluster, lag, logs, month, promote, promote_results, cancel_delete, templates, promotions, _helpers, __init__) |
 | `config/forecasting/tuning_templates.yaml` | `config/` | Expert-recommended experiment templates |
 | `config/model_tuning_config.yaml` | `config/` | Tuning system configuration |
 | `frontend/src/tabs/ModelTuningTab.tsx` | `frontend/src/tabs/` | Main tab component (replaces LgbmTuningTab.tsx) |
@@ -1868,6 +1892,9 @@ vi.mock("@/api/queries", () => ({
 ## Pre-Implementation Blockers
 
 These must be resolved **before** any spec implementation begins.
+
+> **Status update:** Blockers 1 & 2 are resolved by the tuning fit-path refactor.
+> `common/ml/tuning.py` now constructs estimators via `model_registry.build_tree_model(algorithm_id, params)` and trains via `model_registry.fit_model(...)`. `to_native_params()` translates the canonical YAML keys to the appropriate native constructor arguments for `LGBMRegressor`/`CatBoostRegressor`/`XGBRegressor`, so all keys in `forecast_pipeline_config.yaml` `algorithms.<model_id>.params` reach the model. The legacy 6-parameter `default_params` lambda in `scripts/run_backtest.py`'s MODEL_REGISTRY no longer applies -- backtest, tuning, and production all share the same registry-driven fit path.
 
 ### Blocker 1: CatBoost `default_params` Drops Most Parameters (CRITICAL)
 

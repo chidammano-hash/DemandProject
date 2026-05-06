@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (80 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (80 mounted routers; several decomposed into sub-router packages — `forecasting/tuning/`, `intelligence/customer_analytics/`) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -29,7 +29,7 @@ Data flow: `data/input/` raw CSVs -> normalize scripts -> `data/staged/*_clean.c
 ```
 DemandProject/
 ├── api/                         FastAPI backend (main.py + routers/)
-│   └── routers/                 80 router files (80 mounted, organized into 6 domain subdirs)
+│   └── routers/                 98 router files (80 mounted, organized into 6 domain subdirs; some are sub-router packages — e.g. `forecasting/tuning/` 15 modules, `intelligence/customer_analytics/` 5 sub-routers)
 ├── common/                      Shared Python modules (core/, ml/, engines/, services/, ai/)
 ├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
 ├── frontend/                    React + TypeScript UI
@@ -185,7 +185,7 @@ Three tree-based backtest models (LightGBM, CatBoost, XGBoost) plus three custom
 
 **Tuning Analysis Panels:** The LGBM Tuning tab includes 4 analysis sub-tabs: Cluster EDA (cluster demand profiles, error concentration, seasonality heatmap), Feature Lab (SHAP importance, stability, correlation, per-cluster importance), Accuracy Budget (waterfall decomposition, ABC targets, monthly trend, model comparison), and Sampled Backtest (stratified DFU sampling for fast ~3-min iteration runs). API prefixes: `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/lgbm-tuning/sampled`.
 
-**Unified Model Tuning Studio (Feature 46):** A production-grade, UI-driven hyperparameter tuning platform for LightGBM, CatBoost, and XGBoost. Users configure experiment parameters directly in the browser using an Experiment Builder with templates (production baseline, expert recommendations, custom), launch backtest runs as resilient jobs (subprocess isolation, PID tracking, log streaming), monitor real-time logs in the Jobs tab, compare results with execution-lag filtering (lags 0-4) including per-lag/per-cluster/per-month breakdowns, parameter diffs, and feature diffs, then promote winners to the champion pipeline via a confirmation modal. A unified API router (`/model-tuning/{model}/`) replaces the split between `lgbm-tuning.py` and `model-tuning.py` with a parametrized prefix supporting all three model types. 14 endpoints: list experiments (paginated + filtered), experiment detail, per-lag accuracy, per-cluster accuracy, per-month accuracy, experiment logs (offset-based streaming), pairwise comparison, templates, promoted run, promotion log, create experiment, promote, cancel, delete. See `docs/specs/02-forecasting/11-unified-model-tuning-v2.md` for full spec.
+**Unified Model Tuning Studio (Feature 46):** A production-grade, UI-driven hyperparameter tuning platform for LightGBM, CatBoost, and XGBoost. Users configure experiment parameters directly in the browser using an Experiment Builder with templates (production baseline, expert recommendations, custom), launch backtest runs as resilient jobs (subprocess isolation, PID tracking, log streaming), monitor real-time logs in the Jobs tab, compare results with execution-lag filtering (lags 0-4) including per-lag/per-cluster/per-month breakdowns, parameter diffs, and feature diffs, then promote winners to the champion pipeline via a confirmation modal. A unified API router (`/model-tuning/{model}/`) replaces the split between `lgbm-tuning.py` and `model-tuning.py` with a parametrized prefix supporting all three model types. The router has been decomposed from a single `unified_model_tuning.py` file into the `api/routers/forecasting/tuning/` package (15 modules: `list`, `detail`, `lag`, `cluster`, `month`, `logs`, `compare`, `templates`, `create`, `promote`, `promote_results`, `promotions`, `cancel_delete`, `_helpers`, plus `__init__`). 14 endpoints: list experiments (paginated + filtered), experiment detail, per-lag accuracy, per-cluster accuracy, per-month accuracy, experiment logs (offset-based streaming), pairwise comparison, templates, promoted run, promotion log, create experiment, promote, cancel, delete. The frontend `ModelTuningTab.tsx` has likewise been split into per-section sub-panels. See `docs/specs/02-forecasting/11-unified-model-tuning-v2.md` for full spec.
 
 **Champion Experimentation Studio (Feature 48):** A dedicated sub-tab within the Model Tuning tab for testing champion selection strategies. Users create experiments with 8 champion selection strategies (expanding window, rolling window, exponential decay, ensemble blended, meta-learner ML, hybrid_warmup, adaptive_ensemble, ensemble_rolling) using an Experiment Builder with 9 pre-built templates covering production baselines, rolling/decay variants, ensemble configurations, and meta-learner presets. Each experiment configures strategy-specific parameters (window months, decay factor, top-K, weight method, meta-learner model type/depth/estimators), selects which models to compete (LGBM, CatBoost, XGBoost -- minimum 2), and chooses the scoring metric (accuracy or WAPE) and lag mode (execution lag or fixed lags 0-4). Experiments run as resilient background jobs and produce overall champion accuracy, ceiling accuracy, and gap-to-ceiling in basis points. Comparison panel shows side-by-side results between two experiments: overall metric deltas with verdict badges, per-lag accuracy breakdowns, per-month accuracy trends, model distribution comparison (percentage of DFUs won by each model), and config diffs. 2-stage promotion workflow: Stage 1 writes the winning strategy and parameters to `forecast_pipeline_config.yaml` champion section (with automatic backup), Stage 2 triggers a background job to run champion selection and load results into `fact_external_forecast_monthly`. Results load status is polled with progress updates. API prefix: `/champion-experiments` (list, detail, lags, months, logs, compare, templates, promoted, promotions, create, promote config, promote results with status polling, cancel, delete). UI: ModelTuningTab Champion sub-tab with KPI cards (best accuracy, promoted strategy, total experiments, active runs), status-filterable experiment list, log viewer, and promote modal. DB: `champion_experiment`, `champion_experiment_comparison` tables. Frontend: `src/tabs/champion/` (4 components: ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal).
 
@@ -337,9 +337,12 @@ Every feature ships with tests; every removed feature removes its tests.
 |---|---|
 | Project spec | `CLAUDE.md` |
 | API entry point | `api/main.py` |
-| API routers (80 files, 80 mounted) | `api/routers/` (organized into core/, forecasting/, intelligence/, inventory/, operations/, platform/) |
+| API routers (98 files, 80 mounted) | `api/routers/` (organized into core/, forecasting/, intelligence/, inventory/, operations/, platform/; sub-router packages: `forecasting/tuning/`, `intelligence/customer_analytics/`) |
 | Shared Python modules | `common/` (core/, ml/, engines/, services/, ai/) |
-| Shared SQL helpers | `common/core/sql_helpers.py` |
+| Champion strategies package | `common/ml/champion/` (9 modules covering 31 strategies — `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment`, plus `helpers` and `registry`) |
+| Shared SQL helpers | `common/core/sql_helpers.py` (includes `row_to_dict_from_cursor`/`row_to_dict_from_cols`) |
+| Shared constants | `common/core/constants.py` (includes `FORECAST_QTY_COL` for the canonical forecast quantity column) |
+| AI guardrails / unenforced-rule checks | `scripts/ai_checks/check_unenforced_rules.sh` + `scripts/ai_checks/allowlists/` |
 | Domain config | `common/core/domain_specs.py` |
 | Normalized clean CSVs | `data/staged/` (output of `make normalize-all`, input to `make load-all`) |
 | YAML configs | `config/` |

@@ -58,7 +58,7 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | Database Tables | ~87 (6 dimension, 4 fact, 35+ materialized views, 40+ planning/config, 2 candidate/promotion) |
 | Total Database Rows | 349.8M+ (198M in inventory snapshots alone) |
 | DFU Count | 112,000+ demand forecast units |
-| API Routers | 72 mounted routers across 6 domain groups |
+| API Routers | 70+ mounted routers across 6 domain groups (includes `forecasting/tuning/` package — 15 sub-routers — and `intelligence/customer_analytics/` package — 5 sub-routers) |
 | UI Tabs | 25 lazy-loaded dashboard tabs |
 | ML Models | 3 tree-based + 30+ statistical algorithms |
 | Config Files | 57 YAML configuration files |
@@ -758,15 +758,15 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 ### 5.3 Component Architecture
 
-#### API Layer (72 Routers)
+#### API Layer (70+ Routers)
 
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
 | `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
-| `api/routers/forecasting/` | 10 | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion (`/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`) |
+| `api/routers/forecasting/` | 10 (incl. `tuning/` package — 15 sub-routers) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion (`/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`). The legacy `unified_model_tuning.py` god-module was split into `forecasting/tuning/` (15 sub-routers preserving the `/model-tuning/*` prefix and all 15 endpoints). |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
-| `api/routers/intelligence/` | 3 | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*` | AI agent, forecast explain, market intel |
+| `api/routers/intelligence/` | 3 (incl. `customer_analytics/` package — 5 sub-routers) | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*`, `/customer-analytics/*` | AI agent, forecast explain, market intel. The `customer_analytics.py` god-module was split into `intelligence/customer_analytics/` (5 sub-routers + helpers, 16 GET endpoints preserved). |
 | `api/routers/core/` | 2 | `/dashboard/*`, `/jobs/*` | Dashboard KPIs, job management |
 | `api/routers/domains.py` | 1 | `/domains/{domain}/*` | Generic CRUD for all 10 domains (**mounted LAST**) |
 
@@ -782,7 +782,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 |---|---|
 | `model_registry.py` | Canonical-to-native parameter mapping for LGBM/CatBoost/XGBoost |
 | `backtest_framework.py` | Expanding-window evaluation (10 timeframes A-J), DFU cohort classification |
-| `champion_strategies.py` | 5 selection strategies (expanding, rolling, decay, ensemble, meta-learner) |
+| `champion/` (package, 9 sub-modules) | 31 champion selection strategies — split from former `champion_strategies.py` god-module into 9 sub-modules (expanding, rolling, decay, ensemble, meta-learner families) |
 | `feature_engineering.py` | Causal feature construction (lag 1-12, rolling stats, Fourier, Croston, calendar) |
 | `tuning.py` | Optuna Bayesian hyperparameter optimization with cluster-adaptive profiles |
 | `shap_selector.py` | SHAP-based feature importance and selection (cumulative threshold 0.95) |
@@ -1209,8 +1209,9 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  ┌─────────────────────────────────────────────────────────┐     │
 │  │ Selection & Inference                                    │     │
 │  │                                                          │     │
-│  │ Champion Selection (5 strategies):                       │     │
+│  │ Champion Selection (31 strategies in 9 sub-modules):     │     │
 │  │   Expanding, Rolling, Decay, Ensemble, Meta-Learner     │     │
+│  │   families — `common/ml/champion/` package               │     │
 │  │   Exec-lag-aware strict causality with fallback model   │     │
 │  │                                                          │     │
 │  │ Production Forecast:                                     │     │
@@ -1402,7 +1403,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | # | Control | Implementation | Location |
 |---|---|---|---|
 | SC-1 | Authentication | JWT Bearer tokens, bcrypt password hashing | `common/auth.py` |
-| SC-2 | Authorization | 4-tier RBAC with role hierarchy | `common/auth.py`, `config/platform/auth_config.yaml` |
+| SC-2 | Authorization | 4-tier RBAC with role hierarchy; 12 mutating endpoints carry explicit `dependencies=[Depends(require_api_key)]` guards (audited via lint gate) | `common/auth.py`, `config/platform/auth_config.yaml` |
 | SC-3 | Rate Limiting | Sliding window, tier-based (100 req/min) | `common/services/rate_limiter.py` |
 | SC-4 | Input Validation | Pydantic v2 models on all endpoints | All router files |
 | SC-5 | SQL Injection Prevention | `%s` parameterized queries exclusively | All SQL in routers and scripts |
@@ -1510,6 +1511,26 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Decision** | Expanding-window backtest with 10 fixed timeframes (A-J) storing lag 0-4 predictions in archive table |
 | **Rationale** | Expanding window mirrors real-world forecast production (model always trains on all available history). Fixed timeframes provide reproducible, comparable results across model variants. Lag archiving enables execution-lag-aware accuracy measurement. |
 | **Consequences** | Full backtest runs 3 models x 10 timeframes = expensive compute (~4-6 hours). Sampled backtest option (stratified DFU sampling) provides fast ~3-min iteration runs for development. |
+
+### ADR-009: Atomic Decomposition of God-Modules into Domain Packages
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | Three modules had grown into "god-modules" mixing many responsibilities: `common/ml/champion_strategies.py` (31 strategies), `api/routers/forecasting/unified_model_tuning.py` (15 endpoints), `api/routers/intelligence/customer_analytics.py` (16 endpoints). Each was a navigation, review, and merge-conflict hot spot. |
+| **Decision** | Atomically split each god-module into a domain package with cohesive sub-modules: `common/ml/champion/` (9 sub-modules), `api/routers/forecasting/tuning/` (15 sub-routers), `api/routers/intelligence/customer_analytics/` (5 sub-routers + helpers). All public surfaces (15 model-tuning endpoints under `/model-tuning/*`, 16 customer-analytics GET endpoints) preserved exactly. No backward-compat shims — importers rewritten in the same change per the project rule. |
+| **Rationale** | Smaller files reduce review surface, support per-domain ownership, and make sub-router additions cheap. Atomic migration avoids the well-documented "permanent shim" debt pattern. |
+| **Consequences** | Three more package directories to navigate, but each sub-module is small and focused. Routing tables and ML registry imports updated in lock-step. Frontend tabs (ModelTuningTab, SkuFeaturesTab, ExplorerTab) split into sub-panels in parallel. |
+
+### ADR-010: Mechanical Lint Gates for Previously-Unenforced Rules
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | CLAUDE.md rules such as "no `date.today()`", "no `Path(__file__).parents[N]`", "no bare `except Exception`", "no `print()` in scripts", and "no `: any` in TypeScript queries" were repeatedly violated because they relied on reviewer memory rather than tooling. |
+| **Decision** | Add `scripts/ai_checks/check_unenforced_rules.sh` plus 5 per-rule allowlists. The script is a mechanical gate that fails CI when a violation appears outside its allowlist; the allowlist exists so existing legacy hits do not block work but new violations cannot land silently. |
+| **Rationale** | Governance rules without a mechanical enforcement layer rot. A lightweight shell-based gate is cheaper than a custom linter, integrates with existing pre-commit / CI, and the per-rule allowlists make exceptions explicit and reviewable. |
+| **Consequences** | One additional CI step. Allowlist files become part of governance review — shrinking them is a backlog item. Closes the long-standing gap between "documented rule" and "enforced rule". |
 
 ---
 
@@ -1656,6 +1677,8 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | G-6 | Database HA | Single PostgreSQL instance | Primary-replica with automatic failover | No replication configuration | High |
 | G-7 | CI/CD | Manual `make` commands | Automated pipeline (GitHub Actions) | No CI/CD pipeline defined | High |
 | G-8 | API Versioning | Single unversioned API | Multi-version support with deprecation | Version infrastructure in `rate_limiter.py` but no versioned routers | Low |
+| G-9 | Architecture Rule Enforcement | CLAUDE.md rules enforced by reviewer memory | Mechanical CI gates per rule | **Closed** — `scripts/ai_checks/check_unenforced_rules.sh` + 5 allowlists added (see ADR-010); covers `date.today`, `parents[N]`, bare `except`, `print()` in scripts, `: any` in queries | Closed |
+| G-10 | God-Module Refactor | `champion_strategies.py`, `unified_model_tuning.py`, `customer_analytics.py` were monolithic | Domain-package decomposition with preserved public APIs | **Closed** — split into `common/ml/champion/` (9 sub-modules), `api/routers/forecasting/tuning/` (15 sub-routers), `api/routers/intelligence/customer_analytics/` (5 sub-routers); see ADR-009 | Closed |
 
 ### 11.2 Migration Roadmap
 

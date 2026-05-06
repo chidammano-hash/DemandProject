@@ -8,7 +8,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `config/forecasting/cluster_tuning_profiles.yaml`, `common/ml/shap_selector.py`, `common/core/constants.py`, `common/ml/model_registry.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py`, `common/ml/champion_strategies.py`, `scripts/run_backtest.py`, `scripts/tune_cluster_hyperparams.py` |
+| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `config/forecasting/cluster_tuning_profiles.yaml`, `common/ml/shap_selector.py`, `common/core/constants.py` (now exposes `FORECAST_QTY_COL`), `common/ml/model_registry.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py`, `common/ml/tuning.py` (now routes fits through `model_registry.build_tree_model` + `fit_model` -- no direct `LGBMRegressor`/`CatBoostRegressor`/`XGBRegressor` instantiation), `common/ml/champion/` (split package -- formerly `common/ml/champion_strategies.py`), `scripts/run_backtest.py`, `scripts/tune_cluster_hyperparams.py` |
 
 ---
 
@@ -525,6 +525,10 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
    - **Phase 2:** Statistical criteria fallback (mean_demand, cv_demand, zero_demand_pct, etc.)
    - First match wins per `_PROFILE_PRIORITY` order
 
+### 5b.4 Tuning Fit Path Matches Production
+
+`common/ml/tuning.py` no longer instantiates `LGBMRegressor` / `CatBoostRegressor` / `XGBRegressor` directly. Every Optuna trial now constructs its estimator through `model_registry.build_tree_model(algorithm_id, params)` and trains it via `model_registry.fit_model(...)` -- the exact same path used by `scripts/run_backtest.py` and production training. This guarantees that tuned hyperparameters reproduce the same fit semantics (early-stop patience, custom WAPE eval callbacks, sparse-aware patience floors, demand-pattern routing) when promoted to production. Adding a new tree model to the registry is the only step needed to make it tunable -- no `if/elif` branches in `tuning.py`.
+
 ### 5b.3 Recursive Lag Smoothing
 
 - **Config:** `recursive_lag_smooth: 0.15` (in `forecast_pipeline_config.yaml` under `backtest`)
@@ -535,7 +539,7 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 
 ### 5c.1 Decimal to Float Cast
 
-- **File:** `common/ml/champion_strategies.py`
+- **File:** `common/ml/champion/helpers.py` (formerly part of the now-split `common/ml/champion_strategies.py`; canonical import is `from common.ml.champion import ...`)
 - **What:** Explicit `float()` cast on Decimal values from DB queries to prevent `TypeError` in numpy/pandas operations
 
 ### 5c.2 Ensemble Detection Fix
@@ -570,7 +574,7 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 | `common/ml/model_registry.py` | `EARLY_STOP_PCT=0.05`, `SPARSE_EARLY_STOP_PCT=0.10`, `SPARSE_EARLY_STOP_FLOOR=50`. `_wape_lgbm()`, `WapeMetric`, `_wape_xgb()` custom eval functions with scaled denominator floor. `fit_model()` accepts `demand_pattern` param for sparse-aware early stopping. |
 | `scripts/run_backtest.py` | `_classify_cluster_demand()` for demand pattern classification. `_apply_tweedie_objective()` to override objective for intermittent clusters. `persist_cluster_models()` handles per-cluster feature_cols dict. Training log includes val_accuracy. `_RollingMeanModel` class and intermittent routing in `_train_single_cluster` to route sparse clusters to `_predict_rolling_mean`. `feature_selector_fn` routes to per-cluster SHAP. `train_and_predict_per_cluster` accepts `per_cluster_feature_cols`. |
 | `scripts/tune_cluster_hyperparams.py` | **NEW** — Per-cluster Bayesian hyperparameter tuning pipeline. Runs Optuna independently per `ml_cluster`, writes cluster-specific overrides to `cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. |
-| `common/ml/champion_strategies.py` | Decimal -> float cast for DB values. `is_ensemble` detection fix (checks synthetic model_id). Per-cluster strategy loads `dfu_features`. |
+| `common/ml/champion/` (split from the legacy `common/ml/champion_strategies.py` into 9 sub-modules: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py` -- see [Champion Selection](./07-champion-selection.md#module-layout)) | Decimal -> float cast for DB values (in `helpers.py`). `is_ensemble` detection fix (checks synthetic model_id). Per-cluster strategy (in `segment.py`) loads `dfu_features`. |
 
 ---
 

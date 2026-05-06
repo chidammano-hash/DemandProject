@@ -238,18 +238,20 @@ Performance work is centralised in `common/services/perf_profiler.py` and `scrip
 
 ```
 compute_safety_stock        compute_eoq               compute_replenishment_plan
-compute_demand_variability  compute_inventory_projection
+compute_sku_features        compute_inventory_projection
 compute_demand_signals      compute_blended_forecast  compute_investment_plan
 compute_rebalancing         compute_echelon_targets   compute_lead_time_variability
 assign_replenishment_policies   classify_abc_xyz      compute_bias_corrections
 compute_service_level_actuals   compute_financial_plan
 generate_planned_orders     generate_replenishment_exceptions
 generate_production_forecasts   generate_storyboard_exceptions
-generate_consensus_plan     apply_event_adjustments   detect_seasonality
+generate_consensus_plan     apply_event_adjustments
 run_backtest                run_backtest_catboost     run_backtest_xgboost
 run_ss_simulation           run_sop_cycle             populate_dq_checks
 fix_dq_issues
 ```
+
+> Note: `compute_demand_variability` and `detect_seasonality` were unified into `compute_sku_features` on 2026-05-06 (the standalone scripts were deleted; redirect any preset to `compute_sku_features`).
 
 To add a new preset, append it under `script_presets:` in `config/platform/perf_config.yaml` with optional `args:` / `callable:` / `callable_kwargs:` keys.
 

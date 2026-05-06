@@ -26,21 +26,43 @@ and customer concentration across 7 panel types.
 
 ## API Router
 
-**File:** `api/routers/core/customer_analytics.py`
+**Package:** `api/routers/intelligence/customer_analytics/` (split from the
+former 1726-LoC `customer_analytics.py` module — endpoints and `/customer-analytics`
+prefix unchanged)
 **Prefix:** `/customer-analytics`
+
+### Sub-Routers
+
+| Sub-Router File | Concern | Endpoints |
+|---|---|---|
+| `geo.py` | Geographic visualizations | `/map`, `/treemap`, `/heatmap`, `/demand-flow` |
+| `segments.py` | Channel / segment breakdowns | `/channel-mix`, `/segment-trends`, `/filter-options` |
+| `ranking.py` | Customer ranking + behavior | `/ranking`, `/oos-impact`, `/affinity`, `/order-patterns` |
+| `lifecycle.py` | Lifecycle + risk views | `/lifecycle`, `/demand-at-risk` |
+| `kpis.py` | Item picker + KPI tiles + alerts | `/items`, `/kpis`, `/alerts` |
+| `_helpers.py` | Geocoding cache + WHERE-clause builders (shared) | (helpers, no routes) |
+| `__init__.py` | Aggregates sub-router includes; re-exports `_get_nomi` and `get_planning_date` for test patching | (package init) |
 
 ### Endpoints
 
-| # | Method | Path | Description |
-|---|--------|------|-------------|
-| 1 | GET | `/customer-analytics/map` | Demand-aware map data by state/city/zip |
-| 2 | GET | `/customer-analytics/treemap` | Customer concentration hierarchy |
-| 3 | GET | `/customer-analytics/heatmap` | Item x State demand matrix |
-| 4 | GET | `/customer-analytics/channel-mix` | Channel/store-type sunburst hierarchy |
-| 5 | GET | `/customer-analytics/segment-trends` | Monthly demand by segment (sparklines) |
-| 6 | GET | `/customer-analytics/ranking` | Top/bottom customers by metric |
-| 7 | GET | `/customer-analytics/oos-impact` | Bubble chart: demand vs fill rate |
-| 8 | GET | `/customer-analytics/items` | Typeahead item search for filters |
+| # | Method | Path | Sub-Router | Description |
+|---|--------|------|------------|-------------|
+| 1 | GET | `/customer-analytics/map` | `geo.py` | Demand-aware map data by state/city/zip |
+| 2 | GET | `/customer-analytics/treemap` | `geo.py` | Customer concentration hierarchy |
+| 3 | GET | `/customer-analytics/heatmap` | `geo.py` | Item x State demand matrix |
+| 4 | GET | `/customer-analytics/demand-flow` | `geo.py` | Origin/destination demand flow |
+| 5 | GET | `/customer-analytics/channel-mix` | `segments.py` | Channel/store-type sunburst hierarchy |
+| 6 | GET | `/customer-analytics/segment-trends` | `segments.py` | Monthly demand by segment (sparklines) |
+| 7 | GET | `/customer-analytics/filter-options` | `segments.py` | Distinct values for filter dropdowns |
+| 8 | GET | `/customer-analytics/ranking` | `ranking.py` | Top/bottom customers by metric |
+| 9 | GET | `/customer-analytics/oos-impact` | `ranking.py` | Bubble chart: demand vs fill rate |
+| 10 | GET | `/customer-analytics/affinity` | `ranking.py` | Customer-item affinity scores |
+| 11 | GET | `/customer-analytics/order-patterns` | `ranking.py` | Inter-order intervals / cadence |
+| 12 | GET | `/customer-analytics/lifecycle` | `lifecycle.py` | New / growing / declining / churned cohorts |
+| 13 | GET | `/customer-analytics/demand-at-risk` | `lifecycle.py` | Demand exposure from at-risk customers |
+| 14 | GET | `/customer-analytics/items` | `kpis.py` | Typeahead item search for filters |
+| 15 | GET | `/customer-analytics/kpis` | `kpis.py` | Aggregate KPI tiles |
+| 16 | GET | `/customer-analytics/alerts` | `kpis.py` | Threshold-based alert feed |
 
 ### Common Filter Parameters
 
@@ -94,5 +116,8 @@ with 7 panels in a 2-column grid below.
 
 ## Testing
 
-- Backend: `tests/api/test_customer_analytics.py` — mock DB, test all 8 endpoints
+- Backend: `tests/api/test_customer_analytics.py` — mock DB, test all 16 endpoints. Patch
+  targets live on the package (`api.routers.intelligence.customer_analytics._get_nomi`,
+  `…customer_analytics.get_planning_date`), which the package `__init__.py` re-exports
+  for test convenience.
 - Frontend: `frontend/src/tabs/__tests__/CustomerAnalyticsTab.test.tsx` — render, filter, panels

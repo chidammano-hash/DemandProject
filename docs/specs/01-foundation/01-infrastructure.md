@@ -110,6 +110,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Notifications + Webhooks | [../08-integration/04-notifications.md](../08-integration/04-notifications.md) | Integration |
 | FVA + ROI Measurement | [../08-integration/07-fva.md](../08-integration/07-fva.md) | Integration |
 | Demand History Workbench (5 endpoints) | [../03-demand-intelligence/06-demand-history-workbench.md](../03-demand-intelligence/06-demand-history-workbench.md) | Demand Intelligence |
+| Mechanical lint gates for 5 unenforced rules (`scripts/ai_checks/check_unenforced_rules.sh`) | — | Foundation |
 
 ## Quick Start
 

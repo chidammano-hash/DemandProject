@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | ExplorerTab, ItemAnalysisTab |
-| **Key Files** | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `api/routers/domains.py`, `api/routers/forecasting/analysis.py`, `api/routers/inventory/inventory_main.py` |
+| **Key Files** | `ExplorerTab.tsx` (orchestrator, ~245 lines composing 11 sub-files in `tabs/explorer/`: `ExplorerHeader.tsx`, `ExplorerTable.tsx`, `ExplorerPagination.tsx`, `ExplorerErrorBanner.tsx`, `DomainFiltersPanel.tsx`, `FieldVisibilityPanel.tsx`, `useExplorerState.ts`, `useExplorerQueries.ts`, `useColumnSuggestions.ts`, `_helpers.ts`, `types.ts`), `ItemAnalysisTab.tsx`, `api/routers/domains.py`, `api/routers/forecasting/analysis.py`, `api/routers/inventory/inventory_main.py` |
 
 ---
 

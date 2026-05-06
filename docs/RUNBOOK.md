@@ -766,7 +766,7 @@ Experiment templates are loaded from `config/forecasting/forecast_pipeline_confi
 
 | File | Purpose |
 |------|---------|
-| `api/routers/forecasting/unified_model_tuning.py` | Unified router (14 endpoints) |
+| `api/routers/forecasting/tuning/` | Unified router package (14 endpoints, split by concern) |
 | `frontend/src/api/queries/unified-model-tuning.ts` | Frontend query module |
 | `frontend/src/tabs/LgbmTuningTab.tsx` | Main UI component |
 | `tests/api/test_unified_model_tuning.py` | Backend tests (40 tests) |
@@ -2085,7 +2085,7 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ### Step 7: SKU Feature Engineering (Seasonality + Variability)
 
 The unified pipeline computes seasonality, variability, and lifecycle features in a single pass.
-The legacy scripts (`detect_seasonality.py`, `update_seasonality_profiles.py`, `compute_demand_variability.py`) are deprecated shims -- use `make features-compute` instead.
+The legacy scripts (`detect_seasonality.py`, `update_seasonality_profiles.py`, `compute_demand_variability.py`, `generate_clustering_features.py`, `train_clustering_model.py`, `detect_drift.py`) have been removed -- use `make features-compute` (or `scripts/ml/compute_sku_features.py`) and `scripts/ml/run_cluster_pipeline.py` instead.
 
 ```bash
 ~/.local/bin/uv run python scripts/ml/compute_sku_features.py   # or: make features-compute

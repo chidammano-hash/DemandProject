@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/ml/compute_sku_features.py` (unified pipeline, `make features-compute`), `scripts/compute_lead_time_variability.py`, `config/variability_config.yaml`, `sql/022_create_demand_variability.sql`. Legacy shim: `scripts/compute_demand_variability.py` (deprecated, kept for backward-compat imports) |
+| **Key Files** | `scripts/ml/compute_sku_features.py` (unified pipeline, `make features-compute`), `scripts/compute_lead_time_variability.py`, `config/variability_config.yaml`, `sql/022_create_demand_variability.sql`. (The legacy `scripts/compute_demand_variability.py` was deleted; use `make features-compute`.) |
 
 ---
 
@@ -108,7 +108,7 @@ Routers: `inv_planning_variability.py`, `inv_planning_lead_time.py`
 | SKU features (incl. demand variability) | `scripts/ml/compute_sku_features.py` (`make features-compute`) | `dim_sku` seasonality + variability columns updated |
 | Lead time variability | `scripts/compute_lead_time_variability.py` | `dim_item_lead_time_profile` rows |
 
-> **Note:** The legacy `scripts/compute_demand_variability.py` is a deprecated shim. Use `make features-compute` for all new work.
+> **Note:** The legacy `scripts/compute_demand_variability.py` has been deleted. Use `make features-compute` for all new work.
 
 ---
 

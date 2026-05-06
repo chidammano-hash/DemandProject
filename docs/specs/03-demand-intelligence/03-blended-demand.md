@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (Sensing group) |
-| **Key Files** | `scripts/compute_blended_forecast.py`, `api/routers/forecasting/blended_forecast.py`, `config/blended_demand_config.yaml` |
+| **Key Files** | `scripts/forecasting/compute_blended_forecast.py`, `api/routers/forecasting/blended_forecast.py`, `config/blended_demand_config.yaml` |
 
 ---
 
@@ -104,7 +104,7 @@ make blended-demand    # Compute blended demand from champion + sensing signals
 
 | Step | Script | Output |
 |---|---|---|
-| Compute blend | `scripts/compute_blended_forecast.py` | Blended demand rows |
+| Compute blend | `scripts/forecasting/compute_blended_forecast.py` | Blended demand rows |
 
 Requires champion selection and demand signals to have run first.
 

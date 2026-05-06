@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Model Tuning |
-| **Key Files** | `sql/100_results_promotion.sql`, `common/services/job_state.py`, `api/routers/forecasting/unified_model_tuning.py`, `frontend/src/tabs/model-tuning/EnhancedPromoteModal.tsx` |
+| **Key Files** | `sql/100_results_promotion.sql`, `common/services/job_state.py`, `api/routers/forecasting/tuning/promote.py` + `api/routers/forecasting/tuning/promote_results.py` (within the 15-module `tuning/` package -- see [Unified Model Tuning Studio](./11-unified-model-tuning-v2.md#router-layout)), `frontend/src/tabs/model-tuning/EnhancedPromoteModal.tsx` |
 
 ---
 
@@ -75,6 +75,6 @@ Experiment table shows dual badges: crown (params) + database icon (results).
 | `sql/100_results_promotion.sql` | Schema migration |
 | `common/services/job_state.py` | `_run_load_backtest_results` job function |
 | `common/services/job_registry.py` | Job type registration |
-| `api/routers/forecasting/unified_model_tuning.py` | 2 new endpoints |
+| `api/routers/forecasting/tuning/promote_results.py` | 2 new endpoints (`POST /promote-results`, `GET /promote-results/status`) within the unified `tuning/` package |
 | `frontend/src/tabs/model-tuning/EnhancedPromoteModal.tsx` | Dual-action modal |
 | `frontend/src/api/queries/unified-model-tuning.ts` | Types + fetchers |

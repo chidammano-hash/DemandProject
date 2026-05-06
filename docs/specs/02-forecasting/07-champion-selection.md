@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/run_champion_selection.py`, `common/ml/champion_strategies.py`, `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `scripts/run_champion_selection.py`, `common/ml/champion/` (9-module package: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py`), `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
 ---
 
@@ -153,7 +153,29 @@ All 31 strategies share these properties:
 - **Exec-lag-aware**: Uses `shift(execution_lag + 1)` to exclude months whose actuals weren't available at forecast issuance time
 - **Standard output schema**: All return `[item_id, customer_group, loc, startdate, model_id, prior_wape, basefcst_pref, tothist_dmd]`
 - **Empty-safe**: All return an empty DataFrame with correct columns when given empty input
-- **Registry-based**: All registered via `@register_strategy("name")` in `STRATEGY_REGISTRY`
+- **Registry-based**: All registered via `@register_strategy("name")` in `STRATEGY_REGISTRY` (defined in `common/ml/champion/registry.py`)
+
+### Module Layout
+
+The 31 strategies live in `common/ml/champion/` (split from the legacy 3,530-LoC `common/ml/champion_strategies.py`). Importers should use `from common.ml.champion import ...` -- the package re-exports `STRATEGY_REGISTRY`, `register_strategy`, and every strategy implementation.
+
+| Sub-module | Strategies | Purpose |
+|------------|------------|---------|
+| `registry.py` | -- | `STRATEGY_REGISTRY` dict + `@register_strategy` decorator |
+| `basic.py` | 5 | Baseline strategies: `expanding`, `rolling`, `decay`, `last_value`, `oracle` |
+| `blend.py` | 10 | Blending/ensemble strategies (e.g. `ensemble`, `ensemble_rolling`, `adaptive_ensemble`, `diverse_ensemble`, `learned_blend`, `ridge_blend`, `shrinkage_blend`, `cascade_ensemble`, `error_correcting`, `uncertainty_aware`) |
+| `meta.py` | 2 | `meta_learner`, `hybrid_meta_router` |
+| `bandit.py` | 4 | RL/bandit strategies: `thompson_sampling`, `linucb`, `exp3`, `thompson_ensemble` |
+| `segment.py` | 3 | Segment-driven: `per_segment`, `per_cluster`, `cluster_regime_hybrid` |
+| `regime.py` | 2 | `dynamic_window`, `regime_adaptive` |
+| `routing.py` | 5 | Multi-stage routers: `hybrid_warmup`, `optimized_decay`, `seasonal`, `dfu_strategy_router`, `stacked_strategies` |
+| `helpers.py` | -- | Shared helpers (causal shift, weight computations, etc.) |
+
+```python
+# Canonical import path (post-split):
+from common.ml.champion import STRATEGY_REGISTRY, register_strategy
+from common.ml.champion.routing import hybrid_warmup
+```
 
 ### Segment Routing (per_segment)
 

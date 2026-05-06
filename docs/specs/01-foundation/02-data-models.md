@@ -117,6 +117,23 @@ All domain definitions live in `common/core/domain_specs.py` as frozen `DomainSp
 - `search_fields`: columns with GIN trigram indexes
 - `int_fields`, `float_fields`, `date_fields`, `bool_fields`: type-aware filtering
 
+## Shared Query Helpers
+
+Canonical row-to-dict helpers for any cursor result live in `common/core/sql_helpers.py`:
+
+| Helper | Signature | Use when |
+|---|---|---|
+| `row_to_dict_from_cursor(cur, row)` | `(psycopg.Cursor, tuple) -> dict` | You have a live cursor and want column names from `cur.description` |
+| `row_to_dict_from_cols(cols, row)` | `(Sequence[str], tuple) -> dict` | You already extracted column names (e.g., for batch processing) |
+
+For domain-aware conversion (applies the `class` -> `class_` alias and DomainSpec
+column ordering), use `domain_row_to_dict(spec, row)` in `api/core.py` (renamed
+from `row_to_dict()` to disambiguate from the generic helpers above).
+
+The forecast quantity column is centralized as `FORECAST_QTY_COL = "basefcst_pref"`
+in `common/core/constants.py` — reference this constant rather than hardcoding the
+column name in new SQL or Python code.
+
 ## Dependencies
 
 - PostgreSQL 16 with `pg_trgm` extension

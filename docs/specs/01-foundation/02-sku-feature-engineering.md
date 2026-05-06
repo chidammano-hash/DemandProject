@@ -205,7 +205,7 @@ Four-class taxonomy following the Syntetos-Boylan framework, using `cv_demand` a
 
 The classifier in `common/ml/sku_features/classifiers.py` (`classify_variability_class()`) handles edge cases: extreme CV forces `lumpy` regardless of intermittency; moderate CV with regular timing maps to `erratic`.
 
-**Note:** The pipeline script `compute_sku_features.py` also contains inline classifier functions (`_classify_seasonality_profile`, `_classify_variability`) with slightly different thresholds used during the pipeline run. The `classifiers.py` module provides the canonical reusable implementation for downstream callers.
+**Note:** The pipeline script `compute_sku_features.py` also contains inline classifier functions (`_classify_seasonality_profile`, `_classify_variability`) with slightly different thresholds used during the pipeline run. The `classifiers.py` module provides the canonical reusable implementation for downstream callers. The previously-existing standalone seasonality and demand-variability detection scripts have been deleted; their logic now lives only in this single pipeline.
 
 ### Dependent Classifications (not computed here)
 
@@ -240,12 +240,15 @@ common/ml/
 scripts/ml/
   compute_sku_features.py    # CLI entry point: run_pipeline(), main()
                              # Loads config, orchestrates load -> compute -> classify -> persist
-
-scripts/                     # Deprecated shims (backward-compat only)
-  detect_seasonality.py      # Delegates to unified pipeline
-  compute_demand_variability.py  # Delegates to unified pipeline
-  update_seasonality_profiles.py # Delegates to unified pipeline
+                             # THIS IS THE SINGLE SOURCE OF TRUTH for SKU feature computation.
 ```
+
+**Historical scripts (DELETED):** The legacy seasonality, demand-variability, and
+profile-update detection scripts (`detect_seasonality.py`, `compute_demand_variability.py`,
+`update_seasonality_profiles.py`, plus three other deprecated ML scripts) have been
+**removed entirely** — not renamed, not shimmed. Their logic is now folded into
+`compute_sku_features.py` + `common/ml/sku_features/`. Any historical references
+should be updated to call `make features-compute`.
 
 ### Computation Flow
 

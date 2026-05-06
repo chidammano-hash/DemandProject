@@ -198,7 +198,7 @@ champion:
 
 ### Strategies
 
-All strategies live in `common/ml/champion_strategies.py` and register
+All strategies live in the `common/ml/champion/` package (9 modules: `bandit`, `basic`, `blend`, `helpers`, `meta`, `regime`, `registry`, `routing`, `segment` — 31 strategies total) and register
 themselves via `@register_strategy("name")`. Every strategy is **strictly
 causal** — selection for month `T` uses only data from months
 `< T - execution_lag`. This blocks two leakage paths:
@@ -316,7 +316,7 @@ interactively. This is the primary surface for ad-hoc tuning debugging.
 | Trigger | Recommended Action |
 |---|---|
 | New monthly sales data loaded (`make pipeline-refresh`) | Re-run `make tune-clusters` only if cluster fingerprints have shifted; otherwise rely on existing profiles |
-| Significant data drift detected (`scripts/ml/detect_drift.py`) | `make tune-all` then `make tune-clusters` |
+| Significant data drift detected (re-run `scripts/ml/compute_sku_features.py` and review `dim_sku` distributions; `detect_drift.py` was deleted on 2026-05-06) | `make tune-all` then `make tune-clusters` |
 | New features added to `dim_sku` | `make tune-all` (search space sees new feature distributions) |
 | New algorithm added to roster | Tune that algorithm in isolation: `uv run python scripts/tune_hyperparams.py --model <id>` |
 | Schema migration touching `cluster_tuning_profile` | `POST /admin/tuning/invalidate-stale`, then re-run `make tune-clusters` |
@@ -354,7 +354,7 @@ interactively. This is the primary surface for ad-hoc tuning debugging.
 |---|---|
 | `common/ml/tuning.py` | CV splits, stabilised WAPE objective, Optuna helpers |
 | `common/ml/tuning_tracker.py` | Tuning-run registry + leaderboard |
-| `common/ml/champion_strategies.py` | Strategy registry (causal, exec-lag aware) |
+| `common/ml/champion/` (package: `registry.py` + 8 strategy modules) | Strategy registry (causal, exec-lag aware) — 31 strategies across `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment` |
 | `common/ml/backtest_framework.py` | `resolve_cluster_params()` Phase 1/Phase 2 matcher |
 | `scripts/tune_hyperparams.py` | Global per-algorithm tuning |
 | `scripts/tune_cluster_hyperparams.py` | Per-cluster tuning |

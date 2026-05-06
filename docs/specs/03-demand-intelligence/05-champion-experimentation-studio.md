@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Model Tuning > Champion sub-tab |
-| **Key Files** | `api/routers/forecasting/champion_experiments.py`, `frontend/src/tabs/champion/*.tsx`, `sql/102_champion_experiments.sql`, `common/ml/champion_strategies.py` |
+| **Key Files** | `api/routers/forecasting/champion_experiments.py`, `frontend/src/tabs/champion/*.tsx`, `sql/102_champion_experiments.sql`, `common/ml/champion/` (package) |
 
 | | |
 |---|---|
@@ -14,7 +14,7 @@
 | **Router** | `api/routers/forecasting/champion_experiments.py` |
 | **Frontend** | `frontend/src/api/queries/champion-experiments.ts`, `frontend/src/tabs/champion/*.tsx` |
 | **Tests** | `tests/api/test_champion_experiments.py` (31 tests) |
-| **Depends On** | Feature 46 (Unified Model Tuning), Feature 44 (Resilient Jobs), `common/ml/champion_strategies.py` |
+| **Depends On** | Feature 46 (Unified Model Tuning), Feature 44 (Resilient Jobs), `common/ml/champion/` package (split from the legacy `common/ml/champion_strategies.py`; sub-modules: `registry.py`, `helpers.py`, `basic.py`, `blend.py`, `bandit.py`, `meta.py`, `regime.py`, `routing.py`, `segment.py`) |
 
 ---
 
@@ -148,7 +148,9 @@ Side-by-side comparison:
 
 ## Champion Strategies
 
-8 strategies from `common/ml/champion_strategies.py` `STRATEGY_REGISTRY`:
+8 strategies registered in `STRATEGY_REGISTRY` from the `common/ml/champion/` package
+(re-exported at the package root; implementations split across `basic.py`, `blend.py`,
+`bandit.py`, `meta.py`, `regime.py`, `routing.py`, `segment.py`):
 
 | Strategy | Key Params | Description |
 |----------|-----------|-------------|
@@ -210,7 +212,8 @@ Two job types registered in `common/services/job_registry.py`:
 | `champion_results_load` | champion | `_run_champion_results_load` | `scripts/run_champion_selection.py` |
 
 The experiment runner (`scripts/run_champion_experiment.py`) reuses:
-- `STRATEGY_REGISTRY`, `compute_strategy_accuracy()`, `compute_ceiling()` from `common/ml/champion_strategies.py`
+- `STRATEGY_REGISTRY`, `compute_strategy_accuracy()`, `compute_ceiling()` re-exported from
+  `common/ml/champion/` (package root; implementations live in `registry.py` + `helpers.py`)
 - `load_monthly_errors_df()`, `load_dfu_features()` from `scripts/run_champion_selection.py`
 
 ---

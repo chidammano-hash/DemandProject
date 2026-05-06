@@ -355,9 +355,10 @@ make variability-compute    # alias → features-compute
 
 **Scripts:**
 - `scripts/ml/compute_sku_features.py` -- unified pipeline: computes volume, trend, seasonality (CV of monthly means, YoY correlation, ACF lag-12, peak/trough), variability (CV/MAD/skewness/kurtosis), intermittency, and lifecycle features in a single pass; writes all columns to `dim_sku`
-- `scripts/detect_seasonality.py` -- **deprecated shim** (kept for backward-compatible function exports consumed by tests); use `compute_sku_features.py` instead
-- `scripts/update_seasonality_profiles.py` -- **deprecated shim**; handled by `compute_sku_features.py`
-- `scripts/compute_demand_variability.py` -- **deprecated shim** (kept for backward-compatible function exports consumed by tests); use `compute_sku_features.py` instead
+- ~~`scripts/detect_seasonality.py`~~ -- **deleted**; use `compute_sku_features.py` (`make features-compute`) instead
+- ~~`scripts/update_seasonality_profiles.py`~~ -- **deleted**; handled by `compute_sku_features.py`
+- ~~`scripts/compute_demand_variability.py`~~ -- **deleted**; use `compute_sku_features.py` instead
+- ~~`scripts/detect_drift.py`~~ -- **deleted**; drift signals are now derived from `dim_sku` features and the SKU feature pipeline
 
 **Error Recovery:**
 - If seasonality detection fails: check `min_months_history` threshold -- DFUs with insufficient history are skipped (not an error)
@@ -461,7 +462,12 @@ make customer-features-python   # Python-based alternative
 **CLI commands:**
 ```bash
 make cluster-all       # Full pipeline: features -> train -> label -> update DB
-make cluster-features  # Step 1: generate_clustering_features.py
+# Note: the legacy step-1 script `scripts/ml/generate_clustering_features.py`
+# has been deleted. SKU features (volume, trend, seasonality, periodicity,
+# intermittency, lifecycle) are now produced by `make features-compute`
+# (scripts/ml/compute_sku_features.py) and read from `dim_sku` by the
+# clustering pipeline.
+make features-compute  # Step 1: unified SKU feature computation (replaces generate_clustering_features.py)
 make cluster-train     # Step 2: KMeans training (via run_cluster_pipeline.py)
 make cluster-label     # Step 3: label_clusters.py
 # (cluster-update absorbed into unified pipeline via promote_scenario)
@@ -486,7 +492,8 @@ API endpoints (prefix `/cluster-experiments`):
 - `GET /{id}/used-by` -- which tuning experiments reference this clustering
 
 **Scripts:**
-- `scripts/ml/generate_clustering_features.py` -- 6 feature dimensions: volume, trend, seasonality, periodicity, intermittency, lifecycle
+- ~~`scripts/ml/generate_clustering_features.py`~~ -- **deleted**; the 6 feature dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle) are now produced by `scripts/ml/compute_sku_features.py` (`make features-compute`) and read from `dim_sku`
+- ~~`scripts/ml/train_clustering_model.py`~~ -- **deleted**; KMeans training is now driven by `scripts/ml/run_cluster_pipeline.py`
 - `scripts/ml/run_cluster_pipeline.py` -- unified pipeline: features -> train -> label -> promote (KMeans with silhouette + Calinski-Harabasz combined scoring)
 - `scripts/ml/label_clusters.py` -- hierarchical labeling taxonomy (e.g., `high_volume_seasonal_growing`)
 - Cluster assignment updates are handled by `promote_scenario()` in the unified pipeline
@@ -1348,6 +1355,7 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 | Pipeline Config UI | `frontend/src/tabs/model-tuning/PipelineConfigPanel.tsx` |
 | Cluster experiments API | `api/routers/forecasting/cluster_experiments.py` |
 | Champion experiments API | `api/routers/forecasting/champion_experiments.py` |
-| Model tuning API | `api/routers/forecasting/unified_model_tuning.py` |
+| Model tuning API | `api/routers/forecasting/tuning/` (15-module package; mounted via `tuning/__init__.py`. See [Unified Model Tuning Studio](./11-unified-model-tuning-v2.md#router-layout) for the full sub-router map) |
+| Champion strategies library | `common/ml/champion/` (9-module package: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py`. See [Champion Selection](./07-champion-selection.md#module-layout)) |
 | Expert panel (basic) | `algorithm_testing/run_expert_panel.py` |
 | Expert panel (advanced) | `adv_algorithm_testing/run_adv_expert_panel.py` |
