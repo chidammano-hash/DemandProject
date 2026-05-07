@@ -14,11 +14,13 @@
 -- target `sales_ck` directly (sales loads use INSERT ... ON CONFLICT (sk)
 -- semantics or full-table replace). Verified safe to drop.
 --
--- We use DROP INDEX CONCURRENTLY to avoid taking AccessExclusive on a hot
--- table; it cannot run inside a transaction block, so this command must be
--- run by itself (psql autocommit).
+-- The index is auto-created by a UNIQUE constraint, so a plain DROP INDEX is
+-- rejected by Postgres ("cannot drop index because constraint requires it").
+-- Drop the constraint instead — Postgres removes the backing index atomically.
+-- ALTER TABLE briefly takes AccessExclusive; for a hot table consider running
+-- during a maintenance window.
 
-DROP INDEX CONCURRENTLY IF EXISTS fact_sales_monthly_sales_ck_key;
+ALTER TABLE fact_sales_monthly DROP CONSTRAINT IF EXISTS fact_sales_monthly_sales_ck_key;
 
 -- ----------------------------------------------------------------------------
 -- 2. uq_forecast_ck_model (267 MB, idx_scan=0)  -- KEEP, DO NOT DROP

@@ -30,13 +30,17 @@ WITH bounds AS (
     FROM fact_customer_demand_monthly
 ),
 base AS (
+    -- Use explicit CROSS JOIN so the subsequent JOIN's ON clause can reference f.
+    -- The implicit comma-join + JOIN form parses as (f, b) JOIN c ON ... which
+    -- doesn't expose f to the JOIN condition.
     SELECT
         f.customer_no,
         f.site,
         c.customer_name,
         f.startdate,
         SUM(f.demand_qty) AS demand_qty
-    FROM fact_customer_demand_monthly f, bounds b
+    FROM fact_customer_demand_monthly f
+    CROSS JOIN bounds b
     JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
     WHERE f.startdate >= b.min_dt
       AND f.startdate <  b.max_dt + INTERVAL '1 month'

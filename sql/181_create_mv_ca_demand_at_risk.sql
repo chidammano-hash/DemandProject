@@ -57,13 +57,16 @@ item_loc_totals AS (
     HAVING SUM(demand_qty) > 0
 ),
 cust_il_share AS (
-    SELECT w.customer_no, w.site,
-           BOOL_OR(SUM(w.demand_qty) / NULLIF(t.il_total, 0) > 0.4) AS is_concentration_risk,
+    -- Per (customer, item, location): customer's share of that item-loc demand.
+    -- Cannot nest aggregates — compute the per-cell sum first, then derive the
+    -- > 40% flag in the surrounding GROUP BY.
+    SELECT w.customer_no, w.site, w.item_id, w.location_id,
+           SUM(w.demand_qty) / NULLIF(MAX(t.il_total), 0) > 0.4 AS is_concentration_risk,
            SUM(w.demand_qty) AS demand_qty
     FROM window_rows w
     JOIN item_loc_totals t
       ON t.item_id = w.item_id AND t.location_id = w.location_id
-    GROUP BY w.customer_no, w.site, w.item_id, w.location_id, t.il_total
+    GROUP BY w.customer_no, w.site, w.item_id, w.location_id
 ),
 cust_agg AS (
     SELECT customer_no, site,
