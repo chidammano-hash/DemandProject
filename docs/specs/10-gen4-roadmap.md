@@ -24,6 +24,134 @@ Follow-ups and deferred items are flagged inline below.
 
 ---
 
+## 2026-05-07 Synthesis — 1000 supply-chain-expert ideas, ranked
+
+A second-wave review structured to produce raw enhancement volume, then sift it down. Pipeline:
+
+- **10 supply-chain experts** (each a named persona with 15-25 years' experience across SAP IBP, Kinaxis Maestro, Blue Yonder Luminate, o9, OMP, ToolsGroup SO99+, Logility, RELEX, Anaplan, Manhattan Active, plus relevant research literature) generated **100 enhancements each = 1000 raw ideas**. Files: `/tmp/sc_expert_01..10_*.md`.
+- **8 consolidator agents** synthesized along orthogonal lenses. **6 succeeded** (capability tiers, roadmap quadrants, competitive matrix, monetization, dependency DAG, by-role view); 2 stalled at watchdog while digesting 10 expert files. Files: `/tmp/sc_consolidation_*.md`.
+- **9 judges** ranked under orthogonal criteria: business impact, effort/feasibility, novelty, RFP win-rate, technical feasibility, customer pain, strategic leverage, time-to-ROI, regulatory pressure. Files: `/tmp/sc_judge_*.md`.
+- Final aggregation uses **Borda-style scoring** (rank-N → 11-N points) summed across 9 judges, with a consensus-width bonus.
+
+### Top 30 Master Ranking
+
+#### Tier A — Universal winners (4+ judges agreed in top-10)
+
+| # | Enhancement | Borda | Effort | Why it wins |
+|---|---|---|---|---|
+| 1 | **Lot/serial/FEFO/DSCSA traceability + recall workflow** | 39 | XL | RFP-DQ for pharma/food/cannabis; FSMA Rule 204 enforcement Jan 20 2026; unlocks $3.2B TAM. Effort judge is the sole detractor — 4 other top-tier judges overwhelm. |
+| 2 | **Lag-decomposed accuracy + pinball-loss leaderboard API** | 30 | S (3-day) | Zero-cost ship-now: `backtest_lag_archive` already populated. Three perfect 10/10s from feasibility/tech/ROI judges. |
+| 3 | **Override audit trail + reason-code taxonomy + override-FVA** | 26 | S–M | Universal pain-killer (5+ planner roles); RFP audit-trail asks; SOX-relevant. Already partially scaffolded via `decision_ledger`. |
+| 4 | **SLA countdowns + acknowledge/snooze on exceptions** | 25 | S | Exception engine already typed with timestamps; pure additive UX. |
+| 5 | **"Why am I seeing this?" + recommended-action chip** | 24 | S | Exception engine records `rule_id`; trivial backend, large planner-trust uplift. |
+| 6 | **Sales Order + ATP/CTP + EDI 850/855/856 + AS2** | 23 | XL | Moves us from "analytics" to "execution platform" → 3-5× ASP. Head-on Kinaxis/BY/o9 attack. RFP-DQ for retail/grocery EDI mandates. |
+| 7 | **Multi-tenant `tenant_id` + RLS + per-tenant config** | 22 | XL | Force-multiplier for 3PL channel ($1.8B TAM); RFP-DQ for shared-services deals. |
+| 8 | **Bulk action toolbar + inline diff before commit** | 20 | S | Trio of feasibility+pain+ROI judges agree. |
+| 9 | **Plant/line capacity master + multi-level BOM + MPS + changeover** | 18 | XL | Without these, "S&OP supply review" is theatre. Unlocks discrete/process manufacturing (5× TAM). |
+| 10 | **Forecastability score + cold-start successor mapping** | 18 | S | Inputs already in `dim_sku`; pure additive analytics. Drives smarter NPI/EOL handling. |
+
+#### Tier B — Strong consensus (3 judges top-10)
+
+| # | Enhancement | Borda | Effort | Notes |
+|---|---|---|---|---|
+| 11 | **Service-level back-test / drift report** | 17 | S | Fill-rate MV + tier MVs already in place. |
+| 12 | **Decision Ledger Merkle anchoring + four-eyes** | 15 | M | Gates AI agents, autonomy tiers, EU AI Act, SOX 404. North-star primitive in dependency DAG. |
+| 13 | **Lead-time CV exposure + change-point auto-recompute** | 14 | S | `mv_supplier_performance.lt_cv` already computed; expose via API. |
+| 14 | **Probabilistic chain — conformal forecast → conformal SS → conformal replenishment** | 14 | M–L | Differentiator vs ToolsGroup (only conformal chain end-to-end is novel; quantile alone is parity). |
+| 15 | **Tier-N supplier visibility + SPOF/HHI + Risk Module** | 13 | M–L | Standalone $200-500K module (Resilinc/Everstream comp). |
+| 16 | **Bitemporal facts + AS-OF queries + SCD-2 dimensions** | 14 | XL | **TENSION**: leverage judge calls it #1 primitive (~25 downstream); business-impact judge demoted as "plumbing nobody pays for." Ship as enabler, not as feature. |
+| 17 | **Stage-gate validators on S&OP cycle** | 11 | S | `_next_stage()` already exists; add `is_complete` checks. SOX-relevant. |
+| 18 | **Multi-level customer hierarchy SCD-2 (sold-to/ship-to/bill-to/payer + GLN/DUNS)** | 11 | M | Customer hierarchy is flat strings today. Unlocks customer-tier SL, allocation, cost-to-serve. |
+| 19 | **Sustainability Module — CSRD/CBAM/EUDR + carbon-aware planning** | 11 | L–XL | $150-400K standalone, mandatory FY2024 EU CSRD wave 1 in flight. |
+| 20 | **Agentic AI Co-Pilot — policy-bounded autonomy + episodic memory feedback** | 13 | L | Only SCM segment growing >25%. Codebase has unusually advanced foundations (decision ledger + RAG + 3-tier memory) — gap is ergonomics. |
+
+#### Tier C — Specialist wins (2 judges, distinctive value)
+
+| # | Enhancement | Effort | Distinctive value |
+|---|---|---|---|
+| 21 | **Continuous IBP / kill the monthly cycle** | XL | Green-field positioning. **TENSION**: leverage judge calls it a *consumer*, not a primitive. |
+| 22 | **Plant capacity + line routing + changeover modeling** | L | F&B-vertical unlock (subset of #9). |
+| 23 | **MEIO Clark-Scarf / GST stochastic-DP** | XL | Headline competitive gap vs ToolsGroup. **TENSION**: pain judge demoted because planners never see MEIO math. |
+| 24 | **Plan freeze + immutable plan versions + lineage hash** | M | Couples with bitemporal #16. |
+| 25 | **SOC2 Type II + ISO 27001 + RBAC + immutable audit** | L | Enterprise-RFP gate. Combine with #12 (decision ledger). |
+| 26 | **Override-FVA classifier (predict ex-ante override quality)** | M | Green-field per novelty judge — no major SCM software ships. |
+| 27 | **Counterfactual digital-twin replay** | L | Green-field. Unlocks "what would have happened if we'd taken the AI's recommendation?" |
+| 28 | **OFAC/EU/UK sanctions screening on suppliers + customers** | S–M | Quick-win regulatory check. |
+| 29 | **EUDR DDS + polygon traceability** | L | EU EUDR in force Dec 2024; specific to commodity importers. |
+| 30 | **Adversarial red-team agent against live S&OP** | M | Green-field; uses existing AI Planner + scenario engine. |
+
+### Cross-judge tensions
+
+Items where judges sharply disagree are roadmap-debate territory — surfaced rather than averaged away:
+
+| Item | High-rankers | Demoters | Resolution suggestion |
+|---|---|---|---|
+| Lot/FEFO/DSCSA | Business, RFP, regulatory (#1 each) | Effort (1-2/10) | XL, but trifecta of revenue + RFP + regulatory overrides effort. Phase the build: dim_lot first, FEFO replenishment, then full DSCSA event capture. |
+| Bitemporal facts | Leverage (#1) | Business ("plumbing, nobody pays") | Ship as enabler under audit/AI feature work, not as standalone product. |
+| MEIO Clark-Scarf | Business #8, RFP #7 | Pain #30 | Real RFP-credibility need but invisible to user. Couple with planner-facing UI (SS justification panel) to convert tech win to perceived win. |
+| Continuous IBP | Business #9, novelty #1 | Leverage ("consumer not primitive") | Don't sequence first; ship after bitemporal + decision ledger + drift mature. |
+| "Bulk action / undo / Why-am-I-seeing-this" | Effort/pain/ROI (#2-5 across) | Leverage ("low; consume primitives, unblock nothing") | Build them anyway — cheap, planner-trust-building; the leverage objection only matters at portfolio level. |
+| Probabilistic forecasting | All quantile-rank high | Novelty ("conformal chain is novel; quantile alone is parity") | Ship the chain end-to-end (forecast → SS → MEIO → ATP) as a coherent suite, not separate components. Differentiator only if integrated. |
+
+### Recommended sequencing (4 waves)
+
+**Wave 1 — 90 days (foundational + quick wins, parallel)**
+- Quick wins (S effort, multi-judge winners): #2 lag-accuracy, #3 override audit, #4 SLA, #5 why-am-I-seeing, #8 bulk action, #10 forecastability, #11 SL drift, #13 LT-CV, #17 stage-gate, #28 sanctions
+- Foundational primitives (M effort): **#12 Decision Ledger** (north-star primitive), **#16 SCD-2 dim conventions** (for bitemporal lift later), #18 customer hierarchy SCD-2
+
+**Wave 2 — Q2/Q3 (regulatory-driven + table-stakes)**
+- **#1 Lot/FEFO** (FSMA Jan 2026 deadline → start now)
+- **#9 Plant/BOM/MPS** (long-pole — start in parallel with Wave 1 once SCD-2 stable)
+- #19 Sustainability Module (CSRD already in flight)
+- #15 Tier-N supplier + Risk Module
+- #14 Probabilistic chain (forecasting + SS + replenishment integrated)
+
+**Wave 3 — 12-18 months (RFP credibility)**
+- **#6 Sales order + ATP/CTP + EDI** (the 3-5× ASP move)
+- **#7 Multi-tenant + RLS** (3PL channel)
+- #20 Agentic AI Co-Pilot (Wave 1's decision ledger + memory + feedback loops fed forward)
+- #23 MEIO Clark-Scarf / GST
+- #25 SOC2/ISO27001 audit prep
+
+**Wave 4 — strategic R&D bets (12-24 months)**
+- #21 Continuous IBP
+- #26 Override-FVA classifier
+- #27 Counterfactual replay
+- #30 Adversarial red-team agent
+
+### Honest competitive verdict (plain language)
+
+Right now we're at **"impressive demo, not ready to buy"** stage.
+
+If a company puts our forecasting head-to-head against SAP IBP or Kinaxis on their own data, we hold our own — the forecasting math is genuinely good. But when that company sends us their checklist of required features (the standard procurement document — "do you support lot tracking? multi-tenant? sales orders? capacity planning?"), we get screened out before anyone runs the bake-off, because the data plumbing for those features isn't there.
+
+**The road back to "real option" status:**
+- **4 to 6 quarters of Wave 2 work** would make us a credible choice for medium-sized food, beverage, and consumer-goods companies, plus smaller retailers trying to compete with the big chains.
+- **Without that work**, our realistic position is "the AI/forecasting brain that plugs into a customer's existing planning system" — not a replacement for the planning system itself.
+
+**The single biggest 12-month investment to make** (per the regulatory judge): **food traceability (FSMA Rule 204) + EU carbon-border tax reporting (CBAM) + EU deforestation tracking (EUDR) + tamper-proof decision log**. Doing those four together solves two problems at once: the 2026 compliance deadlines customers are panicking about, AND the audit foundation any trustworthy AI co-pilot needs anyway.
+
+### Underserved-role audit (Consolidator E)
+
+Five planner roles get effectively zero support today: **Customer Service / OMS Operator** (no sales-order tables, no ATP/CTP, no allocation), **External Partner** (no EDI/AS2, no portal, no sandbox tenant), **Sustainability/Compliance Officer** (no ESG schema), **Risk/Resilience Officer** (`supply_scenarios` is a stub), **Field Ops/Mobile** (no PWA, no barcode, no offline queue). All are entirely greenfield in the current platform and gate specific RFP segments.
+
+### Strongest cross-cutting consensus (5+ roles agreed)
+
+Three enhancements appear repeatedly across role-specific top lists:
+1. **Lot grain (`dim_lot`) + recall/FEFO/DSCSA traceability** — Inventory, OMS, Compliance, Sustainability, Field Ops
+2. **Bitemporal facts + AS-OF queries / immutable audit** — Data Eng, AI Sci, Compliance, S&OP, Demand
+3. **Specialist agent split + conversational copilot grounded in tools/RAG** — AI Sci, every planner role, Exec
+
+### Source artifacts
+
+All raw materials live under `/tmp/sc_*.md` for the duration of this review:
+- `/tmp/sc_expert_01..10_*.md` — 10 expert files, 100 enhancements each
+- `/tmp/sc_consolidation_{B,C,D,E,F,G}_*.md` — 6 consolidator outputs (capability tiers, roadmap quadrants, competitive matrix, by-role view, dependency DAG, monetization)
+- `/tmp/sc_judge_01..09_*.md` — 9 judge rankings
+- `/tmp/sc_FINAL_RANKED_SYNTHESIS.md` — full synthesis (this section is the canonical version)
+
+---
+
 ## Goal
 
 Evolve the Supply Chain Command Center from a dashboard-and-pipelines platform (Gen-3) into a system where **AI is the operating system**: autonomous agents sense, decide, act, and explain; planners set goals and intervene on exceptions; every number is causally attributed and every decision is auditable.
