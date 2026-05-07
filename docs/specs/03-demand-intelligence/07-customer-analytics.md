@@ -121,3 +121,109 @@ with 7 panels in a 2-column grid below.
   `…customer_analytics.get_planning_date`), which the package `__init__.py` re-exports
   for test convenience.
 - Frontend: `frontend/src/tabs/__tests__/CustomerAnalyticsTab.test.tsx` — render, filter, panels
+- Scale: `tests/scale/test_customer_analytics_scale.py` — synthetic 100K-row run by default;
+  nightly `make scale-test SCALE=10000000` (10M rows ≈ 40× production) verifies all
+  MV-routed endpoints clear the 30s `statement_timeout` ceiling.
+
+---
+
+## Performance Architecture (Items 8 / 9 / 14 / 19 / 24)
+
+The dashboard's first cut hit `fact_customer_demand_monthly` (~50M+ rows) for every
+panel. At 1× scale `/kpis` ran 10,805 ms; at 40× scale several panels exceeded the
+30s `statement_timeout`. The perf rework shifts almost all "no-item-filter" reads
+onto narrow MVs, parallelizes the heaviest panel, and routes selected reads to a
+read-replica pool. Net result: `/kpis` 10,805 ms → 63 ms at 1× and the entire tab
+survives the 40× scale test.
+
+### MV Topology
+
+| MV | DDL | Role |
+|---|---|---|
+| `mv_customer_activity_monthly` | `sql/174_extend_mv_customer_activity_geo.sql` | Hot path. Extended with `state`, `city`, `zip`, `customer_name`, `rpt_sub_channel_desc`, `chain_type_desc`, `location_id` so the geo + segment + ranking panels read from a single MV without re-joining `dim_customer` / `dim_location`. 9 of 16 endpoints route through this MV when `item_id` is null. |
+| `mv_customer_filter_options` | `sql/173_create_mv_customer_filter_options.sql` | 3-row materialization that replaces three `ARRAY_AGG(DISTINCT ...)` scans of `dim_customer` previously executed on every filter-bar mount. |
+| `mv_ca_segment_trends` | `sql/180_create_mv_ca_segment_trends.sql` | Pre-aggregates 12-month segment trend rollups for `/segment-trends`. |
+| `mv_ca_demand_at_risk` | `sql/181_create_mv_ca_demand_at_risk.sql` | Pre-computes lifecycle-derived demand-at-risk windows for `/demand-at-risk`. |
+| `mv_ca_order_patterns` | `sql/182_create_mv_ca_order_patterns.sql` | Inter-order interval / cadence rollup for `/order-patterns`. |
+
+All five MVs are nightly-refreshed; the underlying tables (`dim_customer`,
+`fact_customer_demand_monthly`) change on the same cadence so end-of-day
+freshness is sufficient.
+
+### Endpoint Routing Strategy
+
+| Endpoint | Default Source | Falls Back To Fact Table When |
+|---|---|---|
+| `/kpis` | `mv_customer_activity_monthly` | `item_id` is set |
+| `/map` | `mv_customer_activity_monthly` | `item_id` is set |
+| `/treemap` | `mv_customer_activity_monthly` | `item_id` is set |
+| `/heatmap` | `mv_customer_activity_monthly` | `item_id` is set |
+| `/channel-mix` | `mv_customer_activity_monthly` | `item_id` is set |
+| `/segment-trends` | `mv_ca_segment_trends` | `item_id` is set |
+| `/ranking` | `mv_customer_activity_monthly` | `item_id` is set |
+| `/demand-at-risk` | `mv_ca_demand_at_risk` | `item_id` is set |
+| `/order-patterns` | `mv_ca_order_patterns` | `item_id` is set |
+| `/filter-options` | `mv_customer_filter_options` | (always — 3 rows) |
+| `/lifecycle`, `/oos-impact`, `/affinity`, `/demand-flow`, `/alerts`, `/items` | fact tables / dim_customer | n/a |
+
+When a single `item_id` is supplied the panels fall through to the original
+fact-table query path so item-grain detail still works — only the dashboard-wide
+"all items" view (the dominant access pattern) is MV-accelerated.
+
+### Single-Pass `/kpis` Aggregate
+
+`/kpis` originally ran four CTEs comma-joined together (one base scan per CTE,
+then a 4-way Cartesian on single-row results). It is now rewritten as a single
+pass over the MV with `FILTER (WHERE …)` aggregates — one base scan, no joins —
+which is the bulk of the 10,805 ms → 63 ms win at 1× scale.
+
+### Async + Read-Replica Routing (Item 19 pilot)
+
+All 16 endpoints have been converted to `async def` against the async pool,
+freeing the anyio threadpool tokens that previously throttled concurrent dashboard
+loads. Cache decorators use `cached_async` from `common/services/cache.py`.
+
+Seven panels route through the read-replica pool via `get_async_read_only_conn()`
+(set by `READ_REPLICA_URL`):
+
+- `/kpis`, `/map`, `/treemap`, `/heatmap`, `/channel-mix`, `/segment-trends`,
+  `/ranking`
+
+These are pure GETs against MVs that tolerate replica lag, so reads peel off the
+primary entirely. The remaining endpoints stay on the primary (`get_async_conn()`)
+because they touch `dim_*` lookups whose currency matters more than throughput.
+
+### Parallel Lifecycle Aggregation
+
+`/lifecycle` previously ran four cohort queries serially via a `ThreadPoolExecutor`
+that occupied threadpool tokens for the duration of the slowest query. It now uses
+`asyncio.gather()` against `get_async_conn()`, which runs the four queries
+concurrently on a single worker without tying up the threadpool.
+
+### In-Process Caches
+
+Two long-TTL caches sit in front of dim-customer-cadence data:
+
+| Cache | Endpoints | TTL | Rationale |
+|---|---|---|---|
+| `_CA_CACHE` | `/items` | 24 h | Item picker payload changes only when `dim_item` reloads. |
+| `_CA_FILTER_OPTIONS_CACHE` | `/filter-options` | 24 h | Filter dropdown values change with `dim_customer` reloads. |
+
+Both invalidate on the existing `dim_customer` / `dim_item` reload hooks, so
+freshness still tracks ETL.
+
+### Frontend Bundle + Render Wins
+
+| Panel | Before | After | Why |
+|---|---|---|---|
+| 8 ECharts panels | echarts (canvas, ~1 MB shared chunk) | recharts (SVG) | Reduced raw bundle by ~728 KB across the tab; SVG renders faster on the small datasets these panels return. |
+| Below-fold panels | Eager `useQuery` on tab mount | Wrapped in `LazyPanel` | Defers ~7 panel queries until the user scrolls; initial paint fires only the above-the-fold panels (`/kpis`, `/map`, `/filter-options`, `/items`). |
+
+### Performance Snapshot
+
+| Metric | Before | After |
+|---|---|---|
+| `/kpis` p50 (1× scale) | 10,805 ms | 63 ms |
+| `/kpis` at 40× scale | timeout (>30 s) | <30 s |
+| Initial-paint queries fired | 13 | ~4 |
+| Tab raw bundle | baseline | −728 KB |

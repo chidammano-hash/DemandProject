@@ -231,6 +231,7 @@ Performance work is centralised in `common/services/perf_profiler.py` and `scrip
 | `make perf-api` | API endpoint analysis | Read-only |
 | `make perf-pipeline` | ETL pipeline analysis | Read-only |
 | `make perf-clean` | Truncate `perf_*` history tables | Destructive — clears the profiling DB log |
+| `make scale-test` | Run the scale-test suite under `tests/scale/` | Synthetic 100K rows by default; nightly knob `SCALE=10000000` |
 
 ### 7.2 Available script presets
 
@@ -291,6 +292,23 @@ Keep section names short and stage-shaped — the report engine groups suggestio
 ### 7.5 Production safety guarantees
 
 `wrap_connection()` sets `default_transaction_read_only = true` and **always** issues `ROLLBACK`. Both `perf-report` and `perf-script` are safe to run against production. Only `perf-script-full --no-readonly` writes — restrict that to staging.
+
+### 7.6 Recent perf work (sql/170-185)
+
+The `170-185` SQL range and the supporting code paths cover this session's perf work. These are additive — the legacy paths still operate.
+
+| Concern | What changed | Where |
+|---|---|---|
+| Boot-time perf | `pg_stat_statements` enabled; unused indexes dropped; empty future partitions cleaned | `sql/170`, `sql/171`, `sql/172` |
+| Customer Analytics MV migration | Heavy ad-hoc aggregates replaced by MVs (segment trends, demand-at-risk, order patterns, filter options, activity geo) | `sql/173`, `sql/174`, `sql/180`-`sql/182` |
+| Async pool pilot | `customer_analytics` and `inv_planning_insights` routers use `get_async_conn()` / `get_async_read_only_conn()` against the new `AsyncConnectionPool` | `api/pool.py`, `api/core.py` |
+| Read-replica routing | Opt-in via `READ_REPLICA_URL`; read-only handlers route to the replica when set | `api/pool.py`, `common/core/db.py` |
+| pg-queue scaffold | `refresh_intramonth` migrated off APScheduler onto pg-queue; see Section 8.7.3 for cutover recipe | `common/services/pg_queue.py`, `scripts/ops/pg_queue_worker.py`, `sql/183` |
+| Cache + single-flight | `common/services/cache.py` `cached_async` decorator wraps hot endpoints with single-flight de-dup; `reset_cache` flushes the live backend (in-memory + Redis) | `common/services/cache.py` |
+| Streaming ETL | `stream_query_in_chunks`, `read_sql_chunked` for bounded-memory loads | `common/core/sql_helpers.py` (see Section 02 §2.3) |
+| Weekly partition cutover prep | DDL prepared; `auto_create_partitions.py` extended for weekly intervals | `sql/184`, `sql/185`, `scripts/db/auto_create_partitions.py` |
+| Frontend chart consolidation | Standardised on Recharts (ECharts paths removed where present); `LazyPanel.tsx` IntersectionObserver wrapper added; `HeatmapGrid` extended with compact mode + clickable headers | `frontend/src/components/LazyPanel.tsx`, `frontend/src/components/HeatmapGrid` |
+| Scale tests | New `tests/scale/` directory with `make scale-test` (synthetic 100K rows by default; `SCALE=10000000` for nightly) | `tests/scale/`, `tests/unit/test_pg_queue.py`, `tests/unit/test_auto_create_partitions.py` |
 
 ---
 

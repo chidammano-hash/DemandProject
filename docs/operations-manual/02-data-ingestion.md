@@ -164,6 +164,28 @@ Both partitioned facts use **monthly range partitioning** keyed on `snapshot_dat
 
 If you need to add data for a month outside the existing range, the loader creates the partition automatically. Manual `CREATE TABLE ... PARTITION OF` is never required.
 
+#### Weekly partition cutover (DDL prepared, not yet promoted)
+
+`sql/184_partition_inventory_snapshot_weekly_cutover.sql` and `sql/185_partition_customer_demand_weekly_cutover.sql` add the DDL needed to switch hot facts from monthly to weekly partitioning. Until the cutover is promoted in production:
+
+- `scripts/db/auto_create_partitions.py` now accepts a weekly interval. Targets:
+  - `make auto-create-partitions-weekly` — creates the rolling-12-week ladder ahead of time.
+  - `make auto-create-partitions-weekly-dry-run` — prints the DDL it would execute without running it.
+- The legacy monthly partition path is unchanged; both modes coexist on the same table during cutover.
+
+Use the dry-run target when validating a new schedule before scheduling the live target via cron / pg-queue.
+
+### Streaming ETL helpers (large reads / bounded memory)
+
+For loaders or analytics jobs that need to consume large result sets without materialising them in memory, use the helpers in `common/core/sql_helpers.py`:
+
+| Helper | Use when |
+|---|---|
+| `stream_query_in_chunks(conn, sql, params=..., chunk_size=...)` | You can process each chunk independently (per-chunk filter, per-chunk INSERT, per-chunk write to disk). Returns an iterator. |
+| `read_sql_chunked(conn, sql, params=..., chunk_size=...)` | You ultimately need the full DataFrame but want to avoid `psycopg.fetchall()` peak memory. Returns a single concatenated `pd.DataFrame`. Prefer the streaming variant for cross-chunk analytics. |
+
+Both helpers run inside the caller's connection / transaction context, so they compose cleanly with the perf profiler's `wrap_connection()` (read-only mode + always-rollback).
+
 ### FK and load-order rules
 
 - Dimensions MUST be loaded before facts that FK into them.

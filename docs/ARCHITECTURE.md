@@ -251,15 +251,19 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - Audit logging: all mutations recorded with user, timestamp, action, resource
    - Router: `api/routers/platform/auth_router.py` (login, register, refresh) + `api/routers/platform/users.py` (CRUD, role assignment)
 6d. Performance & Caching:
-   - `InMemoryBackend` cache in `common/services/cache.py` with configurable TTL per endpoint
+   - Cache backend in `common/services/cache.py`: pluggable, default `redis` (via Redis 7-alpine docker-compose service); falls back to `InMemoryBackend` on `ImportError`/`ConnectionError`/`OSError`/`RedisError`
+   - `RedisBackend.get_or_compute()` provides SETNX-based single-flight (lock holder computes; followers poll) so a thundering-herd cache-miss collapses to a single underlying query
+   - `cached_async()` decorator (sibling of `cached_sync`) — required for async handlers because `cached_sync` would return un-awaited coroutines
+   - `reset_cache()` flushes the live backend (test isolation fix)
+   - Config: `config/platform/cache_config.yaml` (`backend: redis` default, TTL per pattern, single-flight tuning, max entries, eviction policy)
+   - **Boot-time perf:** `ORJSONResponse` is the FastAPI default response class; `CORE_FEATURES` lives in `common/ml/clustering/constants.py` so matplotlib/sklearn no longer load on app boot (cold start: 1535ms -> 714ms); `rate_limiter` import hoisted to module top
+   - **Materialized-view strategy for Customer Analytics:** `mv_customer_activity_monthly` extended (state, city, zip, customer_name, rpt_sub_channel_desc, chain_type_desc, location_id) — `sql/174` — and 9 of 16 customer-analytics endpoints route through the MV when `item_id` is null. `/customer-analytics/kpis` rewritten from a 4-CTE comma-join into a single-pass `FILTER` aggregate (10,805ms -> 63ms at 1x scale). 3 specialized nightly MVs: `mv_ca_segment_trends` (`sql/180`), `mv_ca_demand_at_risk` (`sql/181`), `mv_ca_order_patterns` (`sql/182`). `mv_customer_filter_options` (`sql/173`) is a 3-row MV that replaces 3x `ARRAY_AGG DISTINCT` calls
+   - **Async router pilot (Item 19):** `AsyncConnectionPool` sibling in `api/pool.py` (`ASYNC_POOL_MIN_SIZE` / `ASYNC_POOL_MAX_SIZE` env). Helpers `get_async_conn()` and `get_async_read_only_conn()` in `api/core.py`. 5 customer_analytics sub-routers (16 GET handlers) and `inv_planning_insights.py` (11 GETs) are `async def`. `/lifecycle` migrated from `ThreadPoolExecutor` to `asyncio.gather`
+   - **Read-replica scaffold (Item 24):** `READ_REPLICA_URL` env -> `get_read_replica_params()` in `common/core/db.py`. Sync + async read-replica pools with primary fallback (when env unset, behaviour is bit-identical). 7 customer-analytics endpoints opted in via `get_async_read_only_conn()`: kpis, map, treemap, heatmap, channel-mix, segment-trends, ranking. See `docs/RUNBOOK.md` "Read Replica Deployment" for setup
+   - **MV refresh:** All `REFRESH MATERIALIZED VIEW` calls in the Makefile and `scripts/etl/load_ext_ml_forecasts.py` use `CONCURRENTLY` to avoid blocking readers
+   - **Query plan visibility:** `pg_stat_statements` enabled (`sql/170`)
+   - **Active perf bug fix:** `competition.py:270-277` previously refreshed forecast MVs synchronously inside the request; the work is now enqueued via `job_registry` as a `refresh_forecast_views` job type. The endpoint returns `mv_refresh_job_id`; the frontend polls `/jobs/{id}` for completion
    - Query performance tracking: slow query detection, response time histograms
-   - Config: `config/platform/cache_config.yaml` (TTL, max entries, eviction policy)
-   - Read-replica routing (Item 24): selected analytics endpoints opt in via
-     `get_async_read_only_conn()` in `api/core.py`. Routes to a Postgres read
-     replica when `READ_REPLICA_URL` is set; otherwise falls back to the primary
-     pool (no behaviour change). Currently routed: 7 customer-analytics
-     endpoints (kpis, map, treemap, heatmap, channel-mix, segment-trends,
-     ranking). See `docs/RUNBOOK.md` "Read Replica Deployment" for setup.
 6e. Notifications & Alerting:
    - `NotificationEngine` in `common/services/notification_engine.py` with pluggable adapter pattern
    - 4 adapters: Slack, Teams, Email (SMTP), PagerDuty
@@ -576,6 +580,18 @@ erDiagram
 
 `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, `agg_dfu_coverage`
 
+### Customer Analytics Materialized Views (5)
+
+| MV | Grain | Source | DDL |
+|---|---|---|---|
+| `mv_customer_activity_monthly` | item_id + customer_no + location_id + month (extended with state, city, zip, customer_name, rpt_sub_channel_desc, chain_type_desc) | `fact_customer_demand_monthly` + `dim_customer` + `dim_location` | `sql/174` |
+| `mv_customer_filter_options` | single row per option family | `dim_customer` (3-row MV; replaces 3x `ARRAY_AGG DISTINCT`) | `sql/173` |
+| `mv_ca_segment_trends` | segment + month | `mv_customer_activity_monthly` | `sql/180` |
+| `mv_ca_demand_at_risk` | customer_no + month | `mv_customer_activity_monthly` | `sql/181` |
+| `mv_ca_order_patterns` | customer_no | `mv_customer_activity_monthly` | `sql/182` |
+
+9 of 16 customer-analytics endpoints route through `mv_customer_activity_monthly` when `item_id` is null. Refresh order: refresh `mv_customer_activity_monthly` before the 3 derived MVs.
+
 ### Inventory Planning Tables (12)
 
 `fact_safety_stock_targets`, `fact_eoq_targets`, `dim_replenishment_policy`, `fact_dfu_policy_assignment`, `fact_replenishment_exceptions`, `fact_demand_signals`, `fact_ss_simulation_results`, `fact_inventory_investment_plan`, `fact_efficient_frontier`, `dim_transfer_lane`, `fact_rebalancing_plan`, `fact_rebalancing_transfer`
@@ -701,6 +717,14 @@ erDiagram
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 - Backtest management API router at `/backtest-management` with 6 endpoints: promotion-status, candidate-summary, staging-summary, {model_id}/generate, {model_id}/promote, {model_id}/train (tree-model-only validation)
 
+### Database Schema Housekeeping (perf work)
+
+- `pg_stat_statements` extension enabled (`sql/170`) for query plan visibility
+- 9 empty future partitions of `fact_customer_demand_monthly` dropped (`sql/171`)
+- Redundant `fact_sales_monthly_sales_ck_key` index dropped, reclaiming 519 MB (`sql/172`); `uq_forecast_ck_model` retained — it backs 3 `ON CONFLICT` upsert sites
+- `scripts/db/auto_create_partitions.py` — creates upcoming partitions on a configurable cadence; supports `interval=Literal["month","week"]` (weekly cadence uses `isocalendar()` ISO-week math)
+- Weekly-partitioning DDL prep (Item 25): `sql/184` and `sql/185` are cutover migrations and should be **REVIEWED BEFORE RUN**. The `chk_cust_demand_month_start` `CHECK` constraint on `fact_customer_demand_monthly` is flagged for a separate migration before any switch to weekly grain
+
 ---
 
 ## 11. Accuracy Slice Materialized Views (feature10)
@@ -737,9 +761,15 @@ Views must be refreshed in dependency order. Later views depend on earlier ones.
 9. mv_network_balance         <- agg_inventory_monthly + fact_safety_stock_targets
 10. mv_control_tower_kpis     <- all IPfeature tables (aggregates everything)
 11. mv_dq_dashboard           <- fact_dq_check_results
+12. (parallel — customer analytics, nightly)
+    - mv_customer_activity_monthly  <- fact_customer_demand_monthly + dim_customer + dim_location (extended grain, sql/174)
+    - mv_customer_filter_options    <- dim_customer (3-row MV, sql/173; replaces 3x ARRAY_AGG DISTINCT)
+    - mv_ca_segment_trends          <- mv_customer_activity_monthly (sql/180)
+    - mv_ca_demand_at_risk          <- mv_customer_activity_monthly (sql/181)
+    - mv_ca_order_patterns          <- mv_customer_activity_monthly (sql/182)
 ```
 
-**Note:** `mv_inventory_forecast_monthly` must refresh BEFORE `mv_inventory_health_score`. Use `SET max_parallel_workers_per_gather = 0` if you encounter shared memory errors during concurrent refresh.
+**Note:** `mv_inventory_forecast_monthly` must refresh BEFORE `mv_inventory_health_score`. Use `SET max_parallel_workers_per_gather = 0` if you encounter shared memory errors during concurrent refresh. All MV refreshes in the Makefile + `scripts/etl/load_ext_ml_forecasts.py` are issued `CONCURRENTLY`.
 
 ---
 
@@ -880,7 +910,10 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 
 **Router packages (split from large single-file routers; aggregated routers exposed as the listed name above):**
 - `api/routers/forecasting/tuning/` — 15 sub-modules (`__init__`, `_helpers`, `list`, `detail`, `create`, `compare`, `cluster`, `lag`, `logs`, `month`, `promote`, `promote_results`, `cancel_delete`, `templates`, `promotions`); imported as `unified_model_tuning`; 15 endpoints preserved at `/model-tuning/*`. Replaced the prior `unified_model_tuning.py` (1798 LoC) with no shim.
-- `api/routers/intelligence/customer_analytics/` — 5 sub-routers (`geo`, `segments`, `ranking`, `lifecycle`, `kpis`) plus `__init__` and `_helpers`; 16 GET endpoints preserved. Replaced the prior `customer_analytics.py` (1726 LoC) with no shim.
+- `api/routers/intelligence/customer_analytics/` — 5 sub-routers (`geo`, `segments`, `ranking`, `lifecycle`, `kpis`) plus `__init__` and `_helpers`; 16 GET endpoints preserved. Replaced the prior `customer_analytics.py` (1726 LoC) with no shim. **All 16 GET handlers are `async def` (Item 19)** and use `get_async_conn()` / `get_async_read_only_conn()` from `api/core.py`. `/lifecycle` migrated from `ThreadPoolExecutor` to `asyncio.gather`.
+- `api/routers/inventory/inv_planning_insights.py` — 11 GET handlers converted to `async def` (Item 19) as part of the same async pilot.
+
+**Async connection pool (Item 19):** `api/pool.py` exposes an `AsyncConnectionPool` sibling alongside the sync pool; sized via `ASYNC_POOL_MIN_SIZE` / `ASYNC_POOL_MAX_SIZE` env vars. `api/core.py` provides `get_async_conn()` (primary) and `get_async_read_only_conn()` (read-replica with primary fallback when `READ_REPLICA_URL` is unset).
 
 **Vite proxy path prefixes** in `frontend/vite.config.ts` (50 entries — exact list is the source of truth; representative subset shown):
 `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/sku-features`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/supply`, `/analytics`, `/finance`, `/sop`, `/events`, `/scenarios`, `/auth`, `/users`, `/data-quality`, `/notifications`, `/collaboration`, `/demand-signals`, `/demand-history`, `/fva`, `/reports`, `/webhooks`, `/cache`, `/config`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/catboost-tuning`, `/xgboost-tuning`, `/cluster-eda`, `/cluster-experiments`, `/champion-experiments`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/expsys`, `/customer-analytics`, `/backtest-management`
@@ -948,7 +981,9 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/services/job_state.py` | In-memory job state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants; extracted from `job_registry.py` for separation of concerns |
 | `common/services/job_scheduler.py` | APScheduler wrapper: `make_scheduler()`, `make_trigger()` utilities; extracted from `job_registry.py` to isolate APScheduler-specific initialization and trigger creation |
 | `common/auth.py` | JWT authentication: `create_access_token()`, `create_refresh_token()`, `verify_token()`, `hash_password()`, `verify_password()`, `get_current_user()` FastAPI dependency, role-based `require_role(role)` dependency factory (08-02) |
-| `common/services/cache.py` | `InMemoryBackend` cache: `get()`, `set()`, `invalidate()`, `invalidate_pattern()` with TTL, LRU eviction, max entry count; `cache_response()` FastAPI middleware decorator (08-03) |
+| `common/services/cache.py` | Pluggable cache (`backend: redis` default with single-flight via `RedisBackend.get_or_compute()`; in-memory fallback on Redis unavailability); `cached_sync()` and `cached_async()` decorators (the async variant is required for async handlers — `cached_sync` would return un-awaited coroutines); `reset_cache()` flushes the live backend (test isolation) (08-03 + Item 15) |
+| `common/services/pg_queue.py` | Durable job queue on Postgres (Item 22): `enqueue_job()`, `claim_next_job()` using `FOR UPDATE SKIP LOCKED`, state transitions, exponential-backoff requeue. Worker entry point: `scripts/ops/pg_queue_worker.py` with SIGTERM/SIGINT graceful shutdown. DDL: `sql/183` |
+| `common/core/sql_helpers.py` (streaming additions) | `stream_query_in_chunks()`, `read_sql_chunked()`, `DEFAULT_CHUNK_SIZE = 50_000` for streaming fact-table reads (Item 21). 6 fact-table sites in `train_meta_learner.py` and `generate_production_forecasts.py` migrated to chunked reads to bound memory |
 | `common/services/rate_limiter.py` | Token bucket rate limiter: `RateLimiter` class with per-endpoint and per-user rate tracking, `check_rate_limit()` FastAPI dependency, 429 response with `Retry-After` header (08-09) |
 | `common/engines/dq_engine.py` | `DQEngine` data quality engine: `run_rules()`, `evaluate_rule()`, pluggable rule types (completeness, freshness, schema_drift, outlier, referential_integrity), severity scoring, result persistence (08-01) |
 | `common/services/notification_engine.py` | `NotificationEngine` with adapter pattern: `send()`, `register_channel()`, `route_event()`; adapters: `SlackAdapter`, `TeamsAdapter`, `EmailAdapter`, `PagerDutyAdapter`; event routing by type x severity (08-04) |
@@ -1253,7 +1288,8 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, AlertPanel, HeatmapGrid, TopMovers, ForecastTrendChart, DashboardTab
    - Enhanced KpiCard with sparkline SVG, trend delta, severity, icon support
    - Keyboard shortcuts: `[` sidebar toggle, `d` dark mode toggle, 1-7 tab switch
-24. Job Scheduler/Monitor with APScheduler (feature39):
+24. Job Scheduler/Monitor — APScheduler (existing, in-process) and pg-queue (new, durable):
+   - **APScheduler (retained for short jobs):**
    - Production-grade job execution powered by APScheduler 3.11 (`BackgroundScheduler` + `ThreadPoolExecutor(max_workers=4)`)
    - Persistent `job_history` + `job_schedule` tables in Postgres
    - `JobManager` singleton with per-group concurrency control (one active job per group)
@@ -1273,6 +1309,11 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - **Past Scenarios history:** ClustersTab What-If panel shows last 10 completed scenarios in an accordion with inline charts and promote buttons
    - **Resilient execution:** All subprocess jobs use `Popen(start_new_session=True)` — stopping the API does NOT kill running jobs. PID stored in `job_history.pid` for real kill via `os.killpg(SIGTERM)` and PID-aware startup recovery (re-adopt live PIDs, fail dead ones). Persistent `log` column streams subprocess output to DB in real-time. Kill button with 2-step confirmation in ActiveJobsPanel. Execution logs visible in both active and history panels via `GET /jobs/{id}/logs` polling
    - **AI Tuning integration:** Tuning chat `confirm-run` submits via `JobManager.submit_job("tuning_backtest")` instead of standalone `ThreadPoolExecutor` — gets PID tracking, cancel, log streaming, and restart recovery for free
+   - **pg-queue scaffold (Item 22, durable, out-of-process):**
+   - `common/services/pg_queue.py`: `enqueue_job()`, `claim_next_job()` using `SELECT … FOR UPDATE SKIP LOCKED`, state transitions (`pending` -> `running` -> `succeeded`/`failed`), exponential-backoff requeue on transient failures
+   - `scripts/ops/pg_queue_worker.py`: standalone worker process with SIGTERM/SIGINT graceful shutdown (drain in-flight job before exit)
+   - DDL `sql/183_create_pg_queue.sql`: `job_queue` table + partial index (`WHERE status='pending'`) for fast claim, plus a monitoring index for dashboards
+   - Cutover recipe documented in `docs/RUNBOOK.md`. APScheduler is retained for short, in-process jobs; pg-queue is for durable, multi-host, long-running work
 
 37. AI Planning Agent (IPAIfeature1):
    - Claude `tool_use` agent (`common/ai/ai_planner.py`) with `AIPlannerAgent` class and 10 tools
@@ -1408,6 +1449,16 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 ---
 
 ## 19. Frontend Component Architecture
+
+### Charting Library (standardized on recharts)
+
+`echarts` and `echarts-for-react` have been removed from the bundle (-728 KB raw, -250 KB gzipped). All charts now use `recharts`. 8 customer-analytics ECharts panels were ported: Sankey, Sunburst, Treemap, Scatter, and `ComposedChart` (with an Area-tuple confidence-interval band rendering pattern). `HeatmapGrid` was extended with a compact mode and clickable headers as part of the migration.
+
+### Below-the-fold Lazy Loading (`LazyPanel`)
+
+`frontend/src/components/LazyPanel.tsx` is a hand-rolled `IntersectionObserver` wrapper that defers rendering of heavy panels until they scroll into view. It gates 10 below-fold customer-analytics panels. Combined with `React.lazy` shells, this drove the largest two tab bundles down sharply:
+- `InvPlanningTab`: 318 KB -> 30 KB shell (-91%); 33 sub-panels lazy-loaded
+- `ModelTuningTab`: 247 KB -> 27 KB shell (-89%); 8 components lazy + modals gated to mount on open
 
 ### Tab Panel Subfolder Pattern
 
@@ -1728,6 +1779,10 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 **Total frontend: 874+ tests**
 
 **Combined total: 3,916+ tests.** `make test-all` runs backend + frontend.
+
+### Scale Tests (`tests/scale/`, Item 23)
+
+A marker-gated scale-test scaffold lives at `tests/scale/`. Synthetic data is loaded via a fixture that uses `psycopg` `COPY` into a temp schema (so the live DB is untouched), and a p50/p95/p99 latency helper produces a small report. Two example tests are included to demonstrate the pattern. Because the directory is opt-in, regular `pytest tests/` does not collect these — run them with `make scale-test` (override row count via `SCALE=N`).
 
 ### E2E Testing (Playwright)
 

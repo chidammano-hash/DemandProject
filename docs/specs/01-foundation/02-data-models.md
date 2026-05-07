@@ -125,6 +125,12 @@ Canonical row-to-dict helpers for any cursor result live in `common/core/sql_hel
 |---|---|---|
 | `row_to_dict_from_cursor(cur, row)` | `(psycopg.Cursor, tuple) -> dict` | You have a live cursor and want column names from `cur.description` |
 | `row_to_dict_from_cols(cols, row)` | `(Sequence[str], tuple) -> dict` | You already extracted column names (e.g., for batch processing) |
+| `stream_query_in_chunks(conn, sql, params=None, chunk_size=DEFAULT_CHUNK_SIZE)` | `(Connection, str, Sequence \| None, int) -> Iterator[list[tuple]]` | You need to iterate a large result set without materializing it in memory (server-side fetch in `chunk_size` batches) |
+| `read_sql_chunked(sql, conn, params=None, chunk_size=DEFAULT_CHUNK_SIZE)` | `(str, Connection, Sequence \| None, int) -> pandas.DataFrame` | Pandas-friendly chunked read for ETL / ML feature loads. Used by `scripts/ml/train_meta_learner.py` and `scripts/forecasting/generate_production_forecasts.py` to stream training and inference frames. |
+
+`DEFAULT_CHUNK_SIZE` (also exported from `common/core/sql_helpers.py`) is the
+canonical default for both streaming helpers — change it there rather than
+passing per-call overrides.
 
 For domain-aware conversion (applies the `class` -> `class_` alias and DomainSpec
 column ordering), use `domain_row_to_dict(spec, row)` in `api/core.py` (renamed

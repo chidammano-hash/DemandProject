@@ -80,6 +80,20 @@ The landing page renders five zones:
 
 Every tab is loaded via `React.lazy()` with a per-tab error boundary. This keeps the initial bundle small and isolates tab-level failures. TanStack Query's stale-while-revalidate strategy means data fetched for one tab persists in cache when switching away and back.
 
+#### Sub-Panel Lazy Loading (`LazyPanel`)
+
+`React.lazy()` only defers JS chunk loading; the moment the chunk resolves, every wrapped `useQuery` fires. For tabs with many below-the-fold panels (e.g. `CustomerAnalyticsTab` had 13+ initial-mount queries) this still produced a stampede of API calls on tab open.
+
+`frontend/src/components/LazyPanel.tsx` wraps each below-the-fold panel in an `IntersectionObserver` boundary. The wrapped component (and therefore its `useQuery`) is not mounted until the panel scrolls within `rootMargin: 200px` of the viewport. Once visible the panel stays mounted (`triggerOnce` semantics) so subsequent filter changes do not retrigger the boundary.
+
+Test environments use a polyfill installed in `src/__tests__/setup.ts` that fires `isIntersecting: true` immediately, so panels render eagerly under vitest.
+
+Bundle wins from this session:
+- `CustomerAnalyticsTab` migrated 8 ECharts panels to recharts → −728 KB raw across the tab.
+- `InvPlanningTab`: −91% initial JS via `LazyPanel` wrapping of sub-panels.
+- `ModelTuningTab`: −89% initial JS via the same pattern.
+- `HeatmapGrid` extended to absorb panels previously rendered by ECharts heatmaps.
+
 ### Vite API Proxy
 
 `vite.config.ts` proxies 17 path prefixes to the FastAPI backend at `http://127.0.0.1:8000`. When adding a new API path prefix, a corresponding proxy entry must be added or the frontend receives HTML instead of JSON.
@@ -100,7 +114,8 @@ Every tab is loaded via `React.lazy()` with a per-tab error boundary. This keeps
 | `KpiCard` | Metric card with label, value, delta, optional sparkline |
 | `WidgetGrid` / `WidgetCard` | CSS Grid dashboard layout containers |
 | `AlertPanel` | Severity-coded alert list with expandable detail |
-| `HeatmapGrid` | Color-scaled CSS Grid for cross-dimensional views |
+| `HeatmapGrid` | Color-scaled CSS Grid for cross-dimensional views (extended this session to back panels migrated off ECharts heatmaps) |
+| `LazyPanel` | `IntersectionObserver`-based deferred render — wraps below-the-fold panels so their `useQuery` does not fire on tab mount |
 | `TopMovers` | Period-over-period mover list with up/down indicators |
 | `ForecastTrendChart` | ECharts trend chart with dual Y-axis |
 | `EChartContainer` | Theme-aware ECharts wrapper (auto dark/light) |

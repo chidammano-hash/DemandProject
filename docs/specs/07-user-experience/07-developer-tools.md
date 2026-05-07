@@ -397,6 +397,40 @@ Ready for PR: YES/NO
 
 ---
 
+## Scale Test Framework (`tests/scale/`)
+
+Performance regressions in dashboard endpoints typically only show up against
+production-size data. The scale-test suite at `tests/scale/` materializes
+synthetic data on demand and runs hot-path endpoints against it, gated by the
+`scale` pytest marker so it never runs in `make test`.
+
+| Component | Path |
+|---|---|
+| Suite root | `tests/scale/` |
+| Customer Analytics | `tests/scale/test_customer_analytics_scale.py` |
+| Inventory Planning | `tests/scale/test_inv_planning_scale.py` |
+| Shared fixtures | `tests/scale/conftest.py` |
+| Make target | `make scale-test` |
+
+### Scale Knob
+
+The harness accepts a `--scale=<rows>` pytest CLI flag (read by `conftest.py`)
+that drives the synthetic data volume. The Makefile target wires this through
+the `SCALE` env var:
+
+```bash
+make scale-test                    # default 100K rows (CI-friendly, ~minutes)
+make scale-test SCALE=10000000     # nightly: 10M rows ≈ 40× production
+```
+
+40× scale is the threshold at which the customer-analytics dashboard exceeds
+the 30s `statement_timeout` without the MV-routed query path (see
+`03-demand-intelligence/07-customer-analytics.md` "Performance Architecture").
+The nightly run guards against re-introducing fact-table scans on the hot
+endpoints.
+
+---
+
 ## Recommended Workflows
 
 ### Starting a new feature

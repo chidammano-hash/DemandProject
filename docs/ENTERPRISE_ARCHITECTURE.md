@@ -63,7 +63,7 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | ML Models | 3 tree-based + 30+ statistical algorithms |
 | Config Files | 57 YAML configuration files |
 | Design Specs | 75 specifications across 8 business domains |
-| DDL Migrations | 89 sequential SQL migration files |
+| DDL Migrations | 143 sequential SQL migration files (includes new MVs from ADR-016 and weekly-partitioning DDL prep) |
 | Automated Tests | 3,916 (3,042 backend + 874 frontend) |
 | Make Targets | 130+ build/deploy/test/pipeline targets |
 
@@ -158,6 +158,7 @@ graph TB
 | AP-5 | **Raw SQL over ORM** | Full control over PostgreSQL features (partitions, MVs, CTEs, window functions) | psycopg3 with `%s` placeholders; no SQLAlchemy ORM layer | `api/core.py`, all router files |
 | AP-6 | **Separation of Compute and Serve** | Heavy ML pipelines must not block API request paths | Scripts populate tables; API reads from pre-computed tables and materialized views | `scripts/` (55+ scripts) vs `api/routers/` (72 routers) |
 | AP-7 | **Graceful Degradation** | Optional features (GPU, Redis, AI APIs) must not crash the system when unavailable | Feature detection with fallback paths for every optional dependency | `DEMAND_GPU` env var, Redis optional in cache, Google Search fallback |
+| AP-8 | **Review + Refactor at Each Step** | Multi-step changes accumulate cruft (oversold ADRs, copy-paste config, drift between layers) when each step is only validated against "did it run?". Review the work product after every step and refactor on the spot before moving on. | Each step in a multi-step task ends with: re-read what was just produced, verify it captures the decision/rationale/tradeoffs honestly (no overselling), and refactor if it doesn't. Applies to ADRs, code edits, and config changes alike. | This session's perf roadmap edits — each ADR re-read after authoring; ADR-013 wording corrected mid-flight. |
 
 ### 2.4 Key Requirements and Constraints
 
@@ -776,6 +777,23 @@ Cache Layer         -      via      -         -      R/W      -          -      
 3. **Rate Limiting** -- sliding window on POST/PUT/DELETE, tier-based (100 req/min standard)
 4. **Request Logging** -- method, path, status, duration (ms), skip `/health`
 
+**Connection Pools** (`api/pool.py`, `common/core/db.py`):
+
+| Pool | Driver | Sizing | Used By |
+|---|---|---|---|
+| Sync primary pool | `psycopg_pool.ConnectionPool` | min=2, max=20, timeout=10s, max_lifetime=3600s | All sync `def` handlers (~150) and scripts |
+| Async primary pool | `psycopg_pool.AsyncConnectionPool` | `ASYNC_POOL_MIN_SIZE` / `ASYNC_POOL_MAX_SIZE` | Async pilot routers: `customer_analytics/*`, `inv_planning_insights` (ADR-011) |
+| Async read-replica pool | `psycopg_pool.AsyncConnectionPool` | Same env-driven sizing; created only when `READ_REPLICA_URL` is set | `get_async_read_only_conn()` callers — 7 customer-analytics endpoints (ADR-014). Falls through to primary when env unset |
+
+**Job Execution** (`common/services/`):
+
+| System | Pattern | Used For |
+|---|---|---|
+| **APScheduler 3.11** | In-process `BackgroundScheduler` + 4-thread executor (ADR-004) | Short, frequent jobs: cron, MV refresh, health checks |
+| **pg-queue** | Postgres-backed queue using `SELECT ... FOR UPDATE SKIP LOCKED` (ADR-012) | Long-running, restartable jobs: backtests, intramonth-stockout, MV rebuilds, full inventory recompute |
+
+**Cache** (`common/services/cache.py`): Redis is the default backend with `SETNX` single-flight stampede protection; falls back to in-memory mode if Redis is unreachable at startup (ADR-013).
+
 #### ML Engine (`common/ml/`)
 
 | Module | Purpose |
@@ -875,13 +893,14 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | **Database** | PostgreSQL | 16 | Primary relational data store | Adopt |
 | **Vector Extension** | pgvector | pg16 | Embedding storage for RAG retrieval (`rag_chunk`) | Adopt |
 | **DB Driver** | psycopg | v3 | Async-capable connection pool | Adopt |
+| **Async Pool** | psycopg-pool[async] | latest | Async connection pool for async routers + read replica (ADR-011, ADR-014) | Adopt |
 | **Validation** | Pydantic | v2 | Request/response model validation | Adopt |
 | **Frontend Framework** | React | 18.3.1 | Single-page application | Adopt |
 | **Build Tool** | Vite | 5.4.14 | Frontend bundling + HMR + proxy | Adopt |
 | **Type System** | TypeScript | 5.8.3 | Frontend type safety | Adopt |
 | **CSS** | Tailwind CSS | 3.4.17 | Utility-first styling | Adopt |
 | **UI Components** | shadcn/ui (Radix) | latest | Accessible component library | Adopt |
-| **Charts** | Recharts + ECharts | latest | Data visualization (simple + complex) | Adopt |
+| **Charts** | Recharts | latest | Sole charting library after ECharts removal (ADR-015) | Adopt |
 | **Data Tables** | TanStack Table | 8.21.3 | Virtualized data grid + sorting + filtering | Adopt |
 | **Server State** | TanStack Query | 5.90.21 | React data fetching + caching | Adopt |
 | **ML: Gradient Boosting** | LightGBM, CatBoost, XGBoost | latest | Tree-based demand forecasting | Adopt |
@@ -890,8 +909,9 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | **ML Tracking** | MLflow | v3.0.0 | Experiment logging + artifact storage | Trial |
 | **AI: Planning** | Anthropic Claude | opus-4-6 | Tool-use agent for exception triage | Trial |
 | **AI: Market Intelligence** | OpenAI GPT-4o | latest | Web search + narrative briefing synthesis | Trial |
-| **Job Scheduling** | APScheduler | 3.11 | Cron/interval background jobs | Adopt |
-| **Caching** | Redis | 7-alpine | Distributed cache (256MB, allkeys-lru) | Adopt |
+| **Job Scheduling** | APScheduler | 3.11 | Cron/interval background jobs (short-running) | Adopt |
+| **Long-Running Jobs** | pg-queue pattern (Postgres `FOR UPDATE SKIP LOCKED`) | n/a | Durable, restartable queue for long jobs (ADR-012) | Trial |
+| **Caching** | Redis | 7-alpine | Default cache backend (`maxmemory 256MB`, `allkeys-lru`) with single-flight stampede protection (ADR-013) | Adopt |
 | **Containerization** | Docker Compose | latest | Service orchestration | Adopt |
 | **Reverse Proxy** | Nginx | alpine | Production frontend + API proxy | Adopt |
 | **Package Manager** | uv | latest | Python dependency management | Adopt |
@@ -1414,6 +1434,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | SC-10 | AI Safety | Circuit breakers (40 turns, 100K tokens, $10M cap) | `common/ai/ai_planner.py` |
 | SC-11 | Audit Trail | All mutations logged with user, action, resource, IP | `fact_audit_log` table |
 | SC-12 | Connection Management | Pool timeout=10s, max_lifetime=3600s, reconnect=5s | `api/pool.py` |
+| SC-13 | Read-Replica Read-Only Enforcement | Sessions obtained via `get_async_read_only_conn()` issue `SET TRANSACTION READ ONLY` so any accidental write attempt is rejected at the DB layer (defense in depth on top of the routing rule). When `READ_REPLICA_URL` is unset the helper still applies the read-only flag on the primary connection (ADR-014). | `common/core/db.py` |
 
 ### 8.5 Threat Model Summary
 
@@ -1531,6 +1552,66 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Decision** | Add `scripts/ai_checks/check_unenforced_rules.sh` plus 5 per-rule allowlists. The script is a mechanical gate that fails CI when a violation appears outside its allowlist; the allowlist exists so existing legacy hits do not block work but new violations cannot land silently. |
 | **Rationale** | Governance rules without a mechanical enforcement layer rot. A lightweight shell-based gate is cheaper than a custom linter, integrates with existing pre-commit / CI, and the per-rule allowlists make exceptions explicit and reviewable. |
 | **Consequences** | One additional CI step. Allowlist files become part of governance review — shrinking them is a backlog item. Closes the long-standing gap between "documented rule" and "enforced rule". |
+
+### ADR-011: Async Router Migration (Pilot)
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted (pilot scope only) |
+| **Context** | ~150 sync FastAPI handlers were running on a thread pool, each holding a worker thread for the duration of every blocking DB call. Under perf testing the thread pool became the bottleneck before the connection pool did, especially for analytics endpoints that issue several sequential queries. |
+| **Decision** | Pilot async migration on the two heaviest routers: `intelligence/customer_analytics/*` and `inventory/inv_planning_insights`. Convert handlers to `async def` and use a separate `psycopg_pool.AsyncConnectionPool` (sized via `ASYNC_POOL_MIN_SIZE` / `ASYNC_POOL_MAX_SIZE`). The remaining ~150 sync handlers are tracked as systemic-but-not-urgent follow-up; they continue to work unchanged. |
+| **Rationale** | A whole-codebase async rewrite is expensive and risky. The pilot validates the async pool, error handling, and test patterns on the two routers most likely to benefit, and gives a concrete template for incremental rollout without forcing a flag day. |
+| **Consequences** | Two pools (sync + async) coexist for the duration of the migration — extra config surface and a small memory cost. Mixed sync/async patterns require reviewer attention. Async-specific test fixtures (`AsyncClient`, `AsyncConnectionPool` mocks) added alongside the existing sync fixtures. |
+
+### ADR-012: pg-queue Alongside APScheduler for Long-Running Jobs
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | APScheduler's 4-thread executor (ADR-004) is adequate for short recurring jobs but ties up a worker for the full duration of jobs like `intramonth_stockout` (7-20h at 40× scale) and large backtests. Long jobs starve the pool and lose all progress on API restart. We needed durable, restartable, horizontally-distributable execution without adopting Celery + RabbitMQ/Redis as a broker. |
+| **Decision** | Add a Postgres-backed job queue using `SELECT ... FOR UPDATE SKIP LOCKED` for atomic claim. APScheduler is retained for short, frequent jobs (cron, MV refresh, health checks); long-running jobs (backtests, MV rebuilds, intramonth-stockout, full inventory recompute) migrate to pg-queue first. |
+| **Rationale** | Postgres + Redis is already the operational footprint; a Postgres queue keeps it that way. `FOR UPDATE SKIP LOCKED` is a well-understood pattern with strong durability guarantees and trivially supports multiple workers. Adopting Celery would have added a broker, a result backend, a worker fleet, and a separate operational discipline. |
+| **Consequences** | Two scheduling systems to reason about — clear ownership rules ("short/recurring → APScheduler; long/restartable → pg-queue") are required to keep this from becoming a foot-gun. Queue table needs its own retention/cleanup policy. Worker process is a new long-running container alongside API. |
+
+### ADR-013: Redis as Default Cache Backend with Single-Flight Stampede Protection
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | The previous in-memory cache backend siloed at the worker level: with N Uvicorn workers the effective hit rate degraded toward ~1/N for any given key, and TTL expiry on hot keys caused thundering-herd recomputes that exhausted the connection pool. |
+| **Decision** | Switch the default cache backend from `memory` to `redis` and add a single-flight wrapper using `SETNX` on a per-key lock. Redis remains optional: if the connection fails at startup, the cache falls back to in-memory mode with a logged warning rather than failing the request path. |
+| **Rationale** | Redis is already deployed in compose, so the operational footprint does not grow — we are simply moving it from Trial to load-bearing. Single-flight prevents the well-known TTL-expiry stampede observed under load testing. Graceful fallback preserves AP-7 ("Graceful Degradation"). |
+| **Consequences** | Redis is now in the request hot path for cached endpoints — Redis outage degrades to in-memory mode (correct but slower), not 5xx. Lock-key namespace must be coordinated with cache-key namespace to avoid collisions. Test suite needs a Redis fixture or a clear in-memory fallback assertion. |
+
+### ADR-014: Read-Replica Routing for Analytics Endpoints
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted (opt-in via env var) |
+| **Context** | Customer-analytics endpoints execute long aggregation queries that compete with the OLTP write path on the primary. We wanted to route reads to a replica without forcing every deployment to actually run one. |
+| **Decision** | Introduce `READ_REPLICA_URL` env var and a `get_async_read_only_conn()` helper. Seven customer-analytics endpoints opt in to the helper. When `READ_REPLICA_URL` is unset, the helper transparently returns a primary connection — behavior is bit-identical to the primary-only path, no code changes needed in callers. |
+| **Rationale** | Most installs will run a single Postgres for a long time. Making replica support a configuration concern (not a code concern) keeps single-node deployments simple while letting larger deployments scale reads. Analytics queries tolerate replication lag (results are aggregated over months); OLTP-style endpoints stay on the primary. |
+| **Consequences** | Two connection-pool helpers (`get_async_conn`, `get_async_read_only_conn`) and reviewers must pick correctly. Documented rule: "if your endpoint writes, or its results must reflect a write that just happened in the same flow, use the primary helper". Replica lag monitoring is a follow-up gap. |
+
+### ADR-015: Standardize on Recharts (Drop ECharts)
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | The frontend shipped both Recharts and ECharts. Recharts was used by ~40 panels; ECharts by 8 panels concentrated in customer-analytics. The two libraries together added ~750 KB raw / ~250 KB gzipped to the initial bundle — the single largest contributor to first-paint cost. |
+| **Decision** | Standardize on Recharts. Migrate the 8 ECharts panels to Recharts and remove the ECharts dependency entirely. |
+| **Rationale** | Migrating 8 → Recharts is strictly less work than migrating 40 → ECharts. Recharts covers every chart type we actually use; the ECharts-specific features (advanced sankey, custom force-graph) were not in load-bearing use. Bundle savings are immediate and substantial. |
+| **Consequences** | Some ECharts-only chart types are no longer available without re-adding the dependency — if a future panel genuinely needs them, the decision should be revisited rather than worked around. Existing ECharts imports in tests must be migrated or removed in lock-step. |
+
+### ADR-016: Customer-Analytics Materialized-View Strategy
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | The `/customer-analytics/kpis` endpoint scanned `fact_customer_demand_monthly` (~tens of millions of rows) per request, taking ~10.8s at 1× scale and exceeding the 30s `statement_timeout` at 40× scale. Several other panels had similar shape. |
+| **Decision** | Two-tier MV strategy: (1) extend `mv_customer_activity_monthly` so 9/16 customer-analytics endpoints can route through it when `item_id` is null; (2) add three specialized MVs (`mv_customer_segment_trends`, `mv_customer_demand_at_risk`, `mv_customer_order_patterns`) for the highest-cost panels (segment trends, demand-at-risk, order patterns). All four refresh nightly via the existing tiered MV pipeline. |
+| **Rationale** | Tier 1 (extending an existing MV) is cheaper than adding new MVs and gets most endpoints to fast in one move. Tier 2 (specialized MVs) handles panels whose query shapes don't fit the shared MV. `/kpis` drops from 10.8s → 63ms at 1× and survives 30s `statement_timeout` at 40×. |
+| **Consequences** | Three more MVs to keep refresh-ordered (added to the tiered refresh in correct dependency order). Stale-by-up-to-24h is acceptable for analytics panels but must be documented in the UI. New MVs added to RUNBOOK cleanup and Makefile `refresh-mvs-tiered`. |
 
 ---
 
@@ -1679,6 +1760,14 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | G-8 | API Versioning | Single unversioned API | Multi-version support with deprecation | Version infrastructure in `rate_limiter.py` but no versioned routers | Low |
 | G-9 | Architecture Rule Enforcement | CLAUDE.md rules enforced by reviewer memory | Mechanical CI gates per rule | **Closed** — `scripts/ai_checks/check_unenforced_rules.sh` + 5 allowlists added (see ADR-010); covers `date.today`, `parents[N]`, bare `except`, `print()` in scripts, `: any` in queries | Closed |
 | G-10 | God-Module Refactor | `champion_strategies.py`, `unified_model_tuning.py`, `customer_analytics.py` were monolithic | Domain-package decomposition with preserved public APIs | **Closed** — split into `common/ml/champion/` (9 sub-modules), `api/routers/forecasting/tuning/` (15 sub-routers), `api/routers/intelligence/customer_analytics/` (5 sub-routers); see ADR-009 | Closed |
+| G-11 | Async Routing | All ~150 handlers were sync; thread pool was the bottleneck before connection pool | Async `def` + `psycopg_pool.AsyncConnectionPool` for I/O-bound endpoints | **Partial** — pilot done on `customer_analytics/*` and `inv_planning_insights` with async pool sized via `ASYNC_POOL_MIN/MAX_SIZE` (ADR-011); ~150 sync handlers remain as systemic-but-not-urgent follow-up | Partial |
+| G-12 | Background Jobs | APScheduler 4-thread executor starves under long-running jobs (e.g. `intramonth_stockout` 7-20h) | Durable, restartable, distributable queue | **Closed (scaffold)** — Postgres-backed queue with `FOR UPDATE SKIP LOCKED` added alongside APScheduler; long jobs migrate to pg-queue, short jobs stay on APScheduler (ADR-012) | Closed |
+| G-13 | Shared Cache | In-memory cache siloed at worker level (~1/N hit rate); TTL stampede caused pool exhaustion | Distributed cache with stampede protection | **Closed** — Redis is now the default backend with `SETNX` single-flight locks; in-memory fallback retained for Redis outage (ADR-013) | Closed |
+| G-14 | Read Replica | All reads go to primary; analytics aggregations contend with OLTP writes | Routable read traffic for replica-tolerant endpoints | **Closed (scaffold)** — `READ_REPLICA_URL` env opt-in; `get_async_read_only_conn()` helper; 7 customer-analytics endpoints opt in; bit-identical to primary-only path when env unset (ADR-014). Replica lag monitoring is follow-up | Closed |
+| G-15 | Chart Library Duplication | Frontend shipped both Recharts (~40 panels) and ECharts (8 panels), adding ~750 KB raw / ~250 KB gz to initial bundle | Single chart library | **Closed** — standardized on Recharts; ECharts removed (ADR-015) | Closed |
+| G-16 | ETL Streaming | Several ETL stages loaded full result sets into memory; risked OOM at 40× scale | Chunked streaming for large result sets | **Closed** — `stream_query_in_chunks` / `read_sql_chunked` helpers added in `common/core/db.py`; large ETL stages migrated | Closed |
+| G-17 | Scale Test Coverage | No quantitative baseline for endpoint cost at >1× data volume | Reproducible scale test harness | **Closed** — scale-test scripts added; baselines captured at 1× and 40× for the customer-analytics endpoints (drove ADR-016) | Closed |
+| G-18 | Weekly Partitioning | `fact_customer_demand_monthly` and similar tables partitioned monthly; growth at 40× scale projects out beyond comfortable per-partition row count | Weekly range partitioning for high-volume facts | **Open (DDL drafted)** — cutover SQL drafted and flagged for DBA review; not yet applied. Migration is destructive enough to require a maintenance window | Open |
 
 ### 11.2 Migration Roadmap
 
@@ -1762,10 +1851,10 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 
 | Ring | Technologies | Rationale |
 |---|---|---|
-| **Adopt** | PostgreSQL 16, FastAPI, React 18, psycopg3, LightGBM, Tailwind CSS, TanStack Query, pytest, Vite, Docker Compose | Core production stack, proven at current scale |
-| **Trial** | Claude API (tool_use), GPT-4o, MLflow v3, Redis 7, CatBoost, XGBoost, Playwright | In production, monitoring for stability and cost-effectiveness |
+| **Adopt** | PostgreSQL 16, FastAPI, React 18, psycopg3, psycopg-pool[async], Redis 7, Recharts, LightGBM, Tailwind CSS, TanStack Query, pytest, Vite, Docker Compose | Core production stack, proven at current scale (Redis promoted from Trial → Adopt, ADR-013) |
+| **Trial** | Claude API (tool_use), GPT-4o, MLflow v3, CatBoost, XGBoost, Playwright, pg-queue pattern (`FOR UPDATE SKIP LOCKED`, ADR-012) | In production, monitoring for stability and cost-effectiveness |
 | **Assess** | Kubernetes, OpenTelemetry, Snowflake connectors, Kafka/Debezium, Prometheus/Grafana | Planned for Phase 2-3; evaluating fit and effort |
-| **Hold** | SQLAlchemy ORM (see ADR-002), Django (see ADR-001), Celery (see ADR-004), RabbitMQ | Evaluated and rejected with documented rationale |
+| **Hold / Retire** | SQLAlchemy ORM (see ADR-002), Django (see ADR-001), Celery (see ADR-004), RabbitMQ, ECharts (retired in favour of Recharts, ADR-015) | Evaluated and rejected (or removed) with documented rationale |
 
 ### 12.3 Design Spec Index
 

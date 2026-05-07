@@ -821,6 +821,12 @@ API endpoints (prefix `/champion-experiments`):
 - `POST /{id}/cancel` -- cancel running experiment
 - `DELETE /{id}` -- delete experiment
 
+**MV refresh after champion run:** `api/routers/forecasting/competition.py` no longer
+runs `REFRESH MATERIALIZED VIEW` synchronously inside the request handler; instead
+it enqueues the `refresh_forecast_views` job via `common/services/job_registry.py`.
+This unblocks the request and centralizes refresh ordering through the job
+runner so concurrent champion runs serialize cleanly.
+
 **Scripts:**
 - `scripts/run_champion_selection.py` -- main champion selection pipeline
 - `scripts/run_champion_experiment.py` -- experiment runner (called as subprocess)
@@ -1225,7 +1231,7 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 | View | Purpose | Refresh Command |
 |---|---|---|
 | `agg_sales_monthly` | Pre-aggregated sales KPIs | `refresh-mvs-tiered` (tier 1) |
-| `agg_forecast_monthly` | Pre-aggregated forecast KPIs | `refresh-mvs-tiered` (tier 1) |
+| `agg_forecast_monthly` | Pre-aggregated forecast KPIs | `refresh-mvs-tiered` (tier 1; refreshed `CONCURRENTLY`) |
 | `agg_inventory_monthly` | EOM on-hand, sales, DOS, lead time | `refresh-mvs-tiered` (tier 1) |
 | `mv_inventory_forecast_monthly` | Inventory-forecast bridge | `refresh-mvs-tiered` (tier 2) |
 | `mv_fill_rate_monthly` | Fill rate metrics | `refresh-mvs-tiered` (tier 2) |
@@ -1233,9 +1239,9 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 | `mv_intramonth_stockout` | Intra-month stockout detection | `refresh-mvs-tiered` (tier 2) |
 | `mv_control_tower_kpis` | Control tower aggregate KPIs | `refresh-mvs-tiered` (tier 3) |
 | `mv_network_balance` | Network inventory balance | `refresh-mvs-tiered` (tier 3) |
-| `agg_accuracy_by_dim` | Pre-aggregated accuracy by dimension | `refresh-accuracy-mvs` |
-| `agg_accuracy_lag_archive` | Pre-aggregated archive accuracy | `refresh-accuracy-mvs` |
-| `agg_dfu_coverage` | DFU backtest coverage stats | `refresh-accuracy-mvs` |
+| `agg_accuracy_by_dim` | Pre-aggregated accuracy by dimension | `refresh-accuracy-mvs` (refreshed `CONCURRENTLY`) |
+| `agg_accuracy_lag_archive` | Pre-aggregated archive accuracy | `refresh-accuracy-mvs` (refreshed `CONCURRENTLY`) |
+| `agg_dfu_coverage` | DFU backtest coverage stats | `refresh-accuracy-mvs` (refreshed `CONCURRENTLY`) |
 
 ---
 

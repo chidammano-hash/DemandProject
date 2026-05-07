@@ -16,7 +16,7 @@ Dashboard KPIs, accuracy summaries, and inventory metrics are queried repeatedly
 
 ## Solution
 
-An in-memory LRU cache (Least Recently Used) with TTL-based expiration (Time To Live) sits between API endpoints and the database. Cached responses are served instantly; stale entries are evicted automatically. When data is loaded or materialized views are refreshed, relevant cache namespaces are invalidated. A query tracker monitors endpoint latency and cache hit rates to identify optimization opportunities.
+A pluggable cache layer with TTL-based expiration sits between API endpoints and the database. The default backend is Redis (shared across all gunicorn workers, with `SETNX`-based single-flight stampede protection); when Redis is unavailable or the package is missing the layer transparently falls back to an in-memory LRU per-process cache. Cached responses are served instantly; stale entries are evicted automatically. When data is loaded or materialized views are refreshed, relevant cache namespaces are invalidated. A query tracker monitors endpoint latency and cache hit rates to identify optimization opportunities.
 
 ## How It Works
 
@@ -61,7 +61,8 @@ Indexes on `(endpoint, recorded_at DESC)` and `(cache_hit)`. Rows older than 30 
 
 ```yaml
 cache:
-  backend: in_memory
+  backend: redis            # or "memory" — see "Backends" below
+  redis_url: ${REDIS_URL:-redis://localhost:6379/0}
   default_ttl_seconds: 300
   max_entries_per_namespace: 1000
   namespaces:
@@ -81,6 +82,63 @@ query_tracker:
   retention_days: 30
 ```
 
+## Backends
+
+`common/services/cache.py` ships two backends behind a common `CacheBackend`
+interface:
+
+| Backend | Class | Use case |
+|---|---|---|
+| `redis` (default) | `RedisBackend` | Multi-worker production. Shared across all gunicorn workers, supports single-flight stampede protection. |
+| `memory` | `InMemoryBackend` | Tests, single-process dev, automatic fallback when Redis is unavailable. |
+
+The `REDIS_URL` env var overrides the YAML `redis_url` (highest precedence).
+
+### Single-Flight Stampede Protection (Redis)
+
+`RedisBackend.get_or_compute()` uses a `SETNX` lock so that when a popular key
+expires under concurrent load, only the lock-holding worker recomputes the
+value; all other workers briefly wait and then read the freshly populated key.
+The lock has its own TTL (`lock_ttl`) so a crashed lock holder cannot block the
+key indefinitely.
+
+This eliminates the cache-stampede thundering herd that can otherwise hit the
+database every time a high-traffic 60-second TTL key (e.g. `dashboard:kpis`)
+expires.
+
+### Graceful Fallback
+
+`_build_redis_backend()` catches `ImportError` (the `redis` package is missing)
+and connection-time failures (`ConnectionError`, `OSError`, `redis.RedisError`)
+and transparently substitutes `InMemoryBackend`. Test environments and dev
+machines without a running Redis therefore degrade to per-process cache without
+any code changes.
+
+Per-call Redis errors (`GET`/`SET`/`DELETE`/`INVALIDATE`) are logged at WARNING
+and treated as cache-miss / no-op — the request still completes against the
+database.
+
+### Cache Decorators
+
+| Decorator | For | Notes |
+|---|---|---|
+| `@cached(ttl, group)` | Async route handlers | Original async-only decorator. |
+| `@cached_sync(ttl, group)` | Sync FastAPI handlers | Strips `Response` from cache key via `skip_kwargs`. |
+| `@cached_async(ttl, group)` | `async def` handlers (Item 19 pilot) | Mirrors `cached_sync` but awaits the wrapped coroutine. Used by the customer-analytics package after its async migration. |
+
+### `reset_cache()` Semantics
+
+`reset_cache()` is the test-isolation entrypoint. It now does two things in
+order:
+
+1. Best-effort flush of the live backend's storage — `FLUSHDB` against Redis
+   or `dict.clear()` against the in-memory store. Failures are logged at DEBUG
+   and ignored (teardown is non-fatal).
+2. Drops the singleton so the next `get_cache()` call rebuilds cleanly.
+
+The flush is critical when `backend=redis`: the Redis server outlives the Python
+singleton, so without it consecutive tests would see leaked keys.
+
 ## Query Tracker
 
 The query tracker is a middleware that records per-request performance:
@@ -93,7 +151,10 @@ The query tracker is a middleware that records per-request performance:
 
 ## Dependencies
 
-- No external dependencies -- uses stdlib `collections.OrderedDict`, `threading`, `time`
+- `redis` (optional) — required only when `backend: redis`. When absent the
+  layer falls back to `InMemoryBackend` automatically.
+- Stdlib `collections.OrderedDict`, `threading`, `time`, `hashlib`, `json` for
+  key building and the in-memory backend.
 - Cache decorator applied only to read-only GET endpoints (never mutations)
 
 ## See Also

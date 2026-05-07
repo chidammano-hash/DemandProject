@@ -213,6 +213,13 @@ No new tables. Champion and ceiling predictions are stored in the existing `fact
 | POST | `/competition/run` | Execute champion selection, return summary |
 | GET | `/competition/summary` | Last run summary |
 
+After a successful champion run, `competition.py` enqueues the
+`refresh_forecast_views` job through `common/services/job_registry.py` instead of
+calling `REFRESH MATERIALIZED VIEW` inside the request. This keeps the API
+response fast and lets the background runner refresh `agg_forecast_monthly`,
+`agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, and `agg_dfu_coverage`
+`CONCURRENTLY`.
+
 ## Pipeline
 
 | Target | Description |

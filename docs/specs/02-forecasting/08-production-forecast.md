@@ -66,6 +66,12 @@ For each DFU:
 6. For T+2 through T+24, use recursive inference: the predicted value for month T becomes `qty_lag_1` for month T+1, and so on
 7. Write all predictions to `fact_production_forecast` with `plan_version`, `model_id`, `horizon_months`, `lag_source` ("actual" for T+1, "predicted" for T+2+), and `run_id`
 
+**Streaming reads:** Both `scripts/forecasting/generate_production_forecasts.py`
+and `scripts/ml/train_meta_learner.py` load their large sales / backtest frames
+via `read_sql_chunked()` from `common/core/sql_helpers.py` (chunk size
+`DEFAULT_CHUNK_SIZE`). This avoids materializing multi-million-row result sets
+in memory and keeps RSS bounded during long-horizon production runs.
+
 ### Step 3: Generate Probabilistic Forecasts (Confidence Intervals)
 
 After point forecasts are written:

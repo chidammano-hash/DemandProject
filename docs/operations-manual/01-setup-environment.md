@@ -102,8 +102,12 @@ Edit `/Users/manoharchidambaram/projects/DemandProject/.env` (created by `make i
 | `DEMAND_GPU` | `auto` | backtest scripts in `scripts/ml/` | GPU acceleration mode: `on` / `off` / `auto`. Falls back gracefully if `cupy` / `numba` are not installed. |
 | `POOL_MIN_SIZE` | `5` | `api/pool.py` | psycopg3 connection pool floor. |
 | `POOL_MAX_SIZE` | `50` | `api/pool.py` | psycopg3 connection pool ceiling. With N gunicorn workers, total backend connections = `N × POOL_MAX_SIZE` — keep under Postgres `max_connections` (100). |
+| `ASYNC_POOL_MIN_SIZE` | falls back to `POOL_MIN_SIZE` (`5`) | `api/pool.py` | Floor for the async pool used by the async pilot routers (`customer_analytics`, `inv_planning_insights`). |
+| `ASYNC_POOL_MAX_SIZE` | falls back to `POOL_MAX_SIZE` (`50`) | `api/pool.py` | Ceiling for the async pool. Apply the same `workers × max_size < max_connections` rule as the sync pool. |
+| `READ_REPLICA_URL` | unset (replica disabled — fall back to primary) | `common/core/db.py`, `api/pool.py` | Optional Postgres replica URL (`postgres://user:pass@host:port/dbname`). When set, `get_read_only_conn()` / `get_async_read_only_conn()` route to the replica; `_read_replica_configured()` is the gate. Caller must be lag-tolerant. |
+| `READ_POOL_MIN_SIZE` / `READ_POOL_MAX_SIZE` | fall back to `ASYNC_POOL_*` then `POOL_*` | `api/pool.py` | Per-pool overrides for the read-replica pool. |
 | `PG_STATEMENT_TIMEOUT_MS` | `30000` | `api/pool.py` | `statement_timeout` applied per backend connection. |
-| `REDIS_URL` | `redis://localhost:6379/0` (host) / `redis://redis:6379/0` (container) | API caching | Redis connection string. |
+| `REDIS_URL` | `redis://localhost:6379/0` (host) / `redis://redis:6379/0` (container) | `common/services/cache.py` | Redis connection string. Backs `cached_async` (single-flight de-dup); `reset_cache` flushes the live backend. |
 
 After editing `.env`, reload your shell or restart any running processes — the API picks up `.env` only at startup.
 
@@ -145,7 +149,7 @@ What it does (`Makefile:321-331`):
 1. Waits for `pg_isready` inside the `postgres` container.
 2. Iterates `sql/*.sql` in **lexical order** and pipes each through `psql -v ON_ERROR_STOP=1`.
 3. Runs a one-off `ALTER TABLE` to relax `dim_customer.customer_name NOT NULL`.
-4. Prints the count of applied files (currently **130** files in `sql/`).
+4. Prints the count of applied files (currently **143** files in `sql/` — the `170-185` range covers the recent perf work: `pg_stat_statements`, partition cleanup, customer-analytics MVs, `pg_queue`, weekly-partition cutover prep).
 
 ### 5.1 DDL apply order (lexical)
 
@@ -160,6 +164,7 @@ Files are applied in the order returned by `ls sql/*.sql | sort`. The numeric pr
 | `062-073` | RBAC + DQ + collaboration + transfer network | `users_rbac`, `data_quality`, `notification_log`, `webhook_registrations`, `transfer_network`, `rebalancing_plan` |
 | `080-099` | Medallion + perf profiling + tuning | `medallion_infrastructure`, `partition_inventory_snapshot`, `dim_sourcing`, `fact_purchase_orders`, `lgbm_tuning`, `tuning_chat`, `unified_model_tuning` |
 | `100-130` | Promotion + experiments + customer demand + integrated targets | `results_promotion`, `cluster_experiments`, `champion_experiments`, `fact_customer_demand_monthly`, `candidate_forecast_and_promotion`, `inventory_algorithm_comparison`, `integrated_targets` |
+| `170-185` | Perf work + customer-analytics MVs + pg-queue + weekly-partition cutover | `pg_stat_statements`, `drop_empty_future_partitions`, `drop_unused_indexes`, `mv_customer_filter_options`, `mv_customer_activity_geo` extension, `mv_ca_segment_trends`, `mv_ca_demand_at_risk`, `mv_ca_order_patterns`, `pg_queue`, weekly-partition cutover prep for `fact_inventory_snapshot` and `fact_customer_demand_monthly` |
 
 A subset of the early DDL files (`001-007`, `009`) are also auto-applied on **first** Postgres container boot via `docker-entrypoint-initdb.d` mounts (`docker-compose.yml:31-38`). `make db-apply-sql` is still required to bring the schema fully up to date — the initdb mounts only run on an empty data volume.
 

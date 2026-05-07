@@ -35,12 +35,13 @@ Supply Chain Command Center is a full-stack analytics platform that ingests CSV 
 | ML Tracking | MLflow v2.16.2 |
 | API | Python + FastAPI + Uvicorn |
 | Validation | Pydantic v2 |
-| DB Driver | psycopg v3 (connection pool: min=2, max=20) |
+| DB Driver | psycopg v3 (sync `ConnectionPool` min=2 / max=20, plus async `AsyncConnectionPool` sibling and optional read-replica pools both sync + async) |
 | Frontend | React + Vite + TypeScript |
 | Styling | Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | ML / Clustering | scikit-learn, pandas, scipy |
-| Job Scheduling | APScheduler 3.11 |
+| Job Scheduling | APScheduler 3.11 (in-process); pg-queue scaffold (`common/services/pg_queue.py`, `sql/183_create_job_queue.sql`) for cross-process work |
+| Cache | Redis with in-memory fallback (`common/services/cache.py` `RedisBackend` -> `MemoryBackend`); `cached_async` decorator + `get_or_compute` single-flight |
 | E2E Testing | Playwright |
 | Python Packaging | uv |
 | Build | Make |
@@ -111,6 +112,12 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | FVA + ROI Measurement | [../08-integration/07-fva.md](../08-integration/07-fva.md) | Integration |
 | Demand History Workbench (5 endpoints) | [../03-demand-intelligence/06-demand-history-workbench.md](../03-demand-intelligence/06-demand-history-workbench.md) | Demand Intelligence |
 | Mechanical lint gates for 5 unenforced rules (`scripts/ai_checks/check_unenforced_rules.sh`) | — | Foundation |
+| Async router pilot (`customer_analytics` + `inv_planning_insights` GETs use `AsyncConnectionPool` via `get_async_conn` / `get_async_read_only_conn`) | — | Foundation |
+| pg-queue scaffold (`sql/183_create_job_queue.sql`, `common/services/pg_queue.py` — `enqueue_job`, `claim_next_job`, exponential-backoff requeue) | — | Foundation |
+| Read-replica scaffold (`READ_REPLICA_URL` opt-in, parsed by `common/core/db.py` `get_read_replica_params()`; `api/pool.py` builds replica pools when present; `api/core.py` `get_read_only_conn` / `get_async_read_only_conn` route reads when available) | — | Foundation |
+| Weekly partitioning DDL prep (`sql/184`, `sql/185` — REVIEW-BEFORE-RUN; `scripts/db/auto_create_partitions.py` extended with `interval="week"` ISO week math) | — | Foundation |
+| Streaming ETL helpers (`common/core/sql_helpers.py` — `stream_query_in_chunks`, `read_sql_chunked`, `DEFAULT_CHUNK_SIZE`) | [02-data-models.md](02-data-models.md) | Foundation |
+| ORJSON default response class (`api/main.py` uses `ORJSONResponse` for faster JSON serialization) | — | Foundation |
 
 ## Quick Start
 

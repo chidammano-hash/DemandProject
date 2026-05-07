@@ -14,11 +14,13 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 | Database | PostgreSQL 16 (pgvector for embeddings) |
 | ML Pipeline | scikit-learn, LightGBM, CatBoost, XGBoost, pandas, statsforecast (MSTL), neuralforecast + PyTorch (N-HiTS, N-BEATS) |
 | ML Tracking | MLflow |
-| Job Scheduler | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
+| Job Scheduler | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) + Postgres-backed pg-queue scaffold (`FOR UPDATE SKIP LOCKED`, restart-survivable) — `refresh_intramonth` cutover pilot |
+| Cache | In-memory LRU + Redis (single-flight via `cached_async`; `reset_cache` flushes the live backend) |
+| Async DB | psycopg3 `AsyncConnectionPool` (pilot: `customer_analytics`, `inv_planning_insights`) + optional read-replica routing via `READ_REPLICA_URL` |
 | AI Agent | Claude (Anthropic) via tool_use API |
 | Market Intelligence | OpenAI GPT-4o + Google Custom Search |
 | E2E Testing | Playwright |
-| Build | Make, uv, Docker Compose (2 services: Postgres + MLflow) |
+| Build | Make, uv, Docker Compose (3 services: Postgres + MLflow + Redis) |
 
 Data flow: `data/input/` raw CSVs -> normalize scripts -> `data/staged/*_clean.csv` -> PostgreSQL -> FastAPI (:8000) -> React UI (:5173)
 
@@ -28,13 +30,19 @@ Data flow: `data/input/` raw CSVs -> normalize scripts -> `data/staged/*_clean.c
 
 ```
 DemandProject/
-├── api/                         FastAPI backend (main.py + routers/)
+├── api/                         FastAPI backend (main.py + routers/, sync + async pool + optional read-replica pool in `pool.py`; `core.py` exposes `get_conn`, `get_async_conn`, `get_read_only_conn`, `get_async_read_only_conn`)
 │   └── routers/                 98 router files (80 mounted, organized into 6 domain subdirs; some are sub-router packages — e.g. `forecasting/tuning/` 15 modules, `intelligence/customer_analytics/` 5 sub-routers)
 ├── common/                      Shared Python modules (core/, ml/, engines/, services/, ai/)
+│   ├── core/sql_helpers.py      Streaming ETL helpers — `stream_query_in_chunks`, `read_sql_chunked` (chunked DataFrame iteration; bounded memory)
+│   └── services/
+│       ├── pg_queue.py          Postgres-backed job queue scaffold (`enqueue_job`, `claim_next_job`, `requeue_failed_with_backoff`, `get_queue_depth`)
+│       └── cache.py             In-memory LRU + `cached_async` Redis single-flight; `reset_cache` flushes the live backend
 ├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
+│   ├── ops/pg_queue_worker.py   Long-running pg-queue worker (run via `make pg-queue-worker`)
+│   └── db/auto_create_partitions.py   Auto-create monthly + weekly partitions ahead of cutover
 ├── frontend/                    React + TypeScript UI
 │   ├── src/tabs/                22 tab components + sub-panels
-│   ├── src/components/          Shared UI components
+│   ├── src/components/          Shared UI components (includes `LazyPanel.tsx` — IntersectionObserver wrapper for deferred panel mounting; `HeatmapGrid` extended with compact mode + clickable headers; chart library standardized on Recharts)
 │   ├── src/hooks/               Custom React hooks
 │   ├── src/api/queries/         57 domain query modules
 │   └── e2e/                     Playwright E2E tests
@@ -85,8 +93,8 @@ DemandProject/
 cd DemandProject
 
 make init              # Create .venv, install uv, sync dependencies
-make up                # Start Docker services (Postgres, MLflow)
-make db-apply-sql      # Apply DDL schemas
+make up                # Start Docker services (Postgres, MLflow, Redis)
+make db-apply-sql      # Apply DDL schemas (now includes sql/170-185: pg_stat_statements, partition cleanup, customer-analytics MVs, pg_queue, weekly partition cutover)
 make normalize-all     # Normalize all source domains -> data/staged/*_clean.csv
 make load-all          # Load data/staged/*_clean.csv into Postgres + refresh materialized views
 
@@ -262,6 +270,18 @@ make perf-pipeline                       # Profile end-to-end pipeline
 
 Configuration: `config/platform/perf_config.yaml` (thresholds for all 8 suggestion rules). Spec: [docs/specs/01-foundation/05-performance-profiling.md](docs/specs/01-foundation/05-performance-profiling.md).
 
+**Recent perf work (sql/170-185):**
+- **Boot-time perf** — pg_stat_statements enabled (`sql/170`), unused indexes dropped (`sql/172`), empty future partitions cleaned (`sql/171`).
+- **Customer-Analytics MV migration** — heavy on-the-fly aggregates moved into MVs: `mv_customer_filter_options` (`sql/173`), `mv_customer_activity_geo` extension (`sql/174`), `mv_ca_segment_trends` (`sql/180`), `mv_ca_demand_at_risk` (`sql/181`), `mv_ca_order_patterns` (`sql/182`).
+- **Async pilot** — `customer_analytics` and `inv_planning_insights` routers now use `get_async_conn()` / `get_async_read_only_conn()` against the new `AsyncConnectionPool`.
+- **pg-queue scaffold** (`sql/183`) — Postgres-backed job queue using `FOR UPDATE SKIP LOCKED`. Pilot: `refresh_intramonth` cutover off APScheduler. Worker: `scripts/ops/pg_queue_worker.py`. Targets: `make pg-queue-worker`, `make pg-queue-enqueue-recurring`, `make pg-queue-depth`.
+- **Redis caching** — `common/services/cache.py` `cached_async` decorator wraps hot endpoints with single-flight de-dup; `reset_cache` flushes both in-memory LRU and the Redis backend.
+- **Read-replica routing** — opt-in via `READ_REPLICA_URL` env var; `get_read_only_conn()` / `get_async_read_only_conn()` route to the replica when configured, fall back to the primary when not.
+- **Streaming ETL helpers** (`common/core/sql_helpers.py`) — `stream_query_in_chunks` and `read_sql_chunked` for bounded-memory loads.
+- **Weekly partition cutover prep** — `sql/184` (inventory) and `sql/185` (customer demand) DDL prepared; `scripts/db/auto_create_partitions.py` extended to support weekly intervals (`make auto-create-partitions-weekly`, `make auto-create-partitions-weekly-dry-run`).
+- **Scale tests** — `tests/scale/` directory with `make scale-test` (synthetic 100K rows by default; `SCALE=10000000` for nightly).
+- **Frontend** — recharts-only chart library (ECharts paths removed where present), `LazyPanel.tsx` IntersectionObserver wrapper for deferred mounting.
+
 ### 7. Platform Services
 
 - **Data Quality**: DQEngine with 12 check types, statistical auto-fix, Self-Heal UI
@@ -340,7 +360,13 @@ Every feature ships with tests; every removed feature removes its tests.
 | API routers (98 files, 80 mounted) | `api/routers/` (organized into core/, forecasting/, intelligence/, inventory/, operations/, platform/; sub-router packages: `forecasting/tuning/`, `intelligence/customer_analytics/`) |
 | Shared Python modules | `common/` (core/, ml/, engines/, services/, ai/) |
 | Champion strategies package | `common/ml/champion/` (9 modules covering 31 strategies — `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment`, plus `helpers` and `registry`) |
-| Shared SQL helpers | `common/core/sql_helpers.py` (includes `row_to_dict_from_cursor`/`row_to_dict_from_cols`) |
+| Shared SQL helpers | `common/core/sql_helpers.py` (includes `row_to_dict_from_cursor`/`row_to_dict_from_cols`, plus streaming ETL helpers `stream_query_in_chunks` / `read_sql_chunked`) |
+| pg-queue scaffold | `common/services/pg_queue.py` + worker `scripts/ops/pg_queue_worker.py` |
+| Cache (LRU + Redis single-flight) | `common/services/cache.py` (`cached_async`, `reset_cache`) |
+| Async + read-replica pools | `api/pool.py` (sync, async, optional replica), `api/core.py` (`get_conn`, `get_async_conn`, `get_read_only_conn`, `get_async_read_only_conn`) |
+| Auto-create partitions (monthly + weekly) | `scripts/db/auto_create_partitions.py` |
+| Lazy panel wrapper | `frontend/src/components/LazyPanel.tsx` |
+| Scale tests | `tests/scale/` (run via `make scale-test`) |
 | Shared constants | `common/core/constants.py` (includes `FORECAST_QTY_COL` for the canonical forecast quantity column) |
 | AI guardrails / unenforced-rule checks | `scripts/ai_checks/check_unenforced_rules.sh` + `scripts/ai_checks/allowlists/` |
 | Domain config | `common/core/domain_specs.py` |

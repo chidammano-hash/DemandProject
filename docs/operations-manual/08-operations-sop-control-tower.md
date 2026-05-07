@@ -326,7 +326,31 @@ backfilling NULL `customer_no` from upstream joins, deduplicating duplicate
 - Recurring jobs are coalesced — if two firings happen during a long-running
   job, only one will run when the slot becomes free.
 
-### 8.7.3 UI surface
+### 8.7.3 pg-queue scaffold (cutover surface alongside APScheduler)
+
+`common/services/pg_queue.py` is a Postgres-backed job queue (DDL: `sql/183_create_pg_queue.sql`)
+introduced as the cutover surface for long-running, restart-survivable, multi-instance-safe
+recurring jobs. It does **not** replace APScheduler — both run side by side.
+
+- **Pilot job:** `refresh_intramonth` has been migrated off APScheduler onto pg-queue.
+  All other recurring jobs continue to run via the APScheduler thread pool.
+- **Worker:** `scripts/ops/pg_queue_worker.py` is a long-running worker process. Run via
+  `make pg-queue-worker`.
+- **Scheduling:** a thin enqueueing entry-point (`make pg-queue-enqueue-recurring`)
+  drops a single row into `job_queue` per cycle — typically driven by cron or a
+  lightweight APScheduler job whose only side-effect is the enqueue. The actual
+  work runs whenever the worker claims it via `FOR UPDATE SKIP LOCKED`.
+- **Diagnostics:** `make pg-queue-depth` shows queue depth grouped by status.
+- **Migration recipe:** see `docs/RUNBOOK.md` for the full APScheduler -> pg-queue
+  cutover steps. The `refresh_intramonth` migration is the reference recipe.
+
+| Make target | Purpose |
+|---|---|
+| `make pg-queue-worker` | Run a worker (long-running; one per host is enough for the pilot) |
+| `make pg-queue-enqueue-recurring` | Drop a single `refresh_intramonth` row into `job_queue` (cron entry-point) |
+| `make pg-queue-depth` | Diagnostic — current depth grouped by status |
+
+### 8.7.4 UI surface
 
 `JobsTab.tsx` exposes six panels: Active Jobs, Job History, Job Groups,
 Schedules, Pipeline Builder, Champion Config. Important behaviour:

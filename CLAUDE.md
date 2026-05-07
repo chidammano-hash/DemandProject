@@ -33,6 +33,7 @@ Hard constraints. Violations cause bugs, test failures, or silent data corruptio
 
 ### Workflow (applies to every change)
 - **Review + refactor at each step.** Before reporting any change as complete: re-read your own diff, fix anything you'd flag in code review, refactor for clarity if the diff is messy. In multi-step plans (parallel agents, multi-file refactors), each step ends with this self-pass — don't defer it to the end. **[FREQUENTLY VIOLATED]**
+- **Docs updated in the same commit as the code.** When a change affects architecture, APIs, schemas, conventions, infra, or operational procedures, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`, `docs/PLATFORM_GUIDE.md`, `docs/RUNBOOK.md`, `docs/specs/<domain>/`, this file if rules changed) in the same commit. Don't ship code today and document tomorrow — they drift permanently. The "Documentation Update Rules" mapping in the Workflow & Hooks section tells you which doc maps to which kind of change. **[FREQUENTLY VIOLATED]**
 
 ### Backend / Python
 - **`date.today()` forbidden outside `common/core/planning_date.py`.** Use `get_planning_date()`. Env overrides: `PLANNING_DATE`, `USE_SYSTEM_DATE`. **[FREQUENTLY VIOLATED]**
