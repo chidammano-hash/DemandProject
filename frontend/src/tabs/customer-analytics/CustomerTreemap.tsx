@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ResponsiveContainer, Treemap, Tooltip } from "recharts";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -13,90 +13,55 @@ interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
-interface TreeNode {
-  name: string;
-  size?: number;
-  value?: number;
-  fill_rate?: number;
-  fill?: string;
-  children?: TreeNode[];
-}
-
-/** Map fill_rate (0-100) to a red->yellow->green color (matches the prior ECharts visualMap). */
-function fillRateColor(fr: number): string {
-  // Red #ef4444 -> Yellow #eab308 -> Green #22c55e
-  const clamped = Math.max(0, Math.min(100, fr));
-  if (clamped <= 50) {
-    // Red -> Yellow on [0, 50]
-    const t = clamped / 50;
-    const r = Math.round(0xef + (0xea - 0xef) * t);
-    const g = Math.round(0x44 + (0xb3 - 0x44) * t);
-    const b = Math.round(0x44 + (0x08 - 0x44) * t);
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  // Yellow -> Green on [50, 100]
-  const t = (clamped - 50) / 50;
-  const r = Math.round(0xea + (0x22 - 0xea) * t);
-  const g = Math.round(0xb3 + (0xc5 - 0xb3) * t);
-  const b = Math.round(0x08 + (0x5e - 0x08) * t);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-/**
- * Recharts Treemap expects `{name, size}` (or whatever the dataKey is) at
- * leaf nodes. Recursively coerce the API tree (which uses `value`) to the
- * recharts shape and attach a per-leaf fill computed from fill_rate.
- */
-function toRechartsTree(nodes: TreeNode[]): TreeNode[] {
-  return nodes.map((n) => {
-    const kids = n.children ? toRechartsTree(n.children) : undefined;
-    const size = n.value ?? n.size ?? 0;
-    const fr = n.fill_rate;
-    const fill = fr != null ? fillRateColor(fr) : undefined;
-    return {
-      name: n.name,
-      size,
-      value: size,
-      fill_rate: fr,
-      fill,
-      children: kids,
-    };
-  });
-}
-
-interface RechartsTooltipProps {
-  active?: boolean;
-  payload?: Array<{ payload: TreeNode & { root?: TreeNode } }>;
-}
-
-function TreemapTooltip({ active, payload }: RechartsTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  const node = payload[0].payload;
-  const value = node.value ?? node.size ?? 0;
-  return (
-    <div className="rounded-md border bg-background p-2 text-xs shadow-sm">
-      <div className="font-semibold">{node.name}</div>
-      <div>Demand: {value.toLocaleString()} cases</div>
-      {node.fill_rate != null && <div>Fill Rate: {node.fill_rate}%</div>}
-    </div>
-  );
-}
-
 export function CustomerTreemap({ filters }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.treemap(filters),
     queryFn: () => fetchCustomerAnalyticsTreemap(filters),
-    staleTime: 60 * 60_000,
-    placeholderData: keepPreviousData,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
-  // Recharts wants a single root node — wrap the API forest under a synthetic
-  // root so the chart shows the full set of channels at the top level.
-  const treeData = useMemo<TreeNode[]>(() => {
-    const tree = (data?.tree ?? []) as TreeNode[];
-    if (tree.length === 0) return [];
-    return toRechartsTree(tree);
-  }, [data]);
+  // Memoize so the option object identity is stable across parent re-renders
+  // (filter keystrokes, theme toggles, etc.). Without this ECharts re-runs the
+  // full treemap layout on every render even when `data` is unchanged.
+  const option = useMemo(() => ({
+    tooltip: {
+      formatter: (p: { name: string; value: number; data?: { fill_rate?: number } }) => {
+        const fr = p.data?.fill_rate;
+        return `<b>${p.name}</b><br/>Demand: ${(p.value ?? 0).toLocaleString()} cases${fr != null ? `<br/>Fill Rate: ${fr}%` : ""}`;
+      },
+    },
+    visualMap: {
+      show: true,
+      min: 0,
+      max: 100,
+      text: ["100%", "0%"],
+      dimension: "fill_rate",
+      inRange: {
+        color: ["#ef4444", "#eab308", "#22c55e"],
+      },
+      calculable: true,
+      orient: "horizontal" as const,
+      left: "center",
+      bottom: 0,
+    },
+    series: [
+      {
+        type: "treemap",
+        data: data?.tree ?? [],
+        leafDepth: 2,
+        roam: false,
+        animation: false, // skip layout animation on large trees
+        label: { show: true, formatter: "{b}", fontSize: 11 },
+        breadcrumb: { show: true },
+        levels: [
+          { itemStyle: { borderWidth: 2, borderColor: "#fff", gapWidth: 2 } },
+          { itemStyle: { borderWidth: 1, borderColor: "#ddd", gapWidth: 1 } },
+          { itemStyle: { borderWidth: 0 } },
+        ],
+      },
+    ],
+  }), [data]);
 
   return (
     <Card aria-label="Customer concentration treemap">
@@ -117,17 +82,7 @@ export function CustomerTreemap({ filters }: Props) {
           </div>
         ) : (
           <div role="img" aria-roledescription="Customer concentration treemap chart">
-            <ResponsiveContainer width="100%" height={360}>
-              <Treemap
-                data={treeData}
-                dataKey="size"
-                nameKey="name"
-                stroke="#fff"
-                isAnimationActive={false}
-              >
-                <Tooltip content={<TreemapTooltip />} />
-              </Treemap>
-            </ResponsiveContainer>
+            <ReactECharts option={option} style={{ height: 360 }} lazyUpdate notMerge={false} />
           </div>
         )}
       </CardContent>

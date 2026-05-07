@@ -7,10 +7,6 @@ interface HeatmapGridProps {
   colorScale: (value: number) => string;
   valueFormat?: (value: number) => string;
   onCellClick?: (row: string, col: string) => void;
-  /** Click handler for column headers (sort-by-col UX). When set, headers render as buttons. */
-  onColumnHeaderClick?: (col: string) => void;
-  /** Click handler for row headers (sort-by-row UX). When set, row labels render as buttons. */
-  onRowHeaderClick?: (row: string) => void;
   className?: string;
   /** Show a gradient legend bar below the heatmap */
   showLegend?: boolean;
@@ -18,20 +14,6 @@ interface HeatmapGridProps {
   minLabel?: string;
   /** Label for the high end of the legend (default: "100%") */
   maxLabel?: string;
-  /**
-   * "compact" mode: smaller, label-less cells suitable for high-cardinality
-   * heatmaps (50+ rows or columns). Tooltips still show the value via the
-   * cell's title attribute.
-   */
-  compact?: boolean;
-  /** Pixel width of the row-label column (default 120). */
-  rowLabelWidth?: number;
-  /** Pixel min width of each cell column (default 60 in normal mode, 14 in compact). */
-  cellMinWidth?: number;
-  /** Pixel height of compact-mode rows (default 14). Ignored in normal mode. */
-  compactCellHeight?: number;
-  /** Disable the empty-row / empty-col pruning that runs by default. */
-  disablePruning?: boolean;
 }
 
 const defaultFormat = (v: number) => `${v.toFixed(1)}%`;
@@ -48,23 +30,15 @@ export function HeatmapGrid({
   colorScale,
   valueFormat = defaultFormat,
   onCellClick,
-  onColumnHeaderClick,
-  onRowHeaderClick,
   className,
   showLegend = false,
   minLabel = "0%",
   maxLabel = "100%",
-  compact = false,
-  rowLabelWidth = 120,
-  cellMinWidth,
-  compactCellHeight = 14,
-  disablePruning = false,
 }: HeatmapGridProps) {
   const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
 
   // ── Prune empty rows/columns (all DFU counts = 0) ─────────────────
   const { rows, columnLabels } = useMemo(() => {
-    if (disablePruning) return { rows: rawRows, columnLabels: rawColumnLabels };
     const hasCounts = rawRows.some((r) => r.counts && r.counts.length > 0);
     if (!hasCounts) return { rows: rawRows, columnLabels: rawColumnLabels };
 
@@ -87,7 +61,7 @@ export function HeatmapGrid({
       }));
 
     return { rows: filteredRows, columnLabels: filteredCols };
-  }, [rawRows, rawColumnLabels, disablePruning]);
+  }, [rawRows, rawColumnLabels]);
 
   if (rows.length === 0) {
     return (
@@ -97,100 +71,36 @@ export function HeatmapGrid({
     );
   }
 
-  const effectiveCellMinWidth = cellMinWidth ?? (compact ? 14 : 60);
-  const gridTemplateColumns = `${rowLabelWidth}px repeat(${columnLabels.length}, minmax(${effectiveCellMinWidth}px, 1fr))`;
-
   return (
     <div className={cn("overflow-x-auto", className)}>
       <div
         className="grid gap-px"
-        style={{ gridTemplateColumns }}
+        style={{
+          gridTemplateColumns: `120px repeat(${columnLabels.length}, minmax(60px, 1fr))`,
+        }}
         role="grid"
         aria-label="Performance heatmap"
       >
         {/* Header row */}
         <div className="text-xs font-medium text-muted-foreground" />
-        {columnLabels.map((label) => {
-          const headerCommon = "truncate px-1 text-[10px] font-medium text-muted-foreground";
-          // Compact mode rotates labels 90deg so dense column headers don't overlap.
-          const compactStyle: React.CSSProperties = compact
-            ? { writingMode: "vertical-rl", transform: "rotate(180deg)", height: 60 }
-            : {};
-          if (onColumnHeaderClick) {
-            return (
-              <button
-                key={label}
-                type="button"
-                onClick={() => onColumnHeaderClick(label)}
-                className={cn(headerCommon, "text-left hover:bg-muted/40 cursor-pointer")}
-                style={compactStyle}
-                title={label}
-              >
-                {label}
-              </button>
-            );
-          }
-          return (
-            <div
-              key={label}
-              className={cn(headerCommon, compact ? "text-left" : "text-center")}
-              style={compactStyle}
-              title={label}
-            >
-              {label}
-            </div>
-          );
-        })}
+        {columnLabels.map((label) => (
+          <div key={label} className="truncate px-1 text-center text-[10px] font-medium text-muted-foreground">
+            {label}
+          </div>
+        ))}
 
         {/* Data rows */}
         {rows.map((row, rowIdx) => (
           <React.Fragment key={row.label}>
-            {onRowHeaderClick ? (
-              <button
-                type="button"
-                onClick={() => onRowHeaderClick(row.label)}
-                className="flex items-center truncate text-xs font-medium text-card-foreground hover:bg-muted/40 cursor-pointer text-left"
-                title={row.label}
-              >
-                {row.label}
-              </button>
-            ) : (
-              <div
-                className="flex items-center truncate text-xs font-medium text-card-foreground"
-                title={row.label}
-              >
-                {row.label}
-              </div>
-            )}
+            <div className="flex items-center truncate text-xs font-medium text-card-foreground">
+              {row.label}
+            </div>
             {row.values.map((value, colIdx) => {
               const isHovered = hoveredCell?.row === rowIdx && hoveredCell?.col === colIdx;
               const skuCount = row.counts?.[colIdx];
               const hasCounts = row.counts != null && row.counts.length > 0;
               const isEmpty = hasCounts && (skuCount ?? 0) === 0;
               const bg = isEmpty ? "var(--color-muted, #e5e7eb)" : colorScale(value);
-              const tooltip = isEmpty
-                ? `${row.label}, ${columnLabels[colIdx]}: no data`
-                : `${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}${skuCount != null ? `, ${skuCount} SKUs` : ""}`;
-              if (compact) {
-                // Compact cells: no inline text, height-driven, tooltip-only.
-                return (
-                  <div
-                    key={`${row.label}-${colIdx}`}
-                    className={cn(
-                      "rounded-[2px]",
-                      onCellClick && !isEmpty && "cursor-pointer",
-                    )}
-                    style={{
-                      backgroundColor: bg,
-                      height: compactCellHeight,
-                    }}
-                    onClick={() => !isEmpty && onCellClick?.(row.label, columnLabels[colIdx])}
-                    role="gridcell"
-                    title={tooltip}
-                    aria-label={tooltip}
-                  />
-                );
-              }
               return (
                 <div
                   key={`${row.label}-${colIdx}`}
@@ -207,7 +117,9 @@ export function HeatmapGrid({
                   onMouseLeave={() => setHoveredCell(null)}
                   onClick={() => !isEmpty && onCellClick?.(row.label, columnLabels[colIdx])}
                   role="gridcell"
-                  aria-label={tooltip}
+                  aria-label={isEmpty
+                    ? `${row.label}, ${columnLabels[colIdx]}: no data`
+                    : `${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}${skuCount != null ? `, ${skuCount} SKUs` : ""}`}
                 >
                   {isEmpty
                     ? "\u00A0"

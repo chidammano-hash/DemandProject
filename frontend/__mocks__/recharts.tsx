@@ -43,18 +43,6 @@ export const AreaChart = ({ children }: { children: React.ReactNode }) => (
   <div data-testid="area-chart">{children}</div>
 );
 
-export const Treemap = ({ children }: { children?: React.ReactNode }) => (
-  <div data-testid="treemap">{children}</div>
-);
-
-export const Sankey = ({ children }: { children?: React.ReactNode }) => (
-  <div data-testid="sankey">{children}</div>
-);
-
-export const SunburstChart = ({ children }: { children?: React.ReactNode }) => (
-  <div data-testid="sunburst-chart">{children}</div>
-);
-
 /* ------------------------------------------------------------------ */
 /* Leaf components — render nothing                                   */
 /* ------------------------------------------------------------------ */

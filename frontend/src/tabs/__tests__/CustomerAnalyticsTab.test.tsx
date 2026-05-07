@@ -18,8 +18,24 @@ vi.mock("react-leaflet", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
 
-// All customer-analytics panels are now recharts-only — the mock at
-// frontend/__mocks__/recharts.tsx covers the chart components used here.
+// Mock echarts-for-react
+vi.mock("echarts-for-react", () => ({
+  default: (props: { style?: React.CSSProperties }) => (
+    <div data-testid="echart" style={props.style} />
+  ),
+}));
+
+// Mock the modular ECharts wrapper used by CA panels (it pulls in
+// echarts/core + canvas renderer, which jsdom can't satisfy).
+vi.mock("@/components/echarts-modular", () => ({
+  ModularReactECharts: (props: { style?: React.CSSProperties }) => (
+    <div data-testid="echart" style={props.style} />
+  ),
+  default: (props: { style?: React.CSSProperties }) => (
+    <div data-testid="echart" style={props.style} />
+  ),
+}));
+
 vi.mock("recharts");
 
 // Mock US states GeoJSON
@@ -317,15 +333,12 @@ describe("CustomerAnalyticsTab", () => {
     });
   });
 
-  it("renders chart panels", async () => {
+  it("renders ECharts panels", async () => {
     renderTab();
     await waitFor(() => {
-      // After the ECharts -> recharts consolidation, panels render as recharts
-      // containers (treemap, sankey, scatter-chart, sunburst-chart, bar-chart)
-      // plus HeatmapGrid (CSS-grid based). At minimum we expect a treemap and
-      // a sankey to be present once data has loaded.
-      expect(screen.getAllByTestId("treemap").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByTestId("sankey").length).toBeGreaterThanOrEqual(1);
+      const charts = screen.getAllByTestId("echart");
+      // treemap + heatmap + sunburst + oos bubble + lifecycle + affinity + order patterns scatter + sankey = 8
+      expect(charts.length).toBeGreaterThanOrEqual(4);
     });
   });
 

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ResponsiveContainer, Sankey, Tooltip } from "recharts";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -9,84 +9,39 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
-import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
-interface RechartsSankeyData {
-  nodes: { name: string }[];
-  links: { source: number; target: number; value: number }[];
-}
-
-interface SankeyPayloadShape {
-  name?: string;
-  source?: { name: string };
-  target?: { name: string };
-  value?: number;
-  payload?: SankeyPayloadShape;
-}
-
-interface SankeyTooltipProps {
-  active?: boolean;
-  payload?: Array<{ payload: SankeyPayloadShape }>;
-}
-
-function SankeyTooltip({ active, payload }: SankeyTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  const top = payload[0].payload;
-  // Recharts double-wraps each tooltip entry: payload[0].payload.payload is
-  // the raw node/link, payload[0].payload itself can also be the raw node.
-  const wrapped: SankeyPayloadShape = top.payload ?? top;
-  if (wrapped.source && wrapped.target) {
-    return (
-      <div className="rounded-md border bg-background p-2 text-xs shadow-sm">
-        <div className="font-semibold">
-          {wrapped.source.name} -&gt; {wrapped.target.name}
-        </div>
-        <div>Value: {(wrapped.value ?? 0).toLocaleString()}</div>
-      </div>
-    );
-  }
-  if (wrapped.name) {
-    return (
-      <div className="rounded-md border bg-background p-2 text-xs shadow-sm">
-        <div className="font-semibold">{wrapped.name}</div>
-      </div>
-    );
-  }
-  return null;
-}
-
 export function DemandFlowSankey({ filters }: Props) {
-  const { okabeIto } = useChartColors();
-  const nodeFill = okabeIto[0];
-  const linkFill = okabeIto[2];
-
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.demandFlow(filters),
     queryFn: () => fetchCustomerAnalyticsDemandFlow(filters),
-    staleTime: 60 * 60_000,
-    placeholderData: keepPreviousData,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
-  // Recharts Sankey needs numeric source/target indices into the nodes array.
-  // The API returns string-keyed links — convert in one pass via a name->index
-  // map. Drop links whose endpoints aren't in the node list.
-  const sankeyData = useMemo<RechartsSankeyData>(() => {
-    if (!data) return { nodes: [], links: [] };
-    const nodes = data.nodes.map((n) => ({ name: n.name }));
-    const idx = new Map(nodes.map((n, i) => [n.name, i]));
-    const links = data.links
-      .map((l) => {
-        const s = idx.get(l.source);
-        const t = idx.get(l.target);
-        if (s == null || t == null) return null;
-        return { source: s, target: t, value: l.value };
-      })
-      .filter((l): l is NonNullable<typeof l> => l !== null);
-    return { nodes, links };
+  const option = useMemo(() => {
+    if (!data) return {};
+    return {
+      animation: false,  // sankey can have hundreds of links — no point animating
+      tooltip: {
+        trigger: "item" as const,
+        triggerOn: "mousemove" as const,
+      },
+      series: [{
+        type: "sankey",
+        data: data.nodes,
+        links: data.links,
+        orient: "horizontal" as const,
+        emphasis: { focus: "adjacency" as const },
+        lineStyle: { color: "gradient" as const, curveness: 0.5 },
+        label: { fontSize: 11 },
+        nodeWidth: 20,
+        nodeGap: 12,
+      }],
+    };
   }, [data]);
 
   return (
@@ -105,18 +60,7 @@ export function DemandFlowSankey({ filters }: Props) {
           height={400}
         >
           <div role="img" aria-roledescription="Demand flow sankey diagram">
-            <ResponsiveContainer width="100%" height={400}>
-              <Sankey
-                data={sankeyData}
-                node={{ fill: nodeFill, stroke: nodeFill }}
-                link={{ stroke: linkFill, strokeOpacity: 0.4 }}
-                nodePadding={20}
-                nodeWidth={14}
-                margin={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Tooltip content={<SankeyTooltip />} />
-              </Sankey>
-            </ResponsiveContainer>
+            <ReactECharts option={option} style={{ height: 400 }} lazyUpdate notMerge={false} />
           </div>
         </PanelStateGate>
       </CardContent>

@@ -3,15 +3,37 @@ import { render as rtlRender, screen } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import { ThemeProvider } from "@/context/ThemeContext";
 
-// ForecastTrendChart now renders via recharts. The shared mock at
-// frontend/__mocks__/recharts.tsx renders a <div data-testid="composed-chart">.
-vi.mock("recharts");
-
 const ThemeWrapper = ({ children }: { children: ReactNode }) => (
   <ThemeProvider value={{ theme: "light" }}>{children}</ThemeProvider>
 );
 
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ThemeWrapper });
+
+// Mock all ECharts modules before importing the component
+vi.mock("echarts-for-react/lib/core", () => ({
+  default: ({ style, className }: { style?: React.CSSProperties; className?: string }) => (
+    <div data-testid="echarts-mock" style={style} className={className} />
+  ),
+}));
+
+vi.mock("echarts/core", () => ({
+  use: vi.fn(),
+}));
+
+vi.mock("echarts/charts", () => ({
+  LineChart: {},
+}));
+
+vi.mock("echarts/components", () => ({
+  GridComponent: {},
+  TooltipComponent: {},
+  LegendComponent: {},
+  DataZoomComponent: {},
+}));
+
+vi.mock("echarts/renderers", () => ({
+  CanvasRenderer: {},
+}));
 
 import { ForecastTrendChart } from "@/components/ForecastTrendChart";
 
@@ -65,7 +87,7 @@ describe("ForecastTrendChart", () => {
     expect(screen.queryByText("No forecast data available")).not.toBeInTheDocument();
   });
 
-  it("renders a recharts ComposedChart container when data is provided", () => {
+  it("renders ECharts container when data is provided", () => {
     render(
       <ForecastTrendChart
         data={sampleData}
@@ -74,7 +96,7 @@ describe("ForecastTrendChart", () => {
         seriesColors={defaultSeriesColors}
       />
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
   it("renders with dark theme without crashing", () => {
@@ -86,7 +108,7 @@ describe("ForecastTrendChart", () => {
         seriesColors={["#818cf8", "#fbbf24"]}
       />
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
   it("renders with a single data point without crashing", () => {
@@ -98,7 +120,7 @@ describe("ForecastTrendChart", () => {
         seriesColors={defaultSeriesColors}
       />
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
   it("renders with many data points without crashing", () => {
@@ -115,7 +137,7 @@ describe("ForecastTrendChart", () => {
         seriesColors={defaultSeriesColors}
       />
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
   it("renders with zero values in data without crashing", () => {
@@ -130,7 +152,7 @@ describe("ForecastTrendChart", () => {
         seriesColors={defaultSeriesColors}
       />
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
   it("renders with includeCI + quantile band data without crashing (UX-3)", () => {
@@ -148,7 +170,7 @@ describe("ForecastTrendChart", () => {
         includeCI
       />,
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
   it("ignores includeCI flag when data lacks quantile fields", () => {
@@ -163,6 +185,6 @@ describe("ForecastTrendChart", () => {
         includeCI
       />,
     );
-    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
 });

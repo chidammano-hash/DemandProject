@@ -1,15 +1,5 @@
-import { memo, useMemo } from "react";
-import {
-  ComposedChart,
-  Area,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
+import { memo } from "react";
+import { EChartContainer } from "@/components/EChartContainer";
 import { useChartColors } from "@/hooks/useChartColors";
 
 interface ForecastTrendPoint {
@@ -34,12 +24,6 @@ interface ForecastTrendChartProps {
   includeCI?: boolean;
 }
 
-function formatY(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
-  return String(v);
-}
-
 export const ForecastTrendChart = memo(function ForecastTrendChart({
   data,
   theme: themeProp,
@@ -55,26 +39,6 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({
     tooltip: ctxChartColors.tooltip_bg,
   };
   const seriesColors = seriesColorsProp ?? trendColors;
-
-  const hasCI = useMemo(
-    () => includeCI && data.every((d) => d.lower_80 != null && d.upper_80 != null),
-    [data, includeCI],
-  );
-
-  // Recharts renders a CI band as an Area driven by [lower, upper] tuples.
-  // Reshape the data once so the chart can pull the band directly off
-  // each row instead of computing it per render.
-  const chartData = useMemo(
-    () =>
-      data.map((d) => ({
-        ...d,
-        ci: hasCI && d.lower_80 != null && d.upper_80 != null
-          ? [d.lower_80, d.upper_80]
-          : undefined,
-      })),
-    [data, hasCI],
-  );
-
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -83,68 +47,103 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({
     );
   }
 
-  const tooltipBg = chartColors.tooltip;
-  const tooltipFg = theme === "dark" ? "#e5e5e5" : "#171717";
+  const months = data.map((d) => d.month);
+  const forecasts = data.map((d) => d.forecast);
+  const actuals = data.map((d) => d.actual);
+  // The CI band renders as two stacked "line" series: the lower bound drawn
+  // invisibly, then the delta (upper - lower) stacked on top with areaStyle.
+  // This is the canonical ECharts pattern for a filled band between two lines.
+  const hasCI =
+    includeCI &&
+    data.every((d) => d.lower_80 != null && d.upper_80 != null);
+  const lowers = hasCI ? data.map((d) => d.lower_80 as number) : [];
+  const bandHeights = hasCI
+    ? data.map((d) => (d.upper_80 as number) - (d.lower_80 as number))
+    : [];
 
-  return (
-    <div role="img" aria-label="Forecast vs actual trend chart">
-      <ResponsiveContainer width="100%" height={260}>
-        <ComposedChart data={chartData} margin={{ top: 16, right: 16, bottom: 8, left: 8 }}>
-          <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" vertical={false} />
-          <XAxis
-            dataKey="month"
-            tick={{ fontSize: 10, fill: chartColors.axis }}
-            stroke={chartColors.grid}
-          />
-          <YAxis
-            tick={{ fontSize: 10, fill: chartColors.axis }}
-            tickFormatter={formatY}
-            axisLine={false}
-            stroke={chartColors.grid}
-          />
-          <Tooltip
-            contentStyle={{ backgroundColor: tooltipBg, border: `1px solid ${chartColors.grid}`, color: tooltipFg, fontSize: 12 }}
-            labelStyle={{ color: tooltipFg }}
-            formatter={(value: number | [number, number], name: string) => {
-              if (Array.isArray(value)) {
-                return [`${formatY(value[0])} – ${formatY(value[1])}`, name];
-              }
-              return [formatY(value), name];
-            }}
-          />
-          <Legend wrapperStyle={{ fontSize: 11, color: chartColors.axis }} />
-          {hasCI && (
-            <Area
-              type="monotone"
-              dataKey="ci"
-              name="80% CI"
-              fill={seriesColors[0]}
-              fillOpacity={0.18}
-              stroke="transparent"
-              isAnimationActive={false}
-            />
-          )}
-          <Line
-            type="monotone"
-            dataKey="forecast"
-            name="Forecast"
-            stroke={seriesColors[0]}
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="actual"
-            name="Actual"
-            stroke={seriesColors[1]}
-            strokeWidth={2}
-            strokeDasharray="4 4"
-            dot={{ r: 2, fill: seriesColors[1] }}
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
+  const option = {
+    tooltip: {
+      trigger: "axis" as const,
+      backgroundColor: chartColors.tooltip,
+      borderColor: chartColors.grid,
+      textStyle: { color: theme === "dark" ? "#e5e5e5" : "#171717", fontSize: 12 },
+    },
+    legend: {
+      data: hasCI ? ["Forecast", "Actual", "80% CI"] : ["Forecast", "Actual"],
+      bottom: 0,
+      textStyle: { color: chartColors.axis, fontSize: 11 },
+    },
+    grid: { top: 16, right: 16, bottom: 36, left: 60, containLabel: false },
+    xAxis: {
+      type: "category" as const,
+      data: months,
+      axisLine: { lineStyle: { color: chartColors.grid } },
+      axisLabel: { color: chartColors.axis, fontSize: 10 },
+    },
+    yAxis: {
+      type: "value" as const,
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: chartColors.grid, type: "dashed" as const } },
+      axisLabel: {
+        color: chartColors.axis,
+        fontSize: 10,
+        formatter: (v: number) => {
+          if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+          if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+          return String(v);
+        },
+      },
+    },
+    series: [
+      // CI band (drawn first so it sits behind the forecast/actual lines).
+      ...(hasCI
+        ? [
+            {
+              name: "_ci_lower",
+              type: "line" as const,
+              data: lowers,
+              stack: "ci",
+              symbol: "none",
+              lineStyle: { opacity: 0 },
+              itemStyle: { opacity: 0 },
+              silent: true,
+              showInLegend: false,
+              tooltip: { show: false },
+            },
+            {
+              name: "80% CI",
+              type: "line" as const,
+              data: bandHeights,
+              stack: "ci",
+              symbol: "none",
+              lineStyle: { opacity: 0 },
+              areaStyle: { color: seriesColors[0], opacity: 0.18 },
+              tooltip: { show: false },
+            },
+          ]
+        : []),
+      {
+        name: "Forecast",
+        type: "line" as const,
+        data: forecasts,
+        smooth: true,
+        areaStyle: { opacity: 0.15 },
+        lineStyle: { width: 2, color: seriesColors[0] },
+        itemStyle: { color: seriesColors[0] },
+        symbol: "none",
+      },
+      {
+        name: "Actual",
+        type: "line" as const,
+        data: actuals,
+        smooth: true,
+        lineStyle: { width: 2, color: seriesColors[1], type: "dashed" as const },
+        itemStyle: { color: seriesColors[1] },
+        symbol: "circle",
+        symbolSize: 4,
+      },
+    ],
+  };
+
+  return <EChartContainer option={option} theme={theme} height={260} />;
 });
