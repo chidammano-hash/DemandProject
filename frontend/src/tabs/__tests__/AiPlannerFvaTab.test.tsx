@@ -470,6 +470,103 @@ describe("AiPlannerFvaTab — run selection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// U7.2 — failed / 0-rec runs must not dead-end into blank detail panels
+// ---------------------------------------------------------------------------
+
+describe("AiPlannerFvaTab — failed & zero-recommendation runs (U7.2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("surfaces the error_message inline in the failed run row", async () => {
+    const { listFvaBacktestRuns } = await import("@/api/queries");
+    (listFvaBacktestRuns as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      runs: [
+        makeRun({
+          run_id: "id-failed",
+          status: "failed",
+          n_recommendations: null,
+          n_dfus_sampled: null,
+          error_message: "ollama provider unreachable: connection refused",
+        }),
+      ],
+      count: 1,
+    });
+    const { default: AiPlannerFvaTab } = await import("@/tabs/AiPlannerFvaTab");
+    render(
+      <TestQueryWrapper>
+        <AiPlannerFvaTab />
+      </TestQueryWrapper>,
+    );
+    // The failure reason (already returned by the API) is shown in the row.
+    expect(
+      await screen.findByText(/ollama provider unreachable: connection refused/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an explicit error state in the detail column when a failed run is selected", async () => {
+    const { listFvaBacktestRuns } = await import("@/api/queries");
+    (listFvaBacktestRuns as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      runs: [
+        makeRun({
+          run_id: "id-failed",
+          status: "failed",
+          n_recommendations: null,
+          error_message: "model timed out after 600s",
+        }),
+      ],
+      count: 1,
+    });
+    const { default: AiPlannerFvaTab } = await import("@/tabs/AiPlannerFvaTab");
+    render(
+      <TestQueryWrapper>
+        <AiPlannerFvaTab />
+      </TestQueryWrapper>,
+    );
+    const user = userEvent.setup();
+    const statusCell = await screen.findByText("failed");
+    await user.click(statusCell);
+
+    // The right column explains the failure instead of three blank "No data yet." cards.
+    expect(await screen.findByText(/This run failed/i)).toBeInTheDocument();
+    // The error message shows in the detail column (and also inline in the row).
+    expect(screen.getAllByText(/model timed out after 600s/i).length).toBeGreaterThanOrEqual(1);
+    // No misleading KPI/empty panels for a failed run.
+    expect(screen.queryByText("FVA by Month (Walk-Forward)")).not.toBeInTheDocument();
+  });
+
+  it("shows a single 'no recommendations' empty state for a succeeded 0-rec run", async () => {
+    const { listFvaBacktestRuns } = await import("@/api/queries");
+    (listFvaBacktestRuns as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      runs: [
+        makeRun({
+          run_id: "id-zero",
+          status: "succeeded",
+          n_recommendations: 0,
+          n_dfus_sampled: 50,
+        }),
+      ],
+      count: 1,
+    });
+    const { default: AiPlannerFvaTab } = await import("@/tabs/AiPlannerFvaTab");
+    render(
+      <TestQueryWrapper>
+        <AiPlannerFvaTab />
+      </TestQueryWrapper>,
+    );
+    const user = userEvent.setup();
+    const statusCell = await screen.findByText("succeeded");
+    await user.click(statusCell);
+
+    expect(
+      await screen.findByText(/No recommendations were generated for this run/i),
+    ).toBeInTheDocument();
+    // The blank KPI/table panels are suppressed for a 0-rec run.
+    expect(screen.queryByText("FVA by Month (Walk-Forward)")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Status colour coding in RunsListPanel
 // ---------------------------------------------------------------------------
 

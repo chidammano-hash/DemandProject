@@ -58,7 +58,37 @@ async def test_fva_waterfall():
     assert wf["ceiling"]["accuracy_pct"] == 85.1
     assert len(wf["models"]) == 4  # external, champion, ceiling, seasonal_naive
     executed_sql = cursor.execute.call_args_list[0].args[0]
-    assert "current_date - (%s * interval '1 month')" in executed_sql
+    assert "%s::date - (%s * interval '1 month')" in executed_sql
+    assert "current_date" not in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_fva_waterfall_windows_on_planning_date_not_wallclock():
+    """F9.1: the waterfall horizon must anchor to the planning date, NOT the
+    DB wall-clock ``current_date``. The demo forecast horizon ends ~2026-02
+    while the system clock is months ahead, so a ``current_date``-anchored
+    3-month window matches zero rows and blanks the ladder. The bound planning
+    date keeps the window aligned with the data.
+    """
+    rows = [("external", 71.4, 500)]
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    cursor.fetchone.return_value = (64.2, 500)
+    planning = datetime.date(2026, 4, 2)
+    with patch("api.core._get_pool", return_value=pool), patch(
+        "api.routers.forecasting.fva.get_planning_date", return_value=planning
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/fva/waterfall", params={"months": 3})
+    assert resp.status_code == 200
+    executed_sql = cursor.execute.call_args_list[0].args[0]
+    # No wall-clock anchor.
+    assert "current_date" not in executed_sql
+    # The planning date is bound as a parameter, not interpolated.
+    params = cursor.execute.call_args_list[0].args[1]
+    assert planning in params
+    assert 3 in params
 
 
 @pytest.mark.asyncio
@@ -96,7 +126,34 @@ async def test_fva_waterfall_custom_months():
     assert resp.status_code == 200
     assert resp.json()["months"] == 6
     executed_sql = cursor.execute.call_args_list[0].args[0]
-    assert "current_date - (%s * interval '1 month')" in executed_sql
+    assert "%s::date - (%s * interval '1 month')" in executed_sql
+    assert "current_date" not in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_fva_waterfall_ai_adjusted_promoted():
+    """ai_adjusted promotion (F2.4): a 3-column ai_fva row promotes without IndexError.
+
+    The waterfall endpoint runs the seasonal-naive query (2 cols) then the
+    ai_fva query (3 cols: run_id, ai_wape_pct, n_dfus) on the same cursor.
+    A short row must never raise IndexError; a full 3-col row must promote.
+    """
+    rows = [("external", 72.5, 1000), ("champion", 78.3, 1000)]
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    # 1st fetchone: naive row (2-tuple). 2nd fetchone: ai_fva row (3-tuple).
+    cursor.fetchone.side_effect = [(60.2, 1000), ("run-abc", 30.0, 800)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/fva/waterfall")
+    assert resp.status_code == 200
+    stages = resp.json()["waterfall"]["stages"]
+    ai_stage = next(s for s in stages if s["stage_id"] == "ai_adjusted")
+    assert ai_stage["state"] == "actual"
+    assert ai_stage["accuracy_pct"] == 70.0  # 100 - 30.0 WAPE
+    assert ai_stage["n_rows"] == 800
+    assert ai_stage["ai_fva_run_id"] == "run-abc"
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +225,8 @@ async def test_fva_roi_summary():
     assert data["total_estimated_impact"] == 50000.0
     assert data["total_actual_impact"] == 20000.0
     executed_sql = cursor.execute.call_args_list[0].args[0]
-    assert "current_date - (%s * interval '1 month')" in executed_sql
+    assert "%s::date - (%s * interval '1 month')" in executed_sql
+    assert "current_date" not in executed_sql
 
 
 @pytest.mark.asyncio

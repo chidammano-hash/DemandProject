@@ -7,7 +7,7 @@
  * detail panels (headline KPIs, FVA by recommendation, FVA by month,
  * top-DFU drill-down). Printable HTML report opens in a new tab.
  */
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,7 @@ import {
 import { KpiCard } from "@/components/KpiCard";
 import {
   type Provider,
+  type RunMetadata,
   type StartRunRequest,
   aiFvaBacktestKeys,
   getFvaBacktestByMonth,
@@ -220,7 +221,7 @@ function RunsListPanel({
   onSelect,
 }: {
   selectedRunId: string | null;
-  onSelect: (runId: string) => void;
+  onSelect: (run: RunMetadata) => void;
 }) {
   const { data, isLoading, error } = useQuery({
     queryKey: aiFvaBacktestKeys.list(),
@@ -259,32 +260,46 @@ function RunsListPanel({
             </TableHeader>
             <TableBody>
               {data.runs.map((r) => (
-                <TableRow
-                  key={r.run_id}
-                  data-state={selectedRunId === r.run_id ? "selected" : undefined}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => onSelect(r.run_id)}
-                >
-                  <TableCell className="font-mono text-xs">
-                    <span
-                      className={
-                        r.status === "succeeded"
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : r.status === "running"
-                            ? "text-blue-600 dark:text-blue-400"
-                            : r.status === "failed"
-                              ? "text-rose-600 dark:text-rose-400"
-                              : "text-muted-foreground"
-                      }
-                    >
-                      {r.status}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-xs">{r.as_of_date}</TableCell>
-                  <TableCell className="text-xs">{r.provider}</TableCell>
-                  <TableCell className="text-xs">{fmtNum(r.n_dfus_sampled)}</TableCell>
-                  <TableCell className="text-xs">{fmtNum(r.n_recommendations)}</TableCell>
-                </TableRow>
+                <Fragment key={r.run_id}>
+                  <TableRow
+                    data-state={selectedRunId === r.run_id ? "selected" : undefined}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => onSelect(r)}
+                  >
+                    <TableCell className="font-mono text-xs">
+                      <span
+                        className={
+                          r.status === "succeeded"
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : r.status === "running"
+                              ? "text-blue-600 dark:text-blue-400"
+                              : r.status === "failed"
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-muted-foreground"
+                        }
+                      >
+                        {r.status}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-xs">{r.as_of_date}</TableCell>
+                    <TableCell className="text-xs">{r.provider}</TableCell>
+                    <TableCell className="text-xs">{fmtNum(r.n_dfus_sampled)}</TableCell>
+                    <TableCell className="text-xs">{fmtNum(r.n_recommendations)}</TableCell>
+                  </TableRow>
+                  {/* Surface the failure reason inline (U7.2) — the API already
+                      returns error_message; previously it was fetched and dropped. */}
+                  {r.status === "failed" && r.error_message && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell
+                        colSpan={5}
+                        className="pt-0 text-xs text-rose-600 dark:text-rose-400"
+                        title={r.error_message}
+                      >
+                        {r.error_message}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -472,11 +487,19 @@ function ByMonthPanel({ runId }: { runId: string }) {
 // ---------------------------------------------------------------------------
 
 export default function AiPlannerFvaTab() {
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<RunMetadata | null>(null);
+  const selectedRunId = selectedRun?.run_id ?? null;
 
   const reportUrl = selectedRunId
     ? `/ai-planner/fva-backtest/runs/${selectedRunId}/report.html`
     : null;
+
+  // Failed and succeeded-but-0-recommendation runs have no FVA detail to show;
+  // render an explicit explanation instead of three blank "No data yet." cards
+  // that read as a dead end (U7.2).
+  const isFailed = selectedRun?.status === "failed";
+  const isZeroRec =
+    selectedRun?.status === "succeeded" && (selectedRun?.n_recommendations ?? 0) === 0;
 
   return (
     <div className="space-y-4">
@@ -502,7 +525,7 @@ export default function AiPlannerFvaTab() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1">
-          <RunsListPanel selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
+          <RunsListPanel selectedRunId={selectedRunId} onSelect={setSelectedRun} />
         </div>
 
         <div className="lg:col-span-2 space-y-4">
@@ -513,7 +536,29 @@ export default function AiPlannerFvaTab() {
               </CardContent>
             </Card>
           )}
-          {selectedRunId && (
+          {selectedRunId && isFailed && (
+            <Card>
+              <CardContent className="py-8 text-center space-y-2">
+                <p className="font-medium text-rose-600 dark:text-rose-400">This run failed</p>
+                <p className="text-sm text-muted-foreground">
+                  {selectedRun?.error_message ?? "No error message was recorded for this run."}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          {selectedRunId && !isFailed && isZeroRec && (
+            <Card>
+              <CardContent className="py-8 text-center space-y-2">
+                <p className="font-medium">No recommendations were generated for this run</p>
+                <p className="text-sm text-muted-foreground">
+                  The backtest completed but the AI Planner produced 0 recommendations,
+                  so there is no forecast value-add to compare. Try a larger DFU sample
+                  or a different window.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          {selectedRunId && !isFailed && !isZeroRec && (
             <>
               <SummaryKpis runId={selectedRunId} />
               <ByMonthPanel runId={selectedRunId} />

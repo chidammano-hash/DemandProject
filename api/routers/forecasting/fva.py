@@ -5,6 +5,7 @@ import psycopg
 from fastapi import APIRouter, Query
 
 from api.core import get_conn
+from common.core.planning_date import get_planning_date
 
 router = APIRouter(prefix="/fva", tags=["fva"])
 
@@ -47,13 +48,21 @@ async def fva_waterfall(
     """FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages."""
     # Shared DFU-month filter: execution-lag rows within the requested horizon.
     # See docs/specs/01-foundation/06-execution-lag.md for the canonical pattern.
+    # F9.1: anchor the window to the planning date, NOT the DB wall-clock
+    # ``current_date`` — the demo forecast horizon trails the system clock, so a
+    # ``current_date``-anchored 3-month window matches zero rows and blanks the
+    # ladder. The planning date is bound as a parameter (``%s::date``), in line
+    # with sibling forecasting routers (production_forecast.py, consensus_plan.py).
+    planning_dt = get_planning_date()
     dfu_filter = (
         "FROM fact_external_forecast_monthly f "
         "JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc "
-        "WHERE f.startdate >= current_date - (%s * interval '1 month') "
+        "WHERE f.startdate >= %s::date - (%s * interval '1 month') "
         "AND f.lag = COALESCE(d.execution_lag, 0) "
         "AND f.tothist_dmd IS NOT NULL"
     )
+    # Each query embedding ``dfu_filter`` must supply (planning_dt, months) in order.
+    dfu_params = (planning_dt, months)
     with get_conn() as conn, conn.cursor() as cur:
         # Accuracy per model_id at each DFU's execution lag (planning-relevant horizon).
         cur.execute(
@@ -63,7 +72,7 @@ async def fva_waterfall(
                 {dfu_filter}
                 GROUP BY f.model_id
                 ORDER BY accuracy_pct DESC NULLS LAST""",
-            (months,),
+            dfu_params,
         )
         rows = cur.fetchall()
 
@@ -86,7 +95,7 @@ async def fva_waterfall(
                 AND s.loc = m.loc
                 AND s.type = 1
                 AND s.startdate = m.startdate - interval '12 months'""",
-            (months,),
+            dfu_params,
         )
         naive_row = cur.fetchone()
 
@@ -122,7 +131,7 @@ async def fva_waterfall(
             # Tables may not exist yet on a fresh DB. Silently fall back.
             conn.rollback()
             ai_row = None
-        if ai_row and ai_row[1] is not None:
+        if ai_row and len(ai_row) >= 3 and ai_row[1] is not None:
             ai_run_id = ai_row[0]
             models["ai_adjusted"] = {
                 "model_id": "ai_adjusted",
@@ -251,8 +260,8 @@ async def roi_summary(
                  coalesce(sum(financial_impact_estimate), 0) AS total_estimated_impact,
                  coalesce(sum(actual_financial_impact) FILTER (WHERE status = 'measured'), 0) AS total_actual_impact
                FROM fact_intervention_metrics
-               WHERE created_at >= current_date - (%s * interval '1 month')""",
-            (months,),
+               WHERE created_at >= %s::date - (%s * interval '1 month')""",
+            (get_planning_date(), months),
         )
         row = cur.fetchone()
 
