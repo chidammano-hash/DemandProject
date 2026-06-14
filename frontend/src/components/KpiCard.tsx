@@ -9,8 +9,15 @@ type KpiCardProps = {
   borderClass?: string;
   /** Override classes on the outer wrapper div */
   className?: string;
-  /** direction drives color; unit defaults to "%" if omitted; period labels the comparison window */
-  trend?: { delta: number; direction: "up" | "down" | "flat"; unit?: string; period?: string };
+  /**
+   * `delta` is ALWAYS displayed verbatim (its sign is the true movement).
+   * Color: when `goodDirection` is given, the card is green when the delta moves
+   * in the good direction and red when it moves the opposite way (U6.1 — decouples
+   * the displayed sign from the good/bad color, so a lower-is-better WAPE can show
+   * "-1.9pp" in green). When `goodDirection` is omitted, `direction` drives color
+   * for backward compatibility. `unit` defaults to "%"; `period` labels the window.
+   */
+  trend?: { delta: number; direction: "up" | "down" | "flat"; goodDirection?: "up" | "down"; unit?: string; period?: string };
   sparkline?: number[];
   severity?: "best" | "warning" | "neutral";
   icon?: LucideIcon;
@@ -78,12 +85,26 @@ function Sparkline({ data }: { data: number[] }) {
 export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon, tooltip, target, size = "md" }: KpiCardProps) {
   const cfg = SIZE_CONFIG[size];
 
+  // Color by *outcome* (good vs bad) when goodDirection is supplied; otherwise
+  // fall back to raw direction. The icon always reflects the true delta sign.
+  const trendIsGood = trend && trend.goodDirection
+    ? trend.delta === 0
+      ? null
+      : (trend.delta > 0 ? "up" : "down") === trend.goodDirection
+    : null;
+
   const trendColor = trend
-    ? trend.direction === "up"
-      ? "text-[var(--kpi-best)]"
-      : trend.direction === "down"
-        ? "text-[var(--kpi-warning)]"
-        : "text-muted-foreground"
+    ? trend.goodDirection
+      ? trendIsGood === null
+        ? "text-muted-foreground"
+        : trendIsGood
+          ? "text-[var(--kpi-best)]"
+          : "text-[var(--kpi-warning)]"
+      : trend.direction === "up"
+        ? "text-[var(--kpi-best)]"
+        : trend.direction === "down"
+          ? "text-[var(--kpi-warning)]"
+          : "text-muted-foreground"
     : "";
 
   const TrendIcon = trend

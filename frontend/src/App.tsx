@@ -40,9 +40,7 @@ const ItemAnalysisTab = lazy(() => import("./tabs/ItemAnalysisTab").then((m) => 
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
 const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
-const ControlTowerTab = lazy(() => import("./tabs/ControlTowerTab"));
 const JobsTab = lazy(() => import("./tabs/JobsTab"));
-const AIPlannerTab = lazy(() => import("./tabs/AIPlannerTab"));
 const StoryboardTab = lazy(() => import("./tabs/StoryboardTab"));
 const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 const SopTab = lazy(() => import("./tabs/SopTab"));
@@ -246,22 +244,12 @@ export default function App() {
                     <InvPlanningTab />
                   </TabPanel>
                 )}
-                {activeTab === "controlTower" && (
-                  <TabPanel tabKey="controlTower" resetKeys={[activeTab]}>
-                    <ControlTowerTab onNavigate={handleTabSwitch} />
-                  </TabPanel>
-                )}
                 {activeTab === "jobs" && (
                   <TabPanel tabKey="jobs" resetKeys={[activeTab]}>
                     <JobsTab onNavigateToScenario={handleNavigateToScenario} />
                   </TabPanel>
                 )}
-                {activeTab === "aiPlanner" && (
-                  <TabPanel tabKey="aiPlanner" resetKeys={[activeTab]}>
-                    <AIPlannerTab />
-                  </TabPanel>
-                )}
-                {(activeTab === "exceptions" || activeTab === "storyboard") && (
+                {activeTab === "exceptions" && (
                   <TabPanel tabKey="exceptions" resetKeys={[activeTab]}>
                     <ExceptionsTab />
                   </TabPanel>

@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   getInitialDomain,
   getInitialTab,
+  resolveTab,
   updateUrlState,
   getScenarioJobParam,
   setScenarioJobParam,
   VALID_TABS,
   DIMENSION_DOMAINS,
 } from "@/hooks/useUrlState";
+import { NAV_ITEMS } from "@/components/AppSidebar";
 
 describe("useUrlState", () => {
   beforeEach(() => {
@@ -59,6 +61,39 @@ describe("useUrlState", () => {
       window.history.replaceState(null, "", "/?tab=aggregateAnalysis");
       expect(getInitialTab()).toBe("aggregateAnalysis");
     });
+
+    it("accepts demandHistory tab from URL (U2.2 deep-link / refresh)", () => {
+      window.history.replaceState(null, "", "/?tab=demandHistory");
+      expect(getInitialTab()).toBe("demandHistory");
+    });
+  });
+
+  // U5.1 — browser Back/Forward (popstate) must apply TAB_REDIRECTS the same
+  // way getInitialTab does, otherwise navigating to a retired tab key resolves
+  // to a dead, still-bundled tab branch (non-deterministic for the same URL).
+  describe("resolveTab", () => {
+    it("redirects retired tab keys to their consolidated tab", () => {
+      expect(resolveTab("controlTower")).toBe("commandCenter");
+      expect(resolveTab("aiPlanner")).toBe("commandCenter");
+      expect(resolveTab("storyboard")).toBe("commandCenter");
+    });
+
+    it("passes through valid non-redirected tabs unchanged", () => {
+      expect(resolveTab("aggregateAnalysis")).toBe("aggregateAnalysis");
+      expect(resolveTab("customerAnalytics")).toBe("customerAnalytics");
+    });
+
+    it("returns null for invalid tabs", () => {
+      expect(resolveTab("bogus")).toBeNull();
+      expect(resolveTab(null)).toBeNull();
+    });
+
+    it("resolves controlTower via popstate to the same tab as a fresh load", () => {
+      window.history.replaceState(null, "", "/?tab=controlTower");
+      const initial = getInitialTab();
+      // popstate must reach the identical resolved tab, not the raw URL value
+      expect(resolveTab("controlTower")).toBe(initial);
+    });
   });
 
   describe("updateUrlState", () => {
@@ -103,8 +138,8 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 26 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, lgbmTuning, sqlRunner, and skuFeatures", () => {
-      expect(VALID_TABS).toHaveLength(26);
+    it("VALID_TABS has 29 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, lgbmTuning, sqlRunner, skuFeatures, and demandHistory", () => {
+      expect(VALID_TABS).toHaveLength(29);
       expect(VALID_TABS).toContain("commandCenter");
       expect(VALID_TABS).toContain("aggregateAnalysis");
       expect(VALID_TABS).toContain("overview");
@@ -117,10 +152,21 @@ describe("useUrlState", () => {
       expect(VALID_TABS).toContain("sqlRunner");
       expect(VALID_TABS).toContain("customerAnalytics");
       expect(VALID_TABS).toContain("skuFeatures");
+      expect(VALID_TABS).toContain("demandHistory");
     });
 
     it("DIMENSION_DOMAINS has 9 entries", () => {
       expect(DIMENSION_DOMAINS).toHaveLength(9);
+    });
+
+    // U2.9 — guard against the U2.2 class of bug: every clickable sidebar tab
+    // must be deep-linkable. A sidebar key missing from VALID_TABS silently
+    // bounces a refresh/bookmark back to Command Center.
+    it("every NAV_ITEMS sidebar key is in VALID_TABS (deep-linkable)", () => {
+      const missing = NAV_ITEMS.map((i) => i.key).filter(
+        (key) => !VALID_TABS.includes(key),
+      );
+      expect(missing).toEqual([]);
     });
   });
 });

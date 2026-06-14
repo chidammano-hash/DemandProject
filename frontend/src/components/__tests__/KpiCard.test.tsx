@@ -283,6 +283,55 @@ describe("KpiCard", () => {
     expect(svg).toBeNull();
   });
 
+  // U6.1 — the displayed delta sign must always reflect the TRUE movement,
+  // decoupled from the good/bad color. For a lower-is-better metric (WAPE),
+  // a -1.9 delta is an improvement: it must DISPLAY "-1.9" but be colored GREEN.
+  describe("U6.1 goodDirection decouples display-sign from color", () => {
+    it("displays the raw (true) delta sign — negative stays negative", () => {
+      render(
+        <KpiCard label="WAPE %" value="26.1%" trend={{ delta: -1.9, direction: "down", goodDirection: "down", unit: "pp" }} />
+      );
+      // The true movement (-1.9) is shown, NOT a flipped/positive value.
+      expect(screen.getByText("-1.9pp vs prior")).toBeInTheDocument();
+      expect(screen.queryByText("+1.9pp vs prior")).toBeNull();
+    });
+
+    it("colors an improvement GREEN even when the delta is negative (lower-is-better)", () => {
+      const { container } = render(
+        <KpiCard label="WAPE %" value="26.1%" trend={{ delta: -1.9, direction: "down", goodDirection: "down", unit: "pp" }} />
+      );
+      const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
+      expect(trendRow?.className).toContain("text-[var(--kpi-best)]");
+      expect(trendRow?.className).not.toContain("text-[var(--kpi-warning)]");
+    });
+
+    it("colors a regression RED when a lower-is-better metric rises (positive delta)", () => {
+      const { container } = render(
+        <KpiCard label="WAPE %" value="30.0%" trend={{ delta: 2.0, direction: "up", goodDirection: "down", unit: "pp" }} />
+      );
+      expect(screen.getByText("+2.0pp vs prior")).toBeInTheDocument();
+      const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
+      expect(trendRow?.className).toContain("text-[var(--kpi-warning)]");
+    });
+
+    it("colors a higher-is-better metric GREEN on a positive delta", () => {
+      const { container } = render(
+        <KpiCard label="Accuracy %" value="74%" trend={{ delta: 1.9, direction: "up", goodDirection: "up", unit: "pp" }} />
+      );
+      expect(screen.getByText("+1.9pp vs prior")).toBeInTheDocument();
+      const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
+      expect(trendRow?.className).toContain("text-[var(--kpi-best)]");
+    });
+
+    it("renders a neutral color for a zero delta regardless of goodDirection", () => {
+      const { container } = render(
+        <KpiCard label="WAPE %" value="26.1%" trend={{ delta: 0, direction: "flat", goodDirection: "down", unit: "pp" }} />
+      );
+      const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
+      expect(trendRow?.className).toContain("text-muted-foreground");
+    });
+  });
+
   it("renders transition-all class on value for animated value changes", () => {
     const { container } = render(
       <KpiCard label="Test" value="42" />

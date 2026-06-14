@@ -18,14 +18,15 @@ import {
   fetchLtProfile,
   correctionKeys,
   fetchCorrectionsByItem,
+  fetchSamplePair,
+  fetchDomainSuggest,
+  fetchSkuAnalysis,
 } from "@/api/queries";
 import { fetchProductionForecast, fetchStagingForecasts } from "@/api/queries/production-forecast";
 import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
 import type {
   SkuAnalysisKpis,
   SkuAnalysisPayload,
-  SamplePairPayload,
-  SuggestPayload,
   InventoryKpis,
   InventoryTrendPoint,
 } from "@/types";
@@ -79,6 +80,7 @@ export function ItemAnalysisTab() {
   const [skuTimeEnd, setSkuTimeEnd] = useState("");
   const [skuDefaultStart, setSkuDefaultStart] = useState("");
   const [skuLoading, setSkuLoading] = useState(false);
+  const [skuError, setSkuError] = useState<string | null>(null);
   const [skuAutoSampled, setSkuAutoSampled] = useState(false);
   const [skuItemSuggestions, setSkuItemSuggestions] = useState<string[]>([]);
   const [skuLocationSuggestions, setSkuLocationSuggestions] = useState<string[]>([]);
@@ -137,14 +139,12 @@ export function ItemAnalysisTab() {
     let cancelled = false;
     async function loadSample() {
       try {
-        const res = await fetch("/domains/sales/sample-pair");
-        if (!res.ok) throw new Error("HTTP error");
-        const payload = (await res.json()) as SamplePairPayload;
+        const payload = await fetchSamplePair("sales");
         if (!cancelled) {
           if (payload.item) setSkuItem(String(payload.item));
           if (payload.location) setSkuLocation(String(payload.location));
         }
-      } catch { /* non-blocking */ } finally {
+      } catch { /* non-blocking: leave inputs empty for manual entry */ } finally {
         if (!cancelled) setSkuAutoSampled(true);
       }
     }
@@ -158,14 +158,17 @@ export function ItemAnalysisTab() {
     if (!anyDemandPanelOn) return;
     if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) return;
     setSkuData(null);
+    setSkuError(null);
     let cancelled = false;
     async function loadAnalysis() {
       setSkuLoading(true);
       try {
-        const params = new URLSearchParams({ mode: "item_location", item: debouncedSkuItem.trim(), location: debouncedSkuLocation.trim(), points: String(skuPoints) });
-        const res = await fetch(`/sku/analysis?${params}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const payload = (await res.json()) as SkuAnalysisPayload;
+        const payload = await fetchSkuAnalysis({
+          mode: "item_location",
+          item: debouncedSkuItem.trim(),
+          location: debouncedSkuLocation.trim(),
+          points: skuPoints,
+        });
         if (!cancelled) {
           setSkuData(payload);
           setSelectedModel(null);
@@ -177,7 +180,10 @@ export function ItemAnalysisTab() {
           setSkuTimeStart(smartStart);
           setSkuTimeEnd("");
         }
-      } catch { if (!cancelled) setSkuData(null); }
+      } catch (err) {
+        // U3.1: surface the sanitized error instead of silently leaving a blank chart.
+        if (!cancelled) { setSkuData(null); setSkuError(err instanceof Error ? err.message : "Failed to load analysis"); }
+      }
       finally { if (!cancelled) setSkuLoading(false); }
     }
     loadAnalysis();
@@ -211,12 +217,9 @@ export function ItemAnalysisTab() {
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ field: "item_id", q: skuItem.trim(), limit: "12" });
-        if (debouncedSkuLocation.trim()) params.set("filters", JSON.stringify({ loc: `=${debouncedSkuLocation.trim()}` }));
-        const res = await fetch(`/domains/sales/suggest?${params}`);
-        if (!res.ok) throw new Error("HTTP error");
-        const payload = (await res.json()) as SuggestPayload;
-        if (!cancelled) setSkuItemSuggestions(payload.values || []);
+        const filters = debouncedSkuLocation.trim() ? { loc: `=${debouncedSkuLocation.trim()}` } : undefined;
+        const values = await fetchDomainSuggest("sales", "item_id", skuItem.trim(), filters, 12);
+        if (!cancelled) setSkuItemSuggestions(values);
       } catch { if (!cancelled) setSkuItemSuggestions([]); }
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
@@ -228,12 +231,9 @@ export function ItemAnalysisTab() {
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ field: "loc", q: skuLocation.trim(), limit: "12" });
-        if (debouncedSkuItem.trim()) params.set("filters", JSON.stringify({ item_id: `=${debouncedSkuItem.trim()}` }));
-        const res = await fetch(`/domains/sales/suggest?${params}`);
-        if (!res.ok) throw new Error("HTTP error");
-        const payload = (await res.json()) as SuggestPayload;
-        if (!cancelled) setSkuLocationSuggestions(payload.values || []);
+        const filters = debouncedSkuItem.trim() ? { item_id: `=${debouncedSkuItem.trim()}` } : undefined;
+        const values = await fetchDomainSuggest("sales", "loc", skuLocation.trim(), filters, 12);
+        if (!cancelled) setSkuLocationSuggestions(values);
       } catch { if (!cancelled) setSkuLocationSuggestions([]); }
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
@@ -546,6 +546,11 @@ export function ItemAnalysisTab() {
             ) : skuLoading ? (
               <div className="flex h-[320px] items-center justify-center">
                 <LoadingElement message="Fetching analysis..." />
+              </div>
+            ) : skuError ? (
+              <div className="flex h-[320px] flex-col items-center justify-center gap-1 text-sm">
+                <span className="font-medium text-red-600">Could not load analysis</span>
+                <span className="text-muted-foreground">{skuError}</span>
               </div>
             ) : (
               <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">

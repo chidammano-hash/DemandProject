@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-const VALID_TABS = ["commandCenter", "aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "skuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "aiPlannerFva", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerAnalytics", "fva", "dataQuality", "lgbmTuning", "sqlRunner", "skuFeatures", "integration"];
+const VALID_TABS = ["commandCenter", "aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "skuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "aiPlannerFva", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerAnalytics", "fva", "dataQuality", "lgbmTuning", "sqlRunner", "skuFeatures", "integration", "demandHistory"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "sku", "sales", "forecast", "customer_demand", "customer_features"];
 
@@ -19,11 +19,24 @@ const TAB_REDIRECTS: Record<string, string> = {
   storyboard: "commandCenter",
 };
 
+/**
+ * Resolve a raw URL `tab` value to the tab that should actually render,
+ * applying TAB_REDIRECTS (retired tab keys → their consolidated tab). Returns
+ * null when the value is missing or not a known tab so callers can fall back.
+ * Shared by getInitialTab (fresh load) and the popstate handler (Back/Forward)
+ * so both paths land on the same tab for the same URL (U5.1).
+ */
+export function resolveTab(urlTab: string | null): string | null {
+  if (!urlTab) return null;
+  if (TAB_REDIRECTS[urlTab]) return TAB_REDIRECTS[urlTab];
+  if (VALID_TABS.includes(urlTab)) return urlTab;
+  return null;
+}
+
 export function getInitialTab(): string {
   const params = new URLSearchParams(window.location.search);
-  const urlTab = params.get("tab");
-  if (urlTab && TAB_REDIRECTS[urlTab]) return TAB_REDIRECTS[urlTab];
-  if (urlTab && VALID_TABS.includes(urlTab)) return urlTab;
+  const resolved = resolveTab(params.get("tab"));
+  if (resolved) return resolved;
   const d = getInitialDomain();
   if (ANALYTICS_TAB_DOMAINS.has(d)) return d;
   return DIMENSION_DOMAINS.includes(d) ? "commandCenter" : d;
@@ -43,9 +56,11 @@ export function usePopstateSync(
   useEffect(() => {
     const handler = () => {
       const params = new URLSearchParams(window.location.search);
-      const urlTab = params.get("tab");
+      // Apply TAB_REDIRECTS so Back/Forward resolves retired tab keys the same
+      // way a fresh load does — never set a retired tab key directly (U5.1).
+      const resolved = resolveTab(params.get("tab"));
       const urlDomain = params.get("domain");
-      if (urlTab && VALID_TABS.includes(urlTab)) setActiveTab(urlTab);
+      if (resolved) setActiveTab(resolved);
       if (urlDomain) setDomain(urlDomain.toLowerCase());
     };
     window.addEventListener("popstate", handler);

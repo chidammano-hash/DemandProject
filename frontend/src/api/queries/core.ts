@@ -105,7 +105,22 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   const res = await fetch(url, init);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status}`);
+    // Parse FastAPI `{detail}` so formatApiError can sanitize a clean message,
+    // and attach the HTTP status so the global handler maps it to friendly copy
+    // (404 → "That record could not be found.") instead of leaking the raw body.
+    let detail: unknown = text;
+    try {
+      detail = JSON.parse(text);
+    } catch {
+      /* non-JSON body — keep the raw text */
+    }
+    const message =
+      detail && typeof detail === "object" && "detail" in detail
+        ? String((detail as { detail: unknown }).detail)
+        : text || `HTTP ${res.status}`;
+    const err = new Error(message);
+    Object.assign(err, { status: res.status, detail });
+    throw err;
   }
   return res.json() as Promise<T>;
 }

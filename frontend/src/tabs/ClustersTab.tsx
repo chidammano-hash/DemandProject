@@ -28,8 +28,13 @@ type ClustersTabProps = {
 };
 
 export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps) {
-  // Ensure sku domain
-  if (domain !== "sku") onDomainChange("sku");
+  // Ensure the active domain is "sku". This must run in an effect, not the
+  // render body — calling onDomainChange (a parent/App state setter) during
+  // render triggers React's "Cannot update a component while rendering a
+  // different component" warning (F1.7).
+  useEffect(() => {
+    if (domain !== "sku") onDomainChange("sku");
+  }, [domain, onDomainChange]);
 
   // What-If state
   const [showWhatIf, setShowWhatIf] = useState(false);

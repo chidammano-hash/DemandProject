@@ -12,6 +12,8 @@ import {
   fetchSopCycles,
   fetchSopGaps,
   fetchApprovedPlan,
+  advanceSopCycle,
+  approveSopCycle,
   STALE_EVO,
   type SopCycle,
   type SopGap,
@@ -112,15 +114,16 @@ export default function SopTab() {
   });
 
   const advanceMutation = useMutation({
-    mutationFn: async (cycle_id: string) => {
-      const res = await fetch(`/sop/cycles/${cycle_id}/advance`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ facilitated_by: facilitatedBy || "planner", notes: null }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
+    mutationFn: (cycle_id: string) =>
+      advanceSopCycle(cycle_id, { facilitated_by: facilitatedBy || "planner", notes: null }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: sopKeys.cycles({}) });
     },
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (cycle_id: string) =>
+      approveSopCycle(cycle_id, { approved_by: approvedBy, plan_version: planVersion }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: sopKeys.cycles({}) });
     },
@@ -283,15 +286,8 @@ export default function SopTab() {
                           />
                         </div>
                         <button
-                          disabled={!approvedBy || !planVersion}
-                          onClick={async () => {
-                            await fetch(`/sop/cycles/${selectedCycle.cycle_id}/approve`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ approved_by: approvedBy, plan_version: planVersion }),
-                            });
-                            queryClient.invalidateQueries({ queryKey: sopKeys.cycles({}) });
-                          }}
+                          disabled={!approvedBy || !planVersion || approveMutation.isPending}
+                          onClick={() => approveMutation.mutate(selectedCycle.cycle_id)}
                           className="px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium disabled:opacity-50"
                         >
                           Approve Plan
@@ -301,6 +297,9 @@ export default function SopTab() {
                   </div>
                   {advanceMutation.isError && (
                     <p className="text-xs text-red-600 mt-2">{String(advanceMutation.error)}</p>
+                  )}
+                  {approveMutation.isError && (
+                    <p className="text-xs text-red-600 mt-2">{String(approveMutation.error)}</p>
                   )}
                 </CardContent>
               </Card>
