@@ -37,7 +37,7 @@ export const fetchAuditLog = async (limit = 50, offset = 0) =>
 // ---------------------------------------------------------------------------
 // Data Quality (08-01)
 // ---------------------------------------------------------------------------
-export interface DQDomainScore { domain: string; score: number; passed: number; failed: number; warnings: number; total: number; }
+export interface DQDomainScore { domain: string; score: number; passed: number; failed: number; warnings: number; skipped: number; info_fails: number; total: number; }
 export interface DQCheck { check_id: number; check_name: string; check_type: string; domain: string; table_name: string; severity: string; enabled: boolean; last_status: string | null; last_value: number | null; last_run: string | null; }
 export interface DQHistoryEntry { check_id: number; check_name: string; check_type?: string; domain: string; table_name: string; severity: string; status: string; metric_value: number | null; details: Record<string, unknown> | string | null; run_ts: string | null; }
 export interface DQFixItem { id: number; fix_type: string; description: string; affected_rows: number; recommendation: string | null; status: string; }
@@ -120,14 +120,14 @@ export const fetchBatches = async (domain?: string, status?: string, limit = 50)
   if (domain) params.set("domain", domain);
   if (status) params.set("status", status);
   params.set("limit", String(limit));
-  return fetchJson(`/data-quality/lineage/batches?${params}`);
+  return fetchJson(`/data-quality/batches?${params}`);
 };
 
 export const fetchBatchDetail = async (batchId: number): Promise<LoadBatch> =>
-  fetchJson(`/data-quality/lineage/batches/${batchId}`);
+  fetchJson(`/data-quality/batches/${batchId}`);
 
 export const fetchRowLineage = async (domain: string, businessKey: string) =>
-  fetchJson(`/data-quality/lineage/row/${domain}/${encodeURIComponent(businessKey)}`);
+  fetchJson(`/data-quality/row/${domain}/${encodeURIComponent(businessKey)}`);
 
 export const fetchCorrections = async (domain?: string, fixType?: string, batchId?: number, limit = 50): Promise<{ corrections: DQCorrection[]; total: number }> => {
   const params = new URLSearchParams();
@@ -135,7 +135,7 @@ export const fetchCorrections = async (domain?: string, fixType?: string, batchI
   if (fixType) params.set("fix_type", fixType);
   if (batchId) params.set("batch_id", String(batchId));
   params.set("limit", String(limit));
-  return fetchJson(`/data-quality/lineage/corrections?${params}`);
+  return fetchJson(`/data-quality/corrections?${params}`);
 };
 
 export const fetchCorrectionsByItem = async (

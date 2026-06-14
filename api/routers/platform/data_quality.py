@@ -22,6 +22,9 @@ async def dq_dashboard():
                       count(*) FILTER (WHERE status = 'pass') AS passed,
                       count(*) FILTER (WHERE status = 'fail') AS failed,
                       count(*) FILTER (WHERE status = 'warn') AS warnings,
+                      count(*) FILTER (WHERE status = 'skip') AS skipped,
+                      count(*) FILTER (WHERE status = 'fail' AND severity = 'info')
+                        AS info_fails,
                       count(*) AS total
                FROM fact_dq_check_results
                WHERE run_ts >= now() - interval '24 hours'
@@ -32,15 +35,31 @@ async def dq_dashboard():
 
     domains = []
     for r in rows:
-        total = r[4] or 1
-        score = round(100.0 * (r[1] or 0) / total, 1)
+        passed = r[1] or 0
+        failed = r[2] or 0
+        warnings = r[3] or 0
+        skipped = r[4] or 0
+        info_fails = r[5] or 0
+        # Skipped checks (e.g. a check whose source table is absent) carry no
+        # signal, so they are excluded from the score denominator: a domain with
+        # only passing scored checks reads 100% even with skips present (F7.1).
+        # Info-severity fails are likewise informational notices, not breakage —
+        # they are excluded from the score denominator so an info-only failing
+        # domain reads 100% instead of cratering to 0% alarm-red, while the raw
+        # `failed` count stays visible (U8.3). Both are surfaced explicitly so
+        # the breakdown still reconciles with `total`.
+        scoring_fails = failed - info_fails
+        scored = passed + scoring_fails + warnings
+        score = round(100.0 * passed / scored, 1) if scored else 100.0
         domains.append({
             "domain": r[0],
             "score": score,
-            "passed": r[1] or 0,
-            "failed": r[2] or 0,
-            "warnings": r[3] or 0,
-            "total": r[4] or 0,
+            "passed": passed,
+            "failed": failed,
+            "warnings": warnings,
+            "skipped": skipped,
+            "info_fails": info_fails,
+            "total": r[6] or 0,
         })
 
     return {"domains": domains}
@@ -48,20 +67,36 @@ async def dq_dashboard():
 
 @router.get("/checks")
 async def dq_checks():
-    """List all configured checks with last-run status."""
+    """List all checks with last-run status.
+
+    Existence is driven by ``fact_dq_check_results`` (the table the run actually
+    writes), not by ``dim_dq_check_catalog`` — which may be empty even after a
+    full DQ battery. The catalog dimension, when populated, is LEFT-JOINed in to
+    enrich each row with its configured ``check_type``; absent that, the type is
+    sourced from the latest result. This keeps the Check Catalog populated and
+    "Last Run" honest whenever results exist (F4.2 / U4.1).
+    """
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT c.check_id, c.check_name, c.check_type, c.domain,
-                      c.table_name, c.severity, c.enabled,
-                      r.status, r.metric_value, r.run_ts
-               FROM dim_dq_check_catalog c
-               LEFT JOIN LATERAL (
-                 SELECT status, metric_value, run_ts
+            """SELECT r.check_id,
+                      r.check_name,
+                      COALESCE(c.check_type, r.severity) AS check_type,
+                      r.domain,
+                      r.table_name,
+                      r.severity,
+                      COALESCE(c.enabled, TRUE) AS enabled,
+                      r.status,
+                      r.metric_value,
+                      r.run_ts
+               FROM (
+                 SELECT DISTINCT ON (check_name)
+                        check_id, check_name, domain, table_name,
+                        severity, status, metric_value, run_ts
                  FROM fact_dq_check_results
-                 WHERE check_name = c.check_name
-                 ORDER BY run_ts DESC LIMIT 1
-               ) r ON TRUE
-               ORDER BY c.domain, c.check_name"""
+                 ORDER BY check_name, run_ts DESC
+               ) r
+               LEFT JOIN dim_dq_check_catalog c ON c.check_name = r.check_name
+               ORDER BY r.domain, r.check_name"""
         )
         rows = cur.fetchall()
 
@@ -70,7 +105,8 @@ async def dq_checks():
             {
                 "check_id": r[0], "check_name": r[1], "check_type": r[2],
                 "domain": r[3], "table_name": r[4], "severity": r[5],
-                "enabled": r[6], "last_status": r[7], "last_value": float(r[8]) if r[8] is not None else None,
+                "enabled": r[6], "last_status": r[7],
+                "last_value": float(r[8]) if r[8] is not None else None,
                 "last_run": r[9].isoformat() if r[9] else None,
             }
             for r in rows

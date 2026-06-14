@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  MinusCircle,
   Shield,
   Clock,
   GitBranch,
@@ -108,6 +109,7 @@ export default function DataQualityTab() {
   const totalPass = domains.reduce((s, d) => s + d.passed, 0);
   const totalFail = domains.reduce((s, d) => s + d.failed, 0);
   const totalWarn = domains.reduce((s, d) => s + d.warnings, 0);
+  const totalSkip = domains.reduce((s, d) => s + (d.skipped ?? 0), 0);
   const lastRun = useMemo(() => checkList.reduce<string | null>((latest, c) => {
     if (!c.last_run) return latest;
     if (!latest) return c.last_run;
@@ -149,7 +151,7 @@ export default function DataQualityTab() {
       {/* ================================================================== */}
       {/* SECTION 0: Summary KPI Bar                                         */}
       {/* ================================================================== */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-7">
         {/* Overall Health Score */}
         <div className="rounded-lg border border-border bg-card p-4 text-center">
           <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full border-4 ${scoreRingColor(overallScore)}`}>
@@ -188,6 +190,16 @@ export default function DataQualityTab() {
             <span className="text-2xl font-bold text-amber-500">{totalWarn}</span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">Warnings</p>
+        </div>
+        {/* Skipped — checks whose source table was absent at run time. Surfaced
+            so the tile counts reconcile with Total (passed+failed+warn+skip),
+            and excluded from the health score denominator (F7.1). */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <MinusCircle className="h-4 w-4 text-muted-foreground" />
+            <span className="text-2xl font-bold text-muted-foreground">{totalSkip}</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Skipped</p>
         </div>
         {/* Last Run */}
         <div className="rounded-lg border border-border bg-card p-4">
@@ -228,6 +240,22 @@ export default function DataQualityTab() {
                   <span className="text-green-600">{d.passed} pass</span>
                   <span className="text-red-600">{d.failed} fail</span>
                   <span className="text-amber-600">{d.warnings} warn</span>
+                  {(d.skipped ?? 0) > 0 && (
+                    <span
+                      className="text-muted-foreground"
+                      title="Checks skipped (source table absent); excluded from the score"
+                    >
+                      {d.skipped} skip
+                    </span>
+                  )}
+                  {(d.info_fails ?? 0) > 0 && (
+                    <span
+                      className="text-blue-600"
+                      title="Informational fails (severity 'info'); excluded from the score so they do not alarm-red the domain"
+                    >
+                      {d.info_fails} info
+                    </span>
+                  )}
                 </div>
               </button>
             );
@@ -238,10 +266,11 @@ export default function DataQualityTab() {
                 variant="no-data"
                 icon={Shield}
                 title="No data quality checks have been run yet"
-                description='Run the full DQ battery to populate domain health scores and issue catalogs.'
+                description="Run the full DQ battery to populate domain health scores and issue catalogs — no CLI needed."
+                onAction={() => { if (!runChecksMutation.isPending) runChecksMutation.mutate(undefined); }}
+                actionLabel="Run DQ checks now"
                 steps={[
-                  { label: "Run checks via API", command: 'curl -X POST http://localhost:8000/dq/run' },
-                  { label: "Or trigger manually", command: "uv run python scripts/dq_run_checks.py" },
+                  { label: "Or trigger from a shell", command: "uv run python scripts/populate_dq_checks.py" },
                 ]}
               />
             </div>

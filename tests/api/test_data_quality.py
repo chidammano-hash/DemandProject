@@ -23,9 +23,10 @@ _NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
 
 @pytest.mark.asyncio
 async def test_dq_dashboard_200():
+    # Row shape: (domain, passed, failed, warnings, skipped, info_fails, total)
     pool, conn, cursor = _make_pool(fetchall_return=[
-        ("sales", 8, 1, 1, 10),
-        ("forecast", 5, 3, 2, 10),
+        ("sales", 8, 1, 1, 0, 0, 10),
+        ("forecast", 5, 3, 2, 0, 0, 10),
     ])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -37,10 +38,82 @@ async def test_dq_dashboard_200():
     assert "domains" in data
     assert len(data["domains"]) == 2
     assert data["domains"][0]["domain"] == "sales"
-    assert data["domains"][0]["score"] == 80.0  # 8/10 * 100
+    # No skips -> score is passed / (passed+failed+warnings) = 8/10 = 80.
+    assert data["domains"][0]["score"] == 80.0
     assert data["domains"][0]["passed"] == 8
     assert data["domains"][0]["failed"] == 1
     assert data["domains"][0]["warnings"] == 1
+    assert data["domains"][0]["skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dq_dashboard_excludes_skipped_from_score_denominator():
+    """F7.1: a domain with all-passing scored checks reads 100% even when some
+    checks were skipped. Skipped checks are surfaced explicitly and dropped from
+    the score denominator so "10 pass / 0 fail / 0 warn" no longer reads 62.5%.
+    The breakdown must reconcile: passed + failed + warnings + skipped == total."""
+    # item: 10 pass / 0 fail / 0 warn / 6 skip / 0 info_fail / 16 total.
+    pool, conn, cursor = _make_pool(fetchall_return=[
+        ("item", 10, 0, 0, 6, 0, 16),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/dashboard")
+    assert resp.status_code == 200
+    d = resp.json()["domains"][0]
+    assert d["domain"] == "item"
+    assert d["score"] == 100.0  # 10 / (10+0+0), skip excluded from denominator
+    assert d["passed"] == 10
+    assert d["failed"] == 0
+    assert d["warnings"] == 0
+    assert d["skipped"] == 6
+    assert d["total"] == 16
+    # Reconciles end to end.
+    assert d["passed"] + d["failed"] + d["warnings"] + d["skipped"] == d["total"]
+
+
+@pytest.mark.asyncio
+async def test_dq_dashboard_info_fails_excluded_from_score():
+    """U8.3: an info-severity fail must not crater a domain to 0% alarm-red.
+
+    `sku_to_item` has its only fail at INFO severity. It must score >= a domain
+    whose only fail is critical/warning severity. Info fails are excluded from
+    the score denominator (treated like skips) and surfaced as `info_fails`,
+    while the raw `failed` count stays visible.
+
+    Row shape: (domain, passed, failed, warnings, skipped, info_fails, total).
+    """
+    pool, conn, cursor = _make_pool(fetchall_return=[
+        # Only fail is info-severity: 0 passed, 2 failed, both info.
+        ("sku_to_item", 0, 2, 0, 0, 2, 2),
+        # Only fail is a real warning-severity fail.
+        ("inventory", 10, 2, 0, 0, 0, 12),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/dashboard")
+    assert resp.status_code == 200
+    domains = {d["domain"]: d for d in resp.json()["domains"]}
+
+    info_domain = domains["sku_to_item"]
+    real_fail_domain = domains["inventory"]
+
+    # Info-only domain: 2 fails but all info -> excluded from denominator ->
+    # nothing scoreable -> 100% (not 0% alarm-red).
+    assert info_domain["score"] == 100.0
+    assert info_domain["info_fails"] == 2
+    assert info_domain["failed"] == 2  # raw count still visible
+
+    # A domain with a genuine (non-info) fail scores below 100.
+    assert real_fail_domain["score"] < 100.0
+    assert real_fail_domain["info_fails"] == 0
+
+    # The info-only domain scores >= the genuinely-failing domain.
+    assert info_domain["score"] >= real_fail_domain["score"]
 
 
 @pytest.mark.asyncio
@@ -82,6 +155,48 @@ async def test_dq_checks_200():
     assert checks[0]["last_status"] == "pass"
     assert checks[0]["last_value"] == 1.0
     assert checks[0]["last_run"] is not None
+
+
+@pytest.mark.asyncio
+async def test_dq_checks_derives_from_results_when_catalog_empty():
+    """F4.2/U4.1: when dim_dq_check_catalog is empty but fact_dq_check_results
+    has rows, /checks must still return the distinct checks derived from the
+    results table (not an empty list). The catalog dimension being unpopulated
+    must NOT make the Check Catalog blank.
+
+    The handler now runs a single results-derived query; the mock returns the
+    same 10-column row shape the endpoint serializes.
+    """
+    pool, conn, cursor = _make_pool(fetchall_return=[
+        (None, "freshness_sales", "freshness", "sales", "fact_sales_monthly",
+         "critical", True, "pass", 1.0, _NOW),
+        (None, "completeness_forecast", "completeness", "forecast",
+         "fact_external_forecast_monthly", "warning", True, "warn", 0.95, _NOW),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/checks")
+    assert resp.status_code == 200
+    checks = resp.json()["checks"]
+    # Must NOT be empty: the catalog dimension is empty but results exist.
+    assert len(checks) == 2
+    names = {c["check_name"] for c in checks}
+    assert names == {"freshness_sales", "completeness_forecast"}
+    # SQL existence must be driven by fact_dq_check_results, NOT by the
+    # (empty) dim_dq_check_catalog. The catalog may only appear behind a LEFT
+    # JOIN (enrichment), never as the FROM driver.
+    executed_sql = " ".join(
+        str(c.args[0]) for c in cursor.execute.call_args_list
+    ).lower()
+    assert "fact_dq_check_results" in executed_sql
+    catalog_idx = executed_sql.find("dim_dq_check_catalog")
+    if catalog_idx != -1:
+        preceding = executed_sql[:catalog_idx]
+        assert preceding.rstrip().endswith("left join"), (
+            "catalog must be a LEFT JOIN enrichment, not the FROM driver"
+        )
 
 
 @pytest.mark.asyncio

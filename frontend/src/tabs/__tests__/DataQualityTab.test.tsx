@@ -101,6 +101,81 @@ describe("DataQualityTab", () => {
     expect(screen.getByText(/Check Catalog/)).toBeInTheDocument();
   });
 
+  it("F7.1: Domain Health card surfaces the skipped count and the summary bar adds a Skipped tile", async () => {
+    const { fetchDQDashboard } = await import("@/api/queries");
+    (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      domains: [
+        // 10 pass / 0 fail / 0 warn / 6 skip / 16 total — the live "item" shape.
+        { domain: "item", score: 100, passed: 10, failed: 0, warnings: 0, skipped: 6, total: 16 },
+      ],
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // Domain card must show the skip count so 100% with 0 fail/0 warn reconciles.
+    expect(await screen.findByText("6 skip")).toBeInTheDocument();
+    // Summary KPI bar must have a "Skipped" tile so total checks reconcile.
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+  });
+
+  it("U8.3: an info-only failing domain shows an info count and is not painted critical-red", async () => {
+    const { fetchDQDashboard } = await import("@/api/queries");
+    (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      domains: [
+        // sku_to_item: only fail is info-severity -> backend scores it 100,
+        // surfaces info_fails:2. The card must badge the score green (not red)
+        // and disclose the informational fails as "2 info".
+        { domain: "sku_to_item", score: 100, passed: 0, failed: 2, warnings: 0, skipped: 0, info_fails: 2, total: 2 },
+      ],
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // The info count is disclosed so the planner sees it is informational.
+    const infoChip = await screen.findByText("2 info");
+    expect(infoChip).toBeInTheDocument();
+    // The domain-card score badge (rounded-full pill) must be green (>80),
+    // never the red critical bucket. (The overall ring also shows 100%.)
+    const badges = screen.getAllByText("100%");
+    const cardBadge = badges.find((b) => b.className.includes("rounded-full"));
+    expect(cardBadge).toBeDefined();
+    expect(cardBadge!.className).toContain("green");
+    expect(cardBadge!.className).not.toContain("red");
+  });
+
+  it("U3.2: empty state does not instruct the stale /dq/run 404 path", async () => {
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    const { container } = render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // The stale curl pointed at /dq/run (a confirmed 404) and a non-existent
+    // scripts/dq_run_checks.py. Neither should appear on screen.
+    expect(container.textContent).not.toContain("/dq/run");
+    expect(container.textContent).not.toContain("dq_run_checks.py");
+  });
+
+  it("U3.2: empty state offers an in-app run action wired to runDQChecks", async () => {
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // The empty-state CTA triggers the in-app run (POST /data-quality/run via
+    // runDQChecks), not a curl to a 404 path.
+    const cta = screen.getByRole("button", { name: /Run DQ checks now/i });
+    fireEvent.click(cta);
+    await waitFor(() => expect(mockRunDQChecks).toHaveBeenCalled());
+  });
+
   it("renders Run Checks Now button", async () => {
     const { default: DataQualityTab } = await import("../DataQualityTab");
     render(

@@ -132,7 +132,7 @@ export function CheckCatalogPanel({ checkList, domainFilter }: CheckCatalogPanel
                 </span>
               </th>
               <th className="pb-2 pr-3">Table</th>
-              <th className="pb-2 pr-3">Last Value</th>
+              <th className="pb-2 pr-3" title="Defect/violation count — lower is better; 0.00 = clean pass">Last Value (violations)</th>
               <th className="pb-2 cursor-pointer select-none" onClick={() => toggleSort("last_run")}>
                 <span className="inline-flex items-center gap-1">
                   Last Run <ArrowUpDown className="h-3 w-3" />
@@ -156,7 +156,22 @@ export function CheckCatalogPanel({ checkList, domainFilter }: CheckCatalogPanel
                     </span>
                   </td>
                   <td className="py-1.5 pr-3">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${SEVERITY_STYLE[c.severity] ?? SEVERITY_STYLE.low}`}>
+                    {/* F6.1: severity is the configured severity-IF-IT-FAILS, not the
+                        current outcome. The status icon already conveys pass/fail; so a
+                        PASSING check shows its severity muted (secondary metadata) and only
+                        emphasizes the alarming style when the check is not currently passing. */}
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                        c.last_status === "pass"
+                          ? "text-muted-foreground"
+                          : SEVERITY_STYLE[c.severity] ?? SEVERITY_STYLE.low
+                      }`}
+                      title={
+                        c.last_status === "pass"
+                          ? `Configured severity if this check fails: ${c.severity} (currently passing)`
+                          : `Severity: ${c.severity}`
+                      }
+                    >
                       {c.severity}
                     </span>
                   </td>
@@ -164,7 +179,10 @@ export function CheckCatalogPanel({ checkList, domainFilter }: CheckCatalogPanel
                   <td className="py-1.5 pr-3 text-muted-foreground">{c.check_type}</td>
                   <td className="py-1.5 pr-3 capitalize text-muted-foreground">{c.domain}</td>
                   <td className="py-1.5 pr-3 font-mono text-muted-foreground">{c.table_name}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">
+                  <td
+                    className="py-1.5 pr-3 text-muted-foreground"
+                    title="Defect/violation count for this check \u2014 lower is better. 0.00 means zero violations (a clean pass)."
+                  >
                     {c.last_value != null ? c.last_value.toFixed(2) : "\u2014"}
                   </td>
                   <td className="py-1.5 text-muted-foreground">{c.last_run ? relativeTime(c.last_run) : "\u2014"}</td>
