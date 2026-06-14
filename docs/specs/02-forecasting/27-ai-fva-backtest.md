@@ -4,6 +4,7 @@
 **Domain:** Forecasting / AI Platform / Backtest Framework
 **Source PRD:** [../PRD/PRD-ai-planner-fva-backtest.md](../PRD/PRD-ai-planner-fva-backtest.md) (design intent + open questions)
 **Related specs:** [01-ai-planning-agent](../06-ai-platform/01-ai-planning-agent.md) · [03-backtest-framework](03-backtest-framework.md) · [05-advanced-backtest](05-advanced-backtest.md)
+**⚠ Known flaws / critical review:** [27-ai-fva-backtest-FLAWS.md](27-ai-fva-backtest-FLAWS.md) — read before trusting the headline FVA number.
 
 ## Implemented artifacts
 
@@ -429,6 +430,77 @@ provider: openai_compat   # then export LLM_BASE_URL + LLM_API_KEY
 
 ---
 
+## 8.1 Development & Testing Provider Modes (Ollama & Manual Opus)
+
+During development and testing we want to validate the prompt, the JSON-recommendation
+schema, and the recommender logic **without spending on the metered API**. There are
+exactly two zero-cost modes, plus the metered path for the authoritative run.
+
+| Mode | Provider | Automated? | Cost during dev | Policy status |
+|---|---|---|---|---|
+| **A — Ollama** (default) | `ollama` | Yes — runs the whole walk-forward loop unattended | $0 (local) | Clean — no Anthropic surface |
+| **B — Manual Opus spot-check** via Claude Code | *none — human-in-the-loop* | **No — interactive only** | $0 (your existing Pro/Max subscription) | Clean **only while interactive** (see boundary below) |
+| Authoritative benchmark | `anthropic` | Yes | Metered ($ per call) | Clean — Anthropic API |
+
+### Mode A — Ollama (automated, default)
+The local OpenAI-compatible endpoint at `http://localhost:11434/v1`. The entire
+backtest runs unattended at $0. This is the **default dev provider and the only
+automated zero-cost path**. Use it for all volume iteration. Operating steps:
+operations-manual §9.11.1.
+
+### Mode B — Manual Opus spot-check via Claude Code (interactive)
+**Purpose.** Before committing API budget to an authoritative `anthropic` run, an
+operator validates that *real* Opus judgment is materially better than the local
+model on a small, representative sample of DFUs — "is Opus worth paying for here?".
+This is a **human-in-the-loop** workflow, **not a wired provider**: the operator
+exports the exact prompt for a handful of DFUs, pastes each into an interactive
+Claude Code session, reads the returned JSON recommendation, and records it for
+side-by-side comparison against Ollama's output (capture lands under
+`usertestinputs/cycleN/`). Operating steps: operations-manual §9.11.2.
+
+### ⚠ Compliance boundary (normative — do not implement around it)
+The Anthropic **Consumer Terms** (which govern Pro / Max / Claude Code) prohibit
+accessing the Services "through automated or non-human means" **"except when you are
+accessing our Services via an Anthropic API Key."** Therefore:
+
+- **Mode B is permitted only as interactive, human-initiated use.** A person drives
+  each call by hand. This is ordinary Claude Code usage.
+- **Automating subscription Opus is prohibited and MUST NOT be built** — that
+  includes shelling out to `claude -p` from the backtest, or proxying the Claude
+  Code / subscription session behind an OpenAI-compatible endpoint and pointing a
+  provider at it. The earlier design sketch of a `claude_cli` provider was rejected
+  for this reason.
+- **The only automated Claude path is `provider: anthropic`** (the metered API),
+  governed by the separate Commercial Terms. This matters in particular because the
+  backtest feeds a product on a monetization track — commercial, automated inference
+  belongs on the API, not on a consumer subscription.
+
+### Full Opus-vs-Ollama comparison run (metered API — the intended eval)
+The intended evaluation is to run the **entire** backtest through Claude and compare
+its FVA against Ollama. A full *automated* backtest **cannot** use Mode B / the
+subscription — the Consumer Terms forbid automated access except via an API key — so
+the Claude side of the comparison runs on `provider: anthropic`. Mode B stays a
+small interactive spot-check; it is not a substitute for the full run.
+
+To run the comparison fairly:
+- **Same sample, same everything-but-provider.** Run both providers over the *same*
+  stratified DFU set (`sampling` config), with identical prompt version and
+  `apply_guardrails`. Set `hybrid_routing.enabled: false` on the Claude side so a
+  cheap screener doesn't contaminate the head-to-head.
+- **Provider config.** `provider: anthropic`, `models.anthropic: claude-opus-4-8`
+  (current Opus; the config still names the older `claude-opus-4-7`), supply
+  `ANTHROPIC_API_KEY`.
+- **Bound the cost.** Keep `sampling.stratified.max_dfus` at its cap and rely on
+  `cost_controls.per_run_max_cost_usd` as the hard stop. Prefer the **Batches API**
+  (50% discount; backtests are non-latency-sensitive) plus **prompt caching** on the
+  shared system/rubric prefix — together these bring a ~$1.1K Opus run down toward
+  ~$0.5K or less.
+
+**Production** runs on the same `anthropic` API path — so this comparison run also
+exercises the exact production code path. Operating steps: operations-manual §9.11.3.
+
+---
+
 ## 9. Metrics & Success Criteria
 
 The PRD itself is successful when:
@@ -516,6 +588,7 @@ If the product fails the bar, that itself is a valuable signal — it tells us t
 When this PRD's implementation lands, the following docs update in the same commit as the code:
 
 - `docs/specs/02-forecasting/` — promote this PRD to a numbered spec (e.g. `27-ai-fva-backtest.md`)
+- `docs/operations-manual/09-ai-intelligence.md` — §9.11 dev/test provider modes (Ollama, manual Opus spot-check, full Opus-vs-Ollama API comparison run); keep in sync with §8.1 of this spec
 - `docs/ARCHITECTURE.md` — add the 4 new tables and 5 new MVs to the catalog
 - `docs/PLATFORM_GUIDE.md` — add the AI FVA Backtest tab to the feature list
 - `docs/RUNBOOK.md` — add the new Make target (e.g. `make ai-fva-backtest`) and DB cleanup entries
