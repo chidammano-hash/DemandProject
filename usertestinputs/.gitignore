@@ -1,0 +1,4 @@
+# Heavy Playwright capture artifacts — keep the markdown audit trail, drop binaries.
+_smoketest/
+*/screens/
+*/capture-dump.json
