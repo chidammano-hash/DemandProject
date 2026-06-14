@@ -1,38 +1,38 @@
 """Domain CRUD, analytics, suggest, sample-pair, and backward-compatible alias routes."""
 from __future__ import annotations
 
-from typing import Any
 import json
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from common.core.domain_specs import DOMAIN_SPECS
 from api.core import (
-    get_conn,
-    get_spec_or_404,
-    set_cache,
-    to_api_col,
-    to_sql_col,
-    qident,
-    numeric_fields_for_spec,
-    date_fields_for_spec,
-    category_fields_for_spec,
-    item_field_for_spec,
-    location_field_for_spec,
-    build_where,
-    parse_filters_json,
-    parse_filters_safe,
     _col_type,
     _typed_eq_clause,
     _typed_like_clause,
+    build_agg_trend_source,
+    build_where,
+    category_fields_for_spec,
+    date_fields_for_spec,
+    fetch_page,
+    forecast_accuracy_expr,
+    get_conn,
+    get_spec_or_404,
     grouped_metric_expr,
     grouped_metric_expr_with_count,
-    forecast_accuracy_expr,
-    build_agg_trend_source,
-    fetch_page,
+    item_field_for_spec,
     list_domain,
+    location_field_for_spec,
+    numeric_fields_for_spec,
+    parse_filters_json,
+    parse_filters_safe,
+    qident,
+    set_cache,
+    to_api_col,
+    to_sql_col,
 )
+from common.core.domain_specs import DOMAIN_SPECS
 
 router = APIRouter(tags=["domains"])
 
@@ -634,10 +634,13 @@ def dfu_count(
         conditions.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.location_id = d.loc AND dl.state_id = ANY(%s))")
     if channel:
         params.append(channel.split(","))
+        # dim_customer PK is (customer_no, site); fact_customer_demand_monthly is the
+        # per-customer fact. fact_sales_monthly only holds aggregated `customer_group`
+        # (e.g. "ALL") and never joins to dim_customer.
         conditions.append(
-            "EXISTS (SELECT 1 FROM dim_customer dc "
-            "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
-            "WHERE fsm.item_id = d.item_id AND fsm.loc = d.loc AND dc.rpt_channel_desc = ANY(%s))"
+            "EXISTS (SELECT 1 FROM fact_customer_demand_monthly fcd "
+            "JOIN dim_customer dc ON dc.customer_no = fcd.customer_no AND dc.site = fcd.site "
+            "WHERE fcd.item_id = d.item_id AND fcd.location_id = d.loc AND dc.rpt_channel_desc = ANY(%s))"
         )
     if cluster:
         params.append(cluster.split(","))
@@ -691,8 +694,13 @@ _CASCADING_EXPR: dict[tuple[str, str], tuple[str, str]] = {
         "dl.state_id",
     ),
     ("customer", "rpt_channel_desc"): (
-        "JOIN fact_sales_monthly fsm ON fsm.item_id = d.item_id AND fsm.loc = d.loc "
-        "JOIN dim_customer dc ON dc.customer_group = fsm.cust_grp",
+        # dim_customer PK is (customer_no, site); fact_customer_demand_monthly is
+        # the per-customer fact. fact_sales_monthly only holds aggregated
+        # `customer_group` (e.g. "ALL") and cannot join dim_customer.
+        "JOIN fact_customer_demand_monthly fcd "
+        "ON fcd.item_id = d.item_id AND fcd.location_id = d.loc "
+        "JOIN dim_customer dc "
+        "ON dc.customer_no = fcd.customer_no AND dc.site = fcd.site",
         "dc.rpt_channel_desc",
     ),
 }
@@ -728,10 +736,12 @@ def _build_cascade_conditions(
         conds.append("EXISTS (SELECT 1 FROM dim_location _dl WHERE _dl.location_id = d.loc AND _dl.state_id = ANY(%s))")
     if channel:
         params.append(channel.split(","))
+        # See note in _build_cascade_conditions: dim_customer joins via
+        # fact_customer_demand_monthly on (customer_no, site), not fact_sales_monthly.
         conds.append(
-            "EXISTS (SELECT 1 FROM dim_customer _dc "
-            "JOIN fact_sales_monthly _fsm ON _fsm.cust_grp = _dc.customer_group "
-            "WHERE _fsm.item_id = d.item_id AND _fsm.loc = d.loc AND _dc.rpt_channel_desc = ANY(%s))"
+            "EXISTS (SELECT 1 FROM fact_customer_demand_monthly _fcd "
+            "JOIN dim_customer _dc ON _dc.customer_no = _fcd.customer_no AND _dc.site = _fcd.site "
+            "WHERE _fcd.item_id = d.item_id AND _fcd.location_id = d.loc AND _dc.rpt_channel_desc = ANY(%s))"
         )
     if cluster:
         params.append(cluster.split(","))

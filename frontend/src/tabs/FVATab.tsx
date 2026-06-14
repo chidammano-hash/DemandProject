@@ -16,7 +16,16 @@ type FVAStage = {
   delta_vs_prev: number | null;
   state: "actual" | "missing" | "planned";
   n_rows?: number;
+  ai_fva_run_id?: string | null;
 };
+
+/** Deep-link to the AI FVA Backtest tab when the AI Adjusted stage is populated. */
+function openAiFvaBacktestTab() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("tab", "aiPlannerFva");
+  window.history.pushState({}, "", url.toString());
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
 const DEFAULT_STAGES: FVAStage[] = [
   { stage_id: "seasonal_naive", label: "Naive Seasonal", description: "Same-month-last-year baseline.", accuracy_pct: null, delta_vs_prev: null, state: "missing" },
@@ -173,6 +182,15 @@ export default function FVATab() {
                 </span>
                 {stage.n_rows ? <span className="text-muted-foreground">{stage.n_rows.toLocaleString()} rows</span> : null}
               </div>
+              {stage.stage_id === "ai_adjusted" && stage.state === "actual" && stage.ai_fva_run_id && (
+                <button
+                  type="button"
+                  onClick={openAiFvaBacktestTab}
+                  className="mt-2 text-xs font-medium text-amber-700 underline-offset-2 hover:underline dark:text-amber-300"
+                >
+                  View backtest →
+                </button>
+              )}
             </div>
           ))}
         </div>

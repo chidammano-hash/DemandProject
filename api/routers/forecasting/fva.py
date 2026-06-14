@@ -1,6 +1,7 @@
 """Forecast Value Added (FVA) & ROI tracking endpoints (Spec 08-07)."""
 from __future__ import annotations
 
+import psycopg
 from fastapi import APIRouter, Query
 
 from api.core import get_conn
@@ -100,10 +101,52 @@ async def fva_waterfall(
             "n_rows": naive_row[1],
         }
 
+    # Promote `ai_adjusted` from the latest succeeded AI FVA backtest run, if any.
+    # PRD: docs/specs/PRD/PRD-ai-planner-fva-backtest.md §6 "FVA waterfall integration"
+    # Accuracy = 100 - WAPE  (uniform with the rest of this endpoint).
+    ai_run_id: str | None = None
+    with get_conn() as conn, conn.cursor() as cur:
+        try:
+            cur.execute(
+                """SELECT r.run_id::text, m.ai_wape_pct, COALESCE(SUM(o.n_dfus), 0)
+                   FROM ai_fva_backtest_run r
+                   JOIN mv_ai_fva_overall  m ON m.run_id = r.run_id
+                   JOIN mv_ai_fva_overall  o ON o.run_id = r.run_id
+                   WHERE r.status = 'succeeded' AND m.ai_wape_pct IS NOT NULL
+                   GROUP BY r.run_id, m.ai_wape_pct, r.completed_at
+                   ORDER BY r.completed_at DESC NULLS LAST
+                   LIMIT 1"""
+            )
+            ai_row = cur.fetchone()
+        except psycopg.Error:
+            # Tables may not exist yet on a fresh DB. Silently fall back.
+            conn.rollback()
+            ai_row = None
+        if ai_row and ai_row[1] is not None:
+            ai_run_id = ai_row[0]
+            models["ai_adjusted"] = {
+                "model_id": "ai_adjusted",
+                "accuracy_pct": _round_or_none(100.0 - float(ai_row[1])),
+                "n_rows": int(ai_row[2] or 0),
+            }
+
     stages = [
         _build_stage(stage_id, label, description, default_state, models.get(stage_id))
         for stage_id, label, description, default_state in STAGE_DEFS
     ]
+    # Promote AI Adjusted from its "planned" default to actual when a backtest run exists.
+    # _build_stage() short-circuits on default_state == "planned" and returns
+    # accuracy_pct=None / n_rows=0, so we must overwrite those fields here too —
+    # otherwise the downstream delta_vs_prev subtraction crashes on None.
+    ai_model = models.get("ai_adjusted")
+    if ai_model is not None:
+        for s in stages:
+            if s["stage_id"] == "ai_adjusted":
+                s["state"] = "actual"
+                s["accuracy_pct"] = ai_model["accuracy_pct"]
+                s["n_rows"] = ai_model["n_rows"]
+                s["ai_fva_run_id"] = ai_run_id
+                break
     for idx in range(1, len(stages)):
         prev = stages[idx - 1]
         curr = stages[idx]

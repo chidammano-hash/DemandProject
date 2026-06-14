@@ -12,11 +12,17 @@ interface SelectContextValue {
   onValueChange?: (value: string) => void;
   open: boolean;
   setOpen: (v: boolean) => void;
+  /** value -> rendered label, populated by each SelectItem on mount. */
+  labels: Map<string, React.ReactNode>;
+  /** SelectItem calls this on mount to register its label; returns an unregister fn. */
+  registerLabel: (value: string, label: React.ReactNode) => () => void;
 }
 
 const SelectContext = React.createContext<SelectContextValue>({
   open: false,
   setOpen: () => {},
+  labels: new Map(),
+  registerLabel: () => () => {},
 });
 
 interface SelectProps {
@@ -28,6 +34,20 @@ interface SelectProps {
 function Select({ value, onValueChange, children }: SelectProps) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
+  const labelsRef = React.useRef(new Map<string, React.ReactNode>());
+  const [, forceTick] = React.useState(0);
+
+  const registerLabel = React.useCallback(
+    (val: string, label: React.ReactNode) => {
+      labelsRef.current.set(val, label);
+      forceTick((n) => n + 1);
+      return () => {
+        labelsRef.current.delete(val);
+        forceTick((n) => n + 1);
+      };
+    },
+    [],
+  );
 
   // Close on outside click
   React.useEffect(() => {
@@ -42,7 +62,9 @@ function Select({ value, onValueChange, children }: SelectProps) {
   }, [open]);
 
   return (
-    <SelectContext.Provider value={{ value, onValueChange, open, setOpen }}>
+    <SelectContext.Provider
+      value={{ value, onValueChange, open, setOpen, labels: labelsRef.current, registerLabel }}
+    >
       <div ref={ref} className={cn("relative inline-block", open && "z-[200]")}>
         {children}
       </div>
@@ -68,7 +90,10 @@ function SelectTrigger({ className, children }: { className?: string; children?:
 }
 
 function SelectValue({ placeholder }: { placeholder?: string }) {
-  const { value } = React.useContext(SelectContext);
+  const { value, labels } = React.useContext(SelectContext);
+  if (value !== undefined && labels.has(value)) {
+    return <span className="truncate">{labels.get(value)}</span>;
+  }
   return <span className="truncate">{value ?? placeholder}</span>;
 }
 
@@ -91,7 +116,14 @@ function SelectItem({
   children?: React.ReactNode;
   className?: string;
 }) {
-  const { value: selected, onValueChange, setOpen } = React.useContext(SelectContext);
+  const { value: selected, onValueChange, setOpen, registerLabel } =
+    React.useContext(SelectContext);
+
+  // Register this item's label with the parent Select so <SelectValue/> can
+  // render the human label (e.g. "Ollama (local, free)") instead of the raw
+  // value ("ollama"). Unregisters on unmount.
+  React.useEffect(() => registerLabel(value, children), [value, children, registerLabel]);
+
   return (
     <div
       role="option"

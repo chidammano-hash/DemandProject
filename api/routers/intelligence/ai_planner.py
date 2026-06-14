@@ -183,15 +183,23 @@ async def get_insights(
         )
         params.append(category.split(","))
     if market:
+        # dim_location PK is location_id; the "market" filter is state_id
+        # (matches the cascading filter shape in api/routers/domains.py).
         conditions.append(
-            "EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = ai.loc AND dl.market = ANY(%s))"
+            "EXISTS (SELECT 1 FROM dim_location dl "
+            "WHERE dl.location_id = ai.loc AND dl.state_id = ANY(%s))"
         )
         params.append(market.split(","))
     if channel:
+        # dim_customer PK is (customer_no, site); fact_customer_demand_monthly
+        # is the per-customer fact. fact_sales_monthly only holds aggregated
+        # `customer_group` (e.g. "ALL") and cannot join dim_customer.
+        # Channel column is `rpt_channel_desc`, not `channel`.
         conditions.append(
-            "EXISTS (SELECT 1 FROM dim_customer dc "
-            "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
-            "WHERE fsm.item_id = ai.item_id AND fsm.loc = ai.loc AND dc.channel = ANY(%s))"
+            "EXISTS (SELECT 1 FROM fact_customer_demand_monthly fcd "
+            "JOIN dim_customer dc ON dc.customer_no = fcd.customer_no AND dc.site = fcd.site "
+            "WHERE fcd.item_id = ai.item_id AND fcd.location_id = ai.loc "
+            "AND dc.rpt_channel_desc = ANY(%s))"
         )
         params.append(channel.split(","))
 

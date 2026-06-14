@@ -90,7 +90,7 @@ def _resolve_filter_clusters(
     if need_item_join:
         sql += " LEFT JOIN dim_item i ON i.item_id = d.item_id"
     if need_loc_join:
-        sql += " LEFT JOIN dim_location l ON l.loc = d.loc"
+        sql += " LEFT JOIN dim_location l ON l.location_id = d.loc"
     sql += f" WHERE {' AND '.join(conditions)} AND d.ml_cluster IS NOT NULL"
 
     with get_conn() as conn:

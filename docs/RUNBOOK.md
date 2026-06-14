@@ -127,6 +127,13 @@ make external-signals-schema   # fact_external_signals (sql/067)
 # FVA Tracking (Spec 08-07)
 make fva-schema                # fact_fva_tracking (sql/068)
 
+# AI Planner FVA Backtest (Spec 02-27) — apply DDL manually until make target added
+psql "$DATABASE_URL" -f sql/186_create_ai_fva_backtest.sql
+# Smoke / full / dry run:
+make ai-fva-backtest-smoke     # 50 DFUs x 3 months, Ollama (~5 min)
+make ai-fva-backtest           # full 10-month walk-forward
+make ai-fva-backtest-dry       # plan + cost estimate, no LLM/DB writes
+
 # Reporting (Spec 08-08)
 make report-schema             # dim_report_template + fact_report_schedule + fact_report_delivery (sql/069)
 

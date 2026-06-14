@@ -7,6 +7,7 @@ export * from "./helpers";
 export * from "./core";
 export * from "./inv-planning";
 export * from "./ai-planner";
+export * from "./ai-planner-fva-backtest";
 export * from "./control-tower";
 export * from "./fill-rate";
 export * from "./storyboard";

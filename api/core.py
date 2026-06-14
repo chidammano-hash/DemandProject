@@ -507,7 +507,7 @@ def add_cross_dim_filters(
     """Append brand/category/market EXISTS subquery filters to WHERE parts.
 
     This is the shared implementation for the global filter bar's cross-dimension
-    filters (brand → dim_item.brand_name, category → dim_item.class_,
+    filters (brand → dim_item.brand_name, category → dim_item.class,
     market → dim_location.state_id).  Each value may be comma-separated for
     multi-select.
 
@@ -534,14 +534,14 @@ def add_cross_dim_filters(
         if values:
             params.append(values)
             where.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_col} AND di.class_ = ANY(%s))"
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_col} AND di.class = ANY(%s))"
             )
     if market:
         values = [v.strip() for v in market.split(",") if v.strip()]
         if values:
             params.append(values)
             where.append(
-                f"EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = {loc_col} AND dl.state_id = ANY(%s))"
+                f"EXISTS (SELECT 1 FROM dim_location dl WHERE dl.location_id = {loc_col} AND dl.state_id = ANY(%s))"
             )
 
 

@@ -608,9 +608,11 @@ erDiagram
 - **`model_promotion_log`** — audit trail for every promotion/demotion event. Tracks model_id, promotion_type (single/champion), plan_version, is_active, dfu_count, total_rows.
 - **`backtest_run`** extended with `is_loaded_to_candidate` and `candidate_loaded_at` columns to track candidate loading state.
 
-### AI & Exception Tables (5)
+### AI & Exception Tables (9)
 
-`ai_insights`, `ai_planning_memos`, `ai_call_log`, `ai_recommendation_outcomes`, `fact_storyboard_exceptions`
+`ai_insights`, `ai_planning_memos`, `ai_call_log`, `ai_recommendation_outcomes`, `fact_storyboard_exceptions`, `ai_fva_backtest_run`, `fact_ai_forecast_recommendation`, `fact_ai_adjusted_forecast`, `ai_planner_backtest_audit`
+
+The last four are the AI Planner FVA backtest store (spec [02-27](specs/02-forecasting/27-ai-fva-backtest.md)). Per-run materialized views: `mv_ai_fva_overall`, `mv_ai_fva_by_recommendation`, `mv_ai_fva_by_month`, `mv_ai_fva_by_dfu` — refreshed by the runner ([scripts/forecasting/run_ai_fva_backtest.py](../scripts/forecasting/run_ai_fva_backtest.py)) at end of each backtest run.
 
 ### Operations Tables (12)
 

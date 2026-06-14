@@ -134,6 +134,7 @@ testpaths = ["tests"]
 addopts = "-m 'not scale'"
 markers = [
   "scale: scale/load tests; excluded from default run (see tests/scale/README.md)",
+  "integration: tests that require a live Postgres + applied migrations; skipped by default unless an env flag enables them (see test docstring).",
 ]
 norecursedirs = ["tests/scale"]
 filterwarnings = ["ignore::DeprecationWarning"]
