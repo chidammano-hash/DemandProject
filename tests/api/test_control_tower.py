@@ -228,6 +228,93 @@ async def test_control_tower_kpis_handles_unpopulated_mv():
 
 
 @pytest.mark.asyncio
+async def test_control_tower_kpis_falls_back_to_exceptions_table_when_mv_stale():
+    """F3.1: when mv_control_tower_kpis is stale/missing, the KPI endpoint must
+    NOT silently report zero open exceptions while live rows exist in
+    fact_replenishment_exceptions. Instead it falls back to a live COUNT(*)
+    grouped by severity so the morning-triage counts are honest."""
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    # First execute (MV query) raises stale; second execute (fallback) succeeds.
+    cursor.execute.side_effect = [
+        psycopg.errors.ObjectNotInPrerequisiteState(
+            'materialized view "mv_control_tower_kpis" has not been populated'
+        ),
+        None,
+    ]
+    # Fallback query: one row per severity (critical/high/other) + order value.
+    cursor.fetchall.return_value = [
+        ("critical", 2465, 120000.0),
+        ("high", 1715, 90000.0),
+        ("low", 1962, 36000.0),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/control-tower/kpis")
+    assert resp.status_code == 200
+    data = resp.json()
+    exc = data["exceptions"]
+    assert exc["open_exceptions_total"] == 2465 + 1715 + 1962
+    assert exc["critical_exceptions"] == 2465
+    assert exc["high_exceptions"] == 1715
+    assert exc["recommended_order_value"] == pytest.approx(246000.0)
+    # An honest warning must still be present so the UI shows the stale banner.
+    assert "warning" in data
+    assert data["exceptions"]["source"] == "fact_replenishment_exceptions"
+
+
+@pytest.mark.asyncio
+async def test_control_tower_kpis_fallback_degrades_when_exceptions_unavailable():
+    """If BOTH the MV and the fallback table are unavailable, still 200 with
+    zeros + warning (never 500)."""
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = [
+        psycopg.errors.ObjectNotInPrerequisiteState(
+            'materialized view "mv_control_tower_kpis" has not been populated'
+        ),
+        psycopg.errors.UndefinedTable(
+            'relation "fact_replenishment_exceptions" does not exist'
+        ),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/control-tower/kpis")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["exceptions"]["open_exceptions_total"] == 0
+    assert "warning" in data
+
+
+@pytest.mark.asyncio
+async def test_control_tower_kpis_handles_missing_mv():
+    """F1.2: when the mv_control_tower_kpis migration was never applied, the
+    MV is *missing* (UndefinedTable), not merely unrefreshed. The endpoint must
+    still degrade to an empty payload + warning instead of 500."""
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.UndefinedTable(
+        'relation "mv_control_tower_kpis" does not exist'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/control-tower/kpis")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["health"]["total_dfus"] == 0
+    assert "warning" in data
+
+
+@pytest.mark.asyncio
 async def test_control_tower_kpis_financial_handles_unpopulated_mv():
     import psycopg
     pool, conn, cursor = _make_pool()

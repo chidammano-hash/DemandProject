@@ -126,6 +126,11 @@ def make_async_pool(
     conn = MagicMock()
     conn.cursor = MagicMock(return_value=_make_async_cm(cursor))
     conn.commit = AsyncMock(return_value=None)
+    # ``async with conn.transaction():`` opens a SAVEPOINT in real psycopg3.
+    # Routers use this to isolate independent queries (e.g. the action-feed
+    # multi-source feed) so one failing statement doesn't abort the others.
+    # Mock it as a no-op async context manager so those code paths run.
+    conn.transaction = MagicMock(return_value=_make_async_cm(None))
 
     pool = MagicMock()
     pool.connection = MagicMock(return_value=_make_async_cm(conn))

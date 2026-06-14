@@ -250,10 +250,23 @@ def get_fill_rate_trend(
         ORDER BY month_start
     """
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+    except (psycopg.errors.ObjectNotInPrerequisiteState, psycopg.errors.UndefinedTable) as exc:
+        # mv_fill_rate_monthly created but not yet refreshed (or missing).
+        # Degrade to an empty trend + hint instead of 500 so the UI renders an
+        # honest empty state (F1.3), matching /control-tower/trend behaviour.
+        logger.warning("fill-rate/trend: MV unavailable (%s)", exc)
+        return {
+            "months": [],
+            "warning": (
+                "Upstream materialized view not yet refreshed. "
+                "Run `make refresh-mvs-tiered`."
+            ),
+        }
 
     return {
         "months": [

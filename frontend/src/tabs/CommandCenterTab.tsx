@@ -283,6 +283,11 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
   const h = kpisQ.data?.health;
   const ex = kpisQ.data?.exceptions;
   const fr = kpisQ.data?.fill_rate;
+  // F2.1: when the control-tower MVs are unrefreshed the endpoint degrades to an
+  // all-zero payload with a `warning`. Surface it so a "data unavailable" state
+  // is never mistaken for a genuinely healthy portfolio.
+  const kpisWarning = kpisQ.data?.warning;
+  const kpisStale = Boolean(kpisWarning);
 
   const isLoading = kpisQ.isLoading || aiQ.isLoading || sbQ.isLoading;
 
@@ -318,6 +323,27 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
           </Badge>
         )}
       </div>
+
+      {/* F2.1: degraded-data banner — the KPI MVs are unrefreshed, so the
+          zeroed tiles are "data unavailable", not a healthy portfolio. */}
+      {kpisStale && (
+        <div
+          data-testid="mv-stale-warning"
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">Portfolio health data unavailable</p>
+            <p className="mt-0.5 text-xs">
+              Health KPIs are stale and showing zeros — they are not a sign of a
+              healthy portfolio. Refresh the analytics views (run{" "}
+              <code className="font-mono">make refresh-mvs-tiered</code>) to see
+              live numbers.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Section 1: KPI Summary Bar */}
       {isLoading && !kpisQ.data ? (
@@ -476,19 +502,39 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
             ))}
           </div>
         ) : unified.length === 0 ? (
-          <div
-            className="rounded-lg border bg-card p-12 text-center"
-            data-testid="empty-state"
-          >
-            <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-green-500/50" />
-            <p className="text-sm font-medium text-green-700 dark:text-green-400">
-              Portfolio looks healthy!
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">
-              No open exceptions matching your filters. All AI insights and
-              rule-based threshold checks are clear.
-            </p>
-          </div>
+          kpisStale ? (
+            // F2.1: stale KPIs + an empty exception feed is "data unavailable",
+            // NOT a healthy portfolio. Never show the green all-clear here.
+            <div
+              className="rounded-lg border bg-card p-12 text-center"
+              data-testid="empty-state-stale"
+            >
+              <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-amber-500/70" />
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                Exception data unavailable
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">
+                Analytics views are stale, so this feed cannot be trusted to be
+                empty. Refresh the data (run{" "}
+                <code className="font-mono">make refresh-mvs-tiered</code>) to see
+                open exceptions.
+              </p>
+            </div>
+          ) : (
+            <div
+              className="rounded-lg border bg-card p-12 text-center"
+              data-testid="empty-state"
+            >
+              <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-green-500/50" />
+              <p className="text-sm font-medium text-green-700 dark:text-green-400">
+                Portfolio looks healthy!
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">
+                No open exceptions matching your filters. All AI insights and
+                rule-based threshold checks are clear.
+              </p>
+            </div>
+          )
         ) : (
           <div className="space-y-2" data-testid="exception-feed">
             {unified.map((item) => (

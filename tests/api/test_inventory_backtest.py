@@ -311,3 +311,24 @@ async def test_seasonality_profile_filter(mock_pool):
             assert resp2.status_code == 200
             resp3 = await client.get("/inventory-backtest/detail?seasonality_profile=seasonal_high")
             assert resp3.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_inventory_backtest_trend_handles_unpopulated_mv(mock_pool):
+    """F1.3: /inventory-backtest/trend degrades to empty + warning when
+    mv_inventory_forecast_monthly has not been refreshed, instead of 500."""
+    import psycopg
+    pool, _, cursor = mock_pool
+    cursor.execute.side_effect = psycopg.errors.ObjectNotInPrerequisiteState(
+        'materialized view "mv_inventory_forecast_monthly" has not been populated'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory-backtest/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["trend"] == []
+    assert "warning" in data
+    assert "refresh" in data["warning"].lower()

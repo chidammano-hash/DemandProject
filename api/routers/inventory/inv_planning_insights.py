@@ -99,6 +99,29 @@ def _severity_from_urgency(score: float) -> str:
     return "medium"
 
 
+# Friendly labels for raw DB exception-type enums (U2.11). A naive title-case of
+# the snake_case value produces garbage like "Below Ss"; map explicitly instead.
+_EXCEPTION_TYPE_LABELS = {
+    "below_ss": "Below Safety Stock",
+    "below_rop": "Below Reorder Point",
+    "below_rop_critical": "Critically Below Reorder Point",
+    "stockout": "Stockout",
+    "excess": "Excess Inventory",
+    "zero_velocity": "Zero Velocity",
+}
+
+
+def _humanize_action_type(action_type: str) -> str:
+    """Render a raw enum (e.g. ``below_ss``) as a friendly label.
+
+    Falls back to title-casing the snake_case value for any unmapped type so a
+    new enum is still readable, just less polished.
+    """
+    return _EXCEPTION_TYPE_LABELS.get(
+        action_type, action_type.replace("_", " ").title()
+    )
+
+
 @router.get("/inv-planning/action-feed")
 async def get_action_feed(
     response: FastAPIResponse,
@@ -127,30 +150,41 @@ async def get_action_feed(
     # "all" => 0.0
 
     actions: list[dict] = []
+    full_summary: dict | None = None
 
     try:
         async with get_async_conn() as conn:
             async with conn.cursor() as cur:
+                # Each source runs inside its own ``conn.transaction()`` block,
+                # which opens a SAVEPOINT. If a source query raises (e.g. a
+                # schema drift like a renamed column), only that savepoint is
+                # rolled back — the outer transaction stays usable so the
+                # remaining sources still execute. Without this, the first
+                # failing query aborts the shared transaction and silently
+                # zeroes out the entire feed (see finding F1.1).
+
                 # --- Source 1: Open exceptions by financial impact ---
                 try:
-                    await cur.execute("""
-                        SELECT 'exception' AS source,
-                               item_id, loc, exception_type AS action_type,
-                               CASE severity
-                                   WHEN 'critical' THEN 0.95
-                                   WHEN 'high' THEN 0.75
-                                   WHEN 'medium' THEN 0.50
-                                   ELSE 0.25
-                               END AS urgency_score,
-                               COALESCE(financial_impact_total, estimated_order_value, 0) AS financial_impact,
-                               'Resolve ' || exception_type || ' exception' AS action_label,
-                               created_at
-                        FROM fact_replenishment_exceptions
-                        WHERE status = 'open'
-                        ORDER BY urgency_score DESC, financial_impact DESC NULLS LAST
-                        LIMIT %s
-                    """, [limit * 2])
-                    for r in await cur.fetchall():
+                    async with conn.transaction():
+                        await cur.execute("""
+                            SELECT 'exception' AS source,
+                                   item_id, loc, exception_type AS action_type,
+                                   CASE severity
+                                       WHEN 'critical' THEN 0.95
+                                       WHEN 'high' THEN 0.75
+                                       WHEN 'medium' THEN 0.50
+                                       ELSE 0.25
+                                   END AS urgency_score,
+                                   COALESCE(financial_impact_total, estimated_order_value, 0) AS financial_impact,
+                                   exception_type AS action_label,
+                                   exception_date
+                            FROM fact_replenishment_exceptions
+                            WHERE status = 'open'
+                            ORDER BY urgency_score DESC, financial_impact DESC NULLS LAST
+                            LIMIT %s
+                        """, [limit * 2])
+                        rows = await cur.fetchall()
+                    for r in rows:
                         actions.append({
                             "source": r[0],
                             "item_id": r[1],
@@ -166,19 +200,21 @@ async def get_action_feed(
 
                 # --- Source 2: Pending planned orders ---
                 try:
-                    await cur.execute("""
-                        SELECT 'planned_order' AS source,
-                               item_id, loc, 'approve_order' AS action_type,
-                               CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
-                               COALESCE(order_value, 0) AS financial_impact,
-                               'Approve order: ' || recommended_qty || ' units' AS action_label,
-                               created_at
-                        FROM fact_planned_orders
-                        WHERE status = 'proposed'
-                        ORDER BY urgency_score DESC, order_value DESC NULLS LAST
-                        LIMIT %s
-                    """, [limit * 2])
-                    for r in await cur.fetchall():
+                    async with conn.transaction():
+                        await cur.execute("""
+                            SELECT 'planned_order' AS source,
+                                   item_id, loc, 'approve_order' AS action_type,
+                                   CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
+                                   COALESCE(order_value, 0) AS financial_impact,
+                                   'Approve order: ' || recommended_qty || ' units' AS action_label,
+                                   created_at
+                            FROM fact_planned_orders
+                            WHERE status = 'proposed'
+                            ORDER BY urgency_score DESC, order_value DESC NULLS LAST
+                            LIMIT %s
+                        """, [limit * 2])
+                        rows = await cur.fetchall()
+                    for r in rows:
                         actions.append({
                             "source": r[0],
                             "item_id": r[1],
@@ -195,25 +231,27 @@ async def get_action_feed(
                 # --- Source 3: High-risk items (stockout risk >= 60) ---
                 # Exclude items that already have an open exception to avoid duplicates
                 try:
-                    await cur.execute("""
-                        SELECT 'stockout_risk' AS source,
-                               t.item_id, t.loc, 'review_risk' AS action_type,
-                               t.stockout_risk_score / 100.0 AS urgency_score,
-                               t.monthly_total_holding_cost * 12 AS financial_impact,
-                               'Review stockout risk (score: ' || t.stockout_risk_score || ')' AS action_label,
-                               t.computed_at AS created_at
-                        FROM mv_integrated_planning_targets t
-                        WHERE t.stockout_risk_score >= 60
-                          AND NOT EXISTS (
-                              SELECT 1 FROM fact_replenishment_exceptions e
-                              WHERE e.item_id = t.item_id
-                                AND e.loc = t.loc
-                                AND e.status = 'open'
-                          )
-                        ORDER BY t.stockout_risk_score DESC, financial_impact DESC NULLS LAST
-                        LIMIT %s
-                    """, [limit * 2])
-                    for r in await cur.fetchall():
+                    async with conn.transaction():
+                        await cur.execute("""
+                            SELECT 'stockout_risk' AS source,
+                                   t.item_id, t.loc, 'review_risk' AS action_type,
+                                   t.stockout_risk_score / 100.0 AS urgency_score,
+                                   t.monthly_total_holding_cost * 12 AS financial_impact,
+                                   'Review stockout risk (score: ' || t.stockout_risk_score || ')' AS action_label,
+                                   t.computed_at AS created_at
+                            FROM mv_integrated_planning_targets t
+                            WHERE t.stockout_risk_score >= 60
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM fact_replenishment_exceptions e
+                                  WHERE e.item_id = t.item_id
+                                    AND e.loc = t.loc
+                                    AND e.status = 'open'
+                              )
+                            ORDER BY t.stockout_risk_score DESC, financial_impact DESC NULLS LAST
+                            LIMIT %s
+                        """, [limit * 2])
+                        rows = await cur.fetchall()
+                    for r in rows:
                         actions.append({
                             "source": r[0],
                             "item_id": r[1],
@@ -226,6 +264,76 @@ async def get_action_feed(
                         })
                 except psycopg.Error as exc:
                     logger.warning("action-inbox: integrated_targets MV query failed: %s", exc)
+
+                # --- Full-population summary (U9.1) ---
+                # The detail queries above are LIMIT-capped for display. The
+                # headline KPIs must reflect the ENTIRE candidate population
+                # (every open exception + proposed order + high-risk item),
+                # not just the truncated page — otherwise the morning-triage
+                # screen understates real exposure (e.g. "20 critical" vs the
+                # true 2,465). Counted with the SAME urgency thresholds the
+                # per-row scores use: urgent >= 0.75, high in [0.5, 0.75).
+                try:
+                    async with conn.transaction():
+                        await cur.execute(
+                            """
+                            WITH pop AS (
+                                SELECT
+                                    CASE severity
+                                        WHEN 'critical' THEN 0.95
+                                        WHEN 'high' THEN 0.75
+                                        WHEN 'medium' THEN 0.50
+                                        ELSE 0.25
+                                    END AS urgency_score,
+                                    COALESCE(financial_impact_total, estimated_order_value, 0) AS fin
+                                FROM fact_replenishment_exceptions
+                                WHERE status = 'open'
+                                UNION ALL
+                                SELECT
+                                    CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
+                                    COALESCE(order_value, 0) AS fin
+                                FROM fact_planned_orders
+                                WHERE status = 'proposed'
+                                UNION ALL
+                                SELECT
+                                    t.stockout_risk_score / 100.0 AS urgency_score,
+                                    t.monthly_total_holding_cost * 12 AS fin
+                                FROM mv_integrated_planning_targets t
+                                WHERE t.stockout_risk_score >= 60
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM fact_replenishment_exceptions e
+                                      WHERE e.item_id = t.item_id
+                                        AND e.loc = t.loc
+                                        AND e.status = 'open'
+                                  )
+                            )
+                            SELECT
+                                count(*) AS total,
+                                count(*) FILTER (WHERE urgency_score >= %s) AS critical,
+                                count(*) FILTER (
+                                    WHERE urgency_score >= %s AND urgency_score < %s
+                                ) AS high,
+                                COALESCE(sum(fin) FILTER (WHERE urgency_score >= %s), 0) AS financial_at_risk
+                            FROM pop
+                            WHERE urgency_score >= %s
+                            """,
+                            [
+                                _URGENCY_THRESHOLDS["urgent"],
+                                _URGENCY_THRESHOLDS["high"],
+                                _URGENCY_THRESHOLDS["urgent"],
+                                _URGENCY_THRESHOLDS["high"],
+                                urgency_min,
+                            ],
+                        )
+                        agg_row = await cur.fetchone()
+                    full_summary = {
+                        "total": int(agg_row[0]),
+                        "critical": int(agg_row[1]),
+                        "high": int(agg_row[2]),
+                        "financial_at_risk": float(agg_row[3]) if agg_row[3] else None,
+                    }
+                except (psycopg.Error, TypeError, ValueError, IndexError) as exc:
+                    logger.warning("action-inbox: full-population summary failed: %s", exc)
 
     except psycopg.Error as exc:
         logger.exception("action-inbox: DB connection failed: %s", exc)
@@ -252,28 +360,51 @@ async def get_action_feed(
         a["id"] = f"{a['source']}:{a['item_id']}:{a['loc']}:{i}"
         a["urgency_label"] = _urgency_label(a["urgency_score"])
         a["severity"] = _severity_from_urgency(a["urgency_score"])
-        a["title"] = a.pop("action_label")
-        a["detail"] = f"{a['action_type'].replace('_', ' ').title()} — {a['item_id']} @ {a['loc']}"
+        action_label = a.pop("action_label")
+        # Source 1 (exceptions) emits the raw enum as action_label; humanize it.
+        # Other sources already emit a full sentence — keep those verbatim.
+        if a["source"] == "exception":
+            a["title"] = f"Resolve {_humanize_action_type(action_label)}"
+        else:
+            a["title"] = action_label
+        a["detail"] = f"{_humanize_action_type(a['action_type'])} — {a['item_id']} @ {a['loc']}"
         a["action_url"] = None
 
-    # Build summary from the full (unsliced) set would be ideal, but for
-    # simplicity we summarise what we return
-    urgent_count = sum(1 for a in actions if a["urgency_score"] >= _URGENCY_THRESHOLDS["urgent"])
-    high_count = sum(
-        1 for a in actions
-        if _URGENCY_THRESHOLDS["high"] <= a["urgency_score"] < _URGENCY_THRESHOLDS["urgent"]
-    )
-    total_impact = sum(a["financial_impact"] or 0 for a in actions)
-
-    return {
-        "actions": actions,
-        "summary": {
+    # Headline KPIs reflect the FULL candidate population (U9.1) when the
+    # aggregate query succeeded; otherwise degrade to the displayed page so a
+    # transient aggregate failure never blanks or 500s the feed.
+    if full_summary is not None:
+        summary = {
+            "total": full_summary["total"],
+            "critical": full_summary["critical"],
+            "high": full_summary["high"],
+            "financial_at_risk": (
+                round(full_summary["financial_at_risk"], 2)
+                if full_summary["financial_at_risk"]
+                else None
+            ),
+        }
+    else:
+        urgent_count = sum(
+            1 for a in actions if a["urgency_score"] >= _URGENCY_THRESHOLDS["urgent"]
+        )
+        high_count = sum(
+            1 for a in actions
+            if _URGENCY_THRESHOLDS["high"] <= a["urgency_score"] < _URGENCY_THRESHOLDS["urgent"]
+        )
+        total_impact = sum(a["financial_impact"] or 0 for a in actions)
+        summary = {
             "total": len(actions),
             "critical": urgent_count,
             "high": high_count,
             "financial_at_risk": round(total_impact, 2) if total_impact else None,
-        },
-    }
+        }
+
+    # The action list is a truncated top-N by urgency × impact; expose how many
+    # rows are shown so the UI can caption "showing top N of {total}".
+    summary["displayed"] = len(actions)
+
+    return {"actions": actions, "summary": summary}
 
 
 # ───────────────────────────────────────────────────────────────────────────

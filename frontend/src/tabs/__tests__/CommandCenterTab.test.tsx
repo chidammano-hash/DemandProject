@@ -112,6 +112,27 @@ describe("CommandCenterTab", () => {
     expect(screen.getByText("Portfolio looks healthy!")).toBeDefined();
   });
 
+  it("shows a degraded warning instead of 'healthy' when KPIs are stale (F2.1)", async () => {
+    const { fetchControlTowerKpis } = await import("@/api/queries");
+    (fetchControlTowerKpis as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      computed_at: null,
+      health: { avg_health_score: 0 },
+      exceptions: { open_exceptions_total: 0, critical_exceptions: 0, high_exceptions: 0 },
+      fill_rate: { portfolio_fill_rate_3m: null },
+      warning: "mv_control_tower_kpis not yet refreshed. Run `make refresh-mvs-tiered`.",
+    });
+    render(
+      <TestQueryWrapper>
+        <CommandCenterTab onNavigate={onNavigate} />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("mv-stale-warning")).toBeDefined();
+    });
+    // The false-positive "healthy" empty state must NOT be shown when KPIs are stale.
+    expect(screen.queryByText("Portfolio looks healthy!")).toBeNull();
+  });
+
   it("renders trend chart section", async () => {
     render(
       <TestQueryWrapper>

@@ -397,6 +397,30 @@ export async function fetchApprovedPlan(params?: { plan_month?: string; item_id?
   return fetchJson(`/sop/approved-plan${buildQuerySuffix(params ?? {})}`);
 }
 
+// Write mutations — routed through fetchJson so 4xx/5xx surface a sanitized
+// message via the cycle-2 error layer instead of leaking the raw body (U3.1).
+export async function advanceSopCycle(
+  cycle_id: string,
+  body: { facilitated_by: string; notes: string | null },
+): Promise<{ cycle_id: string; stage: string }> {
+  return fetchJson(`/sop/cycles/${encodeURIComponent(cycle_id)}/advance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function approveSopCycle(
+  cycle_id: string,
+  body: { approved_by: string; plan_version: string },
+): Promise<{ cycle_id: string; stage: string }> {
+  return fetchJson(`/sop/cycles/${encodeURIComponent(cycle_id)}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // F4.3 — Event & Promotion Planning
 // ---------------------------------------------------------------------------

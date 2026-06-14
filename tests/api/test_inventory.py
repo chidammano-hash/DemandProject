@@ -513,3 +513,80 @@ async def test_inventory_trend_null_dos(mock_pool):
             resp = await client.get("/inventory/trend")
             data = resp.json()
             assert data["trend"][0]["dos"] is None
+
+
+# ---------------------------------------------------------------------------
+# F1.3 / F1.4 — graceful degradation when agg_inventory_monthly is unpopulated
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_inventory_trend_handles_unpopulated_mv(mock_pool):
+    """F1.3: /inventory/trend degrades to empty + warning when
+    agg_inventory_monthly has not been refreshed, instead of 500."""
+    import psycopg
+    pool, _, cursor = mock_pool
+    cursor.execute.side_effect = psycopg.errors.ObjectNotInPrerequisiteState(
+        'materialized view "agg_inventory_monthly" has not been populated'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["trend"] == []
+    assert "warning" in data
+    assert "refresh" in data["warning"].lower()
+
+
+@pytest.mark.asyncio
+async def test_inventory_kpis_degrades_when_agg_mv_unpopulated():
+    """F1.4: /inventory/kpis still returns the snapshot totals (Query 1) with
+    neutral nulls for MV-derived metrics when agg_inventory_monthly is
+    unpopulated, instead of 500-ing the whole Item Analysis panel."""
+    import psycopg
+    from contextlib import contextmanager
+
+    cursor = MagicMock()
+    # Query 1 (latest snapshot) succeeds; Queries 2 & 3 (agg MV) raise.
+    cursor.execute.side_effect = [
+        None,
+        psycopg.errors.ObjectNotInPrerequisiteState(
+            'materialized view "agg_inventory_monthly" has not been populated'
+        ),
+    ]
+    # Query 1 fetchone: total_on_hand, total_on_order, distinct_items,
+    # distinct_locations, last_snapshot_date
+    cursor.fetchone.return_value = (69.83, 154.0, 1, 1, date(2026, 4, 30))
+    cursor.description = []
+
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+
+    # conn.transaction() is a SAVEPOINT context manager that must NOT swallow
+    # the exception raised inside it (real psycopg re-raises after rollback).
+    @contextmanager
+    def _txn():
+        yield None
+    conn.transaction = MagicMock(side_effect=_txn)
+
+    pool = MagicMock()
+    pool.connection.return_value = conn
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/kpis?item=133716&location=1401-BULK")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Snapshot totals survive...
+    assert data["total_on_hand"] == 69.83
+    assert data["total_on_order"] == 154.0
+    # ...while MV-derived KPIs degrade to neutral nulls (no crash).
+    assert data["dos"] is None
+    assert data["inventory_turns"] is None

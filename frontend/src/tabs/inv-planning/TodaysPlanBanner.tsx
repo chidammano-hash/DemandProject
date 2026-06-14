@@ -17,6 +17,7 @@ import {
   type ActionFeedItem,
 } from "@/api/queries";
 import { ChevronUp } from "lucide-react";
+import { formatCompactCurrency, shouldRenderStat } from "./todaysPlanFormat";
 
 // ---------------------------------------------------------------------------
 // Priority badge sub-component
@@ -95,11 +96,7 @@ export function TodaysPlanBanner({ onCollapse }: { onCollapse: () => void }) {
           <PriorityBadge label="High" count={summary?.high ?? 0} color="amber" />
           <PriorityBadge
             label="At Risk"
-            value={
-              summary?.financial_at_risk
-                ? `$${(summary.financial_at_risk / 1000).toFixed(0)}K`
-                : "--"
-            }
+            value={formatCompactCurrency(summary?.financial_at_risk)}
             color="blue"
           />
         </div>
@@ -135,14 +132,18 @@ export function TodaysPlanBanner({ onCollapse }: { onCollapse: () => void }) {
       {/* Stats row from daily briefing */}
       {stats && (
         <div className="flex gap-4 text-xs text-muted-foreground mt-2">
-          <span>{stats.total_skus.toLocaleString()} SKUs</span>
+          <span>
+            {shouldRenderStat(stats.total_skus) ? stats.total_skus.toLocaleString() : "—"} SKUs
+          </span>
           <span className="text-red-600 dark:text-red-400">
             {stats.below_ss_count.toLocaleString()} at risk
           </span>
-          <span className="text-amber-600 dark:text-amber-400">
-            {stats.excess_count.toLocaleString()} excess ($
-            {(stats.total_excess_value / 1000).toFixed(0)}K)
-          </span>
+          {shouldRenderStat(stats.excess_count) && (
+            <span className="text-amber-600 dark:text-amber-400">
+              {stats.excess_count.toLocaleString()} excess (
+              {formatCompactCurrency(stats.total_excess_value)})
+            </span>
+          )}
           {stats.avg_health_score != null && (
             <span>
               Health: {stats.avg_health_score.toFixed(0)}/100

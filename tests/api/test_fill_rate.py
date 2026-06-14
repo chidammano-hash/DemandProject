@@ -291,3 +291,25 @@ async def test_service_level_waterfall_bridge_with_month():
     data = resp.json()
     assert data["month"] == "2026-03"
     assert data["actual"] == 0.975
+
+
+@pytest.mark.asyncio
+async def test_fill_rate_trend_handles_unpopulated_mv():
+    """F1.3: /fill-rate/trend degrades to empty + warning when
+    mv_fill_rate_monthly has not been refreshed, instead of 500-ing."""
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.ObjectNotInPrerequisiteState(
+        'materialized view "mv_fill_rate_monthly" has not been populated'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/fill-rate/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["months"] == []
+    assert "warning" in data
+    assert "refresh" in data["warning"].lower()

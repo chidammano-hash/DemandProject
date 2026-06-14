@@ -1,12 +1,16 @@
 """Inventory backtest endpoints (feature 37)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["inventory-backtest"])
 
@@ -177,9 +181,18 @@ def inv_backtest_trend(
     """
 
     ordered_params: list[Any] = [excess_dos_threshold] + params
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, ordered_params)
-        rows = cur.fetchall()
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, ordered_params)
+            rows = cur.fetchall()
+    except (psycopg.errors.ObjectNotInPrerequisiteState, psycopg.errors.UndefinedTable) as exc:
+        # mv_inventory_forecast_monthly created but not yet refreshed (or missing).
+        # Degrade to an empty trend + hint instead of 500 (F1.3).
+        logger.warning("inventory-backtest/trend: MV unavailable (%s)", exc)
+        return {
+            "trend": [],
+            "warning": "Upstream materialized view not yet refreshed. Run `make refresh-mvs-tiered`.",
+        }
 
     trend: list[dict[str, Any]] = []
     current_month: str | None = None

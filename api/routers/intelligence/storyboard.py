@@ -29,6 +29,24 @@ from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 router = APIRouter(tags=["storyboard"])
 
 
+# Map the text severity used by fact_replenishment_exceptions onto the 0..1
+# numeric severity the storyboard feed sorts/renders by.
+_REPL_SEVERITY_SCORE = {
+    "critical": 0.95,
+    "high": 0.70,
+    "medium": 0.50,
+    "low": 0.30,
+}
+
+# Map replenishment status onto the storyboard status vocabulary.
+_REPL_STATUS_MAP = {
+    "open": "open",
+    "acknowledged": "investigating",
+    "ordered": "investigating",
+    "resolved": "resolved",
+}
+
+
 
 
 
@@ -138,6 +156,20 @@ def list_exceptions(
             cur.execute(count_sql, params)
             total = cur.fetchone()[0] or 0
 
+            # F4.1: the forecast-storyboard exception_queue is empty on installs
+            # that drive triage off replenishment exceptions. Fall back to
+            # fact_replenishment_exceptions so the Command Center feed shows the
+            # same actionable items the Inventory Planning Action Feed shows,
+            # instead of a misleading "Exception data unavailable" panel sitting
+            # below a KPI tile that reads "6142 Open Exceptions".
+            if total == 0:
+                fallback = _replenishment_fallback(
+                    cur, status=status, item=item, loc=loc,
+                    severity_min=severity_min, limit=limit, offset=offset,
+                )
+                if fallback is not None:
+                    return fallback
+
             cur.execute(rows_sql, params + [limit, offset])
             col_names = [d[0] for d in cur.description]
             raw_rows = cur.fetchall()
@@ -159,6 +191,108 @@ def list_exceptions(
         "limit": limit,
         "offset": offset,
         "rows": rows,
+    }
+
+
+def _replenishment_fallback(
+    cur,
+    *,
+    status: str,
+    item: str,
+    loc: str,
+    severity_min: float,
+    limit: int,
+    offset: int,
+) -> Optional[dict]:
+    """Build a storyboard exception feed from fact_replenishment_exceptions.
+
+    Returns the same {total, limit, offset, rows} envelope as the queue-backed
+    path (rows carry ``source="fact_replenishment_exceptions"``), or ``None``
+    when the replenishment table is also empty so the caller renders the normal
+    empty state. Only the filters that map cleanly onto the replenishment table
+    are applied; brand/category/market cross-dim filters are skipped here.
+    """
+    where_parts: list[str] = []
+    params: list[Any] = []
+
+    if status.strip() and status.strip().lower() != "all":
+        where_parts.append("status = %s")
+        params.append(status.strip())
+    if item.strip():
+        where_parts.append("item_id ILIKE %s")
+        params.append(f"%{item.strip()}%")
+    if loc.strip():
+        where_parts.append("loc ILIKE %s")
+        params.append(f"%{loc.strip()}%")
+    if severity_min > 0:
+        # Only keep text severities scoring at/above the requested threshold.
+        allowed = [k for k, v in _REPL_SEVERITY_SCORE.items() if v >= severity_min]
+        if not allowed:
+            return None
+        where_parts.append("severity = ANY(%s)")
+        params.append(allowed)
+
+    where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+    cur.execute(
+        "SELECT COUNT(*) FROM fact_replenishment_exceptions " + where_clause, params
+    )
+    total = cur.fetchone()[0] or 0
+    if total == 0:
+        return None
+
+    # Critical first, then by financial impact. CASE keeps the ordering aligned
+    # with the numeric severity the feed displays.
+    cur.execute(
+        """
+        SELECT exception_id, exception_type, item_id, loc, severity,
+               financial_impact_total, status, exception_date,
+               current_dos, recommended_order_qty
+        FROM fact_replenishment_exceptions
+        """
+        + where_clause
+        + """
+        ORDER BY CASE severity
+                   WHEN 'critical' THEN 4 WHEN 'high' THEN 3
+                   WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END DESC,
+                 financial_impact_total DESC NULLS LAST,
+                 exception_date DESC
+        LIMIT %s OFFSET %s
+        """,
+        params + [limit, offset],
+    )
+    raw_rows = cur.fetchall()
+
+    rows = []
+    for r in raw_rows:
+        (exc_id, exc_type, item_id, row_loc, severity_text, fin_impact,
+         row_status, exc_date, current_dos, rec_qty) = r
+        rows.append({
+            "exception_id": _s(exc_id),
+            "exception_type": exc_type,
+            "item_id": item_id,
+            "loc": row_loc,
+            "severity": _REPL_SEVERITY_SCORE.get(severity_text, 0.5),
+            "financial_impact": _f(fin_impact),
+            "headline": f"{(exc_type or 'exception').replace('_', ' ').title()} — {item_id} @ {row_loc}",
+            "supporting_data": {
+                "current_dos": _f(current_dos),
+                "recommended_order_qty": _f(rec_qty),
+            },
+            "status": _REPL_STATUS_MAP.get(row_status, row_status),
+            "assigned_to": None,
+            "generated_at": exc_date.isoformat() if exc_date else None,
+            "expires_at": None,
+            "month_start": exc_date.isoformat() if exc_date else None,
+            "source": "fact_replenishment_exceptions",
+        })
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "rows": rows,
+        "source": "fact_replenishment_exceptions",
     }
 
 

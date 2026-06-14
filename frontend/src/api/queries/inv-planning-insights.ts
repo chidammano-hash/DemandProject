@@ -55,6 +55,9 @@ export interface ActionFeedPayload {
     critical: number;
     high: number;
     financial_at_risk: number | null;
+    // Number of action rows actually returned in `actions` (the display page).
+    // The other counts reflect the full candidate population (U9.1).
+    displayed?: number;
   };
 }
 

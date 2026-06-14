@@ -1,12 +1,16 @@
 """Inventory planning endpoints (feature 34)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache, qident
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["inventory"])
 
@@ -197,13 +201,25 @@ def inventory_kpis(
         {prev_where}
     """
 
+    cur_row = None
+    prev_row = None
     with get_conn() as conn, conn.cursor() as cur:
+        # Query 1 reads fact_inventory_snapshot (a base table) and always works.
         cur.execute(latest_sql, filter_params)
         latest_row = cur.fetchone()
-        cur.execute(cur_month_sql, cur_params)
-        cur_row = cur.fetchone()
-        cur.execute(prev_month_sql, prev_params)
-        prev_row = cur.fetchone()
+        # Queries 2 & 3 read agg_inventory_monthly (an MV). If it has never been
+        # refreshed, degrade the MV-derived KPIs (DOS, turns, lead-time coverage)
+        # to neutral nulls inside a SAVEPOINT instead of 500-ing — the snapshot
+        # totals from Query 1 still render (F1.4). Run `make refresh-mvs-tiered`
+        # to populate the derived metrics.
+        try:
+            with conn.transaction():
+                cur.execute(cur_month_sql, cur_params)
+                cur_row = cur.fetchone()
+                cur.execute(prev_month_sql, prev_params)
+                prev_row = cur.fetchone()
+        except (psycopg.errors.ObjectNotInPrerequisiteState, psycopg.errors.UndefinedTable) as exc:
+            logger.warning("inventory/kpis: agg_inventory_monthly unavailable (%s)", exc)
 
     # --- point-in-time snapshot values ---
     total_on_hand = float(latest_row[0]) if latest_row else 0.0
@@ -277,6 +293,22 @@ def inventory_kpis(
     }
 
 
+def _set_inv_params(inv_params: dict, prow: tuple) -> None:
+    """Populate the safety-stock / EOQ / policy detail dict from a query row."""
+    inv_params.update({
+        "safety_stock": round(float(prow[0]), 1) if prow[0] is not None else None,
+        "reorder_point_units": round(float(prow[1]), 1) if prow[1] is not None else None,
+        "service_level_target": float(prow[2]) if prow[2] is not None else None,
+        "z_score": round(float(prow[3]), 3) if prow[3] is not None else None,
+        "demand_cv": round(float(prow[4]), 4) if prow[4] is not None else None,
+        "eoq": round(float(prow[5]), 1) if prow[5] is not None else None,
+        "eoq_cycle_stock": round(float(prow[6]), 1) if prow[6] is not None else None,
+        "order_frequency": round(float(prow[7]), 1) if prow[7] is not None else None,
+        "order_policy": str(prow[8]) if prow[8] is not None else None,
+        "policy_type": str(prow[9]) if prow[9] is not None else None,
+    })
+
+
 @router.get("/inventory/trend")
 def inventory_trend(
     response: FastAPIResponse,
@@ -344,25 +376,24 @@ def inventory_trend(
             LIMIT 1
         """
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        if item.strip() and location.strip():
-            cur.execute(params_sql, [f"%{item.strip()}%", f"%{location.strip()}%"])
-            prow = cur.fetchone()
-            if prow:
-                inv_params = {
-                    "safety_stock": round(float(prow[0]), 1) if prow[0] is not None else None,
-                    "reorder_point_units": round(float(prow[1]), 1) if prow[1] is not None else None,
-                    "service_level_target": float(prow[2]) if prow[2] is not None else None,
-                    "z_score": round(float(prow[3]), 3) if prow[3] is not None else None,
-                    "demand_cv": round(float(prow[4]), 4) if prow[4] is not None else None,
-                    "eoq": round(float(prow[5]), 1) if prow[5] is not None else None,
-                    "eoq_cycle_stock": round(float(prow[6]), 1) if prow[6] is not None else None,
-                    "order_frequency": round(float(prow[7]), 1) if prow[7] is not None else None,
-                    "order_policy": str(prow[8]) if prow[8] is not None else None,
-                    "policy_type": str(prow[9]) if prow[9] is not None else None,
-                }
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            if item.strip() and location.strip():
+                cur.execute(params_sql, [f"%{item.strip()}%", f"%{location.strip()}%"])
+                prow = cur.fetchone()
+                if prow:
+                    _set_inv_params(inv_params, prow)
+    except (psycopg.errors.ObjectNotInPrerequisiteState, psycopg.errors.UndefinedTable) as exc:
+        # agg_inventory_monthly created but not yet refreshed (or missing).
+        # Degrade to an empty trend + hint instead of 500 (F1.3).
+        logger.warning("inventory/trend: MV unavailable (%s)", exc)
+        return {
+            "trend": [],
+            "params": {},
+            "warning": "Upstream materialized view not yet refreshed. Run `make refresh-mvs-tiered`.",
+        }
 
     ss = inv_params.get("safety_stock")
     trend = [

@@ -21,6 +21,53 @@ router = APIRouter(tags=["control-tower"])
 
 
 
+def _exceptions_fallback() -> dict:
+    """Live open-exception counts grouped by severity, used when the KPI MV is
+    stale/missing (F3.1). Mirrors the Action Feed source table so the Command
+    Center never shows zero open exceptions while live rows exist. Degrades to
+    zeros if the table itself is unavailable."""
+    neutral = {
+        "open_exceptions_total": 0,
+        "critical_exceptions": 0,
+        "high_exceptions": 0,
+        "recommended_order_value": 0.0,
+    }
+    fallback_sql = """
+        SELECT severity, COUNT(*) AS cnt, COALESCE(SUM(estimated_order_value), 0) AS order_value
+        FROM fact_replenishment_exceptions
+        WHERE status = 'open'
+        GROUP BY severity
+    """
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(fallback_sql, [])
+                rows = cur.fetchall()
+    except (psycopg.errors.ObjectNotInPrerequisiteState, psycopg.errors.UndefinedTable) as exc:
+        logger.warning("control-tower/kpis: exceptions fallback unavailable (%s)", exc)
+        return neutral
+
+    total = 0
+    critical = 0
+    high = 0
+    order_value = 0.0
+    for severity, cnt, ov in rows:
+        count = int(cnt or 0)
+        total += count
+        if severity == "critical":
+            critical = count
+        elif severity == "high":
+            high = count
+        order_value += float(ov or 0.0)
+    return {
+        "open_exceptions_total": total,
+        "critical_exceptions": critical,
+        "high_exceptions": high,
+        "recommended_order_value": order_value,
+        "source": "fact_replenishment_exceptions",
+    }
+
+
 # ---------------------------------------------------------------------------
 # GET /control-tower/kpis
 # ---------------------------------------------------------------------------
@@ -69,9 +116,18 @@ def get_control_tower_kpis(
             with conn.cursor() as cur:
                 cur.execute(sql, [])
                 row = cur.fetchone()
-    except psycopg.errors.ObjectNotInPrerequisiteState as exc:
-        logger.warning("control-tower/kpis: MV not populated (%s)", exc)
-        return {**empty_payload, "warning": "mv_control_tower_kpis not yet refreshed. Run `make refresh-mvs-tiered`."}
+    except (psycopg.errors.ObjectNotInPrerequisiteState, psycopg.errors.UndefinedTable) as exc:
+        # ObjectNotInPrerequisiteState → MV exists but has never been refreshed.
+        # UndefinedTable → the MV migration (sql/035) was never applied.
+        # Either way the portfolio-health half of the payload is unavailable, but
+        # the open-exception counts live in fact_replenishment_exceptions (the same
+        # table the Action Feed reads). Fall back to a live COUNT(*) so morning
+        # triage on the Command Center is never silently zeroed (F3.1). If even the
+        # fallback table is unavailable, degrade to the neutral empty payload (F1.2).
+        logger.warning("control-tower/kpis: MV unavailable (%s)", exc)
+        warning = "mv_control_tower_kpis not yet refreshed. Run `make refresh-mvs-tiered`."
+        fallback = _exceptions_fallback()
+        return {**empty_payload, "exceptions": fallback, "warning": warning}
 
     if not row:
         # View exists and is populated, just has no rows

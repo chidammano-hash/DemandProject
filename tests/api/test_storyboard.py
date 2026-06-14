@@ -122,6 +122,57 @@ async def test_list_exceptions_pagination_params():
     assert data["offset"] == 20
 
 
+# A representative fact_replenishment_exceptions fallback row.
+# Column order matches the fallback SELECT in storyboard.list_exceptions.
+_REPL_ROW = (
+    "repl-uuid-1",            # exception_id
+    "stockout",              # exception_type
+    "627099",               # item_id
+    "1401-BULK",            # loc
+    "critical",             # severity (text)
+    571.98,                  # financial_impact_total
+    "open",                 # status
+    datetime.date(2026, 4, 2),  # exception_date
+    1.5,                     # current_dos
+    120.0,                   # recommended_order_qty
+)
+
+
+@pytest.mark.asyncio
+async def test_list_exceptions_falls_back_to_replenishment_when_queue_empty():
+    """F4.1: when exception_queue is empty but fact_replenishment_exceptions has
+    open rows, the storyboard feed must return those replenishment rows so the
+    Command Center feed is not "Exception data unavailable" while the KPI tile
+    shows 6142 open exceptions.
+    """
+    pool, conn, cursor = _make_pool()
+    # 1st fetchone: COUNT(*) over exception_queue -> 0 (empty).
+    # 2nd fetchone: COUNT(*) over fact_replenishment_exceptions -> 1.
+    cursor.fetchone.side_effect = [(0,), (1,)]
+    cursor.fetchall.return_value = [_REPL_ROW]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/storyboard/exceptions?limit=5")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert len(data["rows"]) == 1
+    row = data["rows"][0]
+    assert row["item_id"] == "627099"
+    assert row["loc"] == "1401-BULK"
+    # text severity mapped to a numeric severity for display/sort
+    assert isinstance(row["severity"], (int, float))
+    assert row["severity"] >= 0.75  # critical
+    assert row["source"] == "fact_replenishment_exceptions"
+    # The fallback query must read the replenishment table.
+    executed = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list).lower()
+    assert "fact_replenishment_exceptions" in executed
+
+
 @pytest.mark.asyncio
 async def test_list_exceptions_severity_min_filter():
     pool, conn, cursor = _make_pool()

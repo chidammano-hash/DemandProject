@@ -89,6 +89,13 @@ export function ActionFeedPanel() {
         />
       </div>
 
+      {!isLoading && actions.length > 0 && (summary?.total ?? 0) > actions.length && (
+        <p className="text-xs text-muted-foreground">
+          Showing top {formatInt(summary?.displayed ?? actions.length)} of{" "}
+          {formatInt(summary?.total)} actions by urgency × impact. KPIs above reflect the full population.
+        </p>
+      )}
+
       {isLoading ? (
         <p className="text-xs text-muted-foreground">Loading action feed...</p>
       ) : actions.length === 0 ? (
