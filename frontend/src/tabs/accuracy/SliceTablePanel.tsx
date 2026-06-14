@@ -12,6 +12,30 @@ import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { LoadingElement } from "@/components/LoadingElement";
 import { titleCase, formatPercent } from "@/lib/formatters";
+import { formatHeatmapAccuracy } from "@/tabs/aggregate-analysis/aggregateShared";
+
+// ---------------------------------------------------------------------------
+// Cell formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * F4.4 — render one accuracy-slice cell. The `accuracy_pct` column floors
+ * negative low-base values to `<0%*` (consistent with the accuracy heatmap,
+ * F3.2) so a planner reads "low base — see WAPE" instead of an apparent bug.
+ * WAPE (also `pct` format) is left raw because a high WAPE is meaningful;
+ * bias keeps its signed value; numeric columns fall through to a count.
+ */
+export function formatSliceCell(
+  key: string,
+  format: string,
+  val: number | null | undefined,
+): string {
+  if (val === null || val === undefined) return "-";
+  if (key === "accuracy_pct") return formatHeatmapAccuracy(val);
+  if (format === "pct") return formatPercent(val);
+  if (format === "bias") return `${(val * 100).toFixed(1)}%`;
+  return Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -261,18 +285,7 @@ export function SliceTablePanel({
                             val !== null &&
                             val !== undefined &&
                             Math.abs(val) > 0.15;
-                          let display: string;
-                          if (val === null || val === undefined) {
-                            display = "-";
-                          } else if (k.format === "pct") {
-                            display = formatPercent(val);
-                          } else if (k.format === "bias") {
-                            display = `${(val * 100).toFixed(1)}%`;
-                          } else {
-                            display = Number(val).toLocaleString(undefined, {
-                              maximumFractionDigits: 0,
-                            });
-                          }
+                          const display = formatSliceCell(k.key, k.format, val);
                           return (
                             <TableCell
                               key={`${m}-${k.key}`}
@@ -305,6 +318,7 @@ export function SliceTablePanel({
           </div>
           <p className="text-xs text-muted-foreground">
             &#9733; = best accuracy for that row. &#9888; = |bias| &gt; 15%.
+            Accuracy = 100 &minus; WAPE; <code className="rounded bg-muted px-1">&lt;0%*</code> = tiny actual base (forecast &gt;&gt; actual) &mdash; read WAPE instead.
           </p>
         </div>
       ) : loadingSlice ? (

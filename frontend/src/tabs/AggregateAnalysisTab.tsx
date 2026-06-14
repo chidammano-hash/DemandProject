@@ -71,6 +71,7 @@ import {
   buildCascade,
   hasActiveFilters,
   formatNumberCompact,
+  formatHeatmapAccuracy,
   trendDirection,
   type LocalFilters,
 } from "./aggregate-analysis";
@@ -429,7 +430,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 label="Accuracy %"
                 size="lg"
                 value={kpi.accuracy_pct != null ? `${kpi.accuracy_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
+                trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), goodDirection: "up", unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.accuracy_pct != null ? (kpi.accuracy_pct >= 90 ? "best" : kpi.accuracy_pct >= 80 ? "neutral" : "warning") : "neutral"}
                 target={{ value: ">= 90%", label: "Target" }}
                 sparkline={(() => {
@@ -441,7 +442,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 label="WAPE %"
                 size="lg"
                 value={kpi.wape_pct != null ? `${kpi.wape_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.wape_pct != null ? { delta: -kpi.deltas.wape_pct, direction: trendDirection(-kpi.deltas.wape_pct), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
+                // U6.1: display the TRUE delta sign; color by goodDirection ("down" = lower WAPE is better).
+                trend={kpi.deltas?.wape_pct != null ? { delta: kpi.deltas.wape_pct, direction: trendDirection(kpi.deltas.wape_pct), goodDirection: "down", unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.wape_pct != null ? (kpi.wape_pct <= 10 ? "best" : kpi.wape_pct <= 20 ? "neutral" : "warning") : "neutral"}
                 target={{ value: "<= 10%", label: "Target" }}
                 sparkline={(() => {
@@ -453,7 +455,10 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 label="Bias %"
                 size="lg"
                 value={kpi.bias_pct != null ? `${kpi.bias_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.bias_pct != null ? { delta: -Math.abs(kpi.deltas.bias_pct), direction: trendDirection(-Math.abs(kpi.deltas.bias_pct)), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
+                // U6.1: show the TRUE signed bias change. "Good" = moving toward zero,
+                // so when current bias is positive lower is better ("down"), and when
+                // negative higher is better ("up").
+                trend={kpi.deltas?.bias_pct != null ? { delta: kpi.deltas.bias_pct, direction: trendDirection(kpi.deltas.bias_pct), goodDirection: (kpi.bias_pct ?? 0) >= 0 ? "down" : "up", unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.bias_pct != null ? (Math.abs(kpi.bias_pct) <= 5 ? "best" : Math.abs(kpi.bias_pct) <= 15 ? "neutral" : "warning") : "neutral"}
                 target={{ value: "+/- 5%", label: "Target" }}
               />
@@ -557,11 +562,24 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
           {heatmapQ.isLoading ? (
             <Skeleton className="h-[200px]" />
           ) : (
-            <HeatmapGrid
-              rows={heatmapRows}
-              columnLabels={heatmapLabels}
-              colorScale={colorScale}
-            />
+            <>
+              <HeatmapGrid
+                rows={heatmapRows}
+                columnLabels={heatmapLabels}
+                colorScale={colorScale}
+                valueFormat={formatHeatmapAccuracy}
+                showLegend
+                minLabel="<0%"
+                maxLabel="100%"
+              />
+              {/* F3.2 / U3.6 — explain the floored cells so a low-base artifact
+                  isn't mistaken for a broken model. */}
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                Accuracy = 100 − WAPE. Cells marked <span className="font-medium">&lt;0%*</span> have
+                actuals near zero on a tiny base (WAPE &gt; 100%) — review WAPE rather than reading
+                the negative literally.
+              </p>
+            </>
           )}
         </CollapsibleSection>
       )}

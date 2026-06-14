@@ -121,6 +121,27 @@ describe("formatCell", () => {
   it("formats zero as '0'", () => {
     expect(formatCell(0)).toBe("0");
   });
+
+  // U6.2 — the API/MVs sometimes emit the literal string "null" (not JSON null)
+  // for empty cells (e.g. UPC). Those sentinel strings must render as "-", not
+  // the word "null". Mirrors the load-time '' / 'null' / 'none' / 'NA' → NULL rule.
+  it("returns '-' for the sentinel string 'null'", () => {
+    expect(formatCell("null")).toBe("-");
+  });
+
+  it("returns '-' for the sentinel string 'NULL' (case-insensitive)", () => {
+    expect(formatCell("NULL")).toBe("-");
+  });
+
+  it("returns '-' for the sentinel strings 'none', 'na', 'undefined'", () => {
+    expect(formatCell("none")).toBe("-");
+    expect(formatCell("NA")).toBe("-");
+    expect(formatCell("undefined")).toBe("-");
+  });
+
+  it("preserves real text that merely contains the substring 'null'", () => {
+    expect(formatCell("Null Object Brand")).toBe("Null Object Brand");
+  });
 });
 
 describe("titleCase", () => {

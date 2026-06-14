@@ -68,7 +68,7 @@ function monthKey(v: string): string {
 
 // Append the raw key (item_id, or item_id||loc, ...) in brackets so planners
 // can see the SKU number alongside the description in the chart title.
-function formatSeriesTitle(s: WorkbenchSeries): string {
+export function formatSeriesTitle(s: WorkbenchSeries): string {
   const label = s.label || s.key;
   if (!s.key || label === s.key) return label;
   const idDisplay = s.key.replace(/\|\|/g, " - ");
@@ -198,16 +198,25 @@ function SparkAndDelta({
           {formatCompactNumber(lastVal)}
         </span>
       )}
-      {mom != null && (
-        <span
-          className={`text-[10px] tabular-nums inline-flex items-center gap-0.5 ${
-            mom >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
-          }`}
-        >
-          {mom >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
-          {Math.abs(mom).toFixed(1)}%
-        </span>
-      )}
+      {mom != null && (() => {
+        // U6.5: this is the last-month-over-prior-month change. Label it for hover
+        // and screen readers, and footnote implausible low-base spikes (>200%) so a
+        // single-month jump on a tiny base is not mistaken for a sustained trend.
+        const spike = Math.abs(mom) > 200;
+        const ariaLabel = `Month-over-month change: ${mom >= 0 ? "+" : ""}${mom.toFixed(1)}%${spike ? " (single-month spike on a low base)" : ""}`;
+        return (
+          <span
+            aria-label={ariaLabel}
+            title={ariaLabel}
+            className={`text-[10px] tabular-nums inline-flex items-center gap-0.5 ${
+              mom >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+            }`}
+          >
+            {mom >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
+            {Math.abs(mom).toFixed(1)}%{spike ? "*" : ""}
+          </span>
+        );
+      })()}
     </div>
   );
 }
@@ -233,13 +242,14 @@ function TreeNode({
 }) {
   return (
     <button
+      aria-pressed={isSelected}
       onClick={(e) => onToggle(series.key, e.metaKey || e.ctrlKey || e.shiftKey)}
       className={`group w-full text-left px-3 py-2 text-sm rounded-lg transition-all ${
         isSelected
           ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800"
           : "hover:bg-gray-50 dark:hover:bg-gray-800/60 text-gray-700 dark:text-gray-300"
       }`}
-      title={isSelected ? "Click to deselect (cmd/ctrl-click for overlay)" : "Click to select (cmd/ctrl-click to add overlay, max 3)"}
+      title={`${formatSeriesTitle(series)} — ${isSelected ? "click to deselect (cmd/ctrl-click for overlay)" : "click to select (cmd/ctrl-click to add overlay, max 3)"}`}
     >
       <div className="flex items-center gap-2">
         {canDrillDown && (
@@ -247,7 +257,14 @@ function TreeNode({
             isSelected ? "text-blue-500 rotate-90" : "text-gray-400 group-hover:text-gray-500"
           }`} />
         )}
+        {/* U6.4: append the id so duplicate descriptions (e.g. four "TITOS ... 80"
+            rows that are distinct item_ids) are visually distinguishable. */}
         <span className="truncate font-medium flex-1">{series.label || series.key}</span>
+        {series.key && series.label && series.label !== series.key && (
+          <span className="text-[10px] tabular-nums text-gray-400 flex-shrink-0">
+            #{series.key.replace(/\|\|/g, " · ")}
+          </span>
+        )}
         <span className={`text-xs tabular-nums flex-shrink-0 ${
           isSelected ? "text-blue-500 font-medium" : "text-gray-400"
         }`}>
@@ -438,8 +455,11 @@ export function DemandWorkbenchPanel() {
             {/* Series count + multi-select hint */}
             {!isLoading && data?.series && (
               <div className="flex items-center justify-between text-[10px] mb-2 px-1 pr-3">
-                <span className="text-gray-400 uppercase tracking-wider">
-                  {filteredSeries.length} of {data.series.length} series
+                <span
+                  className="text-gray-400 uppercase tracking-wider"
+                  title="Each row: total demand · sparkline · month-over-month change (last vs prior month; * = low-base spike)"
+                >
+                  {filteredSeries.length} of {data.series.length} series · last · MoM&nbsp;%
                 </span>
                 {selectedKeys.length > 0 && (
                   <span className="text-blue-500">

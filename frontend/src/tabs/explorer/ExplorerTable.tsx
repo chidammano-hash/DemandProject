@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/table";
 import { LoadingElement } from "@/components/LoadingElement";
 import { cn } from "@/lib/utils";
-import { titleCase, formatCell } from "@/lib/formatters";
+import { titleCase, formatCell, isEmptyCell } from "@/lib/formatters";
 
 import type { DomainPageRow, SortDir } from "./types";
 
@@ -130,7 +130,7 @@ export function ExplorerTable({
                         "whitespace-nowrap max-w-[300px] truncate",
                         colIdx === 0 && "sticky left-0 z-10 bg-card",
                       )}
-                      title={row[col] != null ? String(row[col]) : ""}
+                      title={isEmptyCell(row[col]) ? "" : String(row[col])}
                     >
                       {formatCell(row[col])}
                     </TableCell>

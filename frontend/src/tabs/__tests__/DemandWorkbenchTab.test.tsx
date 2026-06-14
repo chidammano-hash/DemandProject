@@ -112,4 +112,32 @@ describe("DemandWorkbenchPanel (via DemandHistoryTab)", () => {
     expect(screen.getByText("Item + Loc")).toBeInTheDocument();
     expect(screen.getByText("Item + Loc + Cust")).toBeInTheDocument();
   });
+
+  // U6.6 — series rows are toggle buttons; assistive tech needs a pressed state.
+  it("exposes aria-pressed on a series row reflecting selection state", () => {
+    render(
+      <TestQueryWrapper>
+        <DemandHistoryTab />
+      </TestQueryWrapper>,
+    );
+    const row = screen.getByText("Item A (Loc 1)").closest("button")!;
+    expect(row.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // U6.5 — the trailing colored % is a month-over-month delta; it must be labeled
+  // for screen readers / hover so a 50%+ single-month spike is not read as a trend.
+  it("labels the month-over-month delta with an accessible name", () => {
+    render(
+      <TestQueryWrapper>
+        <DemandHistoryTab />
+      </TestQueryWrapper>,
+    );
+    // Item A: 400 -> 600 = +50.0% MoM.
+    const delta = screen.getByText("50.0%");
+    const labelled = delta.closest("[aria-label]");
+    expect(labelled).not.toBeNull();
+    expect((labelled as HTMLElement).getAttribute("aria-label")?.toLowerCase()).toContain("month-over-month");
+  });
 });

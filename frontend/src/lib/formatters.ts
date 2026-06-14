@@ -19,8 +19,19 @@ export function formatPercent(value: number | null | undefined): string {
   return `${numberFmt.format(value)}%`;
 }
 
+// Case-insensitive sentinel strings that some APIs/MVs emit (as text, not JSON
+// null) for empty cells — mirrors the load-time '' / 'null' / 'none' / 'NA' →
+// NULL normalization rule. Rendered as "-", same as a genuine null (U6.2).
+const NULL_SENTINELS = new Set(["null", "none", "na", "undefined"]);
+
+/** True when a value is null/undefined/empty or a case-insensitive null sentinel string. */
+export function isEmptyCell(value: unknown): boolean {
+  if (value === null || value === undefined || value === "") return true;
+  return typeof value === "string" && NULL_SENTINELS.has(value.trim().toLowerCase());
+}
+
 export function formatCell(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "-";
+  if (isEmptyCell(value)) return "-";
   if (typeof value === "number") return formatNumber(value);
   return String(value);
 }

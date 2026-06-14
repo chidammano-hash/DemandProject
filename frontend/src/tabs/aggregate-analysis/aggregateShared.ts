@@ -97,3 +97,16 @@ export function trendDirection(delta: number | null): "up" | "down" | "flat" {
 }
 
 export const HEATMAP_SCALE = ["#16a34a", "#65a30d", "#eab308", "#f97316", "#dc2626"];
+
+/**
+ * F3.2 / U3.6 — accuracy = 100 − WAPE goes strongly negative when the forecast
+ * dwarfs a tiny actual base (intermittent/low-base categories). Showing raw
+ * "-263.9%" reads as a bug, not a low-base artifact. Floor the *displayed*
+ * value at 0% and append a "*" marker (the heatmap legend explains it) so a
+ * planner can tell "low base — see WAPE" from a real model failure. The
+ * underlying value still drives the (already-saturated) color scale.
+ */
+export function formatHeatmapAccuracy(value: number): string {
+  if (value < 0) return "<0%*";
+  return `${value.toFixed(1)}%`;
+}
