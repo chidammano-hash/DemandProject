@@ -105,11 +105,11 @@ refresh-customer-mv:
 # fact-table aggregations to single indexed lookups at 40x scale.
 refresh-ca-mvs:                       ## Refresh customer-analytics specialized MVs
 	@echo "Refreshing customer-analytics MVs CONCURRENTLY..."
-	@for mv in mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns; do \
+	@for mv in mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns mv_ca_item_state; do \
 	  echo "  Refreshing $$mv ..."; \
 	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
 	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \
-	    || echo "    WARN: $$mv skipped (does not exist — apply sql/180-182_*.sql)"; \
+	    || echo "    WARN: $$mv skipped (does not exist — apply sql/180-182,187_*.sql)"; \
 	done
 	@echo "  OK"
 
@@ -1663,7 +1663,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	  mv_inventory_health_score mv_control_tower_kpis \
 	  mv_integrated_planning_targets \
 	  mv_customer_activity_monthly \
-	  mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns; do \
+	  mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns mv_ca_item_state; do \
 	  echo "  Refreshing $$mv ..."; \
 	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
 	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \

@@ -17,6 +17,38 @@ interface KpiCardDef {
   label: string;
   format: (v: number) => string;
   suffix?: string;
+  // Direction in which an increase is *good*. For OOS / lost sales /
+  // concentration an increase is bad, so a green up-arrow would mislead.
+  goodDirection?: "up" | "down";
+}
+
+// Deltas with magnitude below this are treated as flat (no direction).
+const FLAT_THRESHOLD = 0.05;
+
+interface DeltaPresentation {
+  flat: boolean;
+  color: string;
+  arrow: string;
+}
+
+/**
+ * Resolve a delta's color + arrow given which direction is "good" for the
+ * metric (U2.3/U2.4). Near-zero deltas render neutral (flat) with no arrow.
+ */
+export function deltaPresentation(
+  delta: number,
+  goodDirection: "up" | "down" = "up",
+): DeltaPresentation {
+  if (Math.abs(delta) < FLAT_THRESHOLD) {
+    return { flat: true, color: "text-muted-foreground", arrow: "→" };
+  }
+  const isUp = delta > 0;
+  const isGood = goodDirection === "up" ? isUp : !isUp;
+  return {
+    flat: false,
+    color: isGood ? "text-green-600" : "text-red-600",
+    arrow: isUp ? "↑" : "↓",
+  };
 }
 
 function fmtPct(n: number): string {
@@ -28,12 +60,12 @@ function fmtRatio(n: number): string {
 }
 
 const KPI_DEFS: KpiCardDef[] = [
-  { key: "total_demand", label: "Total Demand", format: fmtNum, suffix: " cases" },
-  { key: "fill_rate", label: "Fill Rate", format: fmtPct },
-  { key: "lost_sales_oos", label: "Lost Sales (OOS)", format: fmtNum, suffix: " cases" },
-  { key: "active_customers", label: "Active Customers", format: fmtNum },
-  { key: "demand_concentration", label: "Demand Concentration", format: fmtPct },
-  { key: "order_to_demand_ratio", label: "Order-to-Demand Ratio", format: fmtRatio },
+  { key: "total_demand", label: "Total Demand", format: fmtNum, suffix: " cases", goodDirection: "up" },
+  { key: "fill_rate", label: "Fill Rate", format: fmtPct, goodDirection: "up" },
+  { key: "lost_sales_oos", label: "Lost Sales (OOS)", format: fmtNum, suffix: " cases", goodDirection: "down" },
+  { key: "active_customers", label: "Active Customers", format: fmtNum, goodDirection: "up" },
+  { key: "demand_concentration", label: "Demand Concentration", format: fmtPct, goodDirection: "down" },
+  { key: "order_to_demand_ratio", label: "Order-to-Demand Ratio", format: fmtRatio, goodDirection: "up" },
 ];
 
 // Backend returns {kpis: [{key, value, delta}, ...]} with keys like
@@ -69,12 +101,23 @@ function useKpiData(filters: CustomerAnalyticsFilters) {
   return { kpis, isLoading };
 }
 
-function DeltaBadge({ delta }: { delta: number }) {
-  const isPositive = delta >= 0;
-  const color = isPositive ? "text-green-600" : "text-red-600";
-  const arrow = isPositive ? "\u2191" : "\u2193";
+/**
+ * Accessible, period-anchored description of a MoM delta (U9.3). Screen readers
+ * and the hover title get "up/down N% month-over-month vs prior month" instead
+ * of a bare "↑ N% MoM" with no comparison anchor. Mirrors the Demand-History
+ * MoM aria pattern (U6.5).
+ */
+export function deltaAriaLabel(delta: number, flat: boolean): string {
+  const magnitude = `${Math.abs(delta).toFixed(1)}% month-over-month vs prior month`;
+  if (flat) return `No material change ${magnitude}`;
+  return `${delta >= 0 ? "Up" : "Down"} ${magnitude}`;
+}
+
+function DeltaBadge({ delta, goodDirection }: { delta: number; goodDirection?: "up" | "down" }) {
+  const { color, arrow, flat } = deltaPresentation(delta, goodDirection);
+  const label = deltaAriaLabel(delta, flat);
   return (
-    <span className={`text-xs font-medium ${color}`}>
+    <span className={`text-xs font-medium ${color}`} aria-label={label} title={label}>
       {arrow} {Math.abs(delta).toFixed(1)}% MoM
     </span>
   );
@@ -98,7 +141,7 @@ function KpiCard({ metric, def }: { metric: KpiMetric | undefined; def: KpiCardD
         <div className="text-lg font-semibold mt-1">
           {def.format(metric.value)}{def.suffix ?? ""}
         </div>
-        <DeltaBadge delta={metric.delta} />
+        <DeltaBadge delta={metric.delta} goodDirection={def.goodDirection} />
       </CardContent>
     </Card>
   );

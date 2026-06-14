@@ -6,11 +6,64 @@ import {
   customerAnalyticsKeys,
   fetchCustomerAnalyticsTreemap,
 } from "@/api/queries/customer-analytics";
-import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
+import type {
+  CustomerAnalyticsFilters,
+  TreemapNode,
+} from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
+}
+
+// Fill-rate color ramp: red (0%) -> amber (50%) -> green (100%). Applied per node
+// via itemStyle.color rather than ECharts `visualMap.dimension`, which expects a
+// numeric index into a node's `value` array — a treemap node's `value` is a
+// scalar, so the old `dimension: "fill_rate"` resolved every node out-of-range
+// and painted the whole treemap transparent/blank (U7.1).
+const RAMP_LOW = "#ef4444"; // red @ 0%
+const RAMP_MID = "#eab308"; // amber @ 50%
+const RAMP_HIGH = "#22c55e"; // green @ 100%
+const NEUTRAL = "#94a3b8"; // slate — node with no fill_rate
+
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return Math.round(a + (b - a) * t);
+}
+
+function fillRateColor(fr: number | undefined): string {
+  if (fr == null || Number.isNaN(fr)) return NEUTRAL;
+  const pct = Math.max(0, Math.min(100, fr)) / 100;
+  // Two-segment ramp: low->mid for the bottom half, mid->high for the top half.
+  const [from, to, t] =
+    pct <= 0.5
+      ? ([hexToRgb(RAMP_LOW), hexToRgb(RAMP_MID), pct / 0.5] as const)
+      : ([hexToRgb(RAMP_MID), hexToRgb(RAMP_HIGH), (pct - 0.5) / 0.5] as const);
+  const [r, g, b] = from.map((c, i) => lerp(c, to[i], t));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+type ColoredNode = Omit<TreemapNode, "children"> & {
+  itemStyle: { color: string };
+  children?: ColoredNode[];
+};
+
+/** Recursively attach an explicit `itemStyle.color` (mapped from `fill_rate`) to
+ *  every node so the treemap draws without a fragile `visualMap` binding. */
+function colorizeTree(nodes: TreemapNode[]): ColoredNode[] {
+  return nodes.map((node) => {
+    const { children, ...rest } = node;
+    const colored: ColoredNode = {
+      ...rest,
+      itemStyle: { color: fillRateColor(node.fill_rate) },
+    };
+    if (children) colored.children = colorizeTree(children);
+    return colored;
+  });
 }
 
 export function CustomerTreemap({ filters }: Props) {
@@ -31,24 +84,12 @@ export function CustomerTreemap({ filters }: Props) {
         return `<b>${p.name}</b><br/>Demand: ${(p.value ?? 0).toLocaleString()} cases${fr != null ? `<br/>Fill Rate: ${fr}%` : ""}`;
       },
     },
-    visualMap: {
-      show: true,
-      min: 0,
-      max: 100,
-      text: ["100%", "0%"],
-      dimension: "fill_rate",
-      inRange: {
-        color: ["#ef4444", "#eab308", "#22c55e"],
-      },
-      calculable: true,
-      orient: "horizontal" as const,
-      left: "center",
-      bottom: 0,
-    },
     series: [
       {
         type: "treemap",
-        data: data?.tree ?? [],
+        // Each node carries an explicit itemStyle.color mapped from fill_rate —
+        // no visualMap.dimension (U7.1). A static legend below shows the ramp.
+        data: colorizeTree(data?.tree ?? []),
         leafDepth: 2,
         roam: false,
         animation: false, // skip layout animation on large trees
@@ -81,8 +122,19 @@ export function CustomerTreemap({ filters }: Props) {
             <span className="text-xs">Try a different item or widen the date range</span>
           </div>
         ) : (
-          <div role="img" aria-roledescription="Customer concentration treemap chart">
-            <ReactECharts option={option} style={{ height: 360 }} lazyUpdate notMerge={false} />
+          <div role="img" aria-roledescription="Customer concentration treemap chart" className="w-full">
+            <ReactECharts option={option} style={{ height: 360, width: "100%" }} lazyUpdate notMerge={false} />
+            {/* Static fill-rate legend — replaces the removed ECharts visualMap
+                (U7.1). Mirrors the red->amber->green node ramp. */}
+            <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <span>0%</span>
+              <span
+                aria-hidden
+                className="h-2 w-40 rounded"
+                style={{ background: `linear-gradient(to right, ${RAMP_LOW}, ${RAMP_MID}, ${RAMP_HIGH})` }}
+              />
+              <span>100% fill rate</span>
+            </div>
           </div>
         )}
       </CardContent>

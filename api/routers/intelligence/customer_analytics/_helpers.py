@@ -162,6 +162,38 @@ def _build_where_mv(
     return " AND ".join(clauses)
 
 
+def _build_where_item_state(
+    params: list[Any],
+    date_from: str | None,
+    date_to: str | None,
+    channel: str | None,
+    store_type: str | None,
+) -> str:
+    """WHERE builder for queries over mv_ca_item_state (alias ``m``).
+
+    The MV inlines state, rpt_channel_desc, and store_type_desc at the
+    (item_id, state, channel, store_type, month) grain, so the heatmap's
+    optional channel/store_type filters map to plain column predicates. As
+    with the fact-table builders the startdate range is mandatory (the MV is
+    big enough that an unbounded scan is wasteful) and falls back to the last
+    12 months.
+    """
+    df, dt = _default_date_range()
+    actual_from = (date_from or "").strip() or df
+    actual_to = (date_to or "").strip() or dt
+    if not actual_from or not actual_to:
+        raise ValueError("startdate range is mandatory for mv_ca_item_state queries")
+    clauses = ["m.startdate >= %s", "m.startdate < %s"]
+    params.extend([actual_from, actual_to])
+    if channel:
+        clauses.append("m.rpt_channel_desc = %s")
+        params.append(channel)
+    if store_type:
+        clauses.append("m.store_type_desc = %s")
+        params.append(store_type)
+    return " AND ".join(clauses)
+
+
 def _customer_activity_source(item_id: str | None) -> tuple[str, bool]:
     """Pick fact vs MV. Returns (FROM clause fragment, uses_mv).
 

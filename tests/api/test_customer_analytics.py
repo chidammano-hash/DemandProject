@@ -153,6 +153,37 @@ async def test_heatmap_returns_matrix():
     assert "CA" in data["states"]
 
 
+@pytest.mark.asyncio
+async def test_heatmap_routes_through_item_state_mv():
+    """F5.1 — the heatmap must source from mv_ca_item_state (the fast path),
+    not the raw fact_customer_demand_monthly JOIN dim_item that took ~9.4 s
+    cold. It must NOT scan dim_item, and channel/store_type filters must be
+    applied against the MV columns."""
+    pool, _, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        ("ITEM001", "Widget A", "CA", 20, 5000.0, 4800.0),
+    ]
+    with patch("api.core._get_async_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/customer-analytics/heatmap?top_n=10&channel=Grocery&store_type=CHAIN"
+            )
+    assert resp.status_code == 200
+    executed_sql = cursor.execute.call_args[0][0]
+    assert "mv_ca_item_state" in executed_sql
+    assert "fact_customer_demand_monthly" not in executed_sql
+    assert "dim_item" not in executed_sql
+    # channel + store_type predicates applied against the MV columns
+    assert "rpt_channel_desc" in executed_sql
+    assert "store_type_desc" in executed_sql
+    bound = cursor.execute.call_args[0][1]
+    assert "Grocery" in bound
+    assert "CHAIN" in bound
+
+
 # ---------------------------------------------------------------------------
 # /customer-analytics/channel-mix
 # ---------------------------------------------------------------------------

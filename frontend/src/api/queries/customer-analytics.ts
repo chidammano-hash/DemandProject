@@ -424,8 +424,73 @@ export function fetchCustomerAnalyticsKpis(
   return fetchJson(`/customer-analytics/kpis${qs}`);
 }
 
-export function fetchCustomerAnalyticsFilterOptions(): Promise<FilterOptionsPayload> {
-  return fetchJson("/customer-analytics/filter-options");
+/**
+ * U3.3 — the source MV serves dirty state codes (`.`, `00`, `0D`, `XX`, `null`,
+ * numeric/junk) intermixed with real 2-letter codes, making the State filter
+ * unscannable. Whitelist only canonical US state/territory + Canadian province
+ * codes (both are 2 alpha chars) so placeholders like `XX` are also dropped;
+ * uppercased, de-duped, sorted. Minimum-safe client-side normalization until
+ * the MV (sql/173) is cleaned upstream.
+ */
+const _VALID_STATE_CODES = new Set<string>([
+  // US states + DC
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID",
+  "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO",
+  "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA",
+  "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+  // US territories
+  "PR", "VI", "GU", "AS", "MP",
+  // Canadian provinces/territories
+  "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT",
+]);
+
+export function normalizeStateOptions(states: readonly string[] | null | undefined): string[] {
+  if (!states) return [];
+  const seen = new Set<string>();
+  for (const raw of states) {
+    if (typeof raw !== "string") continue;
+    const code = raw.trim().toUpperCase();
+    if (_VALID_STATE_CODES.has(code)) seen.add(code);
+  }
+  return Array.from(seen).sort();
+}
+
+const _NULLISH_LABELS = new Set<string>(["", "null", "undefined", "n/a", "na"]);
+
+/**
+ * F4.5 / U4.2 — free-text facets (Channel, Store Type) arrive from the MV with
+ * trailing-whitespace duplicates, case-variant duplicates, and literal
+ * `null`/`undefined` entries. This trims each value, drops nullish/empty ones,
+ * de-dupes case-insensitively (keeping the FIRST canonical casing seen so the
+ * emitted value still matches a real DB value for the WHERE clause), and sorts
+ * case-insensitively. Mirrors the State whitelist treatment without forcing an
+ * uppercase that could break case-sensitive predicates.
+ */
+export function normalizeLabelOptions(
+  values: readonly string[] | null | undefined,
+): string[] {
+  if (!values) return [];
+  const byKey = new Map<string, string>();
+  for (const raw of values) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    const key = trimmed.toLowerCase();
+    if (_NULLISH_LABELS.has(key)) continue;
+    if (!byKey.has(key)) byKey.set(key, trimmed);
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    a.toLowerCase().localeCompare(b.toLowerCase()),
+  );
+}
+
+export async function fetchCustomerAnalyticsFilterOptions(): Promise<FilterOptionsPayload> {
+  const payload = await fetchJson<FilterOptionsPayload>("/customer-analytics/filter-options");
+  return {
+    ...payload,
+    states: normalizeStateOptions(payload.states),
+    channels: normalizeLabelOptions(payload.channels),
+    store_types: normalizeLabelOptions(payload.store_types),
+  };
 }
 
 export function fetchCustomerAnalyticsLifecycle(
