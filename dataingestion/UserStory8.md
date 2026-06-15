@@ -4,6 +4,15 @@
 **Depends on:** US5, US6
 **Complexity:** M  **Risk:** MEDIUM
 
+> **Scope note (implementation):** wired for **sales/forecast** (single-process
+> normalizer, the large fact tables). **Inventory** keeps the load-time DFU net
+> — its normalizer (`normalize_inventory_csv.py`) writes from parallel worker
+> subprocesses where opening a dim_sku DB read per worker is higher-risk and
+> lower-value (on a cold full load dim_sku is empty at normalize anyway, so the
+> benefit is the incremental-refresh path). Mechanism is shared via
+> `etl_helpers.load_valid_dfu_keys` / `dfu_key_for_row` and can be wired into
+> inventory later if profiling shows it's worth the multiprocess DB cost.
+
 ## Story
 As a **platform engineer**, I want **DFU-mismatch rows filtered during normalization instead of after COPY**, so that **the load step avoids a full-table DELETE scan on large fact loads**.
 

@@ -404,6 +404,54 @@ def filter_fk_orphans(cur, stg_table: str, domain: str) -> int:
     return total_deleted
 
 
+def dfu_key_for_row(row: dict, domain: str) -> str:
+    """Build the DFU match key for a normalized row.
+
+    Mirrors the load-time DFU filter: sales/forecast key on
+    item_id_customer_group_loc (== dim_sku.sku_ck); inventory keys on
+    item_id + loc only (tab-joined, no customer_group).
+    """
+    item = (row.get("item_id") or "").strip()
+    loc = (row.get("loc") or "").strip()
+    if domain == "inventory":
+        return f"{item}\t{loc}"
+    cg = (row.get("customer_group") or "").strip()
+    return f"{item}_{cg}_{loc}"
+
+
+def load_valid_dfu_keys(domain: str) -> set[str] | None:
+    """Return the set of valid DFU keys from dim_sku for normalize-time filtering.
+
+    Returns None when dim_sku is missing or empty (cold DB) or on any DB error,
+    signalling the caller to skip normalize-time filtering and rely on the
+    load-time DFU filter instead. Keys match :func:`dfu_key_for_row`.
+    """
+    import psycopg
+
+    from common.core.db import get_db_params
+    try:
+        with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'dim_sku' AND table_schema = 'public')"
+            )
+            if not cur.fetchone()[0]:
+                return None
+            if domain == "inventory":
+                cur.execute("SELECT DISTINCT item_id, loc FROM dim_sku")
+                keys = {f"{r[0]}\t{r[1]}" for r in cur.fetchall()}
+            else:
+                cur.execute("SELECT sku_ck FROM dim_sku")
+                keys = {r[0] for r in cur.fetchall()}
+            return keys or None
+    except psycopg.Error:
+        logger.warning(
+            "could not read dim_sku keys for %s — normalize-time DFU filter skipped",
+            domain,
+        )
+        return None
+
+
 def unmatched_warn_pct() -> float:
     """Unmatched-DFU warning threshold (%) from etl_config.yaml, with default."""
     try:

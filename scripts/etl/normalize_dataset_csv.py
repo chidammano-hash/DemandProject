@@ -1,15 +1,21 @@
 import argparse
 import csv
+import sys
 from datetime import date, timedelta
 from pathlib import Path
-import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.domain_specs import DOMAIN_SPECS, get_spec
+from common.core.etl_helpers import dfu_key_for_row, load_valid_dfu_keys
 from common.services.perf_profiler import profiled_section
+
+# Domains whose rows are filtered against dim_sku at normalize time (US8).
+# Inventory is normalized by normalize_inventory_csv.py and keeps the load-time
+# DFU net (its writer runs in parallel worker subprocesses).
+_NORMALIZE_DFU_DOMAINS = {"sales", "forecast"}
 
 
 def dedupe_headers(headers: list[str]) -> list[str]:
@@ -184,6 +190,17 @@ def main() -> None:
 
             source_rows = list(reader)
 
+    # US8: when dim_sku is already populated (e.g. incremental refresh), drop
+    # rows with no matching DFU here so the load step avoids a post-COPY DELETE
+    # full-table scan. On a cold DB dim_sku is empty -> valid_keys is None and we
+    # fall back to the load-time DFU filter (no rows dropped here).
+    valid_keys = (
+        load_valid_dfu_keys(spec.name)
+        if spec.name in _NORMALIZE_DFU_DOMAINS
+        else None
+    )
+    dfu_dropped = 0
+
     with profiled_section("normalize_and_write"):
         with target.open("w", encoding="utf-8", newline="") as dst:
             writer = csv.DictWriter(dst, fieldnames=spec.columns, lineterminator="\n")
@@ -234,8 +251,15 @@ def main() -> None:
                                    "current_ship_date", "original_ship_date"):
                         out[dt_col] = to_iso_date_yyyymmdd(out.get(dt_col, ""))
 
+                if valid_keys is not None and dfu_key_for_row(out, spec.name) not in valid_keys:
+                    dfu_dropped += 1
+                    continue
+
                 writer.writerow(out)
 
+    if dfu_dropped:
+        print(f"DFU filter (normalize-time): dropped {dfu_dropped:,} {spec.name} "
+              f"rows with no matching DFU in dim_sku")
     print(f"Wrote normalized CSV for {spec.name}: {target}")
 
 

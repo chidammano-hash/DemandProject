@@ -284,6 +284,43 @@ class TestUnmatchedWarnPct:
             assert eh.unmatched_warn_pct() == eh._DEFAULT_UNMATCHED_WARN_PCT
 
 
+class TestDfuKeyForRow:
+    def test_sales_forecast_key_is_sku_ck_shape(self):
+        row = {"item_id": " A ", "customer_group": " CG ", "loc": " L "}
+        assert eh.dfu_key_for_row(row, "sales") == "A_CG_L"
+        assert eh.dfu_key_for_row(row, "forecast") == "A_CG_L"
+
+    def test_inventory_key_is_item_loc_only(self):
+        row = {"item_id": "A", "customer_group": "ignored", "loc": "L"}
+        assert eh.dfu_key_for_row(row, "inventory") == "A\tL"
+
+    def test_missing_fields_default_empty(self):
+        assert eh.dfu_key_for_row({}, "sales") == "__"
+
+
+class TestLoadValidDfuKeys:
+    def test_none_when_dim_sku_missing(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (False,)  # dim_sku does not exist
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        with patch("common.core.db.get_db_params", return_value={}), \
+             patch("psycopg.connect") as mock_connect:
+            mock_connect.return_value.__enter__.return_value = conn
+            assert eh.load_valid_dfu_keys("sales") is None
+
+    def test_returns_sku_ck_set(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (True,)  # dim_sku exists
+        cur.fetchall.return_value = [("A_CG_L",), ("B_CG_L",)]
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        with patch("common.core.db.get_db_params", return_value={}), \
+             patch("psycopg.connect") as mock_connect:
+            mock_connect.return_value.__enter__.return_value = conn
+            assert eh.load_valid_dfu_keys("forecast") == {"A_CG_L", "B_CG_L"}
+
+
 class TestRecordLoadBatch:
     def test_completed_path_creates_and_completes(self):
         cur = MagicMock()
