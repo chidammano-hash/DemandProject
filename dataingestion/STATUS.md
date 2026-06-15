@@ -27,15 +27,17 @@ Branch: `feat/unified-data-ingestion`. All work TDD'd and committed story-by-sto
 | US20 | ✅ | Unified load lineage with domain/status filters + sanitized errors |
 | US21 | ✅ | Docs + final verification (this) |
 
-## Deferred
+## US17 — converge the two job backends (in progress, risk-laddered split)
 
-- **US17 — converge the two job backends** (`integration_jobs` ↔ `job_history`).
-  Explicitly HIGH-risk; the plan said ship it alone. Today the IntegrationRunner
-  (single/chain loads) and the new `etl_pipeline` JobManager job coexist: the new
-  pipeline endpoint uses JobManager (`/jobs`), the per-domain loads use
-  IntegrationRunner (`/integration/jobs`). Both work; merging the stores into one
-  is a dedicated follow-up. Recommended approach unchanged: a backward-compatible
-  `integration_jobs` view over the unified store so the UI shape stays stable.
+Split into 17a–17e (see `README.md`). Shipping bottom-up, lowest risk first.
+
+| Story | Status | Summary |
+|---|---|---|
+| US17a | ✅ | `common/services/job_shape.py` — pure row→`Job` shape + `completed↔success` status map (read-only, zero behavior change) |
+| US17b | ⏳ | Unified read view (`/integration/jobs` merges `integration_job` + `job_history`) |
+| US17c | ⏳ | Submission cutover → `load_domain` JobManager job (HIGH — ship alone) |
+| US17d | ⏳ | Chains on JobManager `submit_pipeline` |
+| US17e | ⏳ | UI convergence + legacy retirement |
 
 ## Known issues (pre-existing, not from this work)
 
