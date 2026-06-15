@@ -16,6 +16,8 @@ from common.core.constants import CAT_FEATURES, FORECAST_QTY_COL
 from common.core.utils import get_algorithm_params, load_config, load_forecast_pipeline_config
 from common.ml.feature_engineering import get_feature_columns
 from common.ml.model_registry import (
+    UnknownAlgorithm,
+    build_tree_model,
     fit_model,
     get_best_iteration,
 )
@@ -23,13 +25,15 @@ from common.ml.model_registry import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Model library registry — maps model_name to import path and instantiation
+# Model library registry — maps model_name to import path and max-iteration param.
+# Estimator construction is delegated to model_registry.build_tree_model; the
+# module import here is only needed so fit_model can wire early-stopping callbacks.
 # ---------------------------------------------------------------------------
 
 _MODEL_LIB: dict[str, dict[str, str]] = {
-    "lgbm": {"module": "lightgbm", "class": "LGBMRegressor", "iter_param": "n_estimators"},
-    "catboost": {"module": "catboost", "class": "CatBoostRegressor", "iter_param": "iterations"},
-    "xgboost": {"module": "xgboost", "class": "XGBRegressor", "iter_param": "n_estimators"},
+    "lgbm": {"module": "lightgbm", "iter_param": "n_estimators"},
+    "catboost": {"module": "catboost", "iter_param": "iterations"},
+    "xgboost": {"module": "xgboost", "iter_param": "n_estimators"},
 }
 
 # Minimum training rows per partition group before we skip it
@@ -192,10 +196,10 @@ def run_tree_models(
         algo_section = algo_config.get("algorithms", {}).get(model_name, {})
         model_id = algo_section.get("model_id", f"{model_name}_cluster")
 
-        # Import library and model class
+        # Import library module (passed to fit_model for early-stopping callbacks).
+        # Estimator construction itself is delegated to build_tree_model below.
         try:
             lib_module = importlib.import_module(lib_info["module"])
-            model_class = getattr(lib_module, lib_info["class"])
         except ImportError:
             logger.warning(
                 "Library '%s' not installed; skipping %s",
@@ -265,9 +269,13 @@ def run_tree_models(
                 group_results.append(result)
                 continue
 
+            # Instantiate through the model registry — the single source of
+            # truth for constructing LGBM/CatBoost/XGBoost estimators. The
+            # registry translates canonical param names to each library's
+            # native names; native keys pass through unchanged.
             try:
-                model = model_class(**params)
-            except TypeError as te:
+                model = build_tree_model(model_name, params)
+            except (TypeError, UnknownAlgorithm) as te:
                 logger.warning(
                     "%s %s %d/%d '%s': instantiation failed: %s",
                     model_name.upper(), partition_label, gi, len(groups),
