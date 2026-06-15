@@ -225,6 +225,26 @@ with dataset scale from `make health` (row counts) and the host.
 > fabricate numbers. Fill the row, then re-measure after each Phase-3 story
 > (US8-US11) and record the delta.
 
+### 2.5 Running the Pipeline (API / UI / managed job)
+
+Besides the Make targets, the whole ingestion pipeline can be run as a managed
+job and triggered from the UI:
+
+- **Job type** `etl_pipeline` (JobManager, group `etl` — one ingestion run at a
+  time). Params: `mode` (`full` | `refresh`), `domains` (optional subset),
+  `parallel`. Runs `run_pipeline.run_full` / `run_refresh` and streams progress.
+  `refresh` is change-detected (SHA-256 vs `audit_load_batch`) and incremental;
+  prefer routing very large `full` reloads to the pg-queue worker.
+- **API**: `POST /integration/pipeline` `{mode, domains?, parallel?}` → 202 +
+  `job_id` (requires API key). Poll status/logs via the unified `/jobs/{id}`
+  endpoints.
+- **UI**: Integration tab → **Run Pipeline** (full/refresh + parallel, live
+  status). Load lineage with domain/status filters is on the Data Quality tab
+  (Pipeline Lineage) and now includes `customer_demand`.
+
+`customer_demand` participates in `pipeline-refresh` change detection (records
+`audit_load_batch` lineage); its full load still uses `make load-customer-demand`.
+
 ## Phase 2b: Data Quality Checks
 
 Run after Phase 2 ingestion to validate loaded data. Can also be scheduled as a recurring pipeline step.
