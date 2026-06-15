@@ -84,6 +84,22 @@ class TestResolveConflictTarget:
         assert ld._resolve_conflict_target(cur, "t", "ck") == []
 
 
+class TestOnetimeDelegatesToBulkLoader:
+    """US7 verify: load.py's onetime path delegates the bulk insert to the
+    canonical load_dataset_postgres.py engine (not a separate implementation)."""
+
+    def test_generic_load_cmd_targets_bulk_loader(self):
+        cmd = ld._generic_load_cmd("sales", replace=True)
+        joined = " ".join(cmd)
+        assert "load_dataset_postgres.py" in joined
+        assert "--dataset" in cmd and "sales" in cmd
+        assert "--replace" in cmd
+
+    def test_generic_load_cmd_without_replace(self):
+        cmd = ld._generic_load_cmd("item", replace=False)
+        assert "--replace" not in cmd
+
+
 class TestValidateArgs:
     def _args(self, **kw):
         from argparse import Namespace

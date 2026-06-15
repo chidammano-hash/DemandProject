@@ -353,6 +353,21 @@ def test_run_job_includes_slice_and_file_in_command():
     assert "--file" in cmd and "/tmp/x.csv" in cmd
 
 
+def test_run_job_targets_unified_load_engine():
+    """US7 verify: the runner invokes the canonical scripts.etl.load dispatcher."""
+    pool, _cursor = _make_pool()
+    runner = IntegrationRunner(pool)
+
+    fake = _completed(0, stdout='{"rows_loaded": 1}\n')
+    with patch("subprocess.run", return_value=fake) as mocked_run:
+        runner._run_job("job-9", "sales", "onetime", None, None)
+
+    cmd = mocked_run.call_args.args[0]
+    assert "-m" in cmd
+    assert "scripts.etl.load" in cmd
+    assert "--mode" in cmd and "onetime" in cmd
+
+
 # ---------------------------------------------------------------------------
 # _parse_final_json
 # ---------------------------------------------------------------------------
