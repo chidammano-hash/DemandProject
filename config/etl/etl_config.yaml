@@ -66,3 +66,10 @@ mv_refresh:
 always_refresh:
   - mv_dq_dashboard                     # Data quality dashboard aggregate (all domains)
   - mv_control_tower_kpis               # Cross-domain control tower KPIs
+
+# ═══ FILTERS ═══
+# Staging-row filtering thresholds applied during load.
+filters:
+  unmatched_dfu_warn_pct: 10.0          # Warn if > this % of staging rows are dropped for
+                                        # having no matching DFU in dim_sku (0–100; default 10.0).
+                                        # Read by common/core/etl_helpers.unmatched_warn_pct().

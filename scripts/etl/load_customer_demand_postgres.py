@@ -24,7 +24,6 @@ Usage:
 import argparse
 import csv
 import logging
-import os
 import sys
 import time
 from collections import defaultdict
@@ -45,8 +44,10 @@ from common.core.etl_helpers import (
     ensure_monthly_partition,
     month_bounds,
     monthly_partition_name,
+    record_load_batch,
     staging_table_name,
 )
+from common.engines.medallion import file_hash
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
@@ -401,7 +402,17 @@ def main() -> None:
                 else:
                     loaded = _load_default(db_params, cur, months)
 
-            # Step 4: Cleanup
+            # Step 4: Record batch lineage so customer_demand participates in
+            # incremental change detection (run_pipeline hash comparison).
+            record_load_batch(
+                cur, "customer_demand",
+                source_file=csv_path.name,
+                source_hash=file_hash(csv_path),
+                rows_in=staged,
+                rows_out=loaded,
+            )
+
+            # Step 5: Cleanup
             _drop_staging(cur)
             conn.commit()
 

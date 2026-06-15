@@ -22,8 +22,12 @@ import logging
 from datetime import date
 
 from common.core.sql_helpers import qident
+from common.engines.medallion import complete_batch, create_batch, fail_batch
 
 logger = logging.getLogger(__name__)
+
+# Default unmatched-DFU warning threshold (%) when etl_config is unavailable.
+_DEFAULT_UNMATCHED_WARN_PCT = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -276,3 +280,138 @@ def recreate_forecast_archive_indexes_and_constraints(cur) -> None:
         ADD CONSTRAINT chk_backtest_lag_archive_start_month_start
             CHECK (startdate = date_trunc('month', startdate)::date)
     """)
+
+
+# ---------------------------------------------------------------------------
+# DFU match + FK orphan filters (shared by the dataset loader)
+# ---------------------------------------------------------------------------
+
+# Domains that require a matching DFU in dim_sku to be loaded.
+DFU_MATCH_DOMAINS = {"sales", "forecast", "inventory"}
+
+# Map: domain → [(staging_column, dimension_table, dimension_column), ...]
+FK_CHECKS: dict[str, list[tuple[str, str, str]]] = {
+    "sales":     [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+    "forecast":  [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+    "inventory": [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+}
+
+
+def filter_unmatched_dfus(cur, stg_table: str, domain: str) -> int:
+    """Delete staging rows that have no matching DFU in dim_sku. Returns deleted count.
+
+    Sales/forecast match on item_id + customer_group + loc (full sku_ck).
+    Inventory matches on item_id + loc only (no customer_group in inventory data).
+    """
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_sku' AND table_schema = 'public'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        logger.warning("dim_sku not found — skipping DFU match filter for %s", domain)
+        return 0
+
+    if domain == "inventory":
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dim_sku d
+                WHERE d.item_id = trim(s."item_id")
+                  AND d.loc = trim(s."loc")
+            )
+        """)
+    else:
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dim_sku d
+                WHERE d.sku_ck = trim(s."item_id") || '_' || trim(s."customer_group") || '_' || trim(s."loc")
+            )
+        """)
+
+    deleted = cur.rowcount
+    if deleted:
+        logger.info("  Deleted %s staging rows with no matching DFU in dim_sku",
+                    f"{deleted:,}")
+    return deleted
+
+
+def filter_fk_orphans(cur, stg_table: str, domain: str) -> int:
+    """Delete staging rows referencing missing dimension values. Returns deleted count."""
+    checks = FK_CHECKS.get(domain)
+    if not checks:
+        return 0
+
+    total_deleted = 0
+    for stg_col, dim_table, dim_col in checks:
+        cur.execute("""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = %s AND table_schema = 'public'
+            )
+        """, (dim_table,))
+        if not cur.fetchone()[0]:
+            continue
+
+        cur.execute("""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+            )
+        """, (stg_table, stg_col))
+        if not cur.fetchone()[0]:
+            continue
+
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE trim(s.{qident(stg_col)}) IS NOT NULL
+              AND trim(s.{qident(stg_col)}) != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM {qident(dim_table)} d
+                WHERE d.{qident(dim_col)} = trim(s.{qident(stg_col)})
+            )
+        """)
+        deleted = cur.rowcount
+        if deleted:
+            logger.info("  Removed %s staging rows: %s not in %s.%s",
+                        f"{deleted:,}", stg_col, dim_table, dim_col)
+            total_deleted += deleted
+
+    return total_deleted
+
+
+def unmatched_warn_pct() -> float:
+    """Unmatched-DFU warning threshold (%) from etl_config.yaml, with default."""
+    try:
+        from common.core.utils import load_config
+        cfg = load_config("etl/etl_config.yaml") or {}
+    except (FileNotFoundError, OSError, ValueError):
+        return _DEFAULT_UNMATCHED_WARN_PCT
+    return float(
+        (cfg.get("filters") or {}).get("unmatched_dfu_warn_pct", _DEFAULT_UNMATCHED_WARN_PCT)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit batch lineage — single entry point for every loader
+# ---------------------------------------------------------------------------
+
+def record_load_batch(cur, domain: str, *, source_file: str | None = None,
+                      source_hash: str | None = None, rows_in: int = 0,
+                      rows_out: int = 0, status: str = "completed",
+                      error: str | None = None) -> int:
+    """Record a complete load batch in audit_load_batch in one call.
+
+    Wraps medallion.create_batch + complete_batch/fail_batch so loaders that
+    don't track a long-running batch (e.g. customer_demand) still register
+    lineage and a source_hash, making them visible to change detection.
+    Returns the batch_id.
+    """
+    batch_id = create_batch(cur, domain, source_file, source_hash)
+    if status == "failed":
+        fail_batch(cur, batch_id, error or "load failed")
+    else:
+        complete_batch(cur, batch_id, rows_in, rows_out)
+    return batch_id

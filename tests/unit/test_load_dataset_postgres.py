@@ -10,15 +10,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl.load_dataset_postgres import (
     _resolve_forecast_execution_lag,
-    _filter_unmatched_dfus,
     _load_forecast_archive,
     _is_partitioned,
     _ensure_partition_exists,
     load_domain,
 )
 
-# Index/constraint helpers moved to common/core/etl_helpers.py (US3); their
-# tests live in tests/unit/test_etl_helpers.py.
+# Index/constraint helpers (US3) and DFU/FK filters (US5) moved to
+# common/core/etl_helpers.py; their tests live in tests/unit/test_etl_helpers.py.
 
 
 # ---------- Helpers ----------
@@ -41,58 +40,6 @@ def _cursor_with_rowcounts(rowcounts):
 
 
 # ---------- TestResolveForecastExecutionLag ----------
-
-class TestFilterUnmatchedDfus:
-    def test_dim_sku_missing_skips_filter(self):
-        cur = MagicMock()
-        cur.fetchone.return_value = (False,)
-
-        deleted = _filter_unmatched_dfus(cur, "stg_sales", "sales")
-
-        assert deleted == 0
-        assert cur.execute.call_count == 1  # EXISTS only
-
-    def test_sales_deletes_unmatched_by_sku_ck(self):
-        cur = _cursor_with_rowcounts([None, 200])
-        cur.fetchone.side_effect = [(True,)]
-
-        deleted = _filter_unmatched_dfus(cur, "stg_sales", "sales")
-
-        assert deleted == 200
-        delete_sql = cur.execute.call_args_list[1][0][0]
-        assert "DELETE" in delete_sql
-        assert "NOT EXISTS" in delete_sql
-        assert "sku_ck" in delete_sql
-
-    def test_inventory_matches_on_item_id_loc(self):
-        cur = _cursor_with_rowcounts([None, 50])
-        cur.fetchone.side_effect = [(True,)]
-
-        deleted = _filter_unmatched_dfus(cur, "stg_inv", "inventory")
-
-        assert deleted == 50
-        delete_sql = cur.execute.call_args_list[1][0][0]
-        assert "DELETE" in delete_sql
-        assert "item_id" in delete_sql
-        assert "loc" in delete_sql
-        assert "sku_ck" not in delete_sql  # inventory uses item_id + loc, not sku_ck
-
-    def test_forecast_deletes_unmatched_by_sku_ck(self):
-        cur = _cursor_with_rowcounts([None, 1000])
-        cur.fetchone.side_effect = [(True,)]
-
-        deleted = _filter_unmatched_dfus(cur, "stg_fcst", "forecast")
-
-        assert deleted == 1000
-        delete_sql = cur.execute.call_args_list[1][0][0]
-        assert "sku_ck" in delete_sql
-
-    def test_no_unmatched_returns_zero(self):
-        cur = _cursor_with_rowcounts([None, 0])
-        cur.fetchone.side_effect = [(True,)]
-
-        assert _filter_unmatched_dfus(cur, "stg_sales", "sales") == 0
-
 
 class TestResolveForecastExecutionLag:
     def test_dim_sku_exists_updates_lag_and_execution_lag(self):

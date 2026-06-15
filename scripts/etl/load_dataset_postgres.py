@@ -25,13 +25,18 @@ from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 from common.core.etl_helpers import (
+    DFU_MATCH_DOMAINS,
+    FK_CHECKS,
     drop_indexes,
     drop_unique_constraints,
     ensure_monthly_partition,
+    filter_fk_orphans,
+    filter_unmatched_dfus,
     get_secondary_indexes,
     get_unique_constraints,
     recreate_indexes,
     recreate_unique_constraints,
+    unmatched_warn_pct,
 )
 from common.core.planning_date import get_planning_date
 from common.core.sql_helpers import (
@@ -53,8 +58,6 @@ logger = logging.getLogger(__name__)
 _PG_WORK_MEM = "512MB"
 _PG_MAINTENANCE_WORK_MEM = "1GB"
 
-# Unmatched DFU warning threshold
-_UNMATCHED_DFU_WARN_PCT = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -90,116 +93,10 @@ def _ensure_partition_exists(cur, parent: str, start_date: str, end_date: str) -
 
 
 # ---------------------------------------------------------------------------
-# DFU matching — only load rows that exist in dim_sku
+# DFU match + FK orphan filters live in common/core/etl_helpers.py
+# (filter_unmatched_dfus, filter_fk_orphans, DFU_MATCH_DOMAINS, FK_CHECKS) —
+# imported above and used in load_domain() below.
 # ---------------------------------------------------------------------------
-
-# Domains that require a matching DFU in dim_sku to be loaded.
-_DFU_MATCH_DOMAINS = {"sales", "forecast", "inventory"}
-
-
-def _filter_unmatched_dfus(cur, stg_table: str, domain: str) -> int:
-    """Delete staging rows that have no matching DFU in dim_sku.
-
-    Returns number of deleted rows.
-    Sales/forecast match on item_id + customer_group + loc (full sku_ck).
-    Inventory matches on item_id + loc only (no customer_group in inventory data).
-    """
-    cur.execute("""
-        SELECT EXISTS(
-            SELECT 1 FROM information_schema.tables
-            WHERE table_name = 'dim_sku' AND table_schema = 'public'
-        )
-    """)
-    if not cur.fetchone()[0]:
-        logger.warning("dim_sku not found — skipping DFU match filter for %s", domain)
-        return 0
-
-    if domain == "inventory":
-        # Inventory has no customer_group — match on item_id + loc
-        cur.execute(f"""
-            DELETE FROM {qident(stg_table)} s
-            WHERE NOT EXISTS (
-                SELECT 1 FROM dim_sku d
-                WHERE d.item_id = trim(s."item_id")
-                  AND d.loc = trim(s."loc")
-            )
-        """)
-    else:
-        # Sales/forecast — match on full sku_ck (item_id_customer_group_loc)
-        cur.execute(f"""
-            DELETE FROM {qident(stg_table)} s
-            WHERE NOT EXISTS (
-                SELECT 1 FROM dim_sku d
-                WHERE d.sku_ck = trim(s."item_id") || '_' || trim(s."customer_group") || '_' || trim(s."loc")
-            )
-        """)
-
-    deleted = cur.rowcount
-    if deleted:
-        logger.info("  Deleted %s staging rows with no matching DFU in dim_sku",
-                     f"{deleted:,}")
-    return deleted
-
-
-# ---------------------------------------------------------------------------
-# FK orphan filter — remove staging rows referencing missing dimension values
-# ---------------------------------------------------------------------------
-
-# Map: (domain, staging_column) → (dimension_table, dimension_column)
-_FK_CHECKS: dict[str, list[tuple[str, str, str]]] = {
-    "sales":     [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
-    "forecast":  [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
-    "inventory": [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
-}
-
-
-def _filter_fk_orphans(cur, stg_table: str, domain: str) -> int:
-    """Delete staging rows that reference missing dimension values.
-
-    Prevents FK violation errors during INSERT. Returns total deleted rows.
-    """
-    checks = _FK_CHECKS.get(domain)
-    if not checks:
-        return 0
-
-    total_deleted = 0
-    for stg_col, dim_table, dim_col in checks:
-        # Check if dimension table exists
-        cur.execute("""
-            SELECT EXISTS(
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = %s AND table_schema = 'public'
-            )
-        """, (dim_table,))
-        if not cur.fetchone()[0]:
-            continue
-
-        # Check if staging table has this column
-        cur.execute(f"""
-            SELECT EXISTS(
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name = %s AND column_name = %s
-            )
-        """, (stg_table, stg_col))
-        if not cur.fetchone()[0]:
-            continue
-
-        cur.execute(f"""
-            DELETE FROM {qident(stg_table)} s
-            WHERE trim(s.{qident(stg_col)}) IS NOT NULL
-              AND trim(s.{qident(stg_col)}) != ''
-              AND NOT EXISTS (
-                SELECT 1 FROM {qident(dim_table)} d
-                WHERE d.{qident(dim_col)} = trim(s.{qident(stg_col)})
-            )
-        """)
-        deleted = cur.rowcount
-        if deleted:
-            logger.info("  Removed %s staging rows: %s not in %s.%s",
-                         f"{deleted:,}", stg_col, dim_table, dim_col)
-            total_deleted += deleted
-
-    return total_deleted
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +106,7 @@ def _filter_fk_orphans(cur, stg_table: str, domain: str) -> int:
 def _resolve_forecast_execution_lag(cur, stg_table: str) -> int:
     """Set lag and execution_lag from dim_sku on staging table.
 
-    Assumes unmatched rows have already been deleted by _filter_unmatched_dfus().
+    Assumes unmatched rows have already been deleted by filter_unmatched_dfus().
     All external forecasts are assumed to be at execution lag — the source
     file's lag/execution_lag fields are ignored and overwritten from dim_sku.
     Returns number of matched (updated) rows.
@@ -557,20 +454,25 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     logger.info("  Staging index created (%s)", _elapsed(t_idx))
 
             # Phase 1b: DFU match filter — only load rows with a matching dim_sku entry
-            if spec.name in _DFU_MATCH_DOMAINS:
+            if spec.name in DFU_MATCH_DOMAINS:
                 with profiled_section("filter_unmatched_dfus"):
                     t0 = time.time()
-                    dfu_deleted = _filter_unmatched_dfus(cur, stg_table, spec.name)
+                    dfu_deleted = filter_unmatched_dfus(cur, stg_table, spec.name)
                     if dfu_deleted:
                         logger.info("  DFU filter: kept %s, removed %s (%s)",
                                     f"{stg_rows - dfu_deleted:,}",
                                     f"{dfu_deleted:,}", _elapsed(t0))
+                        pct = (dfu_deleted / stg_rows * 100) if stg_rows else 0.0
+                        if pct > unmatched_warn_pct():
+                            logger.warning(
+                                "  DFU filter removed %.1f%% of %s rows (> %.1f%% threshold)",
+                                pct, spec.name, unmatched_warn_pct())
 
             # Phase 1b2: FK orphan filter — remove rows referencing missing dimension values
-            if spec.name in _FK_CHECKS:
+            if spec.name in FK_CHECKS:
                 with profiled_section("filter_fk_orphans"):
                     t0 = time.time()
-                    fk_deleted = _filter_fk_orphans(cur, stg_table, spec.name)
+                    fk_deleted = filter_fk_orphans(cur, stg_table, spec.name)
                     if fk_deleted:
                         logger.info("  FK orphan filter: removed %s rows (%s)",
                                     f"{fk_deleted:,}", _elapsed(t0))

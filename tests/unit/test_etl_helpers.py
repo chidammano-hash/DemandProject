@@ -7,7 +7,7 @@ consolidation (parity with US1 characterization).
 """
 
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from common.core import etl_helpers as eh
 
@@ -182,3 +182,96 @@ class TestForecastDropRecreate:
             "UNIQUE (forecast_ck, model_id, lag)"
         ) in sql
         assert cur.execute.call_count == 6  # 1 unique + 4 idx + 1 combined check
+
+
+# ---------------------------------------------------------------------------
+# DFU / FK filters (US5, relocated from test_load_dataset_postgres)
+# ---------------------------------------------------------------------------
+
+def _cursor_with_rowcounts(rowcounts):
+    """MagicMock cursor cycling rowcount values on execute."""
+    cur = MagicMock()
+    rc_iter = iter(rowcounts)
+
+    def _on_execute(*a, **kw):
+        try:
+            cur.rowcount = next(rc_iter)
+        except StopIteration:
+            pass
+
+    cur.execute.side_effect = _on_execute
+    return cur
+
+
+class TestFilterUnmatchedDfus:
+    def test_dim_sku_missing_skips_filter(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (False,)
+        assert eh.filter_unmatched_dfus(cur, "stg_sales", "sales") == 0
+        assert cur.execute.call_count == 1  # EXISTS only
+
+    def test_sales_deletes_by_sku_ck(self):
+        cur = _cursor_with_rowcounts([None, 200])
+        cur.fetchone.side_effect = [(True,)]
+        assert eh.filter_unmatched_dfus(cur, "stg_sales", "sales") == 200
+        delete_sql = cur.execute.call_args_list[1][0][0]
+        assert "NOT EXISTS" in delete_sql and "sku_ck" in delete_sql
+
+    def test_inventory_matches_on_item_id_loc(self):
+        cur = _cursor_with_rowcounts([None, 50])
+        cur.fetchone.side_effect = [(True,)]
+        assert eh.filter_unmatched_dfus(cur, "stg_inv", "inventory") == 50
+        delete_sql = cur.execute.call_args_list[1][0][0]
+        assert "item_id" in delete_sql and "loc" in delete_sql
+        assert "sku_ck" not in delete_sql
+
+    def test_no_unmatched_returns_zero(self):
+        cur = _cursor_with_rowcounts([None, 0])
+        cur.fetchone.side_effect = [(True,)]
+        assert eh.filter_unmatched_dfus(cur, "stg_sales", "sales") == 0
+
+
+class TestFilterFkOrphans:
+    def test_unconfigured_domain_returns_zero(self):
+        cur = MagicMock()
+        assert eh.filter_fk_orphans(cur, "stg_item", "item") == 0
+        cur.execute.assert_not_called()
+
+    def test_removes_orphans_when_dim_and_col_present(self):
+        # For each of the 2 FK checks: EXISTS(dim)=True, EXISTS(col)=True, then DELETE
+        cur = _cursor_with_rowcounts([None, None, 7, None, None, 3])
+        cur.fetchone.side_effect = [(True,), (True,), (True,), (True,)]
+        assert eh.filter_fk_orphans(cur, "stg_sales", "sales") == 10
+
+
+class TestUnmatchedWarnPct:
+    def test_reads_from_config(self):
+        # load_config is imported lazily inside the helper from common.core.utils.
+        with patch("common.core.utils.load_config",
+                   return_value={"filters": {"unmatched_dfu_warn_pct": 25.0}}):
+            assert eh.unmatched_warn_pct() == 25.0
+
+    def test_default_when_config_missing(self):
+        with patch("common.core.utils.load_config", side_effect=FileNotFoundError):
+            assert eh.unmatched_warn_pct() == eh._DEFAULT_UNMATCHED_WARN_PCT
+
+
+class TestRecordLoadBatch:
+    def test_completed_path_creates_and_completes(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (99,)  # batch_id from create_batch RETURNING
+        bid = eh.record_load_batch(
+            cur, "customer_demand", source_file="cd.csv", source_hash="h",
+            rows_in=10, rows_out=9,
+        )
+        assert bid == 99
+        sql = " ; ".join(str(c.args[0]) for c in cur.execute.call_args_list)
+        assert "INSERT INTO audit_load_batch" in sql
+        assert "status = 'completed'" in sql
+
+    def test_failed_path_marks_failed(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (7,)
+        eh.record_load_batch(cur, "sales", status="failed", error="boom")
+        sql = " ; ".join(str(c.args[0]) for c in cur.execute.call_args_list)
+        assert "status = 'failed'" in sql
