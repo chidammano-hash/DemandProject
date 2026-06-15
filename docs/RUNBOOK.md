@@ -199,6 +199,32 @@ make load-inventory         # Load into Postgres + refresh agg view
 make inventory-pipeline     # normalize + load + refresh (all-in-one)
 ```
 
+### 2.4 Ingestion Performance Baseline
+
+Capture before/after timings for the ingestion pipeline. These are the
+reference numbers the streamlining work (DFU-filter relocation, scoped archive
+load, size-based indexing, batched PO inserts) is measured against.
+
+```bash
+make perf-ingestion MODE=full        # times normalize-all, load-all, refresh-mvs-tiered
+make perf-ingestion MODE=refresh     # times pipeline-refresh (incremental)
+```
+
+The harness (`scripts/tools/bench_ingestion.py`) prints a Markdown table and
+flags any stage slower than `thresholds.function_slow_s` in
+`config/platform/perf_config.yaml` (no hardcoded threshold). Annotate results
+with dataset scale from `make health` (row counts) and the host.
+
+**Baseline (populate on first run against a representative DB):**
+
+| Date | Host | Dataset (rows) | full normalize-all | full load-all | refresh-mvs-tiered | pipeline-refresh (no change) | pipeline-refresh (1 domain) |
+|---|---|---|---|---|---|---|---|
+| _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+
+> The table is intentionally empty until measured on a live DB — do not
+> fabricate numbers. Fill the row, then re-measure after each Phase-3 story
+> (US8-US11) and record the delta.
+
 ## Phase 2b: Data Quality Checks
 
 Run after Phase 2 ingestion to validate loaded data. Can also be scheduled as a recurring pipeline step.
