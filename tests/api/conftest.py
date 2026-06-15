@@ -152,21 +152,19 @@ def make_async_pool(
 
 @pytest.fixture
 def mock_pool():
-    """Create a mock connection pool that returns mock cursors."""
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = []
-    mock_cursor.fetchone.return_value = None
-    mock_cursor.description = []
-    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
+    """Create a mock connection pool that returns mock cursors.
 
-    pool = MagicMock()
-    pool.connection.return_value = mock_conn
-
-    return pool, mock_conn, mock_cursor
+    Thin wrapper over :func:`make_pool` that keeps this fixture's historical
+    defaults (``fetchone`` -> ``None`` and an empty ``description``), which a
+    few of its 22 consumers rely on. The pool/conn/cursor plumbing is shared
+    with ``make_pool`` so there is a single definition of it.
+    """
+    pool, conn, cursor = make_pool()
+    # make_pool coerces a None fetchone default to (0,); this fixture's
+    # contract is an explicit None with an empty column description.
+    cursor.fetchone.return_value = None
+    cursor.description = []
+    return pool, conn, cursor
 
 
 @pytest.fixture
