@@ -7,11 +7,11 @@ Single-pass loader: CSV → temp staging → main table. No intermediate layers.
 """
 import argparse
 import logging
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
-import sys
 
 import psycopg
 import psycopg.errors
@@ -24,19 +24,27 @@ if str(ROOT) not in sys.path:
 from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
+from common.core.etl_helpers import (
+    drop_indexes,
+    drop_unique_constraints,
+    get_secondary_indexes,
+    get_unique_constraints,
+    recreate_indexes,
+    recreate_unique_constraints,
+)
+from common.core.planning_date import get_planning_date
 from common.core.sql_helpers import (
-    NULL_SQL,
     EXTERNAL_MODEL_ID,
     HASH_CHUNK_SIZE,
     MV_REFRESH_ARCHIVE,
+    NULL_SQL,
     _elapsed,
+    business_key_expr,
     qident,
     typed_expr_sets,
-    business_key_expr,
 )
-from common.engines.medallion import file_hash, create_batch, complete_batch, fail_batch
+from common.engines.medallion import complete_batch, create_batch, fail_batch, file_hash
 from common.services.perf_profiler import profiled_section
-from common.core.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
 
@@ -49,71 +57,10 @@ _UNMATCHED_DFU_WARN_PCT = 10.0
 
 
 # ---------------------------------------------------------------------------
-# Index management — drop before bulk load, recreate after
+# Index management lives in common/core/etl_helpers.py (get_secondary_indexes,
+# get_unique_constraints, drop_indexes, recreate_indexes, and the unique-
+# constraint equivalents) — imported above and used in load_domain() below.
 # ---------------------------------------------------------------------------
-
-def _get_all_indexes(cur, table: str) -> list[tuple[str, str]]:
-    """Return (index_name, index_def) for non-PK, non-constraint-backing indexes on table."""
-    cur.execute("""
-        SELECT i.indexname, i.indexdef
-        FROM pg_indexes i
-        WHERE i.tablename = %s
-          AND i.schemaname = 'public'
-          AND i.indexname NOT LIKE '%%_pkey'
-          AND NOT EXISTS (
-              SELECT 1 FROM pg_constraint c
-              WHERE c.conindid = (
-                  SELECT oid FROM pg_class
-                  WHERE relname = i.indexname
-                    AND relnamespace = 'public'::regnamespace
-              )
-          )
-        ORDER BY i.indexname
-    """, (table,))
-    return cur.fetchall()
-
-
-def _get_unique_constraints(cur, table: str) -> list[tuple[str, str, list[str]]]:
-    """Return (constraint_name, type, [columns]) for UNIQUE constraints."""
-    cur.execute("""
-        SELECT con.conname, con.contype::text,
-               array_agg(att.attname ORDER BY u.pos)
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, pos) ON true
-        JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = u.attnum
-        WHERE rel.relname = %s AND con.contype = 'u'
-        GROUP BY con.conname, con.contype
-    """, (table,))
-    return [(r[0], r[1], r[2]) for r in cur.fetchall()]
-
-
-def _drop_indexes(cur, indexes: list[tuple[str, str]]) -> None:
-    for idx_name, _ in indexes:
-        cur.execute(f"DROP INDEX IF EXISTS {qident(idx_name)}")
-
-
-def _drop_unique_constraints(cur, table: str,
-                             constraints: list[tuple[str, str, list[str]]]) -> None:
-    for con_name, _, _ in constraints:
-        cur.execute(
-            f"ALTER TABLE {qident(table)} DROP CONSTRAINT IF EXISTS {qident(con_name)}"
-        )
-
-
-def _recreate_indexes(cur, indexes: list[tuple[str, str]]) -> None:
-    for _, idx_def in indexes:
-        cur.execute(idx_def + ";")
-
-
-def _recreate_unique_constraints(cur, table: str,
-                                 constraints: list[tuple[str, str, list[str]]]) -> None:
-    for con_name, _, cols in constraints:
-        col_list = ", ".join(qident(c) for c in cols)
-        cur.execute(
-            f"ALTER TABLE {qident(table)} ADD CONSTRAINT {qident(con_name)} "
-            f"UNIQUE ({col_list})"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -678,10 +625,10 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     else:
                         # Full reload: drop ALL indexes/constraints from parent
                         # (propagates to partitions), then TRUNCATE for fast INSERT
-                        saved_indexes = _get_all_indexes(cur, spec.table)
-                        saved_constraints = _get_unique_constraints(cur, spec.table)
-                        _drop_unique_constraints(cur, spec.table, saved_constraints)
-                        _drop_indexes(cur, saved_indexes)
+                        saved_indexes = get_secondary_indexes(cur, spec.table)
+                        saved_constraints = get_unique_constraints(cur, spec.table)
+                        drop_unique_constraints(cur, spec.table, saved_constraints)
+                        drop_indexes(cur, saved_indexes)
                         cur.execute(f"TRUNCATE TABLE {qident(spec.table)} CASCADE")
                         logger.info("  Truncated + dropped %d indexes (%s)",
                                     len(saved_indexes) + len(saved_constraints), _elapsed(t0))
@@ -689,11 +636,11 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                 with profiled_section("drop_indexes"):
                     logger.info("[2/4] Preparing %s ...", spec.table)
                     t0 = time.time()
-                    saved_indexes = _get_all_indexes(cur, spec.table)
-                    saved_constraints = _get_unique_constraints(cur, spec.table)
+                    saved_indexes = get_secondary_indexes(cur, spec.table)
+                    saved_constraints = get_unique_constraints(cur, spec.table)
                     # Drop UNIQUE constraints FIRST (they depend on backing indexes)
-                    _drop_unique_constraints(cur, spec.table, saved_constraints)
-                    _drop_indexes(cur, saved_indexes)
+                    drop_unique_constraints(cur, spec.table, saved_constraints)
+                    drop_indexes(cur, saved_indexes)
 
                 if replace_mode and is_forecast:
                     cur.execute(
@@ -831,8 +778,8 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     logger.info("[4/4] Rebuilding %d indexes ...",
                                 len(saved_indexes) + len(saved_constraints))
                     t0 = time.time()
-                    _recreate_unique_constraints(cur, spec.table, saved_constraints)
-                    _recreate_indexes(cur, saved_indexes)
+                    recreate_unique_constraints(cur, spec.table, saved_constraints)
+                    recreate_indexes(cur, saved_indexes)
                     logger.info("  Indexes rebuilt (%s)", _elapsed(t0))
 
             # Forecast: refresh archive views

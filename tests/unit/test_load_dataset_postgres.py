@@ -9,12 +9,6 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl.load_dataset_postgres import (
-    _get_all_indexes,
-    _get_unique_constraints,
-    _drop_indexes,
-    _drop_unique_constraints,
-    _recreate_indexes,
-    _recreate_unique_constraints,
     _resolve_forecast_execution_lag,
     _filter_unmatched_dfus,
     _load_forecast_archive,
@@ -22,6 +16,9 @@ from scripts.etl.load_dataset_postgres import (
     _ensure_partition_exists,
     load_domain,
 )
+
+# Index/constraint helpers moved to common/core/etl_helpers.py (US3); their
+# tests live in tests/unit/test_etl_helpers.py.
 
 
 # ---------- Helpers ----------
@@ -156,72 +153,6 @@ class TestLoadForecastArchive:
 
         ins_sql = cur.execute.call_args_list[2][0][0]
         assert 'myalias."item_id"' in ins_sql
-
-
-# ---------- TestIndexManagement ----------
-
-class TestIndexManagement:
-    def test_drop_indexes(self):
-        cur = MagicMock()
-        indexes = [("idx_a", "CREATE INDEX idx_a ..."), ("idx_b", "CREATE INDEX idx_b ...")]
-
-        _drop_indexes(cur, indexes)
-
-        assert cur.execute.call_count == 2
-        assert 'DROP INDEX IF EXISTS "idx_a"' in cur.execute.call_args_list[0][0][0]
-        assert 'DROP INDEX IF EXISTS "idx_b"' in cur.execute.call_args_list[1][0][0]
-
-    def test_recreate_indexes(self):
-        cur = MagicMock()
-        indexes = [("idx_a", "CREATE INDEX idx_a ON t(col)")]
-
-        _recreate_indexes(cur, indexes)
-
-        assert cur.execute.call_count == 1
-        assert "CREATE INDEX idx_a ON t(col);" in cur.execute.call_args_list[0][0][0]
-
-    def test_drop_unique_constraints(self):
-        cur = MagicMock()
-        constraints = [("uq_a", "u", ["col1", "col2"])]
-
-        _drop_unique_constraints(cur, "my_table", constraints)
-
-        sql = cur.execute.call_args_list[0][0][0]
-        assert "DROP CONSTRAINT IF EXISTS" in sql
-        assert '"uq_a"' in sql
-        assert '"my_table"' in sql
-
-    def test_recreate_unique_constraints(self):
-        cur = MagicMock()
-        constraints = [("uq_a", "u", ["col1", "col2"])]
-
-        _recreate_unique_constraints(cur, "my_table", constraints)
-
-        sql = cur.execute.call_args_list[0][0][0]
-        assert "ADD CONSTRAINT" in sql
-        assert "UNIQUE" in sql
-        assert '"col1"' in sql
-        assert '"col2"' in sql
-
-    def test_get_all_indexes_queries_pg_indexes(self):
-        cur = MagicMock()
-        cur.fetchall.return_value = [("idx_a", "CREATE INDEX ...")]
-
-        result = _get_all_indexes(cur, "my_table")
-
-        assert result == [("idx_a", "CREATE INDEX ...")]
-        sql = cur.execute.call_args[0][0]
-        assert "pg_indexes" in sql
-
-    def test_get_unique_constraints_queries_pg_constraint(self):
-        cur = MagicMock()
-        cur.fetchall.return_value = [("uq_a", "u", ["c1"])]
-
-        result = _get_unique_constraints(cur, "my_table")
-
-        assert result == [("uq_a", "u", ["c1"])]
-        sql = cur.execute.call_args[0][0]
-        assert "pg_constraint" in sql
 
 
 # ---------- TestPartitionHelpers ----------

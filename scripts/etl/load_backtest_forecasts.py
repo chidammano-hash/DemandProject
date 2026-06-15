@@ -23,8 +23,13 @@ if str(ROOT) not in sys.path:
 
 from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
+from common.core.etl_helpers import (
+    drop_forecast_archive_indexes_and_constraints,
+    drop_forecast_indexes_and_constraints,
+    recreate_forecast_archive_indexes_and_constraints,
+    recreate_forecast_indexes_and_constraints,
+)
 from common.services.perf_profiler import profiled_section
-
 
 LOAD_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
@@ -34,29 +39,6 @@ LOAD_COLS = [
 
 BATCH_SIZE = 2_000_000
 
-# Indexes to drop/recreate for fast bulk load (excludes PK)
-_SECONDARY_INDEXES = [
-    "idx_fact_external_forecast_monthly_item",
-    "idx_fact_external_forecast_monthly_loc",
-    "idx_fact_external_forecast_monthly_fcstdate",
-    "idx_fact_external_forecast_monthly_startdate",
-    "idx_fact_external_forecast_monthly_lag",
-    "idx_fact_external_forecast_monthly_model_id",
-]
-_INDEX_DDL = [
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (item_id)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (loc)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (fcstdate)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (startdate)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (lag)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (model_id)",
-]
-_CHECK_CONSTRAINTS = [
-    "chk_fact_external_forecast_monthly_lag_0_4",
-    "chk_fact_external_forecast_monthly_fcst_month_start",
-    "chk_fact_external_forecast_monthly_start_month_start",
-]
-_UNIQUE_CONSTRAINT = "uq_forecast_ck_model"
 _TABLE = "fact_external_forecast_monthly"
 
 # ── Archive table constants ────────────────────────────────────────────────
@@ -66,97 +48,10 @@ ARCHIVE_COLS = [
     "fcstdate", "startdate", "lag", "execution_lag",
     FORECAST_QTY_COL, "tothist_dmd", "model_id", "timeframe",
 ]
-_ARCHIVE_SECONDARY_INDEXES = [
-    "idx_backtest_lag_archive_model_id",
-    "idx_backtest_lag_archive_item_id",
-    "idx_backtest_lag_archive_startdate",
-    "idx_backtest_lag_archive_lag",
-]
-_ARCHIVE_INDEX_DDL = [
-    "CREATE INDEX {name} ON backtest_lag_archive (model_id)",
-    "CREATE INDEX {name} ON backtest_lag_archive (item_id)",
-    "CREATE INDEX {name} ON backtest_lag_archive (startdate)",
-    "CREATE INDEX {name} ON backtest_lag_archive (lag)",
-]
-_ARCHIVE_CHECK_CONSTRAINTS = [
-    "chk_backtest_lag_archive_lag_0_4",
-    "chk_backtest_lag_archive_fcst_month_start",
-    "chk_backtest_lag_archive_start_month_start",
-]
-_ARCHIVE_UNIQUE_CONSTRAINT = "uq_backtest_lag_archive_ck"
 
-
-def _drop_indexes_and_constraints(cur) -> None:
-    """Drop secondary indexes and CHECK constraints for fast bulk insert."""
-    for idx in _SECONDARY_INDEXES:
-        cur.execute(f"DROP INDEX IF EXISTS {idx}")
-    cur.execute(f"ALTER TABLE {_TABLE} DROP CONSTRAINT IF EXISTS {_UNIQUE_CONSTRAINT}")
-    for ck in _CHECK_CONSTRAINTS:
-        cur.execute(f"ALTER TABLE {_TABLE} DROP CONSTRAINT IF EXISTS {ck}")
-
-
-def _recreate_indexes_and_constraints(cur) -> None:
-    """Recreate indexes and constraints after bulk insert."""
-    t0 = time.time()
-    # Unique constraint first (needed for ON CONFLICT in future upserts)
-    print("  Recreating UNIQUE constraint...")
-    cur.execute(f"ALTER TABLE {_TABLE} ADD CONSTRAINT {_UNIQUE_CONSTRAINT} UNIQUE (forecast_ck, model_id)")
-    print(f"    UNIQUE constraint created ({time.time() - t0:.1f}s)")
-
-    print("  Recreating secondary indexes...")
-    for name, ddl in zip(_SECONDARY_INDEXES, _INDEX_DDL):
-        t1 = time.time()
-        cur.execute(ddl.format(name=name))
-        print(f"    {name} ({time.time() - t1:.1f}s)")
-
-    print("  Recreating CHECK constraints...")
-    cur.execute(f"""ALTER TABLE {_TABLE}
-        ADD CONSTRAINT chk_fact_external_forecast_monthly_lag_0_4
-            CHECK (lag BETWEEN 0 AND 4),
-        ADD CONSTRAINT chk_fact_external_forecast_monthly_fcst_month_start
-            CHECK (fcstdate = date_trunc('month', fcstdate)::date),
-        ADD CONSTRAINT chk_fact_external_forecast_monthly_start_month_start
-            CHECK (startdate = date_trunc('month', startdate)::date)
-    """)
-    # Note: lag_matches_dates constraint skipped — external forecasts have
-    # mismatched lag/date combinations that are valid upstream data.
-    print(f"  All indexes/constraints rebuilt in {time.time() - t0:.1f}s")
-
-
-def _drop_archive_indexes_and_constraints(cur) -> None:
-    """Drop archive table indexes and constraints for fast bulk insert."""
-    for idx in _ARCHIVE_SECONDARY_INDEXES:
-        cur.execute(f"DROP INDEX IF EXISTS {idx}")
-    cur.execute(f"ALTER TABLE {_ARCHIVE_TABLE} DROP CONSTRAINT IF EXISTS {_ARCHIVE_UNIQUE_CONSTRAINT}")
-    for ck in _ARCHIVE_CHECK_CONSTRAINTS:
-        cur.execute(f"ALTER TABLE {_ARCHIVE_TABLE} DROP CONSTRAINT IF EXISTS {ck}")
-
-
-def _recreate_archive_indexes_and_constraints(cur) -> None:
-    """Recreate archive table indexes and constraints after bulk insert."""
-    t0 = time.time()
-    print("  Recreating archive UNIQUE constraint...")
-    cur.execute(f"ALTER TABLE {_ARCHIVE_TABLE} ADD CONSTRAINT {_ARCHIVE_UNIQUE_CONSTRAINT} "
-                f"UNIQUE (forecast_ck, model_id, lag)")
-    print(f"    UNIQUE constraint created ({time.time() - t0:.1f}s)")
-
-    print("  Recreating archive secondary indexes...")
-    for name, ddl in zip(_ARCHIVE_SECONDARY_INDEXES, _ARCHIVE_INDEX_DDL):
-        t1 = time.time()
-        cur.execute(ddl.format(name=name))
-        print(f"    {name} ({time.time() - t1:.1f}s)")
-
-    print("  Recreating archive CHECK constraints...")
-    cur.execute(f"""ALTER TABLE {_ARCHIVE_TABLE}
-        ADD CONSTRAINT chk_backtest_lag_archive_lag_0_4
-            CHECK (lag BETWEEN 0 AND 4),
-        ADD CONSTRAINT chk_backtest_lag_archive_fcst_month_start
-            CHECK (fcstdate = date_trunc('month', fcstdate)::date),
-        ADD CONSTRAINT chk_backtest_lag_archive_start_month_start
-            CHECK (startdate = date_trunc('month', startdate)::date)
-    """)
-    # Note: lag_matches_dates constraint skipped for consistency with main table.
-    print(f"  All archive indexes/constraints rebuilt in {time.time() - t0:.1f}s")
+# Index/constraint specs + drop/recreate for both the main forecast table and
+# the archive table live in common/core/etl_helpers.py (US3, shared with
+# load_ext_ml_forecasts.py) — imported above as drop_forecast_*/recreate_forecast_*.
 
 
 def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: bool, model_id_filter: str | None, skip_index_ops: bool = False) -> None:
@@ -226,7 +121,7 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
             if not skip_index_ops and replace:
                 print("  Dropping archive indexes & constraints for bulk load...")
                 t0 = time.time()
-                _drop_archive_indexes_and_constraints(cur)
+                drop_forecast_archive_indexes_and_constraints(cur)
                 print(f"    Done ({time.time() - t0:.1f}s)")
 
             # Insert with type casting
@@ -289,7 +184,7 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
 
             if not skip_index_ops and replace:
                 with profiled_section("archive_recreate_indexes"):
-                    _recreate_archive_indexes_and_constraints(cur)
+                    recreate_forecast_archive_indexes_and_constraints(cur)
 
         conn.commit()
     print("Archive load complete.")
@@ -470,7 +365,7 @@ def _load_one(
             if not skip_index_ops and replace:
                 print("  Dropping indexes & constraints for bulk load...")
                 t0 = time.time()
-                _drop_indexes_and_constraints(cur)
+                drop_forecast_indexes_and_constraints(cur)
                 print(f"    Done ({time.time() - t0:.1f}s)")
 
             print(f"  Inserting {staged_count:,} rows in batches of {BATCH_SIZE:,}...")
@@ -531,7 +426,7 @@ def _load_one(
 
             if not skip_index_ops and replace:
                 with profiled_section("recreate_indexes"):
-                    _recreate_indexes_and_constraints(cur)
+                    recreate_forecast_indexes_and_constraints(cur)
 
         conn.commit()
 
@@ -651,9 +546,9 @@ Examples:
         with psycopg.connect(**db) as conn:
             with conn.cursor() as cur:
                 if load_main:
-                    _drop_indexes_and_constraints(cur)
+                    drop_forecast_indexes_and_constraints(cur)
                 if load_archive:
-                    _drop_archive_indexes_and_constraints(cur)
+                    drop_forecast_archive_indexes_and_constraints(cur)
             conn.commit()
         print("[bulk] Indexes dropped. Loading models without per-model index ops...")
 
@@ -666,9 +561,9 @@ Examples:
             with conn.cursor() as cur:
                 cur.execute("SET maintenance_work_mem = '512MB'")
                 if load_main:
-                    _recreate_indexes_and_constraints(cur)
+                    recreate_forecast_indexes_and_constraints(cur)
                 if load_archive:
-                    _recreate_archive_indexes_and_constraints(cur)
+                    recreate_forecast_archive_indexes_and_constraints(cur)
             conn.commit()
 
         main_mvs = ["agg_forecast_monthly", "agg_accuracy_by_dim", "agg_dfu_coverage"]

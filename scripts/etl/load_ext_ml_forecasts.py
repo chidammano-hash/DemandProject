@@ -24,56 +24,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params
-from common.services.perf_profiler import profiled_section
+from common.core.etl_helpers import (
+    drop_forecast_archive_indexes_and_constraints,
+    drop_forecast_indexes_and_constraints,
+    recreate_forecast_archive_indexes_and_constraints,
+    recreate_forecast_indexes_and_constraints,
+)
 from common.core.utils import load_config
-
+from common.services.perf_profiler import profiled_section
 
 BATCH_SIZE = 2_000_000
 
 _TABLE = "fact_external_forecast_monthly"
 _ARCHIVE_TABLE = "backtest_lag_archive"
 
-_SECONDARY_INDEXES = [
-    "idx_fact_external_forecast_monthly_item",
-    "idx_fact_external_forecast_monthly_loc",
-    "idx_fact_external_forecast_monthly_fcstdate",
-    "idx_fact_external_forecast_monthly_startdate",
-    "idx_fact_external_forecast_monthly_lag",
-    "idx_fact_external_forecast_monthly_model_id",
-]
-_INDEX_DDL = [
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (item_id)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (loc)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (fcstdate)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (startdate)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (lag)",
-    "CREATE INDEX {name} ON fact_external_forecast_monthly (model_id)",
-]
-_CHECK_CONSTRAINTS = [
-    "chk_fact_external_forecast_monthly_lag_0_4",
-    "chk_fact_external_forecast_monthly_fcst_month_start",
-    "chk_fact_external_forecast_monthly_start_month_start",
-]
-_UNIQUE_CONSTRAINT = "uq_forecast_ck_model"
-
-_ARCHIVE_SECONDARY_INDEXES = [
-    "idx_backtest_lag_archive_model_id",
-    "idx_backtest_lag_archive_item_id",
-    "idx_backtest_lag_archive_startdate",
-    "idx_backtest_lag_archive_lag",
-]
-_ARCHIVE_INDEX_DDL = [
-    "CREATE INDEX {name} ON backtest_lag_archive (model_id)",
-    "CREATE INDEX {name} ON backtest_lag_archive (item_id)",
-    "CREATE INDEX {name} ON backtest_lag_archive (startdate)",
-    "CREATE INDEX {name} ON backtest_lag_archive (lag)",
-]
-_ARCHIVE_CHECK_CONSTRAINTS = [
-    "chk_backtest_lag_archive_lag_0_4",
-    "chk_backtest_lag_archive_fcst_month_start",
-    "chk_backtest_lag_archive_start_month_start",
-]
-_ARCHIVE_UNIQUE_CONSTRAINT = "uq_backtest_lag_archive_ck"
+# Index/constraint specs + drop/recreate live in common/core/etl_helpers.py
+# (US3, shared with load_backtest_forecasts.py) — imported above.
 
 # Staging table column names match the CSV headers exactly (uppercase).
 _STG_COLS = ["DFU", "STARTDATE", "PREDICTED_ORDERS", "FORECASTDATE", "ACTUAL_ORDERS", "FILE", "LAG"]
@@ -256,87 +222,6 @@ def _build_archive_insert_sql(model_id: str, bulk_fast: bool) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Index / constraint helpers
-# ---------------------------------------------------------------------------
-
-
-def _drop_indexes_and_constraints(cur) -> None:
-    """Drop secondary indexes and CHECK constraints for fast bulk insert."""
-    for idx in _SECONDARY_INDEXES:
-        cur.execute(f"DROP INDEX IF EXISTS {idx}")
-    cur.execute(f"ALTER TABLE {_TABLE} DROP CONSTRAINT IF EXISTS {_UNIQUE_CONSTRAINT}")
-    for ck in _CHECK_CONSTRAINTS:
-        cur.execute(f"ALTER TABLE {_TABLE} DROP CONSTRAINT IF EXISTS {ck}")
-
-
-def _recreate_indexes_and_constraints(cur) -> None:
-    """Recreate indexes and constraints after bulk insert."""
-    t0 = time.time()
-    print("  Recreating UNIQUE constraint...")
-    cur.execute(
-        f"ALTER TABLE {_TABLE} ADD CONSTRAINT {_UNIQUE_CONSTRAINT} "
-        f"UNIQUE (forecast_ck, model_id)"
-    )
-    print(f"    UNIQUE constraint created ({time.time() - t0:.1f}s)")
-
-    print("  Recreating secondary indexes...")
-    for name, ddl in zip(_SECONDARY_INDEXES, _INDEX_DDL):
-        t1 = time.time()
-        cur.execute(ddl.format(name=name))
-        print(f"    {name} ({time.time() - t1:.1f}s)")
-
-    print("  Recreating CHECK constraints...")
-    cur.execute(f"""ALTER TABLE {_TABLE}
-        ADD CONSTRAINT chk_fact_external_forecast_monthly_lag_0_4
-            CHECK (lag BETWEEN 0 AND 4),
-        ADD CONSTRAINT chk_fact_external_forecast_monthly_fcst_month_start
-            CHECK (fcstdate = date_trunc('month', fcstdate)::date),
-        ADD CONSTRAINT chk_fact_external_forecast_monthly_start_month_start
-            CHECK (startdate = date_trunc('month', startdate)::date)
-    """)
-    print(f"  All indexes/constraints rebuilt in {time.time() - t0:.1f}s")
-
-
-def _drop_archive_indexes_and_constraints(cur) -> None:
-    """Drop archive table indexes and constraints for fast bulk insert."""
-    for idx in _ARCHIVE_SECONDARY_INDEXES:
-        cur.execute(f"DROP INDEX IF EXISTS {idx}")
-    cur.execute(
-        f"ALTER TABLE {_ARCHIVE_TABLE} DROP CONSTRAINT IF EXISTS {_ARCHIVE_UNIQUE_CONSTRAINT}"
-    )
-    for ck in _ARCHIVE_CHECK_CONSTRAINTS:
-        cur.execute(f"ALTER TABLE {_ARCHIVE_TABLE} DROP CONSTRAINT IF EXISTS {ck}")
-
-
-def _recreate_archive_indexes_and_constraints(cur) -> None:
-    """Recreate archive table indexes and constraints after bulk insert."""
-    t0 = time.time()
-    print("  Recreating archive UNIQUE constraint...")
-    cur.execute(
-        f"ALTER TABLE {_ARCHIVE_TABLE} ADD CONSTRAINT {_ARCHIVE_UNIQUE_CONSTRAINT} "
-        f"UNIQUE (forecast_ck, model_id, lag)"
-    )
-    print(f"    UNIQUE constraint created ({time.time() - t0:.1f}s)")
-
-    print("  Recreating archive secondary indexes...")
-    for name, ddl in zip(_ARCHIVE_SECONDARY_INDEXES, _ARCHIVE_INDEX_DDL):
-        t1 = time.time()
-        cur.execute(ddl.format(name=name))
-        print(f"    {name} ({time.time() - t1:.1f}s)")
-
-    print("  Recreating archive CHECK constraints...")
-    cur.execute(f"""ALTER TABLE {_ARCHIVE_TABLE}
-        ADD CONSTRAINT chk_backtest_lag_archive_lag_0_4
-            CHECK (lag BETWEEN 0 AND 4),
-        ADD CONSTRAINT chk_backtest_lag_archive_fcst_month_start
-            CHECK (fcstdate = date_trunc('month', fcstdate)::date),
-        ADD CONSTRAINT chk_backtest_lag_archive_start_month_start
-            CHECK (startdate = date_trunc('month', startdate)::date)
-    """)
-    print(f"  All archive indexes/constraints rebuilt in {time.time() - t0:.1f}s")
-
-
-# ---------------------------------------------------------------------------
 # Table loaders
 # ---------------------------------------------------------------------------
 
@@ -346,7 +231,7 @@ def _load_to_main_table(conn, cur, staged_count: int, model_id: str, bulk_fast: 
     if bulk_fast:
         print("  Dropping indexes & constraints for bulk load...")
         t0 = time.time()
-        _drop_indexes_and_constraints(cur)
+        drop_forecast_indexes_and_constraints(cur)
         print(f"    Done ({time.time() - t0:.1f}s)")
 
     insert_sql = _build_stg_insert_sql(model_id, bulk_fast)
@@ -369,7 +254,7 @@ def _load_to_main_table(conn, cur, staged_count: int, model_id: str, bulk_fast: 
 
     if bulk_fast:
         with profiled_section("recreate_main_indexes"):
-            _recreate_indexes_and_constraints(cur)
+            recreate_forecast_indexes_and_constraints(cur)
 
 
 def _load_to_archive_table(conn, cur, staged_count: int, model_id: str, bulk_fast: bool, batch_size: int) -> None:
@@ -377,7 +262,7 @@ def _load_to_archive_table(conn, cur, staged_count: int, model_id: str, bulk_fas
     if bulk_fast:
         print("  Dropping archive indexes & constraints for bulk load...")
         t0 = time.time()
-        _drop_archive_indexes_and_constraints(cur)
+        drop_forecast_archive_indexes_and_constraints(cur)
         print(f"    Done ({time.time() - t0:.1f}s)")
 
     insert_sql = _build_archive_insert_sql(model_id, bulk_fast)
@@ -400,7 +285,7 @@ def _load_to_archive_table(conn, cur, staged_count: int, model_id: str, bulk_fas
 
     if bulk_fast:
         with profiled_section("recreate_archive_indexes"):
-            _recreate_archive_indexes_and_constraints(cur)
+            recreate_forecast_archive_indexes_and_constraints(cur)
 
 
 # ---------------------------------------------------------------------------
