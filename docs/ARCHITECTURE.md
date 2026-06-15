@@ -632,7 +632,22 @@ The last four are the AI Planner FVA backtest store (spec [02-27](specs/02-forec
 
 ### Jobs
 
-`job_history`, `job_schedule`
+`job_history`, `job_schedule`, `integration_job_unified` (view)
+
+**Unified ingestion backend (US17).** All ingestion work — whole-pipeline runs
+(`etl_pipeline`), single-domain loads (`load_domain`), and multi-step chains
+(JobManager pipelines of `load_domain` steps) — runs through **JobManager** and
+lands in **`job_history`** (one write backend, one history store). The
+`/integration/*` endpoints submit via JobManager and read through the
+**`integration_job_unified`** view (`sql/188`), which UNIONs the JobManager
+ingestion rows with the legacy `integration_job` archive and normalizes both to
+the integration `Job` shape (status `completed`→`success`, mirrored in
+`common/services/job_shape.py`). The legacy `integration_job` / `integration_chain`
+tables are **read-only archives** — no new rows are written to them; their
+runners (`IntegrationRunner`, `IntegrationChainRunner`) retain only read +
+cleanup methods (the submit/subprocess paths were retired). Chains are read back
+via `ChainJobRunner` (`common/services/chain_shape.py` + `integration_chain_jobs.py`)
+with a legacy-archive read-fallback.
 
 ### Detailed Table Descriptions
 

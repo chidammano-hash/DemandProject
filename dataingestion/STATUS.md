@@ -2,7 +2,7 @@
 
 Branch: `feat/unified-data-ingestion`. All work TDD'd and committed story-by-story.
 
-## Shipped (20 of 21 stories)
+## Shipped (all 21 stories — US17 via the 17a–17e split below)
 
 | Story | Status | Summary |
 |---|---|---|
@@ -27,9 +27,11 @@ Branch: `feat/unified-data-ingestion`. All work TDD'd and committed story-by-sto
 | US20 | ✅ | Unified load lineage with domain/status filters + sanitized errors |
 | US21 | ✅ | Docs + final verification (this) |
 
-## US17 — converge the two job backends (in progress, risk-laddered split)
+## US17 — converge the two job backends (COMPLETE, risk-laddered split)
 
-Split into 17a–17e (see `README.md`). Shipping bottom-up, lowest risk first.
+Split into 17a–17e (see `README.md`), shipped bottom-up lowest-risk first. One
+write backend (JobManager → `job_history`), one read surface
+(`integration_job_unified`); legacy tables retained as read-only archives.
 
 | Story | Status | Summary |
 |---|---|---|
@@ -37,7 +39,7 @@ Split into 17a–17e (see `README.md`). Shipping bottom-up, lowest risk first.
 | US17b | ✅ | `integration_job_unified` view (sql/188); `IntegrationRunner.list/get` read it — merges `integration_job` + `job_history` ETL jobs, `completed→success` in SQL |
 | US17c | ✅ | `load_domain` JobManager job type (group `etl`); `POST /integration/jobs` submits it — gates (allowlist/slice/sandbox/cascade) enforced pre-submission; new loads land in `job_history`, legacy rows still readable |
 | US17d | ✅ | Chains run as JobManager pipelines of `load_domain` steps (`chain_shape` adapter + `ChainJobRunner`); `/integration/chains[/{id}]` shape unchanged, legacy `integration_chain` rows still readable via fallback |
-| US17e | ⏳ | UI convergence + legacy retirement |
+| US17e | ✅ | Legacy write/exec paths retired (no `INSERT INTO integration_job/chain`); shared `etl_job_output.parse_final_json`; runners reduced to read+cleanup; `integration_job`/`integration_chain` kept as permanent read-only archives behind the unified view; ARCHITECTURE/RUNBOOK document the single backend |
 
 ## Known issues (pre-existing, not from this work)
 

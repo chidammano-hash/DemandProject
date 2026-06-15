@@ -60,9 +60,17 @@ def _row_to_actual(row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     }
 
 
-_PIPELINE_COLS = (
-    "pipeline_id", "pipeline_step", "job_id", "status", "params", "result",
-    "error", "started_at", "completed_at", "triggered_by",
+# Explicit column lists (literal SQL — never interpolate values; psycopg3 %s).
+_GET_CHAIN_SQL = (
+    "SELECT pipeline_id, pipeline_step, job_id, status, params, result, error, "
+    "started_at, completed_at, triggered_by FROM job_history "
+    "WHERE pipeline_id = %s AND job_type = 'load_domain' ORDER BY pipeline_step"
+)
+_LIST_CHAINS_SQL = (
+    "SELECT pipeline_id, pipeline_step, job_id, status, params, result, error, "
+    "started_at, completed_at, triggered_by, submitted_at FROM job_history "
+    "WHERE pipeline_id IS NOT NULL AND job_type = 'load_domain' "
+    "ORDER BY submitted_at DESC LIMIT %s"
 )
 
 
@@ -118,12 +126,7 @@ class ChainJobRunner:
     # -- reads --------------------------------------------------------------
     def _fetch_pipeline_rows(self, chain_id: str) -> list[dict[str, Any]]:
         with self.pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT {', '.join(_PIPELINE_COLS)} FROM job_history "
-                "WHERE pipeline_id = %s AND job_type = 'load_domain' "
-                "ORDER BY pipeline_step",
-                (chain_id,),
-            )
+            cur.execute(_GET_CHAIN_SQL, (chain_id,))
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 
@@ -154,12 +157,7 @@ class ChainJobRunner:
     def list_chains(self, limit: int = 20) -> list[dict[str, Any]]:
         """List recent chains across JobManager pipelines + legacy chains."""
         with self.pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT {', '.join(_PIPELINE_COLS)}, submitted_at FROM job_history "
-                "WHERE pipeline_id IS NOT NULL AND job_type = 'load_domain' "
-                "ORDER BY submitted_at DESC LIMIT %s",
-                (_LIST_ROW_CAP,),
-            )
+            cur.execute(_LIST_CHAINS_SQL, (_LIST_ROW_CAP,))
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 

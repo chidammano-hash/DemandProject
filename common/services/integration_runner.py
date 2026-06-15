@@ -1,34 +1,23 @@
-"""Async job runner for the unified ETL load CLI (scripts/etl/load.py).
+"""Read + cleanup helpers for integration job history.
 
-Persists every submission to the ``integration_job`` table and runs the
-underlying ``uv run python -m scripts.etl.load ...`` invocation in a shared
-ThreadPoolExecutor so the FastAPI request thread returns immediately.
+Since the US17c cutover, ingestion jobs are submitted through JobManager
+(``load_domain`` / ``etl_pipeline``) and land in ``job_history``; the legacy
+``integration_job`` table is a read-only archive. This module no longer submits
+or executes loads — it only:
 
-Public entry point::
+- **reads** the unified view (``integration_job_unified``) so the
+  ``/integration/jobs`` endpoints surface both archived legacy rows and new
+  JobManager ingestion jobs (:meth:`IntegrationRunner.list` / :meth:`get`),
+- **purges / reaps** stale archive rows (:meth:`purge`, :meth:`reap_orphans`),
+- reports backend **health** (:meth:`health`).
 
-    from common.services.integration_runner import IntegrationRunner
-
-    runner = IntegrationRunner(pool)
-    job_id = runner.submit(domain="sales", mode="delta", triggered_by="api")
-    runner.get(job_id)
-    runner.list(domain="sales")
-    runner.health()
-
-The subprocess is expected to emit a final JSON line on stdout. Exit codes
-drive the final status: 0 -> success, 2 -> skipped, anything else -> failed.
+The submission/subprocess path (``submit`` / ``_run_job``) was retired in US17e.
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
-import shutil
-import subprocess
-import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -36,35 +25,6 @@ import psycopg
 from common.core.sql_helpers import row_to_dict_from_cursor
 
 logger = logging.getLogger(__name__)
-
-_VALID_MODES = frozenset({"onetime", "delta", "file"})
-_SUBPROCESS_TIMEOUT_S = 3600
-
-
-def _resolve_project_root() -> Path:
-    """Walk upward from this file searching for a dir with both ``api`` and
-    ``common``. Falls back to ``DEMAND_PROJECT_ROOT`` env or ``parents[2]``.
-    """
-    env_root = os.environ.get("DEMAND_PROJECT_ROOT")
-    if env_root:
-        return Path(env_root).resolve()
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "api").is_dir() and (parent / "common").is_dir():
-            return parent
-    return here.parents[2]
-
-
-_PROJECT_ROOT = _resolve_project_root()
-
-
-def _resolve_uv() -> str:
-    uv = shutil.which("uv")
-    if uv is None:
-        raise RuntimeError(
-            "'uv' not found on PATH; install uv or add it to PATH for the API process"
-        )
-    return uv
 
 
 def _to_iso(value: Any) -> Any:
@@ -78,9 +38,8 @@ def _to_iso(value: Any) -> Any:
 def _row_to_dict(cur: psycopg.Cursor, row: tuple[Any, ...]) -> dict[str, Any]:
     """Convert an integration-job row to a dict with ISO/UUID coercion.
 
-    Wraps the canonical :func:`row_to_dict_from_cursor` helper and then
-    applies integration-domain-specific coercions for ``datetime`` and
-    ``UUID`` values.
+    Wraps the canonical :func:`row_to_dict_from_cursor` helper and then applies
+    integration-domain-specific coercions for ``datetime`` and ``UUID`` values.
     """
     return {
         col: _to_iso(val)
@@ -89,65 +48,20 @@ def _row_to_dict(cur: psycopg.Cursor, row: tuple[Any, ...]) -> dict[str, Any]:
 
 
 class IntegrationRunner:
-    """Async job runner for ETL integration loads.
+    """Read + cleanup surface over the integration job archive + unified view.
 
-    Persists job state to integration_job table; spawns subprocess to run
-    scripts/etl/load.py and updates status + metrics on completion.
+    Construction takes the shared connection pool. There is no background
+    executor — submission moved to JobManager (US17c) and this class no longer
+    spawns work.
     """
-
-    _executor: ClassVar[ThreadPoolExecutor | None] = None
 
     def __init__(self, pool: Any) -> None:
         self.pool = pool
-        if IntegrationRunner._executor is None:
-            IntegrationRunner._executor = ThreadPoolExecutor(
-                max_workers=2,
-                thread_name_prefix="integration-runner",
-            )
-
-    def submit(
-        self,
-        domain: str,
-        mode: str,
-        slice: str | None = None,
-        file: str | None = None,
-        triggered_by: str = "api",
-        reindex: bool = False,
-    ) -> str:
-        if mode not in _VALID_MODES:
-            raise ValueError(
-                f"invalid mode {mode!r}; expected one of {sorted(_VALID_MODES)}"
-            )
-        with self.pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO integration_job
-                    (domain, mode, slice, file_path, status, triggered_by)
-                VALUES (%s, %s, %s, %s, 'queued', %s)
-                RETURNING id
-                """,
-                (domain, mode, slice, file, triggered_by),
-            )
-            row = cur.fetchone()
-            if row is None:  # pragma: no cover - defensive
-                raise psycopg.Error("INSERT into integration_job returned no row")
-            job_id = str(row[0])
-
-        executor = IntegrationRunner._executor
-        if executor is None:  # pragma: no cover - constructor guarantees init
-            raise RuntimeError("IntegrationRunner executor not initialized")
-        executor.submit(self._run_job, job_id, domain, mode, slice, file, reindex)
-        logger.info(
-            "integration job %s queued: domain=%s mode=%s slice=%s file=%s by=%s reindex=%s",
-            job_id, domain, mode, slice, file, triggered_by, reindex,
-        )
-        return job_id
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         # Reads come from the unified view (US17b): legacy integration_job rows
         # plus JobManager ingestion jobs (etl_pipeline / load_domain), all
-        # normalized to the integration Job shape. Writes still target the base
-        # table (see _run_job / purge / reap_orphans).
+        # normalized to the integration Job shape.
         with self.pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM integration_job_unified WHERE id = %s", (job_id,)
@@ -184,11 +98,11 @@ class IntegrationRunner:
         domain: str | None = None,
         keep_running: bool = True,
     ) -> int:
-        """Delete integration_job rows matching the given filters.
+        """Delete archived ``integration_job`` rows matching the given filters.
 
         Defaults are conservative: ``keep_running=True`` always excludes jobs
-        currently in 'queued' or 'running' state so an in-flight worker can
-        still find its row. Returns the number of rows deleted.
+        currently in 'queued' or 'running' state. Returns the number of rows
+        deleted. (Targets the base archive table, not the view.)
         """
         clauses: list[str] = []
         params: list[Any] = []
@@ -216,12 +130,11 @@ class IntegrationRunner:
             return 0
 
     def reap_orphans(self) -> int:
-        """Mark any 'queued' or 'running' job as failed.
+        """Mark any archived 'queued'/'running' row as failed.
 
-        Called on API startup: a fresh process has no in-memory ThreadPoolExecutor
-        carrying over from the previous run, so any row left in those states
-        belonged to a dead worker and would otherwise stay 'running' forever.
-        Returns the number of rows reaped.
+        Pre-cutover loads ran in-process; a row left in those states belonged to
+        a dead worker. No new rows are written here anymore, so this only tidies
+        legacy archive rows. Returns the number of rows reaped.
         """
         try:
             with self.pool.connection() as conn, conn.cursor() as cur:
@@ -266,133 +179,3 @@ class IntegrationRunner:
             logger.exception("integration_runner table health failed: %s", exc)
 
         return {"pool": pool_status, "table": table_status}
-
-    def _run_job(
-        self,
-        job_id: str,
-        domain: str,
-        mode: str,
-        slice: str | None,
-        file: str | None,
-        reindex: bool = False,
-    ) -> None:
-        start_monotonic = time.monotonic()
-        try:
-            with self.pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE integration_job SET status = 'running' WHERE id = %s",
-                    (job_id,),
-                )
-        except psycopg.Error:
-            logger.exception("failed to mark job %s running", job_id)
-            return
-
-        cmd = [
-            _resolve_uv(), "run", "python", "-m", "scripts.etl.load",
-            "--domain", domain, "--mode", mode,
-        ]
-        if slice:
-            cmd.extend(["--slice", slice])
-        if file:
-            cmd.extend(["--file", file])
-        if reindex:
-            cmd.append("--reindex")
-
-        status = "failed"
-        rows_loaded = 0
-        rows_inserted: int | None = None
-        rows_updated: int | None = None
-        rows_deleted: int | None = None
-        error_message: str | None = None
-
-        try:
-            proc = subprocess.run(  # noqa: S603 - argv built from validated inputs
-                cmd,
-                cwd=str(_PROJECT_ROOT),
-                capture_output=True,
-                text=True,
-                timeout=_SUBPROCESS_TIMEOUT_S,
-                check=False,
-            )
-            parsed = self._parse_final_json(proc.stdout)
-            rows_loaded = parsed["rows_loaded"]
-            rows_inserted = parsed["rows_inserted"]
-            rows_updated = parsed["rows_updated"]
-            rows_deleted = parsed["rows_deleted"]
-            parsed_error = parsed["error"]
-            if proc.returncode == 0:
-                status = "success"
-            elif proc.returncode == 2:
-                status = "skipped"
-            else:
-                status = "failed"
-                error_message = parsed_error or (
-                    proc.stderr.strip()[-2000:] if proc.stderr else None
-                ) or f"exit code {proc.returncode}"
-        except subprocess.TimeoutExpired:
-            logger.exception("integration job %s timed out", job_id)
-            error_message = f"subprocess timed out after {_SUBPROCESS_TIMEOUT_S}s"
-        except (subprocess.SubprocessError, OSError):
-            logger.exception("integration job %s subprocess failed", job_id)
-            error_message = "subprocess error (see logs)"
-
-        duration_ms = int((time.monotonic() - start_monotonic) * 1000)
-        try:
-            with self.pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE integration_job
-                       SET status = %s, rows_loaded = %s,
-                           rows_inserted = %s, rows_updated = %s, rows_deleted = %s,
-                           error_message = %s, completed_at = NOW(),
-                           duration_ms = %s
-                     WHERE id = %s
-                    """,
-                    (status, rows_loaded, rows_inserted, rows_updated, rows_deleted,
-                     error_message, duration_ms, job_id),
-                )
-        except psycopg.Error:
-            logger.exception("failed to finalize integration job %s", job_id)
-
-    @staticmethod
-    def _parse_final_json(stdout: str) -> dict[str, Any]:
-        """Extract metrics from the dispatcher's last JSON stdout line.
-
-        Returns a dict with keys: rows_loaded, rows_inserted, rows_updated,
-        rows_deleted, error. Missing keys default to None (or 0 for rows_loaded).
-        """
-        empty = {"rows_loaded": 0, "rows_inserted": None,
-                 "rows_updated": None, "rows_deleted": None, "error": None}
-        if not stdout:
-            return empty
-        last_line = ""
-        for line in stdout.splitlines():
-            stripped = line.strip()
-            if stripped:
-                last_line = stripped
-        if not last_line:
-            return empty
-        try:
-            payload = json.loads(last_line)
-        except json.JSONDecodeError:
-            return empty
-        if not isinstance(payload, dict):
-            return empty
-
-        def _opt_int(v: Any) -> int | None:
-            if v is None:
-                return None
-            try:
-                return int(v)
-            except (TypeError, ValueError):
-                return None
-
-        rows_loaded = _opt_int(payload.get("rows_loaded")) or 0
-        err = payload.get("error")
-        return {
-            "rows_loaded": rows_loaded,
-            "rows_inserted": _opt_int(payload.get("rows_inserted")),
-            "rows_updated":  _opt_int(payload.get("rows_updated")),
-            "rows_deleted":  _opt_int(payload.get("rows_deleted")),
-            "error": str(err) if err not in (None, "") else None,
-        }

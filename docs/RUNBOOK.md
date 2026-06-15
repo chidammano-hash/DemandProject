@@ -2269,9 +2269,13 @@ TRUNCATE TABLE fact_query_performance CASCADE;
 -- Group 17: Infrastructure
 TRUNCATE TABLE audit_load_batch CASCADE;
 TRUNCATE TABLE job_history CASCADE;
--- integration_job_unified (sql/188) is a VIEW over integration_job + job_history
--- (ETL job types) — no rows of its own, nothing to TRUNCATE. Truncating its two
--- base tables clears the unified read surface too. Drop with
+-- US17: ingestion now writes ONLY to job_history (via JobManager: etl_pipeline /
+-- load_domain / chain pipelines). integration_job + integration_chain are
+-- read-only ARCHIVES (no new rows). integration_job_unified (sql/188) is a VIEW
+-- over integration_job + job_history (ETL job types) — no rows of its own,
+-- nothing to TRUNCATE; truncating job_history + the two archives clears the
+-- unified read surface too. The archives are kept as permanent history (no
+-- migration needed); drop the view with
 -- `DROP VIEW IF EXISTS integration_job_unified;` only when rebuilding the schema.
 TRUNCATE TABLE perf_suggestion CASCADE;
 TRUNCATE TABLE perf_query CASCADE;

@@ -1581,9 +1581,7 @@ def _run_load_domain(
         file:    optional explicit file path
         reindex: optional bool — REINDEX after a bulk upsert
     """
-    # IntegrationRunner owns the single source of truth for parsing the
-    # dispatcher's final JSON line; reuse it rather than duplicating.
-    from common.services.integration_runner import IntegrationRunner
+    from common.services.etl_job_output import parse_final_json
 
     domain = params.get("domain")
     if not domain:
@@ -1616,7 +1614,7 @@ def _run_load_domain(
         timeout=_SUBPROCESS_TIMEOUT,
         check=False,
     )
-    metrics = IntegrationRunner._parse_final_json(proc.stdout)
+    metrics = parse_final_json(proc.stdout)
 
     if proc.returncode == 0:
         skipped = False
