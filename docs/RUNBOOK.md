@@ -2269,6 +2269,10 @@ TRUNCATE TABLE fact_query_performance CASCADE;
 -- Group 17: Infrastructure
 TRUNCATE TABLE audit_load_batch CASCADE;
 TRUNCATE TABLE job_history CASCADE;
+-- integration_job_unified (sql/188) is a VIEW over integration_job + job_history
+-- (ETL job types) — no rows of its own, nothing to TRUNCATE. Truncating its two
+-- base tables clears the unified read surface too. Drop with
+-- `DROP VIEW IF EXISTS integration_job_unified;` only when rebuilding the schema.
 TRUNCATE TABLE perf_suggestion CASCADE;
 TRUNCATE TABLE perf_query CASCADE;
 TRUNCATE TABLE perf_section CASCADE;

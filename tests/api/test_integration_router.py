@@ -250,6 +250,50 @@ async def test_list_jobs_returns_runner_items(client, override_runner):
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_merges_legacy_and_job_history(mock_pool, client):
+    """US17b: the real runner reads the unified view, so legacy integration_job
+    rows and job_history ingestion rows surface in one list with the Job shape.
+
+    The view normalizes both sources in SQL, so the cursor returns rows already
+    in the integration Job column order. We drive a *real* IntegrationRunner
+    (bound to the mock pool) through the endpoint to exercise the read path."""
+    from common.services.integration_runner import IntegrationRunner
+
+    pool, _, cursor = mock_pool
+    app.dependency_overrides[_get_runner] = lambda: IntegrationRunner(pool)
+    cursor.description = [
+        ("id",), ("domain",), ("mode",), ("slice",), ("file_path",),
+        ("status",), ("rows_loaded",), ("rows_inserted",), ("rows_updated",),
+        ("rows_deleted",), ("error_message",), ("started_at",),
+        ("completed_at",), ("duration_ms",), ("triggered_by",),
+    ]
+    cursor.fetchall.return_value = [
+        # legacy integration_job row (UUID id cast to text by the view)
+        ("11111111-1111-1111-1111-111111111111", "sales", "delta", None, None,
+         "success", 50, 50, 0, 0, None, "2026-06-01T10:00:00",
+         "2026-06-01T10:01:00", 60000, "api"),
+        # job_history etl_pipeline row (completed already mapped to success by view)
+        ("etl_20260601_0900", "sales,forecast", "refresh", None, None,
+         "success", 7, None, None, None, None, "2026-06-01T09:00:00",
+         "2026-06-01T09:05:00", 300000, "ui"),
+    ]
+    try:
+        resp = await client.get("/integration/jobs")
+    finally:
+        app.dependency_overrides.pop(_get_runner, None)
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    ids = {it["id"] for it in items}
+    assert "11111111-1111-1111-1111-111111111111" in ids  # legacy preserved
+    assert "etl_20260601_0900" in ids                      # job_history surfaced
+    # both carry the integration status vocabulary
+    assert all(it["status"] == "success" for it in items)
+    # the runner read from the unified view, not the base table
+    sql = cursor.execute.call_args.args[0]
+    assert "integration_job_unified" in sql
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_with_domain_filter(client, override_runner):
     await client.get("/integration/jobs?domain=sales&limit=20")
     override_runner.list.assert_called_once_with(domain="sales", limit=20)

@@ -187,6 +187,39 @@ def test_list_with_domain_and_custom_limit():
 
 
 # ---------------------------------------------------------------------------
+# US17b — reads come from the unified view (writes still hit the base table)
+# ---------------------------------------------------------------------------
+def test_list_reads_unified_view():
+    pool, cursor = _make_pool(fetchall=[])
+    runner = IntegrationRunner(pool)
+    runner.list()
+    sql = cursor.execute.call_args.args[0]
+    assert "integration_job_unified" in sql
+
+
+def test_get_reads_unified_view():
+    row = (
+        "abc-123", "sales", "onetime", None, None,
+        "success", 100, None, None, None, 1234, "api",
+    )
+    pool, cursor = _make_pool(fetchone=row)
+    runner = IntegrationRunner(pool)
+    runner.get("abc-123")
+    sql = cursor.execute.call_args.args[0]
+    assert "integration_job_unified" in sql
+
+
+def test_writes_still_target_base_table():
+    # purge / reap must never write to the view.
+    pool, cursor = _make_pool(fetchall=[])
+    runner = IntegrationRunner(pool)
+    runner.purge()
+    sql = cursor.execute.call_args.args[0]
+    assert "integration_job_unified" not in sql
+    assert "integration_job" in sql
+
+
+# ---------------------------------------------------------------------------
 # health()
 # ---------------------------------------------------------------------------
 def test_health_pool_ok_table_ok():

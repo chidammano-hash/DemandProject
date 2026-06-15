@@ -144,8 +144,14 @@ class IntegrationRunner:
         return job_id
 
     def get(self, job_id: str) -> dict[str, Any] | None:
+        # Reads come from the unified view (US17b): legacy integration_job rows
+        # plus JobManager ingestion jobs (etl_pipeline / load_domain), all
+        # normalized to the integration Job shape. Writes still target the base
+        # table (see _run_job / purge / reap_orphans).
         with self.pool.connection() as conn, conn.cursor() as cur:
-            cur.execute("SELECT * FROM integration_job WHERE id = %s", (job_id,))
+            cur.execute(
+                "SELECT * FROM integration_job_unified WHERE id = %s", (job_id,)
+            )
             row = cur.fetchone()
             return _row_to_dict(cur, row) if row is not None else None
 
@@ -157,13 +163,13 @@ class IntegrationRunner:
         with self.pool.connection() as conn, conn.cursor() as cur:
             if domain is not None:
                 cur.execute(
-                    "SELECT * FROM integration_job WHERE domain = %s "
+                    "SELECT * FROM integration_job_unified WHERE domain = %s "
                     "ORDER BY started_at DESC LIMIT %s",
                     (domain, limit),
                 )
             else:
                 cur.execute(
-                    "SELECT * FROM integration_job "
+                    "SELECT * FROM integration_job_unified "
                     "ORDER BY started_at DESC LIMIT %s",
                     (limit,),
                 )
