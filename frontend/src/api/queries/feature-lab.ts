@@ -2,8 +2,12 @@
  * Feature Lab — API types, query keys, and fetchers for feature importance and stability analysis.
  *
  * NOTE: The fetchers normalise backend response shapes into the types below,
- * so component code can rely on a stable contract.
+ * so component code can rely on a stable contract. The `Raw*` interfaces below
+ * mirror the actual FastAPI response shapes from
+ * `api/routers/forecasting/feature_lab.py`.
  */
+
+import { fetchJson } from "./core";
 
 // --- Types (frontend contract) ---
 
@@ -39,6 +43,84 @@ export interface FeatureCategory {
   count: number;
 }
 
+// --- Raw wire shapes (mirror api/routers/forecasting/feature_lab.py) ---
+
+/** One feature entry from GET /feature-lab/importance. */
+interface RawImportanceFeature {
+  name: string;
+  mean_abs_shap: number;
+  rank: number;
+  selected_count: number;
+  n_timeframes: number;
+  category: string;
+}
+
+interface RawImportanceResponse {
+  available: boolean;
+  model_id: string;
+  features: RawImportanceFeature[];
+  total_features: number;
+  selected_features: number;
+}
+
+/** One feature entry from GET /feature-lab/stability. */
+interface RawStabilityFeature {
+  name: string;
+  ranks_by_timeframe: number[];
+  mean_rank: number;
+  rank_std: number;
+  stability: "high" | "medium" | "unstable";
+  min_rank: number;
+  max_rank: number;
+}
+
+interface RawStabilityResponse {
+  available: boolean;
+  features: RawStabilityFeature[];
+}
+
+/** GET /feature-lab/correlation — features list plus a square correlation matrix. */
+interface RawCorrelationResponse {
+  available: boolean;
+  features: string[];
+  matrix: number[][];
+  high_correlation_pairs: Array<{
+    feature_a: string;
+    feature_b: string;
+    correlation: number;
+    recommendation: string;
+  }>;
+}
+
+/** GET /feature-lab/per-cluster-importance — cluster ids are returned as strings. */
+interface RawPerClusterResponse {
+  available: boolean;
+  clusters: string[];
+  features: string[];
+  importance_matrix: number[][];
+  cluster_specific_features: Array<{
+    cluster: string;
+    top_unique_feature: string;
+    note: string;
+  }>;
+  note?: string;
+}
+
+/** One category entry from GET /feature-lab/categories. */
+interface RawCategory {
+  name: string;
+  features: string[];
+  description: string;
+  count: number;
+}
+
+interface RawCategoriesResponse {
+  available: boolean;
+  model_id: string;
+  categories: RawCategory[];
+  total_features: number;
+}
+
 // --- Query keys ---
 
 export const featureLabKeys = {
@@ -69,7 +151,7 @@ const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
   other: "#64748B",
 };
 
-// --- Stability mapping (API uses "high"/"medium"/"low"; frontend uses "stable"/"moderate"/"unstable") ---
+// --- Stability mapping (API uses "high"/"medium"/"unstable"; frontend uses "stable"/"moderate"/"unstable") ---
 
 function mapStability(s: string): "stable" | "moderate" | "unstable" {
   const lower = s.toLowerCase();
@@ -85,60 +167,44 @@ export async function fetchFeatureImportance(
 ): Promise<{ features: FeatureImportanceRow[]; model_id: string }> {
   const sp = new URLSearchParams();
   if (modelId) sp.set("model_id", modelId);
-  const res = await fetch(`/feature-lab/importance${sp.toString() ? `?${sp}` : ""}`);
-  if (!res.ok) throw new Error(`fetchFeatureImportance: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
-  const features: FeatureImportanceRow[] = (raw.features ?? []).map(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (f: any) => ({
-      feature: f.feature ?? f.name ?? "",
-      shap_value: f.shap_value ?? f.mean_abs_shap ?? 0,
-      category: f.category ?? "other",
-      rank: f.rank ?? 0,
-    }),
+  const raw = await fetchJson<RawImportanceResponse>(
+    `/feature-lab/importance${sp.toString() ? `?${sp}` : ""}`,
   );
+  const features: FeatureImportanceRow[] = (raw.features ?? []).map((f) => ({
+    feature: f.name,
+    shap_value: f.mean_abs_shap,
+    category: f.category,
+    rank: f.rank,
+  }));
   return { features, model_id: raw.model_id ?? modelId ?? "lgbm_cluster" };
 }
 
 export async function fetchFeatureStability(): Promise<{ features: FeatureStabilityRow[] }> {
-  const res = await fetch("/feature-lab/stability");
-  if (!res.ok) throw new Error(`fetchFeatureStability: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
-  const features: FeatureStabilityRow[] = (raw.features ?? []).map(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (f: any) => ({
-      feature: f.feature ?? f.name ?? "",
-      mean_rank: f.mean_rank ?? 0,
-      rank_std: f.rank_std ?? 0,
-      stability: mapStability(f.stability ?? "low"),
-      n_folds: f.n_folds ?? (Array.isArray(f.ranks_by_timeframe) ? f.ranks_by_timeframe.length : 0),
-    }),
-  );
+  const raw = await fetchJson<RawStabilityResponse>("/feature-lab/stability");
+  const features: FeatureStabilityRow[] = (raw.features ?? []).map((f) => ({
+    feature: f.name,
+    mean_rank: f.mean_rank,
+    rank_std: f.rank_std,
+    stability: mapStability(f.stability),
+    n_folds: Array.isArray(f.ranks_by_timeframe) ? f.ranks_by_timeframe.length : 0,
+  }));
   return { features };
 }
 
 export async function fetchFeatureCorrelation(
   topN = 20,
 ): Promise<{ top_n: number; features: string[]; cells: FeatureCorrelationCell[] }> {
-  const res = await fetch(`/feature-lab/correlation?top_n=${topN}`);
-  if (!res.ok) throw new Error(`fetchFeatureCorrelation: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
+  const raw = await fetchJson<RawCorrelationResponse>(`/feature-lab/correlation?top_n=${topN}`);
   const features: string[] = raw.features ?? [];
 
-  // Convert matrix (2D array) → cells array
-  let cells: FeatureCorrelationCell[] = [];
-  if (Array.isArray(raw.cells)) {
-    cells = raw.cells;
-  } else if (Array.isArray(raw.matrix)) {
-    for (let i = 0; i < features.length; i++) {
-      for (let j = i + 1; j < features.length; j++) {
-        const corr = raw.matrix[i]?.[j] ?? 0;
-        if (corr !== 0) {
-          cells.push({ feature_a: features[i], feature_b: features[j], correlation: corr });
-        }
+  // Backend returns a square correlation matrix; flatten the upper triangle to non-zero cells.
+  const matrix = raw.matrix ?? [];
+  const cells: FeatureCorrelationCell[] = [];
+  for (let i = 0; i < features.length; i++) {
+    for (let j = i + 1; j < features.length; j++) {
+      const corr = matrix[i]?.[j] ?? 0;
+      if (corr !== 0) {
+        cells.push({ feature_a: features[i], feature_b: features[j], correlation: corr });
       }
     }
   }
@@ -149,12 +215,10 @@ export async function fetchFeatureCorrelation(
 export async function fetchClusterFeatureImportance(
   cluster: number,
 ): Promise<ClusterFeatureImportance> {
-  const res = await fetch("/feature-lab/per-cluster-importance");
-  if (!res.ok) throw new Error(`fetchClusterFeatureImportance: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
+  const raw = await fetchJson<RawPerClusterResponse>("/feature-lab/per-cluster-importance");
 
-  // Backend returns {clusters, features, importance_matrix} — extract the requested cluster row
+  // Backend returns {clusters, features, importance_matrix} with string cluster ids —
+  // extract the row for the requested cluster.
   const clusterStr = String(cluster);
   const clusterIdx = (raw.clusters ?? []).indexOf(clusterStr);
 
@@ -166,7 +230,7 @@ export async function fetchClusterFeatureImportance(
   const importanceRow: number[] = raw.importance_matrix[clusterIdx];
 
   const features = featureNames
-    .map((name: string, i: number) => ({
+    .map((name, i) => ({
       feature: name,
       shap_value: importanceRow[i] ?? 0,
       rank: 0,
@@ -182,17 +246,11 @@ export async function fetchClusterFeatureImportance(
 }
 
 export async function fetchFeatureCategories(): Promise<{ categories: FeatureCategory[] }> {
-  const res = await fetch("/feature-lab/categories");
-  if (!res.ok) throw new Error(`fetchFeatureCategories: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
-  const categories: FeatureCategory[] = (raw.categories ?? []).map(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (c: any) => ({
-      category: c.category ?? c.name ?? "other",
-      color: c.color ?? DEFAULT_CATEGORY_COLORS[c.category ?? c.name ?? "other"] ?? "#64748B",
-      count: c.count ?? 0,
-    }),
-  );
+  const raw = await fetchJson<RawCategoriesResponse>("/feature-lab/categories");
+  const categories: FeatureCategory[] = (raw.categories ?? []).map((c) => ({
+    category: c.name,
+    color: DEFAULT_CATEGORY_COLORS[c.name] ?? "#64748B",
+    count: c.count,
+  }));
   return { categories };
 }
