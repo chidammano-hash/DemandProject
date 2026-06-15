@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse, Response as FastAPIResponse
+from fastapi.responses import JSONResponse
+from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from api.core import get_conn, set_cache
 from api.auth import require_api_key
+from api.core import get_conn, set_cache
+from common.core.sql_helpers import parse_db_json as _parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/cluster-experiments", tags=["cluster-experiments"])
 # ---------------------------------------------------------------------------
 
 from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
+
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "cluster_experiment_templates.yaml"
 _SCENARIOS_DIR = Path("/tmp/clustering_scenarios")
 
@@ -68,7 +70,7 @@ class ModelParams(BaseModel):
     all_features: bool = False
 
     @model_validator(mode="after")
-    def _validate_k_range(self) -> "ModelParams":
+    def _validate_k_range(self) -> ModelParams:
         kr = self.k_range
         if len(kr) != 2:
             raise ValueError("k_range must have exactly 2 elements: [min_k, max_k]")
@@ -89,7 +91,7 @@ class LabelParams(BaseModel):
     zero_demand_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
-    def _validate_volume_ordering(self) -> "LabelParams":
+    def _validate_volume_ordering(self) -> LabelParams:
         if self.volume_low >= self.volume_high:
             raise ValueError("volume_low must be less than volume_high")
         return self
@@ -115,16 +117,6 @@ class UpdateExperimentBody(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _parse_json(val: Any) -> Any:
-    """Parse JSON from a DB value that may be a string, dict, list, or None."""
-    if val is None:
-        return None
-    if isinstance(val, (dict, list)):
-        return val
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError):
-        return val
 
 
 def _experiment_row_to_dict(row: tuple) -> dict[str, Any]:

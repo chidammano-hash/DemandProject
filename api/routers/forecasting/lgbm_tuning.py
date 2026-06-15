@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -13,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
+from common.core.sql_helpers import parse_db_json as _parse_json
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +142,6 @@ def get_run(run_id: int, response: FastAPIResponse):
 
         cur.execute(tf_sql, [run_id])
         tf_rows = cur.fetchall()
-
-    def _parse_json(val: Any) -> Any:
-        if val is None:
-            return None
-        if isinstance(val, (dict, list)):
-            return val
-        return json.loads(val)
 
     run = {
         "run_id": row[0],
@@ -298,13 +291,6 @@ def compare_runs(
             [baseline_id, candidate_id],
         )
         existing = cur.fetchone()
-
-    def _parse_json(val: Any) -> Any:
-        if val is None:
-            return None
-        if isinstance(val, (dict, list)):
-            return val
-        return json.loads(val)
 
     def _run_dict(r: tuple) -> dict[str, Any]:
         return {

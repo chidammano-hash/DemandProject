@@ -6,7 +6,6 @@ compare, promote, cancel_delete, templates, promotions) all depend on.
 """
 from __future__ import annotations
 
-import json
 import logging
 import tempfile
 from pathlib import Path
@@ -17,6 +16,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from api.core import get_conn
+from common.core.sql_helpers import parse_db_json as _parse_json
 from common.core.utils import get_pipeline_config_path
 
 logger = logging.getLogger(__name__)
@@ -130,13 +130,6 @@ def _model_id(model: str) -> str:
     return MODEL_ID_MAP[model]
 
 
-def _parse_json(val: Any) -> Any:
-    """Parse JSON from a DB value that may be a string, dict, list, or None."""
-    if val is None:
-        return None
-    if isinstance(val, (dict, list)):
-        return val
-    return json.loads(val)
 
 
 def _list_row_to_dict(r: tuple) -> dict[str, Any]:

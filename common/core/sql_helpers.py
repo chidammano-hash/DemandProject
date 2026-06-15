@@ -4,6 +4,7 @@ Extracted to eliminate duplication (D1) and centralise magic constants (M1-M7).
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Iterable, Iterator, Sequence
@@ -11,6 +12,42 @@ from typing import Any, Iterable, Iterator, Sequence
 from common.core.domain_specs import DomainSpec
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# DB value coercion helpers (shared across routers — single source of truth)
+# ---------------------------------------------------------------------------
+def parse_db_json(val: Any) -> Any:
+    """Parse a DB JSON/JSONB column value.
+
+    Handles the three shapes a psycopg JSON(B) read can yield: already-decoded
+    ``dict``/``list`` (psycopg3 default), a raw JSON ``str`` (text columns or
+    older drivers), or ``None``. Returns the original value if it is not valid
+    JSON rather than raising — robust against malformed text columns.
+    """
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        return val
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return val
+
+
+def to_float(v: Any, decimals: int | None = None) -> float | None:
+    """Coerce a Postgres numeric value to ``float``; ``None`` on NULL/failure.
+
+    Optional ``decimals`` rounds the result. Replaces the per-router
+    ``_safe_float`` copies.
+    """
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(f, decimals) if decimals is not None else f
 
 
 # ---------------------------------------------------------------------------

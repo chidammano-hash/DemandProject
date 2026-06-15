@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import get_conn
+from common.core.sql_helpers import to_float
 
 log = logging.getLogger(__name__)
 
@@ -161,9 +162,6 @@ def sku_features_summary():
         """)
         avgs_row = cur.fetchone()
 
-    def _safe_float(v, decimals: int = 4) -> float | None:
-        return round(float(v), decimals) if v is not None else None
-
     averages = {}
     if avgs_row:
         labels = [
@@ -172,7 +170,7 @@ def sku_features_summary():
             "demand_mean", "seasonality_strength",
         ]
         for i, label in enumerate(labels):
-            averages[label] = _safe_float(avgs_row[i])
+            averages[label] = to_float(avgs_row[i], decimals=4)
 
     # Convert arrays to Record<string, number> for frontend compatibility
     seasonality_record = {r["profile"]: r["count"] for r in seasonality_dist}

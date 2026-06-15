@@ -16,16 +16,15 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Optional
 
 import psycopg
-
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _s, get_async_conn, set_cache
 from common.core.constants import ABC_CLASSES
 from common.core.planning_date import get_planning_date
+from common.core.sql_helpers import to_float as _safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +35,6 @@ router = APIRouter(tags=["inv-planning"])
 # ---------------------------------------------------------------------------
 
 _SEVERITY_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "urgent": 2}
-
-
-def _safe_float(v) -> float | None:
-    """Coerce to float, returning None on failure."""
-    if v is None:
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def _item_desc(row) -> str | None:
@@ -761,9 +750,9 @@ async def get_segment_dashboard(
 @router.get("/inv-planning/ss-cost-benefit")
 async def get_ss_cost_benefit(
     response: FastAPIResponse,
-    item: Optional[str] = Query(None, max_length=120),
-    loc: Optional[str] = Query(None, max_length=120),
-    abc_class: Optional[str] = Query(None, max_length=10),
+    item: str | None = Query(None, max_length=120),
+    loc: str | None = Query(None, max_length=120),
+    abc_class: str | None = Query(None, max_length=10),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
