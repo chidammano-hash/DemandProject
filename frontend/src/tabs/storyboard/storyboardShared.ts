@@ -69,15 +69,9 @@ export function severityBg(severity: number): string {
   return "bg-green-500";
 }
 
-export function fmt(n: number | null | undefined, dec = 2): string {
-  if (n == null) return "\u2014";
-  return Number(n).toFixed(dec);
-}
-
-export function fmtCurrency(n: number | null | undefined): string {
-  if (n == null) return "\u2014";
-  return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
+// Canonical formatters \u2014 re-exported under the panel-local names the storyboard
+// components already use (callers always pass an explicit decimal count to `fmt`).
+export { formatFixed as fmt, formatCurrencyFull as fmtCurrency } from "@/lib/formatters";
 
 export function daysAgo(dateStr: string): string {
   const ms = Date.now() - new Date(dateStr).getTime();

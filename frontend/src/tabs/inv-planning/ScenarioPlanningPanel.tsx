@@ -14,6 +14,7 @@ import {
   fetchScenarioResults,
   STALE_EVO,
 } from "@/api/queries/evolution";
+import { formatCurrencyFull as fmtCurrency } from "@/lib/formatters";
 
 const STATUS_COLORS: Record<string, string> = {
   completed: "bg-green-100 text-green-700",
@@ -30,11 +31,6 @@ const DISRUPTION_LABELS: Record<string, string> = {
   transport_disruption: "Transport Disruption",
   quality_hold: "Quality Hold",
 };
-
-function fmtCurrency(v: number | null | undefined) {
-  if (v == null) return "—";
-  return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
 
 export function ScenarioPlanningPanel() {
   const [disruptionType, setDisruptionType] = useState("");
