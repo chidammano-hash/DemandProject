@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion.basic import (
     strategy_decay,
     strategy_expanding,
@@ -23,6 +24,7 @@ from common.ml.champion.basic import (
 from common.ml.champion.helpers import (
     _get_exec_lag,
     compute_strategy_accuracy,
+    make_blend_row,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -532,23 +534,18 @@ def strategy_stacked_strategies(
             row = lookup.get(dfu_month_key)
             if row is not None:
                 w = strat_weights.get(strat_name, 0.0)
-                blended += w * float(row["basefcst_pref"])
+                blended += w * float(row[FORECAST_QTY_COL])
                 total_weight += w
                 if actual is None:
                     actual = float(row["tothist_dmd"])
 
         if total_weight > 0 and actual is not None:
             blended /= total_weight
-            results.append({
-                "item_id": dfu_month_key[0],
-                "customer_group": dfu_month_key[1],
-                "loc": dfu_month_key[2],
-                "startdate": dfu_month_key[3],
-                "model_id": "stacked_strategies",
-                "prior_wape": 0.0,
-                "basefcst_pref": blended,
-                "tothist_dmd": actual,
-            })
+            results.append(make_blend_row(
+                dfu_month_key[0], dfu_month_key[1],
+                dfu_month_key[2], dfu_month_key[3],
+                "stacked_strategies", 0.0, blended, actual,
+            ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)

@@ -13,12 +13,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion.basic import strategy_expanding
 from common.ml.champion.helpers import (
     _blend_forecasts,
     _compute_blend_weights,
     _expanding_stats,
     _get_exec_lag,
+    make_blend_row,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -90,7 +92,7 @@ def strategy_meta_learner(
         columns={"predicted_model": "model_id"}
     )
     merged = predictions.merge(
-        df[_DFU_MONTH_COLS + ["model_id", "basefcst_pref", "tothist_dmd"]],
+        df[_DFU_MONTH_COLS + ["model_id", FORECAST_QTY_COL, "tothist_dmd"]],
         on=_DFU_MONTH_COLS + ["model_id"],
         how="inner",
     )
@@ -120,7 +122,7 @@ def _build_meta_features(
     df["_roll_actual"] = np.nan
     df["_roll_bias_num"] = np.nan
     df["_prior_count"] = np.nan
-    df["_bias_raw"] = df["basefcst_pref"] - df["tothist_dmd"]
+    df["_bias_raw"] = df[FORECAST_QTY_COL] - df["tothist_dmd"]
 
     for group_key, idx in df.groupby(_DFU_MODEL_COLS, sort=False).groups.items():
         sub = df.loc[idx]
@@ -314,7 +316,7 @@ def strategy_hybrid_meta_router(
             columns={"predicted_model": "model_id"},
         )
         high_merged = high_predictions.merge(
-            df[_DFU_MONTH_COLS + ["model_id", "basefcst_pref", "tothist_dmd"]],
+            df[_DFU_MONTH_COLS + ["model_id", FORECAST_QTY_COL, "tothist_dmd"]],
             on=_DFU_MONTH_COLS + ["model_id"],
             how="inner",
         )
@@ -346,16 +348,10 @@ def strategy_hybrid_meta_router(
             weights = _compute_blend_weights(top["prior_wape"])
             blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
-            blend_results.append({
-                "item_id": item_id,
-                "customer_group": customer_group,
-                "loc": loc,
-                "startdate": startdate,
-                "model_id": "hybrid_meta_router",
-                "prior_wape": avg_wape,
-                "basefcst_pref": blended_fcst,
-                "tothist_dmd": actual,
-            })
+            blend_results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                "hybrid_meta_router", avg_wape, blended_fcst, actual,
+            ))
 
         if blend_results:
             parts.append(pd.DataFrame(blend_results)[_OUTPUT_COLS])

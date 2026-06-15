@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion.registry import (
     _DFU_MODEL_COLS,
     _DFU_MONTH_COLS,
@@ -15,6 +16,42 @@ from common.ml.champion.registry import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Output row construction
+# ---------------------------------------------------------------------------
+
+def make_blend_row(
+    item_id: Any,
+    customer_group: Any,
+    loc: Any,
+    startdate: Any,
+    model_id: str,
+    prior_wape: float,
+    forecast: float,
+    actual: float,
+) -> dict[str, Any]:
+    """Build one champion output row keyed off ``_OUTPUT_COLS``.
+
+    Every champion strategy emits the same per-DFU-month result shape:
+    the DFU identity (``item_id``/``customer_group``/``loc``/``startdate``),
+    the winning/blended ``model_id``, its ``prior_wape``, the forecast
+    quantity (under ``FORECAST_QTY_COL``), and the realised ``tothist_dmd``.
+    Centralising the dict here keeps the forecast-quantity key in one place
+    (never the ``"basefcst_pref"`` literal) and guarantees column parity with
+    ``_OUTPUT_COLS`` across all ~20 emit sites.
+    """
+    return {
+        "item_id": item_id,
+        "customer_group": customer_group,
+        "loc": loc,
+        "startdate": startdate,
+        "model_id": model_id,
+        "prior_wape": prior_wape,
+        FORECAST_QTY_COL: forecast,
+        "tothist_dmd": actual,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +95,7 @@ def _blend_forecasts(
 
     Returns (blended_fcst, actual, avg_wape).
     """
-    blended_fcst = float((top["basefcst_pref"].astype(float) * weights).sum())
+    blended_fcst = float((top[FORECAST_QTY_COL].astype(float) * weights).sum())
     actual = float(top["tothist_dmd"].iloc[0])
     avg_wape = float((top["prior_wape"] * weights).sum())
     return blended_fcst, actual, avg_wape
@@ -89,7 +126,7 @@ def _resolve_fallback_rows(
     )
     if "abs_err" not in fallback_df.columns:
         fallback_df["abs_err"] = (
-            fallback_df["basefcst_pref"] - fallback_df["tothist_dmd"]
+            fallback_df[FORECAST_QTY_COL] - fallback_df["tothist_dmd"]
         ).abs()
     if results:
         covered = {
@@ -119,7 +156,7 @@ def compute_strategy_accuracy(winners_df: pd.DataFrame) -> dict[str, Any]:
     if len(winners_df) == 0:
         return {"wape": None, "accuracy_pct": None, "n_dfu_months": 0}
 
-    abs_err = float((winners_df["basefcst_pref"] - winners_df["tothist_dmd"]).abs().sum())
+    abs_err = float((winners_df[FORECAST_QTY_COL] - winners_df["tothist_dmd"]).abs().sum())
     total_actual = float(winners_df["tothist_dmd"].sum())
 
     if abs(total_actual) == 0:

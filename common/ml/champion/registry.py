@@ -6,6 +6,8 @@ from typing import Callable
 
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
+
 # ---------------------------------------------------------------------------
 # Strategy registry
 # ---------------------------------------------------------------------------
@@ -31,5 +33,5 @@ _DFU_MODEL_COLS = ["item_id", "customer_group", "loc", "model_id"]
 
 _OUTPUT_COLS = [
     "item_id", "customer_group", "loc", "startdate",
-    "model_id", "prior_wape", "basefcst_pref", "tothist_dmd",
+    "model_id", "prior_wape", FORECAST_QTY_COL, "tothist_dmd",
 ]
