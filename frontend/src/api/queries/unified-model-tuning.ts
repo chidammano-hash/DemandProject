@@ -14,6 +14,13 @@ import { buildSearchParams } from "./helpers";
 
 export type ModelType = "lgbm" | "catboost" | "xgboost";
 
+/** API path prefix per tree-model family (e.g. "/model-tuning/lgbm"). */
+export const MODEL_PREFIX: Record<ModelType, string> = {
+  lgbm: "/model-tuning/lgbm",
+  catboost: "/model-tuning/catboost",
+  xgboost: "/model-tuning/xgboost",
+};
+
 export interface TuningExperiment {
   run_id: number;
   run_label: string;

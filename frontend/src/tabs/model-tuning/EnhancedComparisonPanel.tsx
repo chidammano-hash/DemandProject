@@ -29,6 +29,7 @@ import {
 
 import {
   STALE,
+  MODEL_PREFIX,
   type ModelType,
   type TuningComparison,
   type ClusterComparison,
@@ -72,15 +73,6 @@ interface LagBreakdown {
   baseline_wape: number | null;
   candidate_wape: number | null;
 }
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-const MODEL_PREFIX: Record<ModelType, string> = {
-  lgbm: "/model-tuning/lgbm",
-  catboost: "/model-tuning/catboost",
-  xgboost: "/model-tuning/xgboost",
-};
 
 // ---------------------------------------------------------------------------
 // Fetchers
