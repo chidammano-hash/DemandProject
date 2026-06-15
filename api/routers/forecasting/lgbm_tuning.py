@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from api.core import get_conn, set_cache
 
 logger = logging.getLogger(__name__)
@@ -187,7 +188,7 @@ def get_run(run_id: int, response: FastAPIResponse):
     return {**run, "timeframes": timeframes}
 
 
-@router.post("/lgbm-tuning/runs", status_code=201)
+@router.post("/lgbm-tuning/runs", status_code=201, dependencies=[Depends(require_api_key)])
 def create_run(body: CreateRunBody):
     """Register a new tuning run."""
     sql = """
@@ -214,7 +215,7 @@ def create_run(body: CreateRunBody):
     return {"run_id": row[0]}
 
 
-@router.put("/lgbm-tuning/runs/{run_id}")
+@router.put("/lgbm-tuning/runs/{run_id}", dependencies=[Depends(require_api_key)])
 def update_run(run_id: int, body: UpdateRunBody):
     """Update an existing tuning run (e.g. mark completed with results)."""
     set_parts: list[str] = []
@@ -575,7 +576,7 @@ from common.core.paths import CONFIG_DIR  # noqa: E402
 _PIPELINE_CONFIG_PATH = CONFIG_DIR / "forecasting" / "forecast_pipeline_config.yaml"
 
 
-@router.post("/lgbm-tuning/runs/{run_id}/promote")
+@router.post("/lgbm-tuning/runs/{run_id}/promote", dependencies=[Depends(require_api_key)])
 def promote_run(run_id: int):
     """Promote a tuning run to production — writes params to forecast_pipeline_config.yaml."""
     # 1. Fetch run (only LGBM runs)
@@ -622,9 +623,9 @@ def promote_run(run_id: int):
 
         from common.core.utils import reset_config
         reset_config("forecast_pipeline_config.yaml")
-    except (OSError, KeyError, yaml.YAMLError) as exc:
+    except (OSError, KeyError, yaml.YAMLError):
         logger.exception("Failed to write forecast_pipeline_config.yaml during promote")
-        raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to update config") from None
 
     # 4. Atomically clear previous promoted run and set new one
     with get_conn() as conn, conn.cursor() as cur:

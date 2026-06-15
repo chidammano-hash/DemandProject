@@ -654,9 +654,9 @@ def _promote_run_impl(model_type: str, run_id: int) -> dict[str, Any]:
 
         from common.core.utils import reset_config
         reset_config("forecast_pipeline_config.yaml")
-    except (OSError, KeyError, yaml.YAMLError) as exc:
+    except (OSError, KeyError, yaml.YAMLError):
         logger.exception("Failed to write forecast_pipeline_config.yaml during %s promote", model_type)
-        raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to update config") from None
 
     # Atomically clear previous promoted run for this model and set new one
     with get_conn() as conn, conn.cursor() as cur:

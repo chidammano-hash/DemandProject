@@ -795,8 +795,9 @@ async def shap_dfu(
     # -- Step 8: compute SHAP --
     try:
         shap_values, base_values = _compute_shap_full(model, X_model, model_id, avail)
-    except (ValueError, RuntimeError, MemoryError) as exc:
-        raise HTTPException(status_code=500, detail=f"SHAP computation failed: {exc}") from exc
+    except (ValueError, RuntimeError, MemoryError):
+        logger.exception("SHAP computation failed for model %s", model_id)
+        raise HTTPException(status_code=500, detail="SHAP computation failed") from None
 
     # shap_values shape: (n_rows, n_avail_features)
     # Select top_n features by mean absolute SHAP across all rows

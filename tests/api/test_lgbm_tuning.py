@@ -542,3 +542,24 @@ async def test_get_promoted_returns_null(mock_pool):
             resp = await client.get("/lgbm-tuning/promoted")
     assert resp.status_code == 200
     assert resp.json()["promoted"] is None
+
+
+# ---------------------------------------------------------------------------
+# Auth: write endpoints require X-API-Key when API_KEY is configured
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path,body", [
+    ("post", "/lgbm-tuning/runs", {"run_label": "x"}),
+    ("put", "/lgbm-tuning/runs/1", {"status": "completed"}),
+    ("post", "/lgbm-tuning/runs/1/promote", None),
+])
+async def test_lgbm_tuning_writes_require_api_key(method, path, body, monkeypatch, mock_pool):
+    monkeypatch.setenv("API_KEY", "secret-key")
+    pool, _, _ = mock_pool
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            kwargs = {"json": body} if body is not None else {}
+            resp = await getattr(client, method)(path, **kwargs)
+    assert resp.status_code in (401, 403)
