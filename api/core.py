@@ -515,7 +515,7 @@ def add_cross_dim_filters(
         where: Mutable list of WHERE clause fragments.
         params: Mutable list of query parameters, appended in tandem with *where*.
         brand: Comma-separated brand_name values (dim_item).
-        category: Comma-separated class_ values (dim_item).
+        category: Comma-separated class values (dim_item.class).
         market: Comma-separated state_id values (dim_location).
         item_col: Qualified column expression for the item identifier in the outer
             query (e.g. ``"t.item_id"``, ``"s.item_id"``, ``"f.item_id"``).

@@ -37,7 +37,7 @@ class TestAddCrossDimFilters:
         params: list = []
         fn(where, params, category="Shoes")
         assert len(where) == 1
-        assert "class_" in where[0]
+        assert "di.class" in where[0]  # dim_item column is `class` (sql/001_create_dim_item.sql)
         assert params == [["Shoes"]]
 
     def test_market_only(self):
