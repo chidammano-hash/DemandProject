@@ -34,11 +34,6 @@ common/services/perf_profiler.py
 common/services/query_tracker.py
 common/services/webhook_dispatcher.py
 scripts/algorithm_testing/statistical_upgrades.py
-scripts/etl/load.py
-scripts/etl/load_dataset_postgres.py
-scripts/etl/load_open_pos.py
-scripts/etl/run_pipeline.py
-scripts/etl/trim_input_files.py
 scripts/forecasting/generate_production_forecasts.py
 scripts/forecasting/generate_quantile_forecasts.py
 scripts/inventory/compare_inventory_algorithms.py

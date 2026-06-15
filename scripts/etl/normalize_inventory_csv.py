@@ -17,7 +17,7 @@ Usage:
 import argparse
 import csv
 import glob
-import os
+import logging
 import shutil
 import sys
 import tempfile
@@ -25,8 +25,13 @@ from datetime import date
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+ROOT = Path(__file__).resolve().parent.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.services.perf_profiler import profiled_section
+
+logger = logging.getLogger(__name__)
 
 # Null sentinel values — consistent with normalize_dataset_csv.py
 NULL_SENTINELS = {"", "null", "none", "na"}
@@ -113,7 +118,7 @@ def _normalize_file_to_path(args: tuple[str, str]) -> tuple[str, int]:
         expected = [SRC_EXEC_DATE, SRC_ITEM, SRC_LOC, SRC_LEAD_TIME, SRC_TOT_OH, SRC_TOT_OH_OO, SRC_MTD_SLS]
         missing = [c for c in expected if c not in file_header_idx]
         if missing:
-            print(f"  WARNING: Missing columns {missing} in {source_path.name}, skipping file")
+            logger.info(f"  WARNING: Missing columns {missing} in {source_path.name}, skipping file")
             # Write empty file so merge step doesn't fail
             output_path.write_text("")
             return source_path.name, 0
@@ -195,7 +200,7 @@ def normalize_file(
         expected = [SRC_EXEC_DATE, SRC_ITEM, SRC_LOC, SRC_LEAD_TIME, SRC_TOT_OH, SRC_TOT_OH_OO, SRC_MTD_SLS]
         missing = [c for c in expected if c not in file_header_idx]
         if missing:
-            print(f"  WARNING: Missing columns {missing} in {source_path.name}, skipping file")
+            logger.info(f"  WARNING: Missing columns {missing} in {source_path.name}, skipping file")
             return 0, header_idx
 
         idx_exec_date = file_header_idx[SRC_EXEC_DATE]
@@ -282,13 +287,13 @@ def main() -> None:
     source_files = sorted(glob.glob(pattern))
 
     if not source_files:
-        print(f"No Inventory_Snapshot_*.csv files found in {datafiles_dir}")
+        logger.info(f"No Inventory_Snapshot_*.csv files found in {datafiles_dir}")
         sys.exit(1)
 
-    print(f"Found {len(source_files)} inventory snapshot file(s) in {datafiles_dir}")
-    print(f"Output: {output_path}")
-    print(f"Workers: {workers}")
-    print()
+    logger.info(f"Found {len(source_files)} inventory snapshot file(s) in {datafiles_dir}")
+    logger.info(f"Output: {output_path}")
+    logger.info(f"Workers: {workers}")
+    logger.info()
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -307,7 +312,7 @@ def main() -> None:
                 temp_files.append(tmp)
 
             effective_workers = min(workers, len(source_files))
-            print(f"  Normalizing {len(source_files)} files with {effective_workers} workers...")
+            logger.info(f"  Normalizing {len(source_files)} files with {effective_workers} workers...")
 
             with profiled_section("normalize_inventory_parallel"):
                 with Pool(processes=effective_workers) as pool:
@@ -316,11 +321,11 @@ def main() -> None:
             # Report per-file results
             total_rows = 0
             for filename, rows in results:
-                print(f"  {filename}: {rows:,} rows")
+                logger.info(f"  {filename}: {rows:,} rows")
                 total_rows += rows
 
             # Merge: header + concatenate temp files in sorted order
-            print(f"\n  Merging {len(temp_files)} temp files...")
+            logger.info(f"\n  Merging {len(temp_files)} temp files...")
             with profiled_section("merge_inventory_csvs"):
                 with output_path.open("wb") as dst:
                     dst.write((",".join(OUTPUT_COLUMNS) + "\n").encode("utf-8"))
@@ -343,18 +348,19 @@ def main() -> None:
 
             for filepath in source_files:
                 source_path = Path(filepath)
-                print(f"  Processing {source_path.name} ...", end=" ", flush=True)
+                logger.info(f"  Processing {source_path.name} ...", end=" ", flush=True)
 
                 with profiled_section(f"normalize_{source_path.stem}"):
                     rows_written, header_idx = normalize_file(source_path, writer, header_idx)
                 total_rows += rows_written
 
-                print(f"{rows_written:,} rows")
+                logger.info(f"{rows_written:,} rows")
 
-    print()
-    print(f"Total rows written: {total_rows:,}")
-    print(f"Output file: {output_path}")
+    logger.info()
+    logger.info(f"Total rows written: {total_rows:,}")
+    logger.info(f"Output file: {output_path}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     main()

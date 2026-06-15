@@ -127,7 +127,7 @@ def _filter_file(
             shutil.move(tmp_path, filepath)
         else:
             os.unlink(tmp_path)
-    except Exception:
+    except (OSError, ValueError):
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise

@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -33,6 +34,8 @@ from common.core.etl_helpers import (
 )
 from common.core.utils import load_config
 from common.services.perf_profiler import profiled_section
+
+logger = logging.getLogger(__name__)
 
 BATCH_SIZE = perf_setting("batch_size", 2_000_000)
 
@@ -230,14 +233,14 @@ def _build_archive_insert_sql(model_id: str, bulk_fast: bool) -> str:
 def _load_to_main_table(conn, cur, staged_count: int, model_id: str, bulk_fast: bool, batch_size: int) -> None:
     """Promote staged rows from _stg_ext_ml into fact_external_forecast_monthly."""
     if bulk_fast:
-        print("  Dropping indexes & constraints for bulk load...")
+        logger.info("  Dropping indexes & constraints for bulk load...")
         t0 = time.time()
         drop_forecast_indexes_and_constraints(cur)
-        print(f"    Done ({time.time() - t0:.1f}s)")
+        logger.info(f"    Done ({time.time() - t0:.1f}s)")
 
     insert_sql = _build_stg_insert_sql(model_id, bulk_fast)
 
-    print(f"  Inserting {staged_count:,} rows into {_TABLE} in batches of {batch_size:,}...")
+    logger.info(f"  Inserting {staged_count:,} rows into {_TABLE} in batches of {batch_size:,}...")
     with profiled_section("insert_main_batches"):
         loaded_total = 0
         t_insert = time.time()
@@ -247,11 +250,11 @@ def _load_to_main_table(conn, cur, staged_count: int, model_id: str, bulk_fast: 
             loaded_total += cur.rowcount
             elapsed = time.time() - t_insert
             rate = loaded_total / elapsed if elapsed > 0 else 0
-            print(
+            logger.info(
                 f"    Batch {batch_end:,}/{staged_count:,} — "
                 f"{loaded_total:,} loaded ({elapsed:.0f}s, {rate:,.0f} rows/s)"
             )
-        print(f"  Inserted {loaded_total:,} rows into {_TABLE} in {time.time() - t_insert:.1f}s")
+        logger.info(f"  Inserted {loaded_total:,} rows into {_TABLE} in {time.time() - t_insert:.1f}s")
 
     if bulk_fast:
         with profiled_section("recreate_main_indexes"):
@@ -261,14 +264,14 @@ def _load_to_main_table(conn, cur, staged_count: int, model_id: str, bulk_fast: 
 def _load_to_archive_table(conn, cur, staged_count: int, model_id: str, bulk_fast: bool, batch_size: int) -> None:
     """Promote staged rows from _stg_ext_ml into backtest_lag_archive."""
     if bulk_fast:
-        print("  Dropping archive indexes & constraints for bulk load...")
+        logger.info("  Dropping archive indexes & constraints for bulk load...")
         t0 = time.time()
         drop_forecast_archive_indexes_and_constraints(cur)
-        print(f"    Done ({time.time() - t0:.1f}s)")
+        logger.info(f"    Done ({time.time() - t0:.1f}s)")
 
     insert_sql = _build_archive_insert_sql(model_id, bulk_fast)
 
-    print(f"  Inserting {staged_count:,} rows into {_ARCHIVE_TABLE} in batches of {batch_size:,}...")
+    logger.info(f"  Inserting {staged_count:,} rows into {_ARCHIVE_TABLE} in batches of {batch_size:,}...")
     with profiled_section("insert_archive_batches"):
         loaded_total = 0
         t_insert = time.time()
@@ -278,11 +281,11 @@ def _load_to_archive_table(conn, cur, staged_count: int, model_id: str, bulk_fas
             loaded_total += cur.rowcount
             elapsed = time.time() - t_insert
             rate = loaded_total / elapsed if elapsed > 0 else 0
-            print(
+            logger.info(
                 f"    Batch {batch_end:,}/{staged_count:,} — "
                 f"{loaded_total:,} loaded ({elapsed:.0f}s, {rate:,.0f} rows/s)"
             )
-        print(f"  Inserted {loaded_total:,} rows into {_ARCHIVE_TABLE} in {time.time() - t_insert:.1f}s")
+        logger.info(f"  Inserted {loaded_total:,} rows into {_ARCHIVE_TABLE} in {time.time() - t_insert:.1f}s")
 
     if bulk_fast:
         with profiled_section("recreate_archive_indexes"):
@@ -308,9 +311,9 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
     7. COMMIT.
     8. Refresh downstream materialized views.
     """
-    print(f"\n{'='*60}")
-    print(f"Loading {csv_path}")
-    print(f"  model_id: {model_id}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Loading {csv_path}")
+    logger.info(f"  model_id: {model_id}")
 
     col_list = ", ".join(f'"{c}"' for c in _STG_COLS)
     copy_sql = (
@@ -333,7 +336,7 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
             """)
 
             # Stream CSV into staging with progress reporting.
-            print("  Streaming CSV to staging table...")
+            logger.info("  Streaming CSV to staging table...")
             with profiled_section("stage_csv"):
                 t0 = time.time()
                 bytes_read = 0
@@ -346,19 +349,19 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
                         pct = int(bytes_read * 100 / file_size)
                         if pct >= last_pct + 10:
                             last_pct = pct
-                            print(
+                            logger.info(
                                 f"    COPY progress: {pct}% "
                                 f"({bytes_read / (1024 * 1024):.0f} MB "
                                 f"/ {file_size / (1024 * 1024):.0f} MB)"
                             )
-                print(f"  Staged {bytes_read / (1024 * 1024):.0f} MB in {time.time() - t0:.1f}s")
+                logger.info(f"  Staged {bytes_read / (1024 * 1024):.0f} MB in {time.time() - t0:.1f}s")
 
             cur.execute("SELECT COUNT(*) FROM _stg_ext_ml")
             staged_count: int = cur.fetchone()[0]
-            print(f"  Staged rows: {staged_count:,}")
+            logger.info(f"  Staged rows: {staged_count:,}")
 
             if staged_count == 0:
-                print("  No rows to load.")
+                logger.info("  No rows to load.")
                 conn.rollback()
                 return
 
@@ -368,14 +371,14 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
                     t0 = time.time()
                     cur.execute(f"DELETE FROM {_TABLE} WHERE model_id = %s", (model_id,))
                     deleted_main = cur.rowcount
-                    print(
+                    logger.info(
                         f"  Deleted {deleted_main:,} existing rows from {_TABLE} "
                         f"for model_id='{model_id}' ({time.time() - t0:.1f}s)"
                     )
                     t1 = time.time()
                     cur.execute(f"DELETE FROM {_ARCHIVE_TABLE} WHERE model_id = %s", (model_id,))
                     deleted_archive = cur.rowcount
-                    print(
+                    logger.info(
                         f"  Deleted {deleted_archive:,} existing rows from {_ARCHIVE_TABLE} "
                         f"for model_id='{model_id}' ({time.time() - t1:.1f}s)"
                     )
@@ -386,7 +389,7 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
             _load_to_archive_table(conn, cur, staged_count, model_id, bulk_fast, batch_size)
 
         conn.commit()
-        print(f"  Committed. model_id='{model_id}' loaded successfully.")
+        logger.info(f"  Committed. model_id='{model_id}' loaded successfully.")
 
     # Refresh downstream materialized views (separate connection after commit).
     # All five MVs have unique indexes (sql/119_concurrent_mv_refresh.sql), so
@@ -394,7 +397,7 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
     # against the read-side. Note: REFRESH MATERIALIZED VIEW CONCURRENTLY
     # requires the MV to already be populated; for first-time refresh after
     # CREATE MATERIALIZED VIEW WITH NO DATA, drop the CONCURRENTLY keyword.
-    print("  Refreshing forecast materialized views...")
+    logger.info("  Refreshing forecast materialized views...")
     with profiled_section("refresh_forecast_views"):
         t0 = time.time()
         with psycopg.connect(**db) as conn:
@@ -403,28 +406,28 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
 
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly")
-                print(f"    agg_forecast_monthly refreshed ({time.time() - t1:.1f}s)")
+                logger.info(f"    agg_forecast_monthly refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim")
-                print(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
+                logger.info(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage")
-                print(f"    agg_dfu_coverage refreshed ({time.time() - t1:.1f}s)")
+                logger.info(f"    agg_dfu_coverage refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive")
-                print(f"    agg_accuracy_lag_archive refreshed ({time.time() - t1:.1f}s)")
+                logger.info(f"    agg_accuracy_lag_archive refreshed ({time.time() - t1:.1f}s)")
 
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive")
-                print(f"    agg_dfu_coverage_lag_archive refreshed ({time.time() - t1:.1f}s)")
+                logger.info(f"    agg_dfu_coverage_lag_archive refreshed ({time.time() - t1:.1f}s)")
 
             conn.commit()
-        print(f"  All views refreshed in {time.time() - t0:.1f}s")
+        logger.info(f"  All views refreshed in {time.time() - t0:.1f}s")
 
-    print(f"  Done: model_id='{model_id}'")
+    logger.info(f"  Done: model_id='{model_id}'")
 
 
 # ---------------------------------------------------------------------------
@@ -493,54 +496,55 @@ Examples:
 
     if args.all:
         if not models_cfg:
-            print("Error: No models defined in config/forecasting/ext_ml_forecasts.yaml")
+            logger.info("Error: No models defined in config/forecasting/ext_ml_forecasts.yaml")
             sys.exit(1)
         for mid, mcfg in models_cfg.items():
             p = ROOT / mcfg["input_file"]
             if not p.exists():
-                print(f"Warning: Input file not found for model '{mid}': {p} — skipping")
+                logger.info(f"Warning: Input file not found for model '{mid}': {p} — skipping")
                 continue
             jobs.append((p, mid))
         if not jobs:
-            print("Error: None of the configured input files were found.")
+            logger.info("Error: None of the configured input files were found.")
             sys.exit(1)
 
     elif args.model:
         if args.model not in models_cfg:
             available = list(models_cfg.keys())
-            print(f"Error: model '{args.model}' not found in config. Available: {available}")
+            logger.info(f"Error: model '{args.model}' not found in config. Available: {available}")
             sys.exit(1)
         mcfg = models_cfg[args.model]
         p = ROOT / mcfg["input_file"]
         if not p.exists():
-            print(f"Error: Input file not found: {p}")
+            logger.info(f"Error: Input file not found: {p}")
             sys.exit(1)
         jobs.append((p, args.model))
 
     elif args.input:
         if not args.model_id:
-            print("Error: --model-id is required when using --input")
+            logger.info("Error: --model-id is required when using --input")
             sys.exit(1)
         p = ROOT / args.input
         if not p.exists():
-            print(f"Error: Input file not found: {p}")
+            logger.info(f"Error: Input file not found: {p}")
             sys.exit(1)
         jobs.append((p, args.model_id))
 
     else:
         parser.print_help()
-        print("\nError: Specify one of --model MODEL_ID, --all, or --input PATH --model-id MODEL_ID")
+        logger.info("\nError: Specify one of --model MODEL_ID, --all, or --input PATH --model-id MODEL_ID")
         sys.exit(1)
 
     model_labels = [mid for _, mid in jobs]
-    print(f"Loading {len(jobs)} model(s): {model_labels}")
+    logger.info(f"Loading {len(jobs)} model(s): {model_labels}")
 
     for csv_path, model_id in jobs:
         _load_one(db, csv_path, model_id, args.replace, batch_size)
 
-    print(f"\n{'='*60}")
-    print(f"All done. Loaded: {model_labels}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"All done. Loaded: {model_labels}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     main()

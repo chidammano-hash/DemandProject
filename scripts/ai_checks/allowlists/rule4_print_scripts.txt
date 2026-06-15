@@ -3,11 +3,6 @@
 # Ruff rule T201 also enabled in pyproject.toml scoped to those dirs as a backup.
 # DO NOT add new entries.
 scripts/etl/load.py
-scripts/etl/load_backtest_forecasts.py
-scripts/etl/load_ext_ml_forecasts.py
-scripts/etl/load_open_pos.py
-scripts/etl/normalize_dataset_csv.py
-scripts/etl/normalize_inventory_csv.py
 scripts/etl/run_pipeline.py
 scripts/forecasting/apply_event_adjustments.py
 scripts/forecasting/compute_bias_corrections.py

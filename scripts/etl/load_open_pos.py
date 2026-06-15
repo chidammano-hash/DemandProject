@@ -124,7 +124,7 @@ def load_suppliers(filepath: str, conn, dry_run: bool) -> int:
         if not dry_run and batch:
             with conn.cursor() as cur:
                 cur.executemany(sql, batch)
-        print(f"  Suppliers: {count} rows upserted{' (dry-run)' if dry_run else ''}")
+        logger.info(f"  Suppliers: {count} rows upserted{' (dry-run)' if dry_run else ''}")
         return count
 
 
@@ -231,7 +231,7 @@ def load_receipts(filepath: str, conn, dry_run: bool) -> int:
         if not dry_run and batch:
             with conn.cursor() as cur:
                 cur.executemany(sql, batch)
-        print(f"  Receipts: {count} rows upserted{' (dry-run)' if dry_run else ''}")
+        logger.info(f"  Receipts: {count} rows upserted{' (dry-run)' if dry_run else ''}")
         return count
 
 
@@ -277,23 +277,23 @@ def _execute_load(conn, args, config, dry_run: bool) -> int:
     if args.suppliers:
         files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["supplier_file_pattern"])
         for f in sorted(files):
-            print(f"Loading suppliers from {f}...")
+            logger.info(f"Loading suppliers from {f}...")
             total += load_suppliers(f, conn, dry_run)
 
     elif args.receipts:
         files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["receipt_file_pattern"])
         for f in sorted(files):
-            print(f"Loading receipts from {f}...")
+            logger.info(f"Loading receipts from {f}...")
             total += load_receipts(f, conn, dry_run)
         if not dry_run and files:
             updated = reconcile_received_qty(conn)
-            print(f"  Reconciled received_qty on {updated} PO lines.")
+            logger.info(f"  Reconciled received_qty on {updated} PO lines.")
 
     else:
         # Load suppliers first (FK dependency)
         sup_files = glob.glob(config["ingest"]["csv"]["supplier_file_pattern"])
         for f in sorted(sup_files):
-            print(f"Loading suppliers from {f}...")
+            logger.info(f"Loading suppliers from {f}...")
             load_suppliers(f, conn, dry_run)
 
         # Load POs
@@ -301,7 +301,7 @@ def _execute_load(conn, args, config, dry_run: bool) -> int:
         total_loaded = total_skipped = 0
         all_reasons: dict[str, int] = {}
         for f in sorted(po_files):
-            print(f"Loading POs from {f}...")
+            logger.info(f"Loading POs from {f}...")
             loaded, skipped, reasons = load_pos(f, conn, dry_run, config)
             total_loaded += loaded
             total_skipped += skipped
@@ -309,14 +309,14 @@ def _execute_load(conn, args, config, dry_run: bool) -> int:
                 all_reasons[k] = all_reasons.get(k, 0) + v
         total = total_loaded
 
-        print(f"\nPO load complete: {total_loaded} loaded, {total_skipped} skipped")
+        logger.info(f"\nPO load complete: {total_loaded} loaded, {total_skipped} skipped")
         if all_reasons:
-            print("  Rejection reasons:", all_reasons)
+            logger.info("  Rejection reasons:", all_reasons)
 
         # Reconcile receipts
         if not dry_run:
             updated = reconcile_received_qty(conn)
-            print(f"  Reconciled received_qty on {updated} PO lines.")
+            logger.info(f"  Reconciled received_qty on {updated} PO lines.")
     return total
 
 
@@ -348,7 +348,7 @@ def main():
     with psycopg.connect(**get_db_params()) as conn:
         if dry_run:
             _execute_load(conn, args, config, dry_run=True)
-            print("Dry-run complete — no rows written.")
+            logger.info("Dry-run complete — no rows written.")
             return
         try:
             # Single transaction: suppliers + POs + reconcile commit atomically;
@@ -361,8 +361,9 @@ def main():
             raise
         _record_open_po_audit("completed", total)
 
-    print("Done.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     main()

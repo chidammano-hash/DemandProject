@@ -289,7 +289,7 @@ def _load_domains_parallel(
                     result["elapsed"] = _elapsed(timings[domain])
                     results.append(result)
                     logger.info("  Loaded %s (%s)", domain, result["elapsed"])
-            except Exception as exc:
+            except (psycopg.Error, OSError, ValueError) as exc:
                 logger.error("  FAILED to load %s: %s", domain, exc)
                 results.append({"domain": domain, "skipped": True})
     return results
@@ -408,7 +408,7 @@ def run_full(domains: list[str], source_dir: Path,
                     if result:
                         result["elapsed"] = _elapsed(t0)
                         results.append(result)
-                except Exception as exc:
+                except (psycopg.Error, OSError, ValueError) as exc:
                     logger.error("  FAILED to load %s: %s", domain, exc)
                     results.append({"domain": domain, "skipped": True})
 
@@ -530,7 +530,7 @@ def run_refresh(domains: list[str], source_dir: Path,
                     if result:
                         result["elapsed"] = _elapsed(t0)
                         results.append(result)
-                except Exception as exc:
+                except (psycopg.Error, OSError, ValueError) as exc:
                     logger.error("  FAILED to load %s: %s", domain, exc)
                     results.append({"domain": domain, "skipped": True})
 

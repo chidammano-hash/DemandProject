@@ -1,5 +1,6 @@
 import argparse
 import csv
+import logging
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -11,6 +12,8 @@ if str(ROOT) not in sys.path:
 from common.core.domain_specs import DOMAIN_SPECS, get_spec
 from common.core.etl_helpers import dfu_key_for_row, load_valid_dfu_keys
 from common.services.perf_profiler import profiled_section
+
+logger = logging.getLogger(__name__)
 
 # Domains whose rows are filtered against dim_sku at normalize time (US8).
 # Inventory is normalized by normalize_inventory_csv.py and keeps the load-time
@@ -174,7 +177,7 @@ def main() -> None:
 
     if spec.name == "time":
         write_time_csv(target, spec.columns)
-        print(f"Wrote normalized CSV for {spec.name}: {target}")
+        logger.info(f"Wrote normalized CSV for {spec.name}: {target}")
         return
 
     with profiled_section("read_source_csv"):
@@ -258,10 +261,11 @@ def main() -> None:
                 writer.writerow(out)
 
     if dfu_dropped:
-        print(f"DFU filter (normalize-time): dropped {dfu_dropped:,} {spec.name} "
+        logger.info(f"DFU filter (normalize-time): dropped {dfu_dropped:,} {spec.name} "
               f"rows with no matching DFU in dim_sku")
-    print(f"Wrote normalized CSV for {spec.name}: {target}")
+    logger.info(f"Wrote normalized CSV for {spec.name}: {target}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     main()

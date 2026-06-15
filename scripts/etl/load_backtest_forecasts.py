@@ -9,6 +9,7 @@ Supports --replace to delete existing rows for a model_id before inserting.
 """
 
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -31,6 +32,8 @@ from common.core.etl_helpers import (
     recreate_forecast_indexes_and_constraints,
 )
 from common.services.perf_profiler import profiled_section
+
+logger = logging.getLogger(__name__)
 
 LOAD_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
@@ -58,11 +61,11 @@ ARCHIVE_COLS = [
 def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: bool, model_id_filter: str | None, skip_index_ops: bool = False) -> None:
     """Load all-lags CSV into backtest_lag_archive table."""
     if not archive_path.exists():
-        print(f"\nArchive file not found: {archive_path} — skipping archive load")
+        logger.info(f"\nArchive file not found: {archive_path} — skipping archive load")
         return
 
-    print(f"\n{'='*60}")
-    print(f"Loading archive from {archive_path}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Loading archive from {archive_path}")
     archive_col_list = ", ".join(ARCHIVE_COLS)
 
     with psycopg.connect(**db) as conn:
@@ -81,7 +84,7 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
 
             # Stream CSV
             copy_sql = f"COPY _stg_archive ({archive_col_list}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
-            print("  Streaming archive CSV to staging table...")
+            logger.info("  Streaming archive CSV to staging table...")
             with profiled_section("archive_stage_csv"):
                 t0 = time.time()
                 bytes_read = 0
@@ -94,18 +97,18 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
                         pct = int(bytes_read * 100 / file_size)
                         if pct >= last_pct + 10:
                             last_pct = pct
-                            print(f"    COPY progress: {pct}% ({bytes_read / (1024*1024):.0f} MB / {file_size / (1024*1024):.0f} MB)")
-                print(f"  Staged {bytes_read / (1024*1024):.0f} MB in {time.time() - t0:.1f}s")
+                            logger.info(f"    COPY progress: {pct}% ({bytes_read / (1024*1024):.0f} MB / {file_size / (1024*1024):.0f} MB)")
+                logger.info(f"  Staged {bytes_read / (1024*1024):.0f} MB in {time.time() - t0:.1f}s")
 
             if model_id_filter:
                 cur.execute("DELETE FROM _stg_archive WHERE model_id != %s", (model_id_filter,))
 
             cur.execute("SELECT COUNT(*) FROM _stg_archive")
             staged_count = cur.fetchone()[0]
-            print(f"  Staged archive rows: {staged_count:,}")
+            logger.info(f"  Staged archive rows: {staged_count:,}")
 
             if staged_count == 0:
-                print("  No archive rows to load.")
+                logger.info("  No archive rows to load.")
                 conn.rollback()
                 return
 
@@ -116,14 +119,14 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
                     for mid in model_ids:
                         cur.execute(f"DELETE FROM {_ARCHIVE_TABLE} WHERE model_id = %s", (mid,))
                         deleted = cur.rowcount
-                        print(f"  Deleted {deleted:,} existing archive rows for model_id='{mid}' ({time.time() - t0:.1f}s)")
+                        logger.info(f"  Deleted {deleted:,} existing archive rows for model_id='{mid}' ({time.time() - t0:.1f}s)")
 
             use_plain_insert = skip_index_ops or replace
             if not skip_index_ops and replace:
-                print("  Dropping archive indexes & constraints for bulk load...")
+                logger.info("  Dropping archive indexes & constraints for bulk load...")
                 t0 = time.time()
                 drop_forecast_archive_indexes_and_constraints(cur)
-                print(f"    Done ({time.time() - t0:.1f}s)")
+                logger.info(f"    Done ({time.time() - t0:.1f}s)")
 
             # Insert with type casting
             select_expr = """
@@ -179,16 +182,16 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
                     loaded_total += cur.rowcount
                     elapsed = time.time() - t_insert
                     rate = loaded_total / elapsed if elapsed > 0 else 0
-                    print(f"    Batch {batch_end:,}/{staged_count:,} — {loaded_total:,} loaded ({elapsed:.0f}s, {rate:,.0f} rows/s)")
+                    logger.info(f"    Batch {batch_end:,}/{staged_count:,} — {loaded_total:,} loaded ({elapsed:.0f}s, {rate:,.0f} rows/s)")
 
-                print(f"  Inserted {loaded_total:,} archive rows in {time.time() - t_insert:.1f}s")
+                logger.info(f"  Inserted {loaded_total:,} archive rows in {time.time() - t_insert:.1f}s")
 
             if not skip_index_ops and replace:
                 with profiled_section("archive_recreate_indexes"):
                     recreate_forecast_archive_indexes_and_constraints(cur)
 
         conn.commit()
-    print("Archive load complete.")
+    logger.info("Archive load complete.")
 
 
 def _resolve_input_files(
@@ -211,11 +214,11 @@ def _resolve_input_files(
         for model_id in args_models:
             p = backtest_dir / model_id / "backtest_predictions.csv"
             if not p.exists():
-                print(f"Warning: No predictions found for model '{model_id}' at {p} — skipping")
+                logger.info(f"Warning: No predictions found for model '{model_id}' at {p} — skipping")
                 continue
             found.append(p)
         if not found:
-            print(f"Error: No prediction files found for models: {args_models}")
+            logger.info(f"Error: No prediction files found for models: {args_models}")
             sys.exit(1)
         return found
 
@@ -229,9 +232,9 @@ def _resolve_input_files(
             if p.parent.name in _CANONICAL_MODEL_DIRS
         )
         if not found:
-            print(f"No backtest_predictions.csv files found under {backtest_dir}/*/")
-            print(f"  (looked in canonical dirs: {sorted(_CANONICAL_MODEL_DIRS)})")
-            print("  Run a backtest first: make backtest-lgbm-cluster")
+            logger.info(f"No backtest_predictions.csv files found under {backtest_dir}/*/")
+            logger.info(f"  (looked in canonical dirs: {sorted(_CANONICAL_MODEL_DIRS)})")
+            logger.info("  Run a backtest first: make backtest-lgbm-cluster")
             sys.exit(1)
         return found
 
@@ -240,25 +243,25 @@ def _resolve_input_files(
         if not p.exists():
             available = [d.name for d in backtest_dir.iterdir() if d.is_dir() and
                          (d / "backtest_predictions.csv").exists()] if backtest_dir.exists() else []
-            print(f"Error: No predictions found for model '{args_model}' at {p}")
+            logger.info(f"Error: No predictions found for model '{args_model}' at {p}")
             if available:
-                print(f"  Available models: {available}")
+                logger.info(f"  Available models: {available}")
             else:
-                print("  No backtest output directories found — run a backtest first.")
+                logger.info("  No backtest output directories found — run a backtest first.")
             sys.exit(1)
         return [p]
 
     if args_input:
         p = ROOT / args_input
         if not p.exists():
-            print(f"Error: Input file not found: {p}")
+            logger.info(f"Error: Input file not found: {p}")
             sys.exit(1)
         return [p]
 
-    print("Error: Specify one of:")
-    print("  --model MODEL_ID     load a specific model  (e.g. --model lgbm_cluster)")
-    print("  --all                load all models from data/backtest/*/")
-    print("  --input PATH         explicit CSV path (legacy)")
+    logger.info("Error: Specify one of:")
+    logger.info("  --model MODEL_ID     load a specific model  (e.g. --model lgbm_cluster)")
+    logger.info("  --all                load all models from data/backtest/*/")
+    logger.info("  --input PATH         explicit CSV path (legacy)")
     sys.exit(1)
 
 
@@ -285,9 +288,9 @@ def _load_one(
     if model_id_filter:
         csv_model_ids = [model_id_filter]
 
-    print(f"\n{'='*60}")
-    print(f"Loading {csv_path}")
-    print(f"  Model IDs in file: {csv_model_ids}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Loading {csv_path}")
+    logger.info(f"  Model IDs in file: {csv_model_ids}")
 
     col_list = ", ".join(LOAD_COLS)
 
@@ -297,7 +300,7 @@ def _load_one(
         _load_archive(db, archive_path, csv_model_ids, replace, model_id_filter,
                       skip_index_ops=skip_index_ops)
         if not skip_index_ops:
-            print("  Refreshing archive accuracy views...")
+            logger.info("  Refreshing archive accuracy views...")
             with profiled_section("refresh_archive_views"):
                 t0 = time.time()
                 with psycopg.connect(**db) as conn:
@@ -306,8 +309,8 @@ def _load_one(
                         cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
                         cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
                     conn.commit()
-                print(f"  Archive views refreshed in {time.time() - t0:.1f}s")
-        print(f"  Done (archive only): {csv_path.parent.name}")
+                logger.info(f"  Archive views refreshed in {time.time() - t0:.1f}s")
+        logger.info(f"  Done (archive only): {csv_path.parent.name}")
         return
 
     with psycopg.connect(**db) as conn:
@@ -324,7 +327,7 @@ def _load_one(
             """)
 
             copy_sql = f"COPY _stg_backtest ({col_list}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
-            print("  Streaming CSV to staging table...")
+            logger.info("  Streaming CSV to staging table...")
             with profiled_section("stage_csv"):
                 t0 = time.time()
                 bytes_read = 0
@@ -337,18 +340,18 @@ def _load_one(
                         pct = int(bytes_read * 100 / file_size)
                         if pct >= last_pct + 10:
                             last_pct = pct
-                            print(f"    COPY progress: {pct}% ({bytes_read / (1024*1024):.0f} MB / {file_size / (1024*1024):.0f} MB)")
-                print(f"  Staged {bytes_read / (1024*1024):.0f} MB in {time.time() - t0:.1f}s")
+                            logger.info(f"    COPY progress: {pct}% ({bytes_read / (1024*1024):.0f} MB / {file_size / (1024*1024):.0f} MB)")
+                logger.info(f"  Staged {bytes_read / (1024*1024):.0f} MB in {time.time() - t0:.1f}s")
 
             if model_id_filter:
                 cur.execute("DELETE FROM _stg_backtest WHERE model_id != %s", (model_id_filter,))
 
             cur.execute("SELECT COUNT(*) FROM _stg_backtest")
             staged_count = cur.fetchone()[0]
-            print(f"  Staged rows: {staged_count:,}")
+            logger.info(f"  Staged rows: {staged_count:,}")
 
             if staged_count == 0:
-                print("  No rows to load.")
+                logger.info("  No rows to load.")
                 conn.rollback()
                 return
 
@@ -358,18 +361,18 @@ def _load_one(
                     for mid in csv_model_ids:
                         cur.execute(f"DELETE FROM {_TABLE} WHERE model_id = %s", (mid,))
                         deleted = cur.rowcount
-                        print(f"  Deleted {deleted:,} existing rows for model_id='{mid}' ({time.time() - t0:.1f}s)")
+                        logger.info(f"  Deleted {deleted:,} existing rows for model_id='{mid}' ({time.time() - t0:.1f}s)")
 
             # Use plain INSERT when indexes are dropped (bulk or skip_index_ops),
             # ON CONFLICT upsert when unique constraint is present.
             use_plain_insert = skip_index_ops or replace
             if not skip_index_ops and replace:
-                print("  Dropping indexes & constraints for bulk load...")
+                logger.info("  Dropping indexes & constraints for bulk load...")
                 t0 = time.time()
                 drop_forecast_indexes_and_constraints(cur)
-                print(f"    Done ({time.time() - t0:.1f}s)")
+                logger.info(f"    Done ({time.time() - t0:.1f}s)")
 
-            print(f"  Inserting {staged_count:,} rows in batches of {BATCH_SIZE:,}...")
+            logger.info(f"  Inserting {staged_count:,} rows in batches of {BATCH_SIZE:,}...")
             select_expr = """
                     s.forecast_ck,
                     s.item_id,
@@ -421,9 +424,9 @@ def _load_one(
                     loaded_total += cur.rowcount
                     elapsed = time.time() - t_insert
                     rate = loaded_total / elapsed if elapsed > 0 else 0
-                    print(f"    Batch {batch_end:,}/{staged_count:,} — {loaded_total:,} loaded ({elapsed:.0f}s, {rate:,.0f} rows/s)")
+                    logger.info(f"    Batch {batch_end:,}/{staged_count:,} — {loaded_total:,} loaded ({elapsed:.0f}s, {rate:,.0f} rows/s)")
 
-                print(f"  Inserted {loaded_total:,} rows in {time.time() - t_insert:.1f}s")
+                logger.info(f"  Inserted {loaded_total:,} rows in {time.time() - t_insert:.1f}s")
 
             if not skip_index_ops and replace:
                 with profiled_section("recreate_indexes"):
@@ -438,29 +441,29 @@ def _load_one(
                       skip_index_ops=skip_index_ops)
 
     if skip_index_ops:
-        print(f"  Done (bulk mode — skipping MV refresh): {csv_path.parent.name}")
+        logger.info(f"  Done (bulk mode — skipping MV refresh): {csv_path.parent.name}")
         return
 
     # Refresh forecast materialized views
-    print("  Refreshing forecast materialized views...")
+    logger.info("  Refreshing forecast materialized views...")
     with profiled_section("refresh_forecast_views"):
         t0 = time.time()
         with psycopg.connect(**db) as conn:
             with conn.cursor() as cur:
                 cur.execute("SET maintenance_work_mem = '512MB'")
                 cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
-                print(f"    agg_forecast_monthly refreshed ({time.time() - t0:.1f}s)")
+                logger.info(f"    agg_forecast_monthly refreshed ({time.time() - t0:.1f}s)")
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
-                print(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
+                logger.info(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
                 t2 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
-                print(f"    agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
+                logger.info(f"    agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
             conn.commit()
-        print(f"  Forecast views refreshed in {time.time() - t0:.1f}s")
+        logger.info(f"  Forecast views refreshed in {time.time() - t0:.1f}s")
 
     # Refresh archive accuracy views
-    print("  Refreshing archive accuracy views...")
+    logger.info("  Refreshing archive accuracy views...")
     with profiled_section("refresh_archive_views"):
         t0 = time.time()
         with psycopg.connect(**db) as conn:
@@ -469,8 +472,8 @@ def _load_one(
                 cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
                 cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
             conn.commit()
-        print(f"  Archive views refreshed in {time.time() - t0:.1f}s")
-    print(f"  Done: {csv_path.parent.name}")
+        logger.info(f"  Archive views refreshed in {time.time() - t0:.1f}s")
+    logger.info(f"  Done: {csv_path.parent.name}")
 
 
 def main() -> None:
@@ -535,7 +538,7 @@ Examples:
     csv_files = _resolve_input_files(args.input, args.model, args.all, backtest_dir, args.models)
 
     model_labels = [f.parent.name for f in csv_files]
-    print(f"Loading {len(csv_files)} model(s): {model_labels}")
+    logger.info(f"Loading {len(csv_files)} model(s): {model_labels}")
 
     if args.bulk and len(csv_files) >= 1 and args.replace:
         # Bulk mode: drop indexes ONCE, load all models, recreate ONCE,
@@ -543,7 +546,7 @@ Examples:
         load_main = not args.archive_only
         load_archive = not args.main_only
 
-        print("\n[bulk] Dropping indexes & constraints once for all models...")
+        logger.info("\n[bulk] Dropping indexes & constraints once for all models...")
         with psycopg.connect(**db) as conn:
             with conn.cursor() as cur:
                 if load_main:
@@ -551,13 +554,13 @@ Examples:
                 if load_archive:
                     drop_forecast_archive_indexes_and_constraints(cur)
             conn.commit()
-        print("[bulk] Indexes dropped. Loading models without per-model index ops...")
+        logger.info("[bulk] Indexes dropped. Loading models without per-model index ops...")
 
         for csv_path in csv_files:
             _load_one(db, csv_path, args.replace, args.model_id, skip_index_ops=True,
                       main_only=args.main_only, archive_only=args.archive_only)
 
-        print("\n[bulk] Recreating indexes & constraints once for all models...")
+        logger.info("\n[bulk] Recreating indexes & constraints once for all models...")
         with psycopg.connect(**db) as conn:
             with conn.cursor() as cur:
                 cur.execute("SET maintenance_work_mem = '512MB'")
@@ -575,7 +578,7 @@ Examples:
         if load_archive:
             mvs.extend(archive_mvs)
 
-        print("[bulk] Refreshing materialized views once...")
+        logger.info("[bulk] Refreshing materialized views once...")
         with profiled_section("bulk_refresh_views"):
             t0 = time.time()
             with psycopg.connect(**db) as conn:
@@ -584,17 +587,18 @@ Examples:
                     for mv in mvs:
                         t1 = time.time()
                         cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-                        print(f"    {mv} refreshed ({time.time() - t1:.1f}s)")
+                        logger.info(f"    {mv} refreshed ({time.time() - t1:.1f}s)")
                 conn.commit()
-            print(f"  All views refreshed in {time.time() - t0:.1f}s")
+            logger.info(f"  All views refreshed in {time.time() - t0:.1f}s")
     else:
         for csv_path in csv_files:
             _load_one(db, csv_path, args.replace, args.model_id,
                       main_only=args.main_only, archive_only=args.archive_only)
 
-    print(f"\n{'='*60}")
-    print(f"All done. Loaded: {model_labels}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"All done. Loaded: {model_labels}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     main()

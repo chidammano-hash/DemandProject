@@ -621,7 +621,7 @@ def load_domain(spec: DomainSpec, csv_path: Path,
             complete_batch(cur, batch_id, stg_rows, row_count)
             conn.commit()
 
-        except Exception as exc:
+        except (psycopg.Error, OSError, ValueError, KeyError) as exc:
             conn.rollback()
             try:
                 with psycopg.connect(**db) as err_conn, err_conn.cursor() as err_cur:

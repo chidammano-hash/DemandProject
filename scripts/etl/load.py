@@ -1192,7 +1192,7 @@ def _resolve_business_key(domain: str) -> list[str]:
     if hasattr(spec, "key_fields"):
         try:
             return list(spec.key_fields())
-        except Exception:  # pragma: no cover - defensive
+        except (TypeError, AttributeError):  # spec.key_fields not callable/absent
             pass
     fields = getattr(spec, "business_key_fields", ()) or ()
     if fields:
