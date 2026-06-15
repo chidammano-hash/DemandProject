@@ -19,14 +19,12 @@ import {
   runDQChecks,
   dqKeys,
   STALE_PLATFORM,
-  fetchBatches,
   fetchCorrectionsByItem,
   fetchCorrectionsSummary,
   correctionKeys,
-  lineageKeys,
   STALE_LINEAGE,
 } from "@/api/queries";
-import type { DQDomainScore, DQCheck, LoadBatch, DQCorrection, DQCorrectionSummary } from "@/api/queries/platform";
+import type { DQDomainScore, DQCheck, DQCorrection, DQCorrectionSummary } from "@/api/queries/platform";
 import { formatDate } from "@/lib/formatters";
 import { interactiveRowProps } from "@/lib/interactiveRow";
 import {
@@ -37,10 +35,10 @@ import {
   MinusCircle,
   Shield,
   Clock,
-  GitBranch,
   ClipboardList,
 } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
+import { PipelineLineageSection } from "./data-quality/PipelineLineageSection";
 
 import {
   CheckCatalogPanel,
@@ -381,49 +379,8 @@ export default function DataQualityTab() {
 /* ========================================================================== */
 /*  Section 6: Pipeline Lineage                                               */
 /* ========================================================================== */
-function PipelineLineageSection() {
-  const { data } = useQuery({
-    queryKey: lineageKeys.batches,
-    queryFn: () => fetchBatches(undefined, undefined, 20),
-    staleTime: STALE_LINEAGE,
-  });
-  const batches: LoadBatch[] = data?.batches ?? [];
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="mb-3 text-sm font-medium text-foreground">Pipeline Lineage</h3>
-      {batches.length === 0 ? (
-        <EmptyState
-          variant="no-data"
-          icon={GitBranch}
-          title="No pipeline batches yet"
-          description='Batches appear after the ETL pipeline runs. Trigger an ingest to start the lineage log.'
-          steps={[
-            { label: "Normalize source CSVs", command: "make normalize-all" },
-            { label: "Load into Postgres", command: "make load-all" },
-          ]}
-        />
-      ) : (
-        <div className="space-y-2">
-          {batches.map((b) => (
-            <div key={b.batch_id} className="flex items-center justify-between rounded-md border border-border/40 px-3 py-2 text-sm">
-              <div className="flex items-center gap-2">
-                <span className={`inline-block h-2 w-2 rounded-full ${b.status === "completed" ? "bg-emerald-500" : b.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
-                <span className="font-mono text-xs">{b.domain}</span>
-                <span className="text-xs text-muted-foreground">Batch #{b.batch_id}</span>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>{b.row_count_in?.toLocaleString() ?? "\u2014"} in</span>
-                <span>{b.row_count_out?.toLocaleString() ?? "\u2014"} out</span>
-                <span>{b.started_at ? new Date(b.started_at).toLocaleString() : "\u2014"}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+/* PipelineLineageSection moved to ./data-quality/PipelineLineageSection.tsx
+   (US20: domain/status filters + sanitized errors; keeps this tab smaller). */
 
 /* ========================================================================== */
 /*  Section 7: DQ Corrections Browser                                         */
