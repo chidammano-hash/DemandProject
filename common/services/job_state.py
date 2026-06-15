@@ -1497,3 +1497,64 @@ def _row_to_dict(cols: tuple[str, ...], row: tuple) -> dict[str, Any]:
             d[col] = val or 0
         # ``pid`` and other columns pass through unchanged from the helper.
     return d
+
+
+def _run_etl_pipeline(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the data-ingestion pipeline as a managed job (US16).
+
+    params:
+        mode:     "full" | "refresh" (default "refresh")
+        domains:  optional list of domain names to restrict to (default: all)
+        parallel: bool — parallelize normalize/load/MV refresh (full mode)
+
+    NOTE: a ``full`` reload of large fact tables can exceed the APScheduler
+    comfort window; for very large datasets prefer routing full loads to the
+    pg-queue worker (common/services/pg_queue.py). ``refresh`` is incremental
+    and short, so it is well-suited to APScheduler.
+    """
+    from scripts.etl import run_pipeline as rp
+
+    mode = params.get("mode", "refresh")
+    if mode not in ("full", "refresh"):
+        raise ValueError(f"invalid etl_pipeline mode: {mode!r}")
+    requested = params.get("domains") or None
+    parallel = bool(params.get("parallel", False))
+
+    cfg = rp._cfg()
+    domain_order = cfg.get("domain_order", rp.ALL_DOMAINS)
+    if requested:
+        domains = [d for d in domain_order if d in requested]
+    else:
+        domains = list(domain_order)
+    source_dir = rp.ROOT / cfg.get("source_data_dir", "data/input")
+
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Starting {mode} pipeline ({len(domains)} domains)")
+
+    if mode == "full":
+        results = rp.run_full(domains, source_dir, parallel=parallel)
+    else:
+        results = rp.run_refresh(domains, source_dir)
+
+    loaded = sum(
+        1 for r in results
+        if r.get("loaded") or r.get("rows_loaded") is not None
+    )
+    skipped = sum(1 for r in results if r.get("skipped"))
+    if progress_cb:
+        progress_cb(pct=100, msg=f"{mode} pipeline complete: {loaded} loaded, {skipped} skipped")
+
+    return {
+        "mode": mode,
+        "domains": domains,
+        "loaded": loaded,
+        "skipped": skipped,
+        "results": results,
+        "output_log": f"{mode} pipeline: {loaded} loaded, {skipped} skipped "
+                      f"across {len(domains)} domain(s)",
+    }

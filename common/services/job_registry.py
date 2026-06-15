@@ -69,6 +69,7 @@ from common.services.job_state import (
     _run_compute_sku_features,
     _run_compute_variability,
     _run_data_quality,
+    _run_etl_pipeline,
     _run_generate_ai_insights,
     _run_generate_exceptions,
     _run_generate_production_forecast,
@@ -474,6 +475,16 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="platform",
         callable=_run_data_quality,
         params_schema={"domain": None},
+    ),
+    # ── Ingestion (etl group) ────────────────────────────────────────────────
+    "etl_pipeline": JobTypeDef(
+        type_id="etl_pipeline",
+        label="Data Ingestion Pipeline",
+        description="Run the data-ingestion pipeline: full reload or incremental "
+                    "refresh (change-detected) across all or selected domains",
+        group="etl",  # one ingestion run at a time
+        callable=_run_etl_pipeline,
+        params_schema={"mode": "refresh", "domains": None, "parallel": False},
     ),
 }
 
