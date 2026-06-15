@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { normalizeStoryboardException } from "../CommandCenterTab";
+import { normalizeStoryboardException } from "../command-center/exceptions";
 import type { StoryboardException } from "@/types/storyboard";
 
 // U4.1: the Command Center storyboard card must NOT leak the raw replenishment
