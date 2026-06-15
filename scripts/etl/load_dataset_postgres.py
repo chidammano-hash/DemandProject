@@ -21,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 from common.core.etl_helpers import (
@@ -125,76 +124,11 @@ def _resolve_forecast_execution_lag(cur, stg_table: str) -> int:
     return cur.rowcount
 
 
-def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
-    """Load ALL forecast lags into backtest_lag_archive (preserves multi-lag accuracy).
-
-    Optimized: when no non-external rows exist, skips ON CONFLICT for ~3x speedup.
-    """
-    archive_table = "backtest_lag_archive"
-
-    cur.execute(
-        f"DELETE FROM {archive_table} WHERE model_id = %s",
-        [EXTERNAL_MODEL_ID],
-    )
-    deleted = cur.rowcount
-    if deleted:
-        logger.info("Deleted %s existing '%s' archive rows", f"{deleted:,}", EXTERNAL_MODEL_ID)
-
-    # Check if non-external rows exist — if not, skip ON CONFLICT (massive speedup)
-    cur.execute(
-        f"SELECT EXISTS(SELECT 1 FROM {archive_table} WHERE model_id != %s LIMIT 1)",
-        [EXTERNAL_MODEL_ID],
-    )
-    has_other_models = cur.fetchone()[0]
-
-    ck_expr = (
-        f"trim({stg_alias}.\"item_id\") || '_' || trim({stg_alias}.\"customer_group\") || '_' || "
-        f"trim({stg_alias}.\"loc\") || '_' || trim({stg_alias}.\"fcstdate\") || '_' || "
-        f"trim({stg_alias}.\"startdate\")"
-    )
-
-    select_sql = f"""
-        SELECT
-            {ck_expr},
-            {stg_alias}."item_id",
-            {stg_alias}."customer_group",
-            {stg_alias}."loc",
-            {stg_alias}."fcstdate"::date,
-            {stg_alias}."startdate"::date,
-            {stg_alias}."lag"::integer,
-            CASE WHEN lower(trim({stg_alias}."execution_lag")) IN ({NULL_SQL})
-                 THEN NULL ELSE {stg_alias}."execution_lag"::integer END,
-            CASE WHEN lower(trim({stg_alias}."{FORECAST_QTY_COL}")) IN ({NULL_SQL})
-                 THEN NULL ELSE {stg_alias}."{FORECAST_QTY_COL}"::numeric END,
-            CASE WHEN lower(trim({stg_alias}."tothist_dmd")) IN ({NULL_SQL})
-                 THEN NULL ELSE {stg_alias}."tothist_dmd"::numeric END,
-            {stg_alias}."model_id",
-            NULL
-        FROM {qident(stg_table)} {stg_alias}
-    """
-
-    if has_other_models:
-        # Other model rows exist — use ON CONFLICT to merge
-        cur.execute(f"""
-            INSERT INTO {archive_table}
-                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
-            {select_sql}
-            ON CONFLICT (forecast_ck, model_id, lag) DO UPDATE SET
-                basefcst_pref = EXCLUDED.basefcst_pref,
-                tothist_dmd   = EXCLUDED.tothist_dmd,
-                execution_lag = EXCLUDED.execution_lag
-        """)
-    else:
-        # No conflicting rows — plain INSERT (much faster, no conflict check)
-        logger.info("  Fast-path: no other model rows — skipping ON CONFLICT")
-        cur.execute(f"""
-            INSERT INTO {archive_table}
-                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
-            {select_sql}
-        """)
-    return cur.rowcount
+# NOTE: external forecasts intentionally do NOT populate backtest_lag_archive
+# (see load_domain — "External forecasts skip archive"). The archive is owned by
+# load_backtest_forecasts.py / load_ext_ml_forecasts.py, which stream rows in
+# BATCH_SIZE chunks and use the ON-CONFLICT fast-path. A prior dead
+# _load_forecast_archive() here implied a dual-load that never ran — removed (US9).
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,6 @@
 """Tests for scripts/load_dataset_postgres.py — simplified loader."""
 
-import pytest
-from unittest.mock import MagicMock, patch, call
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import sys
 import os
@@ -10,7 +8,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl.load_dataset_postgres import (
     _resolve_forecast_execution_lag,
-    _load_forecast_archive,
     _is_partitioned,
     _ensure_partition_exists,
     load_domain,
@@ -21,11 +18,6 @@ from scripts.etl.load_dataset_postgres import (
 
 
 # ---------- Helpers ----------
-
-def _cycling_property(values):
-    it = iter(values)
-    return property(lambda self: next(it))
-
 
 def _cursor_with_rowcounts(rowcounts):
     """Build a MagicMock cursor that cycles through rowcount values on execute."""
@@ -65,41 +57,8 @@ class TestResolveForecastExecutionLag:
         assert cur.execute.call_count == 1  # EXISTS only
 
 
-# ---------- TestLoadForecastArchive ----------
-
-class TestLoadForecastArchive:
-    def test_deletes_old_and_inserts_new(self):
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([50, 8000])
-
-        count = _load_forecast_archive(cur, "stg_fcst", "d")
-
-        assert count == 8000
-        # First call: DELETE
-        del_sql = cur.execute.call_args_list[0][0][0]
-        assert "DELETE" in del_sql
-        assert "backtest_lag_archive" in del_sql
-        # Second call: SELECT EXISTS (check for non-external rows)
-        exists_sql = cur.execute.call_args_list[1][0][0]
-        assert "SELECT EXISTS" in exists_sql
-        # Third call: INSERT (with or without ON CONFLICT depending on EXISTS result)
-        ins_sql = cur.execute.call_args_list[2][0][0]
-        assert "INSERT INTO" in ins_sql
-
-    def test_returns_inserted_row_count(self):
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 12345])
-
-        assert _load_forecast_archive(cur, "stg", "s") == 12345
-
-    def test_uses_staging_alias_in_sql(self):
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 100])
-
-        _load_forecast_archive(cur, "stg", "myalias")
-
-        ins_sql = cur.execute.call_args_list[2][0][0]
-        assert 'myalias."item_id"' in ins_sql
+# _load_forecast_archive removed (US9): it was dead code — external forecasts
+# skip the archive (owned by load_backtest_forecasts.py / load_ext_ml_forecasts.py).
 
 
 # ---------- TestPartitionHelpers ----------

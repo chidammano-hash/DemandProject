@@ -4,6 +4,17 @@
 **Depends on:** US6
 **Complexity:** M  **Risk:** MEDIUM
 
+> **REFRAMED during implementation.** The premise ("forecast dual-load in
+> load_dataset_postgres") was wrong: external forecasts **intentionally skip the
+> archive** (`load_domain` comment), and `_load_forecast_archive()` in
+> load_dataset_postgres was **dead code** (defined + tested, never called) that
+> falsely implied a dual-load. The real archive owner is
+> `load_backtest_forecasts.py` / `load_ext_ml_forecasts.py`, which already
+> **streams rows in BATCH_SIZE chunks** and uses the **ON-CONFLICT fast-path**
+> (skips conflict checks when no competing models exist). US9 delivered: remove
+> the misleading dead function + its tests; add tests pinning the real loader's
+> batch-streaming. No behavior change to any live path.
+
 ## Story
 As a **platform engineer**, I want **the forecast archive load to avoid redundant work**, so that **forecast ingestion doesn't pay the dual-load cost when it isn't needed**.
 
