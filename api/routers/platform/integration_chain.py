@@ -1,7 +1,8 @@
 """Integration chain endpoints — directory scan + sequential job-chain submission.
 
 Backed by ``common.services.integration_scanner.scan_input_dir`` and
-``common.services.integration_chain_runner.IntegrationChainRunner``.
+``common.services.integration_chain_jobs.ChainJobRunner`` (US17d — chains on
+the unified JobManager backend).
 
 The single-job submission path lives in ``api.routers.platform.integration``;
 this module mirrors its conventions (router prefix, Pydantic v2 models,
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import _get_pool
-from common.services.integration_chain_runner import IntegrationChainRunner
+from common.services.integration_chain_jobs import ChainJobRunner
 from common.services.integration_scanner import scan_input_dir
 
 logger = logging.getLogger(__name__)
@@ -188,14 +189,16 @@ class ChainDetail(ChainSummary):
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
-def _get_chain_runner() -> IntegrationChainRunner:
-    """Construct an IntegrationChainRunner bound to the shared connection pool.
+def _get_chain_runner() -> ChainJobRunner:
+    """Construct a ChainJobRunner bound to the shared connection pool.
 
+    US17d: chains run as JobManager pipelines of ``load_domain`` steps; this
+    runner submits/reads them (with legacy ``integration_chain`` read-fallback).
     Resolves the pool via direct ``_get_pool()`` call rather than
     ``Depends(_get_pool)`` (per CLAUDE.md "DB & API Patterns" — FastAPI's
     inspection of MagicMock signatures raises 422 in tests).
     """
-    return IntegrationChainRunner(_get_pool())
+    return ChainJobRunner(_get_pool())
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +229,7 @@ def scan() -> ScanResponse:
 )
 def submit_chain(
     req: SubmitChainRequest,
-    runner: IntegrationChainRunner = Depends(_get_chain_runner),
+    runner: ChainJobRunner = Depends(_get_chain_runner),
 ) -> SubmitChainResponse:
     """Submit a multi-step integration chain.
 
@@ -264,7 +267,7 @@ def submit_chain(
 @router.get("/chains", response_model=ChainListResponse)
 def list_chains(
     limit: int = Query(default=20, ge=1, le=100, description="Maximum number of chains to return (1-100)."),
-    runner: IntegrationChainRunner = Depends(_get_chain_runner),
+    runner: ChainJobRunner = Depends(_get_chain_runner),
 ) -> ChainListResponse:
     """List recent integration chains, newest first."""
     items = runner.list_chains(limit=limit) or []
@@ -274,7 +277,7 @@ def list_chains(
 @router.get("/chains/{chain_id}", response_model=ChainDetail)
 def get_chain(
     chain_id: str,
-    runner: IntegrationChainRunner = Depends(_get_chain_runner),
+    runner: ChainJobRunner = Depends(_get_chain_runner),
 ) -> ChainDetail:
     """Fetch a single chain with all per-step job details."""
     record = runner.get_chain(chain_id)
