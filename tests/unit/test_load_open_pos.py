@@ -11,14 +11,17 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+import scripts.etl.load_open_pos as lop
 from scripts.etl.load_open_pos import (
     _parse_date,
     load_pos,
     load_receipts,
     load_suppliers,
+    reconcile_received_qty,
     validate_po_row,
 )
 
@@ -139,7 +142,8 @@ class TestLoadSuppliersBatched:
         sql, params = cur.executemany.call_args.args
         assert "ON CONFLICT (supplier_id)" in sql
         assert len(params) == 3
-        conn.commit.assert_called_once()
+        # US13: loaders no longer own the transaction — caller (main) commits.
+        conn.commit.assert_not_called()
 
     def test_dry_run_no_writes(self):
         conn, cur = _conn_with_cursor()
@@ -209,3 +213,58 @@ class TestLoadReceiptsBatched:
         sql, params = cur.executemany.call_args.args
         assert "ON CONFLICT (receipt_number, po_number, po_line_number)" in sql
         assert len(params) == 1
+
+
+# ---------------------------------------------------------------------------
+# US13: transaction isolation — loaders don't commit; main() is atomic
+# ---------------------------------------------------------------------------
+
+
+class TestTransactionIsolation:
+    def test_loaders_do_not_commit(self):
+        # Each loader must leave the commit to the caller's transaction.
+        conn, _cur = _conn_with_cursor()
+        with patch("scripts.etl.load_open_pos.pd.read_csv", return_value=_supplier_df(1)):
+            load_suppliers("s.csv", conn, dry_run=False)
+        conn.commit.assert_not_called()
+
+    def test_reconcile_does_not_commit(self):
+        conn, cur = _conn_with_cursor()
+        cur.rowcount = 3
+        reconcile_received_qty(conn)
+        conn.commit.assert_not_called()
+
+    def test_main_wraps_steps_in_single_transaction(self):
+        conn = MagicMock()
+        txn = MagicMock()
+        conn.transaction.return_value.__enter__ = MagicMock(return_value=txn)
+        conn.transaction.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("sys.argv", ["load_open_pos.py"]), \
+             patch("scripts.etl.load_open_pos.load_config", return_value={}), \
+             patch("scripts.etl.load_open_pos.get_db_params", return_value={}), \
+             patch("psycopg.connect") as mock_connect, \
+             patch("scripts.etl.load_open_pos._execute_load", return_value=5) as mock_exec, \
+             patch("scripts.etl.load_open_pos._record_open_po_audit") as mock_audit:
+            mock_connect.return_value.__enter__ = MagicMock(return_value=conn)
+            mock_connect.return_value.__exit__ = MagicMock(return_value=False)
+            lop.main()
+        conn.transaction.assert_called_once()
+        mock_exec.assert_called_once()
+        mock_audit.assert_called_once_with("completed", 5)
+
+    def test_main_records_failed_batch_and_reraises_on_error(self):
+        conn = MagicMock()
+        conn.transaction.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        conn.transaction.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("sys.argv", ["load_open_pos.py"]), \
+             patch("scripts.etl.load_open_pos.load_config", return_value={}), \
+             patch("scripts.etl.load_open_pos.get_db_params", return_value={}), \
+             patch("psycopg.connect") as mock_connect, \
+             patch("scripts.etl.load_open_pos._execute_load", side_effect=ValueError("boom")), \
+             patch("scripts.etl.load_open_pos._record_open_po_audit") as mock_audit:
+            mock_connect.return_value.__enter__ = MagicMock(return_value=conn)
+            mock_connect.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ValueError):
+                lop.main()
+        # failed batch recorded with status "failed"
+        assert mock_audit.call_args.args[0] == "failed"

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import logging
 import os
 import sys
 from datetime import date
@@ -30,9 +31,12 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.core.db import get_db_params
+from common.core.etl_helpers import record_load_batch
 from common.core.planning_date import get_planning_date
 from common.core.utils import load_config as _load_config
 from common.services.perf_profiler import profiled_section
+
+logger = logging.getLogger(__name__)
 
 
 def load_config() -> dict:
@@ -120,7 +124,6 @@ def load_suppliers(filepath: str, conn, dry_run: bool) -> int:
         if not dry_run and batch:
             with conn.cursor() as cur:
                 cur.executemany(sql, batch)
-            conn.commit()
         print(f"  Suppliers: {count} rows upserted{' (dry-run)' if dry_run else ''}")
         return count
 
@@ -191,7 +194,6 @@ def load_pos(filepath: str, conn, dry_run: bool, config: dict) -> tuple[int, int
         if not dry_run and batch:
             with conn.cursor() as cur:
                 cur.executemany(sql, batch)
-            conn.commit()
         return loaded, skipped, reasons
 
 
@@ -229,7 +231,6 @@ def load_receipts(filepath: str, conn, dry_run: bool) -> int:
         if not dry_run and batch:
             with conn.cursor() as cur:
                 cur.executemany(sql, batch)
-            conn.commit()
         print(f"  Receipts: {count} rows upserted{' (dry-run)' if dry_run else ''}")
         return count
 
@@ -263,8 +264,74 @@ def reconcile_received_qty(conn) -> int:
         with conn.cursor() as cur:
             cur.execute(sql)
             count = cur.rowcount
-        conn.commit()
         return count
+
+
+def _execute_load(conn, args, config, dry_run: bool) -> int:
+    """Run the selected load branch over ``conn``. Returns rows loaded.
+
+    Performs no commit/rollback — the caller owns the transaction boundary so the
+    whole multi-step sequence (suppliers -> POs -> reconcile) is atomic.
+    """
+    total = 0
+    if args.suppliers:
+        files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["supplier_file_pattern"])
+        for f in sorted(files):
+            print(f"Loading suppliers from {f}...")
+            total += load_suppliers(f, conn, dry_run)
+
+    elif args.receipts:
+        files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["receipt_file_pattern"])
+        for f in sorted(files):
+            print(f"Loading receipts from {f}...")
+            total += load_receipts(f, conn, dry_run)
+        if not dry_run and files:
+            updated = reconcile_received_qty(conn)
+            print(f"  Reconciled received_qty on {updated} PO lines.")
+
+    else:
+        # Load suppliers first (FK dependency)
+        sup_files = glob.glob(config["ingest"]["csv"]["supplier_file_pattern"])
+        for f in sorted(sup_files):
+            print(f"Loading suppliers from {f}...")
+            load_suppliers(f, conn, dry_run)
+
+        # Load POs
+        po_files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["po_file_pattern"])
+        total_loaded = total_skipped = 0
+        all_reasons: dict[str, int] = {}
+        for f in sorted(po_files):
+            print(f"Loading POs from {f}...")
+            loaded, skipped, reasons = load_pos(f, conn, dry_run, config)
+            total_loaded += loaded
+            total_skipped += skipped
+            for k, v in reasons.items():
+                all_reasons[k] = all_reasons.get(k, 0) + v
+        total = total_loaded
+
+        print(f"\nPO load complete: {total_loaded} loaded, {total_skipped} skipped")
+        if all_reasons:
+            print("  Rejection reasons:", all_reasons)
+
+        # Reconcile receipts
+        if not dry_run:
+            updated = reconcile_received_qty(conn)
+            print(f"  Reconciled received_qty on {updated} PO lines.")
+    return total
+
+
+def _record_open_po_audit(status: str, rows: int, error: str | None = None) -> None:
+    """Record an open-PO load batch in audit_load_batch via a fresh connection.
+
+    Uses its own connection so a 'failed' record survives the rolled-back main
+    transaction.
+    """
+    try:
+        with psycopg.connect(**get_db_params()) as c, c.cursor() as cur:
+            record_load_batch(cur, "open_pos", rows_out=rows, status=status, error=error)
+            c.commit()
+    except psycopg.Error:
+        logger.warning("could not record open_pos audit batch")
 
 
 def main():
@@ -279,50 +346,22 @@ def main():
     dry_run = args.dry_run
 
     with psycopg.connect(**get_db_params()) as conn:
-        if args.suppliers:
-            files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["supplier_file_pattern"])
-            for f in sorted(files):
-                print(f"Loading suppliers from {f}...")
-                load_suppliers(f, conn, dry_run)
+        if dry_run:
+            _execute_load(conn, args, config, dry_run=True)
+            print("Dry-run complete — no rows written.")
+            return
+        try:
+            # Single transaction: suppliers + POs + reconcile commit atomically;
+            # any failure rolls the whole unit back.
+            with conn.transaction():
+                total = _execute_load(conn, args, config, dry_run=False)
+        except (psycopg.Error, OSError, ValueError, KeyError) as exc:
+            logger.exception("open-PO load failed — transaction rolled back")
+            _record_open_po_audit("failed", 0, str(exc))
+            raise
+        _record_open_po_audit("completed", total)
 
-        elif args.receipts:
-            files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["receipt_file_pattern"])
-            for f in sorted(files):
-                print(f"Loading receipts from {f}...")
-                load_receipts(f, conn, dry_run)
-            if not dry_run and files:
-                updated = reconcile_received_qty(conn)
-                print(f"  Reconciled received_qty on {updated} PO lines.")
-
-        else:
-            # Load suppliers first (FK dependency)
-            sup_files = glob.glob(config["ingest"]["csv"]["supplier_file_pattern"])
-            for f in sorted(sup_files):
-                print(f"Loading suppliers from {f}...")
-                load_suppliers(f, conn, dry_run)
-
-            # Load POs
-            po_files = [args.file] if args.file else glob.glob(config["ingest"]["csv"]["po_file_pattern"])
-            total_loaded = total_skipped = 0
-            all_reasons: dict[str, int] = {}
-            for f in sorted(po_files):
-                print(f"Loading POs from {f}...")
-                loaded, skipped, reasons = load_pos(f, conn, dry_run, config)
-                total_loaded += loaded
-                total_skipped += skipped
-                for k, v in reasons.items():
-                    all_reasons[k] = all_reasons.get(k, 0) + v
-
-            print(f"\nPO load complete: {total_loaded} loaded, {total_skipped} skipped")
-            if all_reasons:
-                print("  Rejection reasons:", all_reasons)
-
-            # Reconcile receipts
-            if not dry_run:
-                updated = reconcile_received_qty(conn)
-                print(f"  Reconciled received_qty on {updated} PO lines.")
-
-    print("Done." if not dry_run else "Dry-run complete — no rows written.")
+    print("Done.")
 
 
 if __name__ == "__main__":
