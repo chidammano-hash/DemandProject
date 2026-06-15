@@ -49,6 +49,7 @@ def make_pool(
     *,
     fetchall_returns=None,
     fetchone_returns=None,
+    description=None,
 ):
     """Shared factory for mock DB pool used across API tests.
 
@@ -61,6 +62,9 @@ def make_pool(
         fetchone_returns: optional list of per-call fetchone return values
             (wires up ``cursor.fetchone.side_effect``). Takes precedence over
             ``fetchone_return`` when set.
+        description: optional value for ``cursor.description``. Defaults to
+            ``[("col",)]`` when None (the historical default). Pass an explicit
+            value (e.g. ``[]`` or a list of column tuples) to override.
 
     Backwards compatible: callers passing only scalar ``fetchall_return`` /
     ``fetchone_return`` get identical behaviour to before the multi-call
@@ -80,7 +84,7 @@ def make_pool(
     else:
         cursor.fetchone.return_value = fetchone_return if fetchone_return is not None else (0,)
 
-    cursor.description = [("col",)]
+    cursor.description = description if description is not None else [("col",)]
     cursor.rowcount = 1
 
     conn = MagicMock()

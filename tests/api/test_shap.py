@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 import pandas as pd
 import pytest
 from httpx import ASGITransport
+
+from tests.api.conftest import make_pool
 
 
 # ---------------------------------------------------------------------------
@@ -55,17 +57,8 @@ def _write_summary_csv(shap_dir: Path, features: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def _make_pool():
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = []
-    mock_cursor.fetchone.return_value = None
-    mock_cursor.description = []
-    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
-    pool = MagicMock()
-    pool.connection.return_value = mock_conn
+    pool, _, cursor = make_pool(description=[])
+    cursor.fetchone.return_value = None
     return pool
 
 
@@ -215,17 +208,10 @@ async def test_shap_timeframe_detail_success(tmp_path):
 
 def _make_pool_with_clusters(cluster_labels: list[str]):
     """Create a mock pool where dim_sku query returns the given clusters."""
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = [(c,) for c in cluster_labels]
-    mock_cursor.fetchone.return_value = None
-    mock_cursor.description = []
-    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
-    pool = MagicMock()
-    pool.connection.return_value = mock_conn
+    pool, _, cursor = make_pool(
+        fetchall_return=[(c,) for c in cluster_labels], description=[]
+    )
+    cursor.fetchone.return_value = None
     return pool
 
 

@@ -6,9 +6,11 @@ Router: api/routers/analysis.py, path: GET /sku/analysis.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import httpx
 from httpx import ASGITransport
+
+from tests.api.conftest import make_pool
 
 
 # ---------------------------------------------------------------------------
@@ -17,35 +19,9 @@ from httpx import ASGITransport
 #   with get_conn() as conn, conn.cursor() as cur:
 #       cur.execute(...); cur.fetchall()  -- repeated 4 times
 # get_conn() calls _get_pool().connection() so patching _get_pool works.
+# Tests use the shared make_pool factory (tests/api/conftest.py); per-call
+# fetchall values are wired via fetchall_returns (cursor.fetchall.side_effect).
 # ---------------------------------------------------------------------------
-
-def _make_pool(fetchall_side_effect=None, fetchone_return=None):
-    """Build a mock DB pool for analysis endpoint tests.
-
-    Args:
-        fetchall_side_effect: list of return values for successive fetchall() calls,
-                              or a single list used for all calls.
-        fetchone_return: return value for fetchone() calls (unused by analysis endpoint
-                         but included for consistency).
-    """
-    cursor = MagicMock()
-    if fetchall_side_effect is not None:
-        cursor.fetchall.side_effect = fetchall_side_effect
-    else:
-        cursor.fetchall.return_value = []
-    cursor.fetchone.return_value = fetchone_return or (0,)
-    cursor.description = [("col",)]
-    cursor.rowcount = 1
-
-    conn = MagicMock()
-    conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    conn.__enter__ = MagicMock(return_value=conn)
-    conn.__exit__ = MagicMock(return_value=False)
-
-    pool = MagicMock()
-    pool.connection.return_value = conn
-    return pool, conn, cursor
 
 
 def _empty_4():
@@ -66,7 +42,7 @@ def _empty_4():
 @pytest.mark.asyncio
 async def test_sku_analysis_item_location_200():
     """GET /sku/analysis with item+location returns 200."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -81,7 +57,7 @@ async def test_sku_analysis_item_location_200():
 @pytest.mark.asyncio
 async def test_sku_analysis_response_structure():
     """Response contains expected top-level keys."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -100,7 +76,7 @@ async def test_sku_analysis_returns_item_desc():
     """U3.5 — the response carries the item's human-readable description so the
     Item Analysis breadcrumb can show 'Item 185690 — DAMMANN JARDIN BLEU TEA'
     instead of a bare numeric code. dim_item.item_desc is fetched per item."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
     cursor.fetchone.return_value = ("DAMMANN JARDIN BLEU TEA(96CT)",)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -119,7 +95,7 @@ async def test_sku_analysis_returns_item_desc():
 @pytest.mark.asyncio
 async def test_sku_analysis_mode_reflects_in_response():
     """Response mode field matches the requested mode."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -138,7 +114,7 @@ async def test_sku_analysis_mode_reflects_in_response():
 @pytest.mark.asyncio
 async def test_sku_analysis_mode_all_items_at_location():
     """mode=all_items_at_location with location param returns 200."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=[[], [], [], []])
+    pool, conn, cursor = make_pool(fetchall_returns=[[], [], [], []])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -154,7 +130,7 @@ async def test_sku_analysis_mode_all_items_at_location():
 @pytest.mark.asyncio
 async def test_sku_analysis_mode_item_at_all_locations():
     """mode=item_at_all_locations with item param returns 200."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=[[], [], [], []])
+    pool, conn, cursor = make_pool(fetchall_returns=[[], [], [], []])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -174,7 +150,7 @@ async def test_sku_analysis_mode_item_at_all_locations():
 @pytest.mark.asyncio
 async def test_sku_analysis_invalid_mode_422():
     """Invalid mode value returns 422."""
-    pool, conn, cursor = _make_pool()
+    pool, conn, cursor = make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -189,7 +165,7 @@ async def test_sku_analysis_invalid_mode_422():
 @pytest.mark.asyncio
 async def test_sku_analysis_item_location_mode_missing_item_422():
     """item_location mode with missing item → 422."""
-    pool, conn, cursor = _make_pool()
+    pool, conn, cursor = make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -204,7 +180,7 @@ async def test_sku_analysis_item_location_mode_missing_item_422():
 @pytest.mark.asyncio
 async def test_sku_analysis_item_location_mode_missing_location_422():
     """item_location mode with missing location → 422."""
-    pool, conn, cursor = _make_pool()
+    pool, conn, cursor = make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -219,7 +195,7 @@ async def test_sku_analysis_item_location_mode_missing_location_422():
 @pytest.mark.asyncio
 async def test_sku_analysis_all_items_at_location_missing_location_422():
     """all_items_at_location mode without location → 422."""
-    pool, conn, cursor = _make_pool()
+    pool, conn, cursor = make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -234,7 +210,7 @@ async def test_sku_analysis_all_items_at_location_missing_location_422():
 @pytest.mark.asyncio
 async def test_sku_analysis_item_at_all_locations_missing_item_422():
     """item_at_all_locations mode without item → 422."""
-    pool, conn, cursor = _make_pool()
+    pool, conn, cursor = make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -253,7 +229,7 @@ async def test_sku_analysis_item_at_all_locations_missing_item_422():
 @pytest.mark.asyncio
 async def test_sku_analysis_empty_db_returns_empty_series():
     """When DB returns no rows, series and dfu_attributes are empty lists."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -287,8 +263,8 @@ async def test_sku_analysis_with_data_populates_series():
     ]
     dfu_rows = []
 
-    pool, conn, cursor = _make_pool(
-        fetchall_side_effect=[sales_rows, forecast_rows, actual_rows, dfu_rows]
+    pool, conn, cursor = make_pool(
+        fetchall_returns=[sales_rows, forecast_rows, actual_rows, dfu_rows]
     )
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -314,7 +290,7 @@ async def test_sku_analysis_with_data_populates_series():
 @pytest.mark.asyncio
 async def test_sku_analysis_seasonality_profile_filter():
     """seasonality_profile param is accepted and does not raise errors."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=[[], [], [], []])
+    pool, conn, cursor = make_pool(fetchall_returns=[[], [], [], []])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -337,7 +313,7 @@ async def test_sku_analysis_seasonality_profile_filter():
 @pytest.mark.asyncio
 async def test_sku_analysis_custom_points_param():
     """Custom points parameter is reflected in response."""
-    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -353,7 +329,7 @@ async def test_sku_analysis_custom_points_param():
 @pytest.mark.asyncio
 async def test_sku_analysis_points_too_low_422():
     """points < 3 should return 422 (ge=3 constraint)."""
-    pool, conn, cursor = _make_pool()
+    pool, conn, cursor = make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -376,8 +352,8 @@ async def test_sku_analysis_model_monthly_structure():
     forecast_rows = [
         (datetime.date(2024, 3, 1), "lgbm_cluster", 300.0, 290.0),
     ]
-    pool, conn, cursor = _make_pool(
-        fetchall_side_effect=[[], forecast_rows, [(datetime.date(2024, 3, 1), 290.0)], []]
+    pool, conn, cursor = make_pool(
+        fetchall_returns=[[], forecast_rows, [(datetime.date(2024, 3, 1), 290.0)], []]
     )
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
