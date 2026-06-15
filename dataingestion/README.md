@@ -39,7 +39,12 @@ Foundation first — each story ships behind `make test-all`, TDD (tests written
 | [US14](UserStory14.md) | Logging + exception + path-hack cleanup | 4 Reliab | — | S | LOW |
 | [US15](UserStory15.md) | customer_demand in change detection | 4 Reliab | US5 | S | LOW |
 | [US16](UserStory16.md) | Register etl_pipeline job type (full+refresh) | 5 Orchestr | US6 | M | MED |
-| [US17](UserStory17.md) | Converge job backends into one | 5 Orchestr | US16 | L | HIGH |
+| [US17](UserStory17.md) | Converge job backends into one (SPLIT below) | 5 Orchestr | US16 | L | HIGH |
+| [US17a](UserStory17a.md) | Shape/status adapter (read-only) | 5 Orchestr | US16 | S | LOW |
+| [US17b](UserStory17b.md) | Unified read view (`/integration/jobs`) | 5 Orchestr | US17a | M | MED |
+| [US17c](UserStory17c.md) | Submission cutover → `load_domain` job | 5 Orchestr | US17a,US17b | L | HIGH |
+| [US17d](UserStory17d.md) | Chains on JobManager pipeline | 5 Orchestr | US17c | M | MED-HIGH |
+| [US17e](UserStory17e.md) | UI convergence + legacy retirement | 5 Orchestr | US17c,US17d | M | MED |
 | [US18](UserStory18.md) | API endpoints for full + incremental run | 5 Orchestr | US16 | M | MED |
 | [US19](UserStory19.md) | UI: full + incremental triggers w/ live status | 6 UI | US18 | M | MED |
 | [US20](UserStory20.md) | UI: unified load history & lineage | 6 UI | US18 | S | LOW |

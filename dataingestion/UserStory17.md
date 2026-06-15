@@ -4,6 +4,23 @@
 **Depends on:** US16
 **Complexity:** L  **Risk:** HIGH
 
+> **SPLIT (deferred).** This story is too large/risky to ship as one unit — the
+> two backends diverge in schema (UUID vs TEXT PK), status vocabulary
+> (`success` vs `completed`), domain-columns vs `params/result` JSONB, execution
+> model (subprocess vs in-process), plus a separate chains runner and two UIs.
+> It is split into five independently shippable sub-stories, risk rising toward
+> the write cutover:
+> - **[US17a](UserStory17a.md)** — Shape/status adapter (read-only, zero behavior change). LOW.
+> - **[US17b](UserStory17b.md)** — Unified read view; `/integration/jobs` merges both sources. MEDIUM.
+> - **[US17c](UserStory17c.md)** — Submission cutover to a `load_domain` JobManager job. **HIGH — ship alone.**
+> - **[US17d](UserStory17d.md)** — Chains on JobManager `submit_pipeline`. MEDIUM–HIGH.
+> - **[US17e](UserStory17e.md)** — UI convergence + legacy retirement (the actual deletion/simplification). MEDIUM.
+>
+> Note: the epic's user-facing goal (run full+incremental from the UI, unified
+> lineage) is already met by US16/18/19/20 — US17 is internal consolidation.
+> A low-risk stopping point is US17a+US17b only (unified *appearance* without the
+> risky write cutover). The text below is the original single-story framing.
+
 ## Story
 As a **platform engineer**, I want **a single job backend and a single job history**, so that **UI-triggered loads and scheduled pipeline runs share one source of truth instead of `integration_jobs` vs `job_history`**.
 
