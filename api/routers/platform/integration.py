@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -111,6 +112,31 @@ class SubmitJobResponse(BaseModel):
 
     job_id: str = Field(..., description="UUID of the queued integration job.")
     status: Literal["queued"] = Field(default="queued", description="Initial job status — always 'queued' on accept.")
+
+
+class PipelineRunRequest(BaseModel):
+    """Request body for ``POST /integration/pipeline`` (whole-pipeline run)."""
+
+    mode: Literal["full", "refresh"] = Field(
+        default="refresh",
+        description="'full' = reload everything; 'refresh' = change-detected incremental load.",
+    )
+    domains: list[str] | None = Field(
+        default=None,
+        description="Optional subset of domains to run (default: all). Each must be in KNOWN_DOMAINS.",
+    )
+    parallel: bool = Field(
+        default=False,
+        description="Parallelize normalize/load/MV refresh (full mode).",
+    )
+
+
+class PipelineRunResponse(BaseModel):
+    """Response body for ``POST /integration/pipeline``."""
+
+    job_id: str = Field(..., description="ID of the queued etl_pipeline job (poll via /jobs/{id}).")
+    mode: Literal["full", "refresh"] = Field(..., description="Mode the pipeline was started in.")
+    status: Literal["queued"] = Field(default="queued", description="Initial status — always 'queued'.")
 
 
 class Job(BaseModel):
@@ -330,6 +356,43 @@ def submit_job(
         reindex=req.reindex,
     )
     return SubmitJobResponse(job_id=job_id, status="queued")
+
+
+@router.post(
+    "/pipeline",
+    status_code=202,
+    response_model=PipelineRunResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def run_pipeline(req: PipelineRunRequest) -> PipelineRunResponse:
+    """Run the whole ingestion pipeline (full reload or incremental refresh).
+
+    Submits the managed ``etl_pipeline`` job (JobManager); poll status/logs via
+    the unified ``/jobs/{id}`` endpoints.
+    """
+    if req.domains:
+        unknown = [d for d in req.domains if d not in KNOWN_DOMAINS]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown domains: {unknown}. Known domains: {KNOWN_DOMAINS}",
+            )
+
+    from common.services.job_registry import JobManager
+    try:
+        job_id = JobManager().submit_job(
+            "etl_pipeline",
+            params={"mode": req.mode, "domains": req.domains, "parallel": req.parallel},
+            label=f"ETL pipeline ({req.mode})",
+            triggered_by="ui",
+        )
+    except ValueError as exc:
+        logger.warning("etl_pipeline submit rejected: %s", exc)
+        raise HTTPException(status_code=422, detail="invalid pipeline job request") from exc
+    except (psycopg.Error, OSError):
+        logger.exception("failed to submit etl_pipeline job")
+        raise HTTPException(status_code=500, detail="could not start pipeline") from None
+    return PipelineRunResponse(job_id=job_id, mode=req.mode, status="queued")
 
 
 @router.get("/jobs", response_model=JobListResponse)

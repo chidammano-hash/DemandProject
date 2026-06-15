@@ -5,8 +5,6 @@ pattern, with the runner dependency overridden via ``app.dependency_overrides``.
 """
 from __future__ import annotations
 
-import os
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -302,3 +300,58 @@ async def test_get_job_returns_job_when_exists(client, override_runner):
     assert body["id"] == "real-id"
     assert body["status"] == "running"
     override_runner.get.assert_called_once_with("real-id")
+
+
+# ---------------------------------------------------------------------------
+# /integration/pipeline (US18 — whole-pipeline run via etl_pipeline job)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_run_pipeline_full_returns_202(client):
+    fake_mgr = MagicMock()
+    fake_mgr.submit_job.return_value = "etl-job-1"
+    with patch("common.services.job_registry.JobManager", return_value=fake_mgr):
+        resp = await client.post("/integration/pipeline", json={"mode": "full", "parallel": True})
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["job_id"] == "etl-job-1"
+    assert body["mode"] == "full"
+    assert body["status"] == "queued"
+    assert fake_mgr.submit_job.call_args.args[0] == "etl_pipeline"
+    params = fake_mgr.submit_job.call_args.kwargs["params"]
+    assert params["mode"] == "full"
+    assert params["parallel"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_refresh_with_domains(client):
+    fake_mgr = MagicMock()
+    fake_mgr.submit_job.return_value = "etl-job-2"
+    with patch("common.services.job_registry.JobManager", return_value=fake_mgr):
+        resp = await client.post(
+            "/integration/pipeline",
+            json={"mode": "refresh", "domains": ["sales", "forecast"]},
+        )
+    assert resp.status_code == 202
+    assert fake_mgr.submit_job.call_args.kwargs["params"]["domains"] == ["sales", "forecast"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_unknown_domain_422(client):
+    resp = await client.post(
+        "/integration/pipeline", json={"mode": "refresh", "domains": ["totally_made_up"]}
+    )
+    assert resp.status_code == 422
+    assert "Unknown domains" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_invalid_mode_422(client):
+    resp = await client.post("/integration/pipeline", json={"mode": "sideways"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_requires_api_key(client, monkeypatch):
+    monkeypatch.setenv("API_KEY", "secret-key")
+    resp = await client.post("/integration/pipeline", json={"mode": "refresh"})
+    assert resp.status_code in (401, 403)
