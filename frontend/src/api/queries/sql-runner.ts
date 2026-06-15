@@ -1,5 +1,7 @@
 /** SQL Runner API queries */
 
+import { fetchJson } from "./core";
+
 export interface SqlResult {
   columns: string[];
   rows: unknown[][];
@@ -38,34 +40,19 @@ export async function fetchExecuteQuery(
   sql: string,
   maxRows?: number,
 ): Promise<SqlResult> {
-  const resp = await fetch("/sql-runner/execute", {
+  return fetchJson<SqlResult>("/sql-runner/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sql, max_rows: maxRows }),
   });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || resp.statusText);
-  }
-  return resp.json();
 }
 
 export async function fetchSchema(): Promise<{ tables: TableInfo[] }> {
-  const resp = await fetch("/sql-runner/schema");
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || resp.statusText);
-  }
-  return resp.json();
+  return fetchJson<{ tables: TableInfo[] }>("/sql-runner/schema");
 }
 
 export async function fetchQueryHistory(): Promise<{
   history: QueryHistoryEntry[];
 }> {
-  const resp = await fetch("/sql-runner/history");
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || resp.statusText);
-  }
-  return resp.json();
+  return fetchJson<{ history: QueryHistoryEntry[] }>("/sql-runner/history");
 }

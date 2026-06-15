@@ -1,4 +1,5 @@
 import { buildQuerySuffix } from "./helpers";
+import { fetchJson } from "./core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -291,15 +292,6 @@ export interface ItemsPayload {
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
 
 function filterParams(f?: CustomerAnalyticsFilters): Record<string, string | undefined> {
   if (!f) return {};

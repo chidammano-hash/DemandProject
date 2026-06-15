@@ -5,6 +5,8 @@
  * submission, and DB-loading for both tunable and non-tunable models.
  */
 
+import { fetchJson } from "./core";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -132,51 +134,36 @@ export const BACKTEST_MGMT_STALE = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Fetch helper
-// ---------------------------------------------------------------------------
-
-async function fetchOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    const body = await res
-      .json()
-      .catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Request failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-// ---------------------------------------------------------------------------
 // Fetchers — READ
 // ---------------------------------------------------------------------------
 
 /** Fetch summary for all models (latest run, accuracy, loaded status). */
 export async function fetchBacktestSummary(): Promise<BacktestSummary> {
-  return fetchOrThrow("/backtest-management/summary");
+  return fetchJson<BacktestSummary>("/backtest-management/summary");
 }
 
 /** Fetch run history for a specific model. */
 export async function fetchBacktestRuns(
   modelId: string,
 ): Promise<BacktestRun[]> {
-  return fetchOrThrow(`/backtest-management/${modelId}/runs`);
+  return fetchJson<BacktestRun[]>(`/backtest-management/${modelId}/runs`);
 }
 
 /** Fetch current metadata from disk for a model. */
 export async function fetchBacktestCurrent(
   modelId: string,
 ): Promise<Record<string, unknown>> {
-  return fetchOrThrow(`/backtest-management/${modelId}/current`);
+  return fetchJson<Record<string, unknown>>(`/backtest-management/${modelId}/current`);
 }
 
 /** Fetch training status for all forecastable models. */
 export async function fetchTrainingStatus(): Promise<TrainingStatusMap> {
-  return fetchOrThrow("/backtest-management/training-status");
+  return fetchJson<TrainingStatusMap>("/backtest-management/training-status");
 }
 
 /** Fetch staging forecast summary per model. */
 export async function fetchStagingSummary(): Promise<StagingSummaryMap> {
-  return fetchOrThrow("/backtest-management/staging-summary");
+  return fetchJson<StagingSummaryMap>("/backtest-management/staging-summary");
 }
 
 // ---------------------------------------------------------------------------
@@ -187,10 +174,13 @@ export async function fetchStagingSummary(): Promise<StagingSummaryMap> {
 export async function submitBacktestRun(
   modelId: string,
 ): Promise<{ run_id: number; job_id: string }> {
-  return fetchOrThrow(`/backtest-management/${modelId}/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
+  return fetchJson<{ run_id: number; job_id: string }>(
+    `/backtest-management/${modelId}/run`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 /** Load backtest predictions into the database. */
@@ -199,7 +189,7 @@ export async function submitBacktestLoad(
   runId?: number,
 ): Promise<{ job_id: string }> {
   const body = runId != null ? JSON.stringify({ run_id: runId }) : undefined;
-  return fetchOrThrow(`/backtest-management/${modelId}/load`, {
+  return fetchJson<{ job_id: string }>(`/backtest-management/${modelId}/load`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     ...(body ? { body } : {}),
@@ -210,7 +200,7 @@ export async function submitBacktestLoad(
 export async function submitTraining(
   modelId: string,
 ): Promise<{ job_id: string }> {
-  return fetchOrThrow(`/backtest-management/${modelId}/train`, {
+  return fetchJson<{ job_id: string }>(`/backtest-management/${modelId}/train`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -220,10 +210,13 @@ export async function submitTraining(
 export async function submitGenerateForecast(
   modelId: string,
 ): Promise<{ job_id: string; model_id: string }> {
-  return fetchOrThrow(`/backtest-management/${modelId}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
+  return fetchJson<{ job_id: string; model_id: string }>(
+    `/backtest-management/${modelId}/generate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -232,17 +225,19 @@ export async function submitGenerateForecast(
 
 /** Fetch current promotion status (which model is in production). */
 export async function fetchPromotionStatus(): Promise<{ promoted: PromotionStatus | null }> {
-  return fetchOrThrow("/backtest-management/promotion-status");
+  return fetchJson<{ promoted: PromotionStatus | null }>(
+    "/backtest-management/promotion-status",
+  );
 }
 
 /** Fetch candidate forecast summary per model. */
 export async function fetchCandidateSummary(): Promise<CandidateSummaryMap> {
-  return fetchOrThrow("/backtest-management/candidate-summary");
+  return fetchJson<CandidateSummaryMap>("/backtest-management/candidate-summary");
 }
 
 /** Promote a model (or 'champion') to production. Copies candidates → fact_production_forecast. */
 export async function submitPromote(modelId: string): Promise<PromoteResponse> {
-  return fetchOrThrow(`/backtest-management/${modelId}/promote`, {
+  return fetchJson<PromoteResponse>(`/backtest-management/${modelId}/promote`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

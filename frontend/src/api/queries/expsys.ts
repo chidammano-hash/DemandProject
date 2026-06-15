@@ -5,6 +5,8 @@
  * and status information about the latest run.
  */
 
+import { fetchJson } from "./core";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -52,19 +54,9 @@ export async function fetchExpSysLagAccuracy(
   modelId = "ExpSys",
 ): Promise<ExpSysAccuracyReport> {
   const params = modelId !== "ExpSys" ? `?model_id=${encodeURIComponent(modelId)}` : "";
-  const res = await fetch(`/expsys/lag-accuracy${params}`);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json();
+  return fetchJson<ExpSysAccuracyReport>(`/expsys/lag-accuracy${params}`);
 }
 
 export async function fetchExpSysStatus(): Promise<ExpSysStatus> {
-  const res = await fetch("/expsys/status");
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json();
+  return fetchJson<ExpSysStatus>("/expsys/status");
 }
