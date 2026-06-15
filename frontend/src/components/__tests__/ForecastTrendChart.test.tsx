@@ -35,7 +35,7 @@ vi.mock("echarts/renderers", () => ({
   CanvasRenderer: {},
 }));
 
-import { ForecastTrendChart } from "@/components/ForecastTrendChart";
+import { ForecastTrendChart, buildForecastTrendOption } from "@/components/ForecastTrendChart";
 
 const defaultChartColors = {
   grid: "#e5e5e5",
@@ -171,6 +171,27 @@ describe("ForecastTrendChart", () => {
       />,
     );
     expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+
+  // U4.2 — the "Forecast vs Actual" tooltip rendered raw 7-digit integers
+  // (e.g. 2157763) with no thousands separators, inconsistent with the
+  // compact K/M axis and the KPI tiles. The tooltip must carry a
+  // valueFormatter that thousands-separates the hover value.
+  it("tooltip has a valueFormatter that thousands-separates large integers (U4.2)", () => {
+    const option = buildForecastTrendOption({
+      data: sampleData,
+      theme: "light",
+      chartColors: defaultChartColors,
+      seriesColors: defaultSeriesColors,
+      hasCI: false,
+      lowers: [],
+      bandHeights: [],
+    });
+    const fmt = (option.tooltip as { valueFormatter?: (v: unknown) => string })
+      .valueFormatter;
+    expect(typeof fmt).toBe("function");
+    expect(fmt!(2157763)).toBe("2,157,763");
+    expect(fmt!(null)).toBe("—");
   });
 
   it("ignores includeCI flag when data lacks quantile fields", () => {

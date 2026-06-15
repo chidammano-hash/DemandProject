@@ -30,6 +30,8 @@ import {
   fetchFeatureCorrelation,
   fetchClusterFeatureImportance,
   fetchFeatureCategories,
+  fetchClusterProfile,
+  clusterEdaKeys,
   STALE,
   type FeatureImportanceRow,
   type FeatureStabilityRow,
@@ -311,15 +313,15 @@ function PerClusterSection() {
   const [selectedCluster, setSelectedCluster] = useState(0);
   const { chartColors, trendColors } = useChartColors();
 
-  // Fetch profile to get cluster list
+  // Fetch profile to get cluster list (via fetchJson query fetcher — U6.10)
   const { data: profileData } = useQuery({
-    queryKey: ["cluster-eda", "profile"],
-    queryFn: () => fetch("/cluster-eda/profile").then((r) => r.json()),
+    queryKey: clusterEdaKeys.profile(),
+    queryFn: fetchClusterProfile,
     staleTime: STALE.FIVE_MIN,
   });
 
   const clusterIds: number[] = useMemo(
-    () => (profileData?.rows ?? []).map((r: { cluster: number }) => r.cluster),
+    () => (profileData?.rows ?? []).map((r) => r.cluster),
     [profileData],
   );
 

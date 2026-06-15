@@ -208,6 +208,19 @@ def sku_analysis(
                     for col, val in zip(dfu_cols, row)
                 })
 
+        # U3.5 — the item's human-readable description (dim_item.item_desc) so the
+        # Item Analysis breadcrumb can render "185690 — DAMMANN JARDIN BLEU TEA"
+        # rather than a bare numeric code. Resolved once per item, not per DFU row.
+        item_desc: str | None = None
+        if item_val:
+            cur.execute(
+                "SELECT item_desc FROM dim_item WHERE item_id = %s LIMIT 1",
+                [item_val],
+            )
+            desc_row = cur.fetchone()
+            if desc_row and desc_row[0]:
+                item_desc = str(desc_row[0])
+
     return {
         "mode": mode,
         "item": item_val,
@@ -217,4 +230,5 @@ def sku_analysis(
         "series": series,
         "model_monthly": model_monthly,
         "dfu_attributes": dfu_attrs,
+        "item_desc": item_desc,
     }

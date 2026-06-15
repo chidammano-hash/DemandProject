@@ -9,6 +9,7 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { togglePillClass } from "./togglePill";
 
 type Grain = "customer" | "state";
 
@@ -135,7 +136,8 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
             <button
               key={g}
               onClick={() => onGrainChange(g)}
-              className={`px-2 py-0.5 text-xs rounded ${grain === g ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+              aria-pressed={grain === g}
+              className={togglePillClass(grain === g)}
             >
               By {g}
             </button>

@@ -27,6 +27,8 @@ import {
   STALE_LINEAGE,
 } from "@/api/queries";
 import type { DQDomainScore, DQCheck, LoadBatch, DQCorrection, DQCorrectionSummary } from "@/api/queries/platform";
+import { formatDate } from "@/lib/formatters";
+import { interactiveRowProps } from "@/lib/interactiveRow";
 import {
   RefreshCw,
   CheckCircle2,
@@ -46,6 +48,7 @@ import {
   SelfHealPanel,
   scoreBadgeClass,
   scoreRingColor,
+  formatScore,
   relativeTime,
 } from "./data-quality";
 
@@ -102,13 +105,45 @@ export default function DataQualityTab() {
   const [domainFilter, setDomainFilter] = useState<string | null>(null);
 
   /* summary KPIs */
-  const overallScore = domains.length
-    ? Math.round(domains.reduce((s, d) => s + d.score, 0) / domains.length)
-    : 0;
+  // U3.12 — Overall Health is a CHECK-WEIGHTED scored pass rate, not a
+  // mean-of-domain-scores. A simple average let tiny 2-check 0% domains distort
+  // the headline (mean-of-means dominated by the smallest domains) and disagree
+  // with the Passed/Failed tiles beside it. We re-aggregate the same scored
+  // numerator/denominator the per-domain cards use: scored fails exclude info-
+  // and warning-severity fails (F3.1/U8.3) and skips, so this equals
+  // Σpassed / Σ(passed + critical_fails + warnings).
+  const scoredTotals = domains.reduce(
+    (acc, d) => {
+      const criticalFails = Math.max(0, d.failed - (d.info_fails ?? 0) - (d.warning_fails ?? 0));
+      acc.passed += d.passed;
+      acc.scored += d.passed + criticalFails + d.warnings;
+      return acc;
+    },
+    { passed: 0, scored: 0 },
+  );
+  // Overall Health mirrors the per-domain rule: a number when there is a
+  // pass-rate to grade, else null (nothing globally scoreable — all skip/info/
+  // warn). Null renders a neutral "—", never a misleading green 100% (U4.2).
+  const overallScore: number | null = !domains.length
+    ? 0
+    : scoredTotals.scored
+      ? Math.round((100 * scoredTotals.passed) / scoredTotals.scored)
+      : null;
   const totalChecks = domains.reduce((s, d) => s + d.total, 0);
   const totalPass = domains.reduce((s, d) => s + d.passed, 0);
-  const totalFail = domains.reduce((s, d) => s + d.failed, 0);
-  const totalWarn = domains.reduce((s, d) => s + d.warnings, 0);
+  // F7.2 — the summary "Failed" tile must use the SAME severity-aware rule as
+  // the per-domain red chip (cycles U8.3 / F3.1): only scored/critical fails are
+  // red. Previously this summed the RAW `failed` field, so warning- and info-
+  // severity fails (which every card correctly demotes) inflated the headline to
+  // an alarm-red "Failed 26" over a grid of "0 fail" cards. Warning-severity
+  // fails roll into the amber Warnings tile (they belong there conceptually);
+  // info-severity fails surface in their own muted tile.
+  const totalFail = domains.reduce(
+    (s, d) => s + Math.max(0, d.failed - (d.info_fails ?? 0) - (d.warning_fails ?? 0)),
+    0,
+  );
+  const totalWarn = domains.reduce((s, d) => s + d.warnings + (d.warning_fails ?? 0), 0);
+  const totalInfo = domains.reduce((s, d) => s + (d.info_fails ?? 0), 0);
   const totalSkip = domains.reduce((s, d) => s + (d.skipped ?? 0), 0);
   const lastRun = useMemo(() => checkList.reduce<string | null>((latest, c) => {
     if (!c.last_run) return latest;
@@ -151,21 +186,31 @@ export default function DataQualityTab() {
       {/* ================================================================== */}
       {/* SECTION 0: Summary KPI Bar                                         */}
       {/* ================================================================== */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-8">
         {/* Overall Health Score */}
         <div className="rounded-lg border border-border bg-card p-4 text-center">
           <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full border-4 ${scoreRingColor(overallScore)}`}>
-            <span className="text-lg font-bold">{overallScore}%</span>
+            <span className="text-lg font-bold">{formatScore(overallScore)}</span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">Overall Health</p>
         </div>
-        {/* Total Checks */}
+        {/* Check Runs — F5.3: the dashboard rolls up per domain-pair, so a
+            cross-domain referential check is counted once per domain it touches.
+            That makes this number (e.g. 166) legitimately larger than the
+            "Check Catalog (83)" header, which lists DISTINCT definitions. Relabel
+            to "Check Runs" and disclose the definition denominator so the two
+            surfaces self-explain instead of looking contradictory. */}
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-muted-foreground" />
             <span className="text-2xl font-bold">{totalChecks}</span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">Total Checks</p>
+          <p className="mt-1 text-xs text-muted-foreground">Check Runs</p>
+          {checkList.length > 0 && (
+            <p className="text-[10px] text-muted-foreground/80">
+              across {checkList.length} definition{checkList.length !== 1 ? "s" : ""}
+            </p>
+          )}
         </div>
         {/* Passed */}
         <div className="rounded-lg border border-border bg-card p-4">
@@ -190,6 +235,16 @@ export default function DataQualityTab() {
             <span className="text-2xl font-bold text-amber-500">{totalWarn}</span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">Warnings</p>
+        </div>
+        {/* Info-severity fails — non-passing 'info' checks. Surfaced in their
+            own muted tile (F7.2) so a planner can see why some checks are
+            non-passing without them masquerading as hard (red) failures. */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <MinusCircle className="h-4 w-4 text-blue-500" />
+            <span className="text-2xl font-bold text-blue-500">{totalInfo}</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Info</p>
         </div>
         {/* Skipped — checks whose source table was absent at run time. Surfaced
             so the tile counts reconcile with Total (passed+failed+warn+skip),
@@ -232,14 +287,31 @@ export default function DataQualityTab() {
               >
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium capitalize">{d.domain}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${scoreBadgeClass(d.score)}`}>
-                    {d.score}%
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-bold ${scoreBadgeClass(d.score)}`}
+                    title={
+                      d.score === null
+                        ? "No pass-rate to grade — this domain's only checks are failing warning/info checks (warn-only). Review the warn/info chips."
+                        : undefined
+                    }
+                  >
+                    {formatScore(d.score)}
                   </span>
                 </div>
                 <div className="mt-2 flex gap-3 text-xs text-muted-foreground">
                   <span className="text-green-600">{d.passed} pass</span>
-                  <span className="text-red-600">{d.failed} fail</span>
-                  <span className="text-amber-600">{d.warnings} warn</span>
+                  {/* F2.1/U2.18 + F3.1 — the red chip shows only CRITICAL fails.
+                      info-severity and warning-severity fails are excluded from
+                      the score (Check Catalog labels warning fails "WARNING"),
+                      so subtract both here to avoid a red "2 fail" / red 0% badge
+                      contradicting the catalog. info fails surface on the "{n}
+                      info" chip; warning fails roll into the amber warn chip. */}
+                  <span className="text-red-600">
+                    {Math.max(0, d.failed - (d.info_fails ?? 0) - (d.warning_fails ?? 0))} fail
+                  </span>
+                  <span className="text-amber-600">
+                    {d.warnings + (d.warning_fails ?? 0)} warn
+                  </span>
                   {(d.skipped ?? 0) > 0 && (
                     <span
                       className="text-muted-foreground"
@@ -481,10 +553,11 @@ function CorrectionsSection() {
                     return (
                       <tr
                         key={`${s.item_id}-${s.loc}`}
-                        className="border-b border-border/30 cursor-pointer transition-colors hover:bg-primary/10"
-                        onClick={() => {
+                        {...interactiveRowProps(() => {
                           window.location.href = `?tab=itemAnalysis&item=${encodeURIComponent(s.item_id)}&loc=${encodeURIComponent(s.loc)}&dqCorrections=1`;
-                        }}
+                        })}
+                        aria-label={`View item analysis for ${s.item_id} at ${s.loc}`}
+                        className="border-b border-border/30 cursor-pointer transition-colors hover:bg-primary/10"
                       >
                         <td className="py-1.5 pr-3 font-mono font-medium">{s.item_id}</td>
                         <td className="py-1.5 pr-3">{s.loc}</td>
@@ -510,7 +583,7 @@ function CorrectionsSection() {
                             : "\u2014"}
                         </td>
                         <td className="py-1.5 pr-3 text-muted-foreground">
-                          {s.latest_at ? new Date(s.latest_at).toLocaleDateString() : "\u2014"}
+                          {formatDate(s.latest_at)}
                         </td>
                       </tr>
                     );

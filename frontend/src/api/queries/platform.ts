@@ -37,7 +37,7 @@ export const fetchAuditLog = async (limit = 50, offset = 0) =>
 // ---------------------------------------------------------------------------
 // Data Quality (08-01)
 // ---------------------------------------------------------------------------
-export interface DQDomainScore { domain: string; score: number; passed: number; failed: number; warnings: number; skipped: number; info_fails: number; total: number; }
+export interface DQDomainScore { domain: string; score: number | null; passed: number; failed: number; warnings: number; skipped: number; info_fails: number; warning_fails: number; total: number; }
 export interface DQCheck { check_id: number; check_name: string; check_type: string; domain: string; table_name: string; severity: string; enabled: boolean; last_status: string | null; last_value: number | null; last_run: string | null; }
 export interface DQHistoryEntry { check_id: number; check_name: string; check_type?: string; domain: string; table_name: string; severity: string; status: string; metric_value: number | null; details: Record<string, unknown> | string | null; run_ts: string | null; }
 export interface DQFixItem { id: number; fix_type: string; description: string; affected_rows: number; recommendation: string | null; status: string; }

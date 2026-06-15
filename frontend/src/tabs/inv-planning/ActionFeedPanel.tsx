@@ -7,7 +7,7 @@ import {
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
-import { formatCurrency, formatInt } from "@/lib/formatters";
+import { formatCurrency, formatInt, formatDate } from "@/lib/formatters";
 import { getSeverityConfig } from "@/constants/severity";
 import {
   AlertTriangle,
@@ -62,6 +62,7 @@ export function ActionFeedPanel() {
       <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2">
         Unified action feed aggregating exceptions, demand signals, PO risks, and stockout alerts across all inventory planning modules.
         Items are ranked by severity and financial impact. Auto-refreshes every 60 seconds.
+        Counts exceed the Command Center "Open Exceptions" tile, which scopes to replenishment exceptions only.
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -86,6 +87,7 @@ export function ActionFeedPanel() {
           className={PANEL_KPI}
           label="Financial Impact at Risk"
           value={isLoading ? "..." : formatCurrency(summary?.financial_at_risk)}
+          sublabel={summary?.financial_at_risk_basis}
         />
       </div>
 
@@ -130,6 +132,11 @@ export function ActionFeedPanel() {
                         {action.item_id} @ {action.loc}
                       </span>
                     </div>
+                    {action.item_desc && (
+                      <p className="text-xs font-medium text-foreground/80 mb-0.5 truncate">
+                        {action.item_desc}
+                      </p>
+                    )}
                     <p className="text-sm font-medium text-foreground">{action.title}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{action.detail}</p>
                   </div>
@@ -140,7 +147,7 @@ export function ActionFeedPanel() {
                       </p>
                     )}
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {new Date(action.created_at).toLocaleDateString()}
+                      {formatDate(action.created_at)}
                     </p>
                   </div>
                 </div>

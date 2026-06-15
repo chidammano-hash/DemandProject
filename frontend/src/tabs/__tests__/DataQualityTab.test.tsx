@@ -101,6 +101,34 @@ describe("DataQualityTab", () => {
     expect(screen.getByText(/Check Catalog/)).toBeInTheDocument();
   });
 
+  it("F5.3: the check-count tile reconciles the per-domain run total with the distinct catalog definitions", async () => {
+    const { fetchDQDashboard, fetchDQChecks } = await import("@/api/queries");
+    // Dashboard rolls up per domain-pair: 20 + 10 = 30 check-RUNS.
+    (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValue({ domains: mockDomains });
+    // Catalog lists 3 DISTINCT check definitions (the 83-vs-166 shape, scaled).
+    (fetchDQChecks as ReturnType<typeof vi.fn>).mockResolvedValue({ checks: mockChecks });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // The tile must no longer be the bare ambiguous "Total Checks" (which read
+    // 30 next to a "Check Catalog (3)" header). It is relabeled to "Check Runs"
+    // and discloses the distinct-definition denominator so 30 vs 3 self-explains.
+    expect(await screen.findByText("Check Runs")).toBeInTheDocument();
+    expect(screen.queryByText("Total Checks")).toBeNull();
+    // The denominator disclosure is split across text nodes by the {count}
+    // interpolation and renders after the catalog query resolves, so await a
+    // normalized-text match scoped to the leaf <p> (selector avoids ancestors).
+    const sublabel = await screen.findByText(
+      (_content, el) =>
+        el?.tagName === "P" &&
+        (el?.textContent ?? "").replace(/\s+/g, " ").includes("across 3 definitions"),
+    );
+    expect(sublabel).toBeInTheDocument();
+  });
+
   it("F7.1: Domain Health card surfaces the skipped count and the summary bar adds a Skipped tile", async () => {
     const { fetchDQDashboard } = await import("@/api/queries");
     (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -147,6 +175,95 @@ describe("DataQualityTab", () => {
     expect(cardBadge).toBeDefined();
     expect(cardBadge!.className).toContain("green");
     expect(cardBadge!.className).not.toContain("red");
+  });
+
+  it("F2.1/U2.18: an info-only domain does not show a red non-zero 'fail' next to green 100%", async () => {
+    const { fetchDQDashboard } = await import("@/api/queries");
+    (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      domains: [
+        // Both 'fails' are info-severity (excluded from the 100% score). The red
+        // "fail" count must not double-count them — it should read "0 fail".
+        { domain: "sku_to_item", score: 100, passed: 0, failed: 2, warnings: 0, skipped: 0, info_fails: 2, total: 2 },
+      ],
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // The card shows "0 fail" (scored fails), with the detail carried by "2 info".
+    expect(await screen.findByText("0 fail")).toBeInTheDocument();
+    expect(screen.getByText("2 info")).toBeInTheDocument();
+    // No red "2 fail" chip should exist anywhere on the card.
+    expect(screen.queryByText("2 fail")).toBeNull();
+  });
+
+  it("F3.1/U4.2: a warning-only failing domain (0 pass) badges NEUTRAL (not red 0%, not green 100%) and rolls warning fails into the amber warn chip", async () => {
+    const { fetchDQDashboard } = await import("@/api/queries");
+    (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      domains: [
+        // forecast_to_sku: only fails are warning-severity, 0 pass -> nothing
+        // scoreable, so the backend returns score:null. The card must NOT badge a
+        // red 0% (F3.1) and must NOT badge a green 100% (U4.2) — it renders a
+        // neutral "—". The red chip still reads "0 fail" and the 2 warning fails
+        // roll into "2 warn".
+        { domain: "forecast_to_sku", score: null, passed: 0, failed: 2, warnings: 0, skipped: 0, info_fails: 0, warning_fails: 2, total: 2 },
+      ],
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // Red chip reads "0 fail" (warning fails excluded), warn chip absorbs them.
+    expect(await screen.findByText("0 fail")).toBeInTheDocument();
+    expect(screen.getByText("2 warn")).toBeInTheDocument();
+    // The domain-card score badge (rounded-full pill) renders a neutral "—",
+    // never a green 100% (would hide the gap) and never a red 0% (over-alarm).
+    const cardBadge = screen
+      .getAllByText("—")
+      .find((b) => b.className.includes("rounded-full"));
+    expect(cardBadge).toBeDefined();
+    expect(cardBadge!.className).not.toContain("green");
+    expect(cardBadge!.className).not.toContain("red");
+    // No misleading green 100% / red 0% over the warn-only domain card.
+    expect(screen.queryByText("100%")).toBeNull();
+    expect(screen.queryByText("0%")).toBeNull();
+    expect(screen.queryByText("2 fail")).toBeNull();
+  });
+
+  it("F7.2: the summary 'Failed' tile counts only scored/critical fails, matching the '0 fail' cards (warning/info fails are not red)", async () => {
+    const { fetchDQDashboard } = await import("@/api/queries");
+    // Cycle-7 live shape: summed across domains failed=26 decomposes entirely
+    // into warning_fails=20 + info_fails=6, critical=0. Every domain card reads
+    // "0 fail". The header "Failed" tile must NOT contradict them with "26".
+    (fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      domains: [
+        { domain: "inventory", score: 100, passed: 20, failed: 10, warnings: 0, skipped: 0, info_fails: 0, warning_fails: 10, total: 30 },
+        { domain: "customer", score: 100, passed: 4, failed: 16, warnings: 6, skipped: 0, info_fails: 6, warning_fails: 10, total: 32 },
+      ],
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+    // Wait for the mocked dashboard payload to land (domain cards render).
+    await screen.findByRole("button", { name: /inventory/i });
+    // Locate the "Failed" summary tile by its label, then read its number.
+    const failedLabel = screen.getByText("Failed");
+    const failedTile = failedLabel.closest("div.rounded-lg")!;
+    // Scored/critical fails = Σ max(0, failed - info_fails - warning_fails) = 0.
+    expect(failedTile.textContent).toContain("0");
+    expect(failedTile.textContent).not.toContain("26");
+    // Warning-severity fails (20) roll into the amber Warnings tile, joining the
+    // 6 warn-status checks -> 26. They must not masquerade as hard failures.
+    const warnLabel = screen.getByText("Warnings");
+    const warnTile = warnLabel.closest("div.rounded-lg")!;
+    expect(warnTile.textContent).toContain("26");
   });
 
   it("U3.2: empty state does not instruct the stale /dq/run 404 path", async () => {
@@ -307,13 +424,43 @@ describe("DataQualityTab", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Overall Health")).toBeInTheDocument();
-      expect(screen.getByText("Total Checks")).toBeInTheDocument();
+      // F5.3 — "Total Checks" relabeled to "Check Runs" (per-domain run total)
+      // with a distinct-definition denominator sublabel.
+      expect(screen.getByText("Check Runs")).toBeInTheDocument();
       expect(screen.getByText("Passed")).toBeInTheDocument();
       expect(screen.getByText("Failed")).toBeInTheDocument();
       expect(screen.getByText("Warnings")).toBeInTheDocument();
       // "Last Run" appears in both KPI bar and table header
       expect(screen.getAllByText(/Last Run/).length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it("U3.12: Overall Health is a check-weighted pass rate, not a mean-of-domain-scores", async () => {
+    const queries = await import("@/api/queries");
+    // A large healthy domain + a tiny 0% domain. Mean-of-means would read ~47%
+    // (dominated by the tiny domain); the check-weighted scored pass rate is 88%.
+    (queries.fetchDQDashboard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      domains: [
+        // 28 pass / 2 critical fail -> domain score 93.3, scored total 30.
+        { domain: "inventory", score: 93.3, passed: 28, failed: 2, warnings: 0, skipped: 4, info_fails: 0, warning_fails: 0, total: 34 },
+        // 0 pass / 2 critical fail -> domain score 0.0, scored total 2.
+        { domain: "tiny", score: 0.0, passed: 0, failed: 2, warnings: 0, skipped: 0, info_fails: 0, warning_fails: 0, total: 2 },
+      ],
+    });
+
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(
+      <TestQueryWrapper>
+        <DataQualityTab />
+      </TestQueryWrapper>
+    );
+
+    // Check-weighted: round(100 * Σpassed / Σ(passed+critical_fails+warnings))
+    // = round(100 * 28 / (30 + 2)) = round(87.5) = 88.  NOT the mean-of-means
+    // round((93.3 + 0) / 2) = 47.
+    const ring = await screen.findByText("88%");
+    expect(ring).toBeInTheDocument();
+    expect(screen.queryByText("47%")).toBeNull();
   });
 
   it("renders domain health cards as clickable buttons", async () => {

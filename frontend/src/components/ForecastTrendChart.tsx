@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { EChartContainer } from "@/components/EChartContainer";
 import { useChartColors } from "@/hooks/useChartColors";
+import { formatInt } from "@/lib/formatters";
 
 interface ForecastTrendPoint {
   month: string;
@@ -47,9 +48,6 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({
     );
   }
 
-  const months = data.map((d) => d.month);
-  const forecasts = data.map((d) => d.forecast);
-  const actuals = data.map((d) => d.actual);
   // The CI band renders as two stacked "line" series: the lower bound drawn
   // invisibly, then the delta (upper - lower) stacked on top with areaStyle.
   // This is the canonical ECharts pattern for a filled band between two lines.
@@ -61,12 +59,56 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({
     ? data.map((d) => (d.upper_80 as number) - (d.lower_80 as number))
     : [];
 
-  const option = {
+  const option = buildForecastTrendOption({
+    data,
+    theme,
+    chartColors,
+    seriesColors,
+    hasCI,
+    lowers,
+    bandHeights,
+  });
+
+  return <EChartContainer option={option} theme={theme} height={260} />;
+});
+
+interface BuildOptionArgs {
+  data: ForecastTrendPoint[];
+  theme: "light" | "dark";
+  chartColors: { grid: string; axis: string; tooltip: string };
+  seriesColors: string[];
+  hasCI: boolean;
+  lowers: number[];
+  bandHeights: number[];
+}
+
+/**
+ * Pure ECharts option builder for the Forecast-vs-Actual trend chart. Extracted
+ * so the tooltip `valueFormatter` (U4.2) can be unit-tested without mounting
+ * ECharts. The tooltip thousands-separates hover values (`formatInt`) so a
+ * 7-digit point reads "2,157,763" consistent with the compact K/M axis and the
+ * KPI tiles above the chart.
+ */
+export function buildForecastTrendOption({
+  data,
+  theme,
+  chartColors,
+  seriesColors,
+  hasCI,
+  lowers,
+  bandHeights,
+}: BuildOptionArgs) {
+  const months = data.map((d) => d.month);
+  const forecasts = data.map((d) => d.forecast);
+  const actuals = data.map((d) => d.actual);
+
+  return {
     tooltip: {
       trigger: "axis" as const,
       backgroundColor: chartColors.tooltip,
       borderColor: chartColors.grid,
       textStyle: { color: theme === "dark" ? "#e5e5e5" : "#171717", fontSize: 12 },
+      valueFormatter: (v: unknown) => formatInt(typeof v === "number" ? v : null),
     },
     legend: {
       data: hasCI ? ["Forecast", "Actual", "80% CI"] : ["Forecast", "Actual"],
@@ -144,6 +186,4 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({
       },
     ],
   };
-
-  return <EChartContainer option={option} theme={theme} height={260} />;
-});
+}

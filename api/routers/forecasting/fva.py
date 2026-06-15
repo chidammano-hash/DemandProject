@@ -10,12 +10,24 @@ from common.core.planning_date import get_planning_date
 router = APIRouter(prefix="/fva", tags=["fva"])
 
 
+# Each tuple: (stage_id, label, description, default_state, missing_state).
+# ``default_state`` is "planned" for stages that are always reserved (no source
+# data yet). ``missing_state`` is the state a normally-measured ("actual") stage
+# degrades to when its source yields no rows:
+#   - external degrades to "missing" (genuinely no forecast → honest blank).
+#   - F2.2: champion degrades to "planned" instead of "missing". The champion
+#     forecast lives in fact_production_forecast and has no measurable overlap
+#     with actuals in the window, so the external-forecast query (only ever
+#     model_id='external') returns no champion row. Rendering "missing" reads as
+#     a broken "No data" next to the AI/Planner "Coming Soon" stages; "planned"
+#     makes the three forward stages present consistently as reserved. If a
+#     measured champion row ever appears it still surfaces as "actual".
 STAGE_DEFS = [
-    ("seasonal_naive", "Naive Seasonal", "Same-month-last-year baseline for measuring planning lift.", "actual"),
-    ("external", "External", "Current ERP or external forecast before model selection.", "actual"),
-    ("champion", "Champion", "Best measured statistical or ML model for the DFU-month.", "actual"),
-    ("ai_adjusted", "AI Adjusted", "Reserved for AI-assisted forecast interventions once they are measured.", "planned"),
-    ("planner_adjusted", "Planner Adjusted", "Reserved for human overrides once measured outcomes are available.", "planned"),
+    ("seasonal_naive", "Naive Seasonal", "Same-month-last-year baseline for measuring planning lift.", "actual", "missing"),
+    ("external", "External", "Current ERP or external forecast before model selection.", "actual", "missing"),
+    ("champion", "Champion", "Best measured statistical or ML model once champion-vs-actual outcomes are available.", "actual", "planned"),
+    ("ai_adjusted", "AI Adjusted", "Reserved for AI-assisted forecast interventions once they are measured.", "planned", "planned"),
+    ("planner_adjusted", "Planner Adjusted", "Reserved for human overrides once measured outcomes are available.", "planned", "planned"),
 ]
 
 
@@ -23,11 +35,13 @@ def _round_or_none(value: float | None, digits: int = 2) -> float | None:
     return round(float(value), digits) if value is not None else None
 
 
-def _build_stage(stage_id: str, label: str, description: str, default_state: str, model: dict | None) -> dict:
+def _build_stage(
+    stage_id: str, label: str, description: str, default_state: str, missing_state: str, model: dict | None
+) -> dict:
     if default_state == "planned":
         state, accuracy, n_rows = "planned", None, 0
     elif model is None:
-        state, accuracy, n_rows = "missing", None, 0
+        state, accuracy, n_rows = missing_state, None, 0
     else:
         state, accuracy, n_rows = "actual", model["accuracy_pct"], model["n_rows"]
     return {
@@ -140,8 +154,8 @@ async def fva_waterfall(
             }
 
     stages = [
-        _build_stage(stage_id, label, description, default_state, models.get(stage_id))
-        for stage_id, label, description, default_state in STAGE_DEFS
+        _build_stage(stage_id, label, description, default_state, missing_state, models.get(stage_id))
+        for stage_id, label, description, default_state, missing_state in STAGE_DEFS
     ]
     # Promote AI Adjusted from its "planned" default to actual when a backtest run exists.
     # _build_stage() short-circuits on default_state == "planned" and returns

@@ -18,6 +18,8 @@ vi.mock("@/api/queries", () => ({
       critical: 4252,
       high: 0,
       financial_at_risk: 12099.96,
+      financial_at_risk_basis:
+        "7-day lost gross margin (open exceptions) + proposed order value",
       displayed: 20,
     },
     actions: [
@@ -31,7 +33,8 @@ vi.mock("@/api/queries", () => ({
         financial_impact: 571.98,
         severity: "critical",
         title: "Resolve Stockout",
-        detail: "Stockout — 627099 @ 1401-BULK",
+        detail: "Stockout — TITOS HANDMADE VODKA 80 (627099 @ 1401-BULK)",
+        item_desc: "TITOS HANDMADE VODKA 80",
         created_at: "2026-04-01",
       },
     ],
@@ -52,6 +55,22 @@ describe("ActionFeedPanel full-population headline (U9.1)", () => {
     render(<ActionFeedPanel />, { wrapper: TestQueryWrapper });
     await waitFor(() =>
       expect(screen.getByText(/showing top 20 of 6,214/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("renders the human-readable item description on each action row (U1.8)", async () => {
+    render(<ActionFeedPanel />, { wrapper: TestQueryWrapper });
+    await waitFor(() =>
+      expect(screen.getByText("TITOS HANDMADE VODKA 80")).toBeInTheDocument(),
+    );
+  });
+
+  it("labels the $ at risk tile with its 7-day lost-margin basis (F1.2)", async () => {
+    render(<ActionFeedPanel />, { wrapper: TestQueryWrapper });
+    await waitFor(() =>
+      expect(
+        screen.getByText(/7-day lost gross margin/i),
+      ).toBeInTheDocument(),
     );
   });
 });

@@ -36,6 +36,29 @@ export function formatCell(value: unknown): string {
   return String(value);
 }
 
+// U6.8 — a single deterministic date formatter. Five tabs previously used
+// `new Date(x).toLocaleDateString()`, which renders host-locale-dependent
+// "4/1/2026" (ambiguous m/d vs d/m). This fixes `en-US` short-month output
+// ("Apr 1, 2026"), matching the "MMM" family used by month/chart labels.
+// `timeZone: "UTC"` so a date-only ISO string ("2026-04-01", parsed as UTC
+// midnight) renders as that same calendar day regardless of the host's
+// timezone offset — avoiding the classic off-by-one ("Mar 31") in negative-UTC
+// locales.
+const dateFmt = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+
+/** Format an ISO date/timestamp as a deterministic "Apr 1, 2026"; "—" when empty/unparseable. */
+export function formatDate(value: string | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return dateFmt.format(d);
+}
+
 export function titleCase(value: string): string {
   return value
     .split("_")

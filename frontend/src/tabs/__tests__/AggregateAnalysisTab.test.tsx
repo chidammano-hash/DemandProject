@@ -190,10 +190,13 @@ describe("AggregateAnalysisTab", () => {
     });
   });
 
-  it("renders planning date badge", async () => {
+  it("renders a labeled, friendly-formatted planning date badge (U2.5)", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getByText("2026-03-16")).toBeDefined();
+      // Must match the app-wide "Plan as of Mon D, YYYY" convention, not a bare
+      // ISO "2026-03-16" that reads ambiguously as a filter or last-refresh.
+      expect(screen.getByText("Plan as of Mar 16, 2026")).toBeDefined();
     });
+    expect(screen.queryByText("2026-03-16")).toBeNull();
   });
 });

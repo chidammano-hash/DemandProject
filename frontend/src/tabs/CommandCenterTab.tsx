@@ -8,14 +8,11 @@
  *
  * Layout: KPI Summary Bar -> Unified Exception Feed -> Trend Chart
  *
- * TODO (UX-2 Gen-4 Roadmap): Consolidate with ControlTowerTab.
- *
  * CommandCenterTab is the canonical triage overview wired into the sidebar
- * ("commandCenter"). ControlTowerTab is a 433-line legacy 5-zone dashboard
- * that was superseded by this screen but remains reachable via URL state
- * (`?tab=controlTower`). Merging them requires reconciling overlapping KPI
- * queries, migrating the trend-window chooser, and verifying no deep-link
- * consumers rely on the old key. Deferred pending UX review.
+ * ("commandCenter"). The legacy ControlTowerTab and AIPlannerTab screens were
+ * superseded by this consolidated view and removed (U3.10); their old URL keys
+ * (`?tab=controlTower`, `?tab=aiPlanner`) still resolve here via TAB_REDIRECTS
+ * in useUrlState.ts so existing bookmarks keep working.
  */
 import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -45,8 +42,9 @@ import type { StoryboardException } from "@/types/storyboard";
 import { Skeleton } from "@/components/Skeleton";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/formatters";
+import { formatCurrency, formatDate, formatInt } from "@/lib/formatters";
 import { navigateToItem } from "@/lib/navigation";
+import { useChartColors } from "@/hooks/useChartColors";
 import {
   Shield,
   AlertTriangle,
@@ -72,6 +70,7 @@ export interface UnifiedException {
   type: string;
   typeLabel: string;
   itemNo: string;
+  itemDesc?: string;
   location: string;
   summary: string;
   recommendation?: string;
@@ -132,7 +131,23 @@ function mapRuleSeverity(
   return "low";
 }
 
-// Exception type labels for storyboard
+// U7.10 — numeric severity band [min, max) for each categorical chip, matching
+// the mapRuleSeverity cutoffs. Pushed down to /storyboard/exceptions so the
+// server returns rows in the selected band — the feed is sorted critical-first
+// and capped at 50, so client-side filtering of an all-critical page left the
+// High/Medium/Low chips structurally empty (dead controls).
+const SEVERITY_BANDS: Record<string, { min: number; max: number }> = {
+  critical: { min: 0.75, max: 1.0 },
+  high: { min: 0.5, max: 0.75 },
+  medium: { min: 0.25, max: 0.5 },
+  low: { min: 0.0, max: 0.25 },
+};
+
+// Exception type labels for storyboard. Includes the AI-insight rule enums AND
+// the replenishment enums the cycle-4 _replenishment_fallback now emits
+// (below_ss/stockout/below_rop/excess/zero_velocity) so the card chip never
+// leaks a raw enum and names an exception with the SAME words the Inv Planning
+// action feed uses (U4.1).
 const EXCEPTION_TYPE_LABELS: Record<string, string> = {
   forecast_bias: "Forecast Bias",
   stockout_risk: "Stockout Risk",
@@ -140,6 +155,13 @@ const EXCEPTION_TYPE_LABELS: Record<string, string> = {
   excess_risk: "Excess Risk",
   model_drift: "Model Drift",
   new_item: "New Item",
+  // Replenishment exception enums (storyboard fallback)
+  below_ss: "Below Safety Stock",
+  below_rop: "Below Reorder Point",
+  below_rop_critical: "Critically Below Reorder Point",
+  stockout: "Stockout",
+  excess: "Excess Inventory",
+  zero_velocity: "Zero Velocity",
 };
 
 // AI insight type labels
@@ -172,9 +194,27 @@ function normalizeAiInsight(insight: AiInsight): UnifiedException {
   };
 }
 
-function normalizeStoryboardException(
+// U2.2 — the replenishment fallback headline is "<Type> — <item> @ <loc>", but
+// the row already prints "<item> @ <loc>" on its identity line. Strip a trailing
+// "— <item_id> @ <loc>" so the code pair is not shown twice in a dense triage
+// list. Headlines that do not restate the identity (AI-style summaries) are
+// returned unchanged.
+function dropRedundantIdentitySuffix(
+  headline: string,
+  itemId: string,
+  loc: string
+): string {
+  const suffix = `— ${itemId} @ ${loc}`;
+  if (headline.endsWith(suffix)) {
+    return headline.slice(0, headline.length - suffix.length).trim();
+  }
+  return headline;
+}
+
+export function normalizeStoryboardException(
   exc: StoryboardException
 ): UnifiedException {
+  const rawHeadline = exc.headline ?? `${exc.exception_type} detected`;
   return {
     id: `rule-${exc.exception_id}`,
     source: "rule",
@@ -183,8 +223,9 @@ function normalizeStoryboardException(
     typeLabel:
       EXCEPTION_TYPE_LABELS[exc.exception_type] ?? exc.exception_type,
     itemNo: exc.item_id,
+    itemDesc: exc.item_desc ?? undefined,
     location: exc.loc,
-    summary: exc.headline ?? `${exc.exception_type} detected`,
+    summary: dropRedundantIdentitySuffix(rawHeadline, exc.item_id, exc.loc),
     recommendation: undefined,
     financialImpact: exc.financial_impact ?? undefined,
     createdAt: exc.generated_at,
@@ -198,6 +239,11 @@ function normalizeStoryboardException(
 // ---------------------------------------------------------------------------
 export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) {
   const qc = useQueryClient();
+
+  // Portfolio Trend series colors — read from the theme palette so the lines
+  // adapt to Light/Soft/Dark instead of hardcoded hex (U1.2). trendColors[0]
+  // (blue) keys the health-score line, trendColors[1] (teal) the fill-rate.
+  const { trendColors } = useChartColors();
 
   // Filters
   const [severityFilter, setSeverityFilter] = useState<string>("all");
@@ -233,11 +279,21 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
   });
 
   // ── Storyboard Exceptions ──
+  // U7.10 — when a severity chip is active, push its numeric band to the server
+  // so the (critical-first, 50-capped) feed reloads with rows that actually fall
+  // in the selected band instead of an empty client-side filter result.
+  const severityBand = severityFilter === "all" ? undefined : SEVERITY_BANDS[severityFilter];
   const sbQ = useQuery({
-    queryKey: storyboardKeys.list({ status: statusFilter === "all" ? "all" : statusFilter, limit: 50 }),
+    queryKey: storyboardKeys.list({
+      status: statusFilter === "all" ? "all" : statusFilter,
+      severity: severityFilter,
+      limit: 50,
+    }),
     queryFn: () =>
       fetchSbExceptions({
         status: statusFilter === "all" ? "all" : statusFilter,
+        severity_min: severityBand?.min,
+        severity_max: severityBand?.max,
         limit: 50,
       }),
     staleTime: STALE.THIRTY_SEC,
@@ -383,13 +439,14 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
           <KpiSummaryCard
             icon={AlertTriangle}
             label="Open Exceptions"
-            value={String(ex?.open_exceptions_total ?? 0)}
+            value={ex?.open_exceptions_total != null ? formatInt(ex.open_exceptions_total) : "--"}
             badge={
               ex?.critical_exceptions
-                ? `${ex.critical_exceptions} critical`
+                ? `${formatInt(ex.critical_exceptions)} critical`
                 : undefined
             }
             color={ex?.critical_exceptions ? "red" : undefined}
+            caption="Replenishment exceptions only"
           />
           <KpiSummaryCard
             icon={TrendingUp}
@@ -410,11 +467,20 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
             }
             progress={fr?.portfolio_fill_rate_3m ?? undefined}
           />
+          {/* U2.3 — a distinct $ metric (proposed replenishment order value)
+              instead of restating the "X critical" badge already on the Open
+              Exceptions tile. DollarSign is correct here since this IS a currency
+              value. */}
           <KpiSummaryCard
             icon={DollarSign}
-            label="Critical Items"
-            value={String(ex?.critical_exceptions ?? 0)}
-            color={ex?.critical_exceptions ? "red" : "green"}
+            label="Order Value at Risk"
+            value={
+              ex?.recommended_order_value != null
+                ? formatCurrency(ex.recommended_order_value)
+                : "--"
+            }
+            color={ex?.recommended_order_value ? "amber" : undefined}
+            caption="Proposed replenishment orders"
           />
         </div>
       )}
@@ -423,11 +489,14 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
       <div className="space-y-3">
         {/* Filter toolbar */}
         <div className="flex flex-wrap items-center gap-2" data-testid="filter-toolbar">
-          {/* Severity filter */}
-          <div className="flex rounded-md border overflow-hidden text-xs">
+          {/* Severity filter — segmented single-select. role=group + aria-pressed
+              let a screen reader announce the active chip and the mutual
+              exclusivity (U2.4). */}
+          <div role="group" aria-label="Severity filter" className="flex rounded-md border overflow-hidden text-xs">
             {["all", "critical", "high", "medium", "low"].map((sev) => (
               <button
                 key={sev}
+                aria-pressed={severityFilter === sev}
                 onClick={() => setSeverityFilter(sev)}
                 className={cn(
                   "px-3 py-1.5 font-medium transition-colors capitalize",
@@ -442,10 +511,11 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
           </div>
 
           {/* Source filter */}
-          <div className="flex rounded-md border overflow-hidden text-xs">
+          <div role="group" aria-label="Source filter" className="flex rounded-md border overflow-hidden text-xs">
             {["all", "ai", "rule"].map((src) => (
               <button
                 key={src}
+                aria-pressed={sourceFilter === src}
                 onClick={() => setSourceFilter(src)}
                 className={cn(
                   "px-3 py-1.5 font-medium transition-colors",
@@ -460,10 +530,11 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
           </div>
 
           {/* Status filter */}
-          <div className="flex rounded-md border overflow-hidden text-xs">
+          <div role="group" aria-label="Status filter" className="flex rounded-md border overflow-hidden text-xs">
             {["open", "acknowledged", "all"].map((st) => (
               <button
                 key={st}
+                aria-pressed={statusFilter === st}
                 onClick={() => setStatusFilter(st)}
                 className={cn(
                   "px-3 py-1.5 font-medium transition-colors capitalize",
@@ -536,22 +607,37 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
             </div>
           )
         ) : (
-          <div className="space-y-2" data-testid="exception-feed">
-            {unified.map((item) => (
-              <ExceptionFeedCard
-                key={item.id}
-                item={item}
-                onAccept={handleAccept}
-                onViewItem={() => navigateToItem(onNavigate, item.itemNo, item.location)}
-                acceptPending={
-                  acceptMutation.isPending &&
-                  item.source === "ai" &&
-                  acceptMutation.variables?.id ===
-                    (item.originalData as AiInsight).insight_id
-                }
-              />
-            ))}
-          </div>
+          <>
+            {/* U6.7 — the feed fetches at most 50 rows; surface that it is a
+                slice of the full open-exception population (the same total the
+                Open Exceptions tile shows), mirroring the Inv Planning feed. */}
+            <p
+              className="mb-2 text-xs text-muted-foreground"
+              data-testid="feed-count-caption"
+            >
+              Showing top {formatInt(unified.length)} of{" "}
+              {ex?.open_exceptions_total != null
+                ? formatInt(ex.open_exceptions_total)
+                : "—"}{" "}
+              exceptions by severity. KPIs above reflect the full population.
+            </p>
+            <div className="space-y-2" data-testid="exception-feed">
+              {unified.map((item) => (
+                <ExceptionFeedCard
+                  key={item.id}
+                  item={item}
+                  onAccept={handleAccept}
+                  onViewItem={() => navigateToItem(onNavigate, item.itemNo, item.location)}
+                  acceptPending={
+                    acceptMutation.isPending &&
+                    item.source === "ai" &&
+                    acceptMutation.variables?.id ===
+                      (item.originalData as AiInsight).insight_id
+                  }
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -601,7 +687,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
                     yAxisId="left"
                     type="monotone"
                     dataKey="avg_health_score"
-                    stroke="#3b82f6"
+                    stroke={trendColors[0]}
                     dot={false}
                     strokeWidth={2}
                     name="Avg Health Score"
@@ -610,7 +696,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
                     yAxisId="right"
                     type="monotone"
                     dataKey="fill_rate"
-                    stroke="#10b981"
+                    stroke={trendColors[1]}
                     dot={false}
                     strokeWidth={2}
                     name="Fill Rate"
@@ -639,6 +725,7 @@ function KpiSummaryCard({
   badge,
   color,
   progress,
+  caption,
 }: {
   icon: React.FC<{ className?: string }>;
   label: string;
@@ -646,6 +733,7 @@ function KpiSummaryCard({
   badge?: string;
   color?: "green" | "amber" | "red";
   progress?: number;
+  caption?: string;
 }) {
   const borderColor =
     color === "green"
@@ -710,6 +798,9 @@ function KpiSummaryCard({
             style={{ width: `${Math.min(progress * 100, 100)}%` }}
           />
         </div>
+      )}
+      {caption && (
+        <p className="mt-1 text-[10px] leading-tight text-muted-foreground">{caption}</p>
       )}
     </div>
   );
@@ -782,10 +873,16 @@ function ExceptionFeedCard({
             </span>
           </div>
 
-          {/* Item/Location identity */}
+          {/* Item/Location identity — code pair plus the human-readable product
+              name when the dim_item join resolved one (U2.1). */}
           <p className="text-xs font-mono font-bold tracking-wide">
             {item.itemNo} @ {item.location}
           </p>
+          {item.itemDesc && (
+            <p className="text-xs text-muted-foreground truncate">
+              {item.itemDesc}
+            </p>
+          )}
 
           {/* Summary */}
           <p className="text-sm leading-relaxed">{item.summary}</p>
@@ -807,7 +904,7 @@ function ExceptionFeedCard({
               </span>
             )}
             <span className="text-[10px] text-muted-foreground">
-              {new Date(item.createdAt).toLocaleDateString()}
+              {formatDate(item.createdAt)}
             </span>
           </div>
         </div>

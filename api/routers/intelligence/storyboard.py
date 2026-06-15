@@ -38,6 +38,32 @@ _REPL_SEVERITY_SCORE = {
     "low": 0.30,
 }
 
+# Friendly labels for raw replenishment exception-type enums. A naive
+# title-case of the snake_case value produces garbage like "Below Ss"; map
+# explicitly so the Command Center storyboard cards name an exception with the
+# SAME words the Inv Planning action feed uses (U4.1). Mirrors
+# ``inv_planning_insights._EXCEPTION_TYPE_LABELS`` — keep the two in sync.
+_REPL_TYPE_LABELS = {
+    "below_ss": "Below Safety Stock",
+    "below_rop": "Below Reorder Point",
+    "below_rop_critical": "Critically Below Reorder Point",
+    "stockout": "Stockout",
+    "excess": "Excess Inventory",
+    "zero_velocity": "Zero Velocity",
+}
+
+
+def _repl_type_label(exc_type: Optional[str]) -> str:
+    """Render a raw replenishment enum as a friendly label.
+
+    Falls back to title-casing the snake_case value for any unmapped type so a
+    new enum is still readable.
+    """
+    if not exc_type:
+        return "Exception"
+    return _REPL_TYPE_LABELS.get(exc_type, exc_type.replace("_", " ").title())
+
+
 # Map replenishment status onto the storyboard status vocabulary.
 _REPL_STATUS_MAP = {
     "open": "open",
@@ -83,6 +109,7 @@ def list_exceptions(
     status: str = Query(default="open", max_length=50),
     exception_type: str = Query(default="", max_length=50),
     severity_min: float = Query(default=0.0, ge=0.0, le=1.0),
+    severity_max: float = Query(default=1.0, ge=0.0, le=1.0),
     item: str = Query(default="", max_length=100),
     loc: str = Query(default="", max_length=100),
     limit: int = Query(default=50, ge=1, le=500),
@@ -114,6 +141,13 @@ def list_exceptions(
     if severity_min > 0:
         where_parts.append("severity >= %s")
         params.append(severity_min)
+
+    # U7.10 — severity_max lets a caller request a single severity BAND (e.g. the
+    # Command Center "High" chip => [0.5, 0.75)) so a feed sorted critical-first
+    # does not drown the lower bands. severity_max defaults to 1.0 (no upper cap).
+    if severity_max < 1.0:
+        where_parts.append("severity < %s")
+        params.append(severity_max)
 
     if item.strip():
         where_parts.append("item_id ILIKE %s")
@@ -165,7 +199,8 @@ def list_exceptions(
             if total == 0:
                 fallback = _replenishment_fallback(
                     cur, status=status, item=item, loc=loc,
-                    severity_min=severity_min, limit=limit, offset=offset,
+                    severity_min=severity_min, severity_max=severity_max,
+                    limit=limit, offset=offset,
                 )
                 if fallback is not None:
                     return fallback
@@ -201,6 +236,7 @@ def _replenishment_fallback(
     item: str,
     loc: str,
     severity_min: float,
+    severity_max: float = 1.0,
     limit: int,
     offset: int,
 ) -> Optional[dict]:
@@ -215,27 +251,37 @@ def _replenishment_fallback(
     where_parts: list[str] = []
     params: list[Any] = []
 
+    # Qualify every predicate with the ``e`` alias so the same clause is valid in
+    # both the (un-joined) COUNT query and the dim_item-joined row query, where
+    # bare item_id would be ambiguous (U2.1).
     if status.strip() and status.strip().lower() != "all":
-        where_parts.append("status = %s")
+        where_parts.append("e.status = %s")
         params.append(status.strip())
     if item.strip():
-        where_parts.append("item_id ILIKE %s")
+        where_parts.append("e.item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
     if loc.strip():
-        where_parts.append("loc ILIKE %s")
+        where_parts.append("e.loc ILIKE %s")
         params.append(f"%{loc.strip()}%")
-    if severity_min > 0:
-        # Only keep text severities scoring at/above the requested threshold.
-        allowed = [k for k, v in _REPL_SEVERITY_SCORE.items() if v >= severity_min]
+    if severity_min > 0 or severity_max < 1.0:
+        # Keep only text severities whose numeric score falls in the requested
+        # band [severity_min, severity_max). The exclusive upper bound matches
+        # the queue path (``severity < severity_max``) so a single-band request
+        # (e.g. the Command Center "High" chip => [0.5, 0.75)) selects exactly
+        # one text severity and the chip is no longer dead (U7.10).
+        allowed = [
+            k for k, v in _REPL_SEVERITY_SCORE.items()
+            if v >= severity_min and (severity_max >= 1.0 or v < severity_max)
+        ]
         if not allowed:
             return None
-        where_parts.append("severity = ANY(%s)")
+        where_parts.append("e.severity = ANY(%s)")
         params.append(allowed)
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
     cur.execute(
-        "SELECT COUNT(*) FROM fact_replenishment_exceptions " + where_clause, params
+        "SELECT COUNT(*) FROM fact_replenishment_exceptions e " + where_clause, params
     )
     total = cur.fetchone()[0] or 0
     if total == 0:
@@ -243,20 +289,26 @@ def _replenishment_fallback(
 
     # Critical first, then by financial impact. CASE keeps the ordering aligned
     # with the numeric severity the feed displays.
+    # U2.1 — LEFT JOIN dim_item so each storyboard row carries the human-readable
+    # product name (item_desc), matching the Inv Planning Action Feed. The filter
+    # predicates above reference only the fact table's columns (item_id/loc/
+    # severity/status); dim_item shares only item_id, used solely in the join
+    # condition, so the unqualified WHERE clause stays unambiguous.
     cur.execute(
         """
-        SELECT exception_id, exception_type, item_id, loc, severity,
-               financial_impact_total, status, exception_date,
-               current_dos, recommended_order_qty
-        FROM fact_replenishment_exceptions
+        SELECT e.exception_id, e.exception_type, e.item_id, e.loc, e.severity,
+               e.financial_impact_total, e.status, e.exception_date,
+               e.current_dos, e.recommended_order_qty, di.item_desc
+        FROM fact_replenishment_exceptions e
+        LEFT JOIN dim_item di ON di.item_id = e.item_id
         """
         + where_clause
         + """
-        ORDER BY CASE severity
+        ORDER BY CASE e.severity
                    WHEN 'critical' THEN 4 WHEN 'high' THEN 3
                    WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END DESC,
-                 financial_impact_total DESC NULLS LAST,
-                 exception_date DESC
+                 e.financial_impact_total DESC NULLS LAST,
+                 e.exception_date DESC
         LIMIT %s OFFSET %s
         """,
         params + [limit, offset],
@@ -266,15 +318,16 @@ def _replenishment_fallback(
     rows = []
     for r in raw_rows:
         (exc_id, exc_type, item_id, row_loc, severity_text, fin_impact,
-         row_status, exc_date, current_dos, rec_qty) = r
+         row_status, exc_date, current_dos, rec_qty, item_desc) = r
         rows.append({
             "exception_id": _s(exc_id),
             "exception_type": exc_type,
             "item_id": item_id,
             "loc": row_loc,
+            "item_desc": item_desc,
             "severity": _REPL_SEVERITY_SCORE.get(severity_text, 0.5),
             "financial_impact": _f(fin_impact),
-            "headline": f"{(exc_type or 'exception').replace('_', ' ').title()} — {item_id} @ {row_loc}",
+            "headline": f"{_repl_type_label(exc_type)} — {item_id} @ {row_loc}",
             "supporting_data": {
                 "current_dos": _f(current_dos),
                 "recommended_order_qty": _f(rec_qty),

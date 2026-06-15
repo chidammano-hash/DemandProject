@@ -36,6 +36,20 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
   const clusterSummary: ClusterInfo[] = clustersPayload?.clusters ?? [];
   const clusterMeta = profilesPayload?.metadata ?? null;
 
+  // F4.1 — when the current source is empty, probe the OTHER source so the empty
+  // state can name a populated alternative instead of implying the platform has
+  // no clustering at all (the ML path is genuinely empty — ml_cluster is NULL —
+  // while ~310K SKUs are assigned via Source/sku.txt).
+  const otherSource = clusterSource === "ml" ? "source" : "ml";
+  const { data: otherPayload } = useQuery({
+    queryKey: queryKeys.skuClusters(otherSource),
+    queryFn: () => fetchSkuClusters(otherSource),
+    staleTime: STALE.FIVE_MIN,
+    enabled: clusterSummary.length === 0,
+  });
+  const otherAssigned = otherPayload?.total_assigned ?? 0;
+  const otherSourceLabel = otherSource === "source" ? "Source (sku.txt)" : "ML Pipeline";
+
   const handleRunPipeline = async () => {
     setShowRunConfirm(false);
     setPipelineRunning(true);
@@ -228,9 +242,19 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
           </>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              No cluster assignments yet. Run the clustering pipeline to group SKUs by demand patterns.
-            </p>
+            {otherAssigned > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                The <strong>{clusterSource === "ml" ? "ML KMeans pipeline" : "Source (sku.txt) feed"}</strong>{" "}
+                has no assignments yet. {formatNumber(otherAssigned)} SKUs are currently
+                assigned via <strong>{otherSourceLabel}</strong> &mdash; switch the Source
+                dropdown above, or run the clustering pipeline to compute{" "}
+                {clusterSource === "ml" ? "ML" : "source"} clusters.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No cluster assignments yet. Run the clustering pipeline to group SKUs by demand patterns.
+              </p>
+            )}
             <button
               className={cn(
                 "rounded-md px-4 py-2 text-sm font-medium transition-colors",

@@ -14,7 +14,33 @@ import {
   fmtPp,
   fmtNum,
   severityForLift,
+  humanizeRunError,
+  runYieldNote,
 } from "@/tabs/AiPlannerFvaTab";
+
+// U4.4 — a succeeded run that produced 0 recommendations looked identical to a
+// productive run (emerald "succeeded" + a bare "0"). A planner can't tell
+// "ran cleanly, nothing actionable" from "did nothing useful". `runYieldNote`
+// supplies a distinct sub-note for the zero-yield-success case only.
+describe("runYieldNote — zero-yield success affordance (U4.4)", () => {
+  it("returns a 'no recommendations' note for succeeded with 0 recs", () => {
+    expect(runYieldNote("succeeded", 0)).toMatch(/no recommendations/i);
+  });
+  it("returns null for a productive succeeded run", () => {
+    expect(runYieldNote("succeeded", 12)).toBeNull();
+  });
+  it("returns null for non-succeeded statuses regardless of recs", () => {
+    expect(runYieldNote("failed", 0)).toBeNull();
+    expect(runYieldNote("running", 0)).toBeNull();
+  });
+});
+
+const PYDANTIC_ERR =
+  "2 validation errors for Recommendation proposed_qty.1 Input should be a valid number " +
+  "[type=float_type, input_value=None, input_type=NoneType] " +
+  "For further information visit https://errors.pydantic.dev/2.12/v/float_type " +
+  "proposed_qty.4 Input should be a valid number [type=float_type, input_value=None, " +
+  "input_type=NoneType] For further information visit https://errors.pydantic.dev/2.12/v/float_type";
 
 // ---------------------------------------------------------------------------
 // Mock the API layer — the barrel re-exports from ./api/queries
@@ -113,6 +139,20 @@ describe("AiPlannerFvaTab — smoke", () => {
     expect(
       screen.getByText(/Select a run from the list, or start a new backtest/i),
     ).toBeInTheDocument();
+  });
+
+  it("renders the PRD reference as non-interactive text, not a dead href='#' anchor (U6.3)", async () => {
+    const { default: AiPlannerFvaTab } = await import("@/tabs/AiPlannerFvaTab");
+    const { container } = render(
+      <TestQueryWrapper>
+        <AiPlannerFvaTab />
+      </TestQueryWrapper>,
+    );
+    // The PRD reference text is still shown for context...
+    expect(screen.getByText(/PRD 02-27/i)).toBeInTheDocument();
+    // ...but it must NOT be a dead underlined anchor that goes nowhere.
+    const deadAnchors = container.querySelectorAll('a[href="#"]');
+    expect(deadAnchors.length).toBe(0);
   });
 
   it("does not show the Printable Report link when no run is selected", async () => {
@@ -563,6 +603,39 @@ describe("AiPlannerFvaTab — failed & zero-recommendation runs (U7.2)", () => {
     ).toBeInTheDocument();
     // The blank KPI/table panels are suppressed for a 0-rec run.
     expect(screen.queryByText("FVA by Month (Walk-Forward)")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// humanizeRunError — U2.19: never leak raw pydantic jargon to the planner
+// ---------------------------------------------------------------------------
+describe("humanizeRunError (U2.19)", () => {
+  it("maps the proposed_qty pydantic error to a planner-readable summary", () => {
+    const out = humanizeRunError(PYDANTIC_ERR);
+    expect(out).toMatch(/no quantity|null quantit|2 recommendation/i);
+    expect(out).not.toMatch(/type=float_type/);
+    expect(out).not.toMatch(/pydantic\.dev/);
+    expect(out.length).toBeLessThanOrEqual(120);
+  });
+
+  it("clamps and de-jargons an unknown long error", () => {
+    const raw =
+      "ValueError: something went very wrong ".repeat(20) +
+      "see https://errors.pydantic.dev/2.12/v/float_type";
+    const out = humanizeRunError(raw);
+    expect(out.length).toBeLessThanOrEqual(120);
+    expect(out).not.toMatch(/pydantic\.dev/);
+  });
+
+  it("passes a short, clean message through unchanged", () => {
+    expect(humanizeRunError("ollama provider unreachable")).toBe(
+      "ollama provider unreachable",
+    );
+  });
+
+  it("returns a neutral fallback for null/empty", () => {
+    expect(humanizeRunError(null)).toMatch(/no error/i);
+    expect(humanizeRunError("")).toMatch(/no error/i);
   });
 });
 

@@ -70,11 +70,61 @@ export function fmtNum(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
+/**
+ * U4.4 — distinguishes a clean-but-empty AI run from a productive one. A run can
+ * legitimately succeed and find nothing actionable; surfaced as an informational
+ * sub-note so a zero-yield success reads as "ran, nothing to do" rather than an
+ * unexplained green "0". Returns null when there's nothing notable to flag.
+ */
+export function runYieldNote(
+  status: string,
+  nRecommendations: number | null | undefined,
+): string | null {
+  if (status === "succeeded" && (nRecommendations ?? 0) === 0) {
+    return "No recommendations — ran cleanly, nothing actionable for this sample.";
+  }
+  return null;
+}
+
 export function severityForLift(lift: number | null | undefined): "best" | "warning" | "neutral" {
   if (lift === null || lift === undefined) return "neutral";
   if (lift > 0.5) return "best";
   if (lift < -0.5) return "warning";
   return "neutral";
+}
+
+const ERROR_SUMMARY_MAX = 120;
+
+/**
+ * U2.19 — turn a backtest run's raw `error_message` into a one-line,
+ * planner-readable cause. Backend stores raw exception text (e.g. a pydantic
+ * `ValidationError`); this strips developer jargon (`type=...`, the
+ * `errors.pydantic.dev` URL) and maps known shapes to plain language. The raw
+ * text stays available behind the row's `title` tooltip / detail disclosure.
+ */
+export function humanizeRunError(raw: string | null | undefined): string {
+  const text = (raw ?? "").trim();
+  if (!text) return "No error message was recorded for this run.";
+
+  // Known shape: the LLM returned null quantities for some recommendations.
+  if (/validation errors? for Recommendation/i.test(text) && /proposed_qty/i.test(text)) {
+    const countMatch = text.match(/^(\d+)\s+validation errors?/i);
+    const n = countMatch ? Number(countMatch[1]) : null;
+    return n
+      ? `The AI returned no quantity for ${n} recommendation${n === 1 ? "" : "s"} — run skipped.`
+      : "The AI returned no quantity for some recommendations — run skipped.";
+  }
+
+  // Generic: strip the docs URL + bracketed pydantic detail, collapse whitespace.
+  const cleaned = text
+    .replace(/For further information visit https?:\/\/\S+/gi, "")
+    .replace(/https?:\/\/errors\.pydantic\.dev\/\S+/gi, "")
+    .replace(/\[type=[^\]]*\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length <= ERROR_SUMMARY_MAX) return cleaned;
+  return `${cleaned.slice(0, ERROR_SUMMARY_MAX - 1).trimEnd()}…`;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,9 +343,19 @@ function RunsListPanel({
                       <TableCell
                         colSpan={5}
                         className="pt-0 text-xs text-rose-600 dark:text-rose-400"
-                        title={r.error_message}
+                        title={r.error_message ?? undefined}
                       >
-                        {r.error_message}
+                        {humanizeRunError(r.error_message)}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {/* U4.4 — a succeeded run with 0 recommendations gets an
+                      informational sub-note so it doesn't read as an
+                      unexplained green "0". */}
+                  {runYieldNote(r.status, r.n_recommendations) && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={5} className="pt-0 text-xs text-muted-foreground">
+                        {runYieldNote(r.status, r.n_recommendations)}
                       </TableCell>
                     </TableRow>
                   )}
@@ -508,9 +568,10 @@ export default function AiPlannerFvaTab() {
           <h2 className="text-xl font-semibold">AI Planner — FVA Backtest</h2>
           <p className="text-sm text-muted-foreground">
             Walk-forward backtest measuring AI Planner forecast value-add vs. champion baseline.
-            See <a className="underline" href="#" onClick={(e) => e.preventDefault()}>
-              PRD 02-27
-            </a>.
+            {/* U6.3 — no in-app destination exists for the spec, so render the
+                reference as plain muted text (with a tooltip) rather than a
+                dead underlined anchor that looks clickable but goes nowhere. */}
+            See <span className="font-medium text-foreground" title="Product spec PRD 02-27">PRD 02-27</span>.
           </p>
         </div>
         <div className="flex gap-2">
@@ -540,8 +601,11 @@ export default function AiPlannerFvaTab() {
             <Card>
               <CardContent className="py-8 text-center space-y-2">
                 <p className="font-medium text-rose-600 dark:text-rose-400">This run failed</p>
-                <p className="text-sm text-muted-foreground">
-                  {selectedRun?.error_message ?? "No error message was recorded for this run."}
+                <p
+                  className="text-sm text-muted-foreground"
+                  title={selectedRun?.error_message ?? undefined}
+                >
+                  {humanizeRunError(selectedRun?.error_message)}
                 </p>
               </CardContent>
             </Card>

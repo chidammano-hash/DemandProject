@@ -16,6 +16,7 @@ import {
 import { insightKeys, fetchRootCause } from "@/api/queries/inv-planning-insights";
 
 import { formatFixed } from "@/lib/formatters";
+import { interactiveRowProps } from "@/lib/interactiveRow";
 import { EmptyState } from "@/components/EmptyState";
 import { TableSkeleton } from "@/components/Skeleton";
 import { KpiCard } from "@/components/KpiCard";
@@ -608,10 +609,11 @@ export function ExceptionQueuePanel() {
             {(excList?.rows ?? []).map((row: ExceptionRow) => (
                 <React.Fragment key={row.exception_id}>
                 <tr
+                  {...interactiveRowProps(() => setSelectedExc(selectedExc === row.exception_id ? null : row.exception_id))}
+                  aria-expanded={selectedExc === row.exception_id}
                   className={`border-t cursor-pointer ${SEVERITY_ROW_BG[row.severity] ?? ""} ${
                     row.status !== "open" ? "opacity-60" : ""
                   } ${selectedExc === row.exception_id ? "ring-1 ring-inset ring-primary/30" : ""}`}
-                  onClick={() => setSelectedExc(selectedExc === row.exception_id ? null : row.exception_id)}
                 >
                   <td className="px-2 py-1.5 w-6">
                     {selectedExc === row.exception_id ? (

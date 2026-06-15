@@ -104,12 +104,66 @@ async def test_fva_waterfall_empty():
     assert resp.status_code == 200
     data = resp.json()
     stages = data["waterfall"]["stages"]
-    assert [stage["state"] for stage in stages[:3]] == ["missing", "missing", "missing"]
-    assert [stage["state"] for stage in stages[3:]] == ["planned", "planned"]
+    # F2.2: champion (index 2) degrades to "planned" (reserved), not "missing".
+    assert [stage["state"] for stage in stages[:2]] == ["missing", "missing"]
+    assert [stage["state"] for stage in stages[2:]] == ["planned", "planned", "planned"]
     assert data["waterfall"]["benchmark"]["state"] == "missing"
     assert data["waterfall"]["external"] is None
     assert data["waterfall"]["champion"] is None
     assert data["waterfall"]["models"] == []
+
+
+@pytest.mark.asyncio
+async def test_fva_waterfall_champion_missing_renders_as_reserved_not_broken():
+    """F2.2: when no champion accuracy is measurable in the external forecast,
+    the champion rung must read as a reserved/planned stage (consistent with the
+    AI Adjusted / Planner Adjusted stages) rather than ``state="missing"`` which
+    the UI renders as a broken-looking "No data".
+
+    The champion forecast lives in fact_production_forecast and has no measurable
+    overlap with actuals in the window, so the external-forecast query (which only
+    ever contains model_id='external') yields no champion row. The ladder must then
+    present champion, ai_adjusted and planner_adjusted as three consistent reserved
+    stages, not one that reads as a failure.
+    """
+    rows = [("external", 71.2, 1000)]  # no champion row from the external table
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    cursor.fetchone.return_value = (65.3, 1000)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/fva/waterfall")
+    assert resp.status_code == 200
+    stages = resp.json()["waterfall"]["stages"]
+    champion = next(s for s in stages if s["stage_id"] == "champion")
+    # Reserved treatment — identical to AI/Planner, NOT the broken "missing".
+    assert champion["state"] == "planned"
+    assert champion["accuracy_pct"] is None
+    # All three forward stages now read consistently as reserved.
+    assert [s["state"] for s in stages if s["stage_id"] in
+            ("champion", "ai_adjusted", "planner_adjusted")] == ["planned", "planned", "planned"]
+
+
+@pytest.mark.asyncio
+async def test_fva_waterfall_champion_actual_when_measured():
+    """F2.2 guard: when the external forecast DOES carry a champion row (measured),
+    the champion rung must still surface as ``actual`` with its accuracy — the
+    reserved fallback only applies when champion is genuinely unmeasured.
+    """
+    rows = [("external", 72.5, 1000), ("champion", 78.3, 1000)]
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    cursor.fetchone.return_value = (60.2, 1000)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/fva/waterfall")
+    assert resp.status_code == 200
+    stages = resp.json()["waterfall"]["stages"]
+    champion = next(s for s in stages if s["stage_id"] == "champion")
+    assert champion["state"] == "actual"
+    assert champion["accuracy_pct"] == 78.3
 
 
 @pytest.mark.asyncio

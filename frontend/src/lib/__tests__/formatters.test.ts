@@ -4,6 +4,7 @@ import {
   formatNumber,
   formatPercent,
   formatCell,
+  formatDate,
   titleCase,
 } from "@/lib/formatters";
 
@@ -141,6 +142,29 @@ describe("formatCell", () => {
 
   it("preserves real text that merely contains the substring 'null'", () => {
     expect(formatCell("Null Object Brand")).toBe("Null Object Brand");
+  });
+});
+
+// U6.8 — five tabs used `new Date(x).toLocaleDateString()`, producing
+// locale-dependent "4/1/2026". A central deterministic formatter renders the
+// "Apr 1, 2026" family used elsewhere regardless of host locale.
+describe("formatDate", () => {
+  it("formats an ISO date as 'MMM D, YYYY' deterministically", () => {
+    expect(formatDate("2026-04-01")).toBe("Apr 1, 2026");
+  });
+
+  it("formats an ISO timestamp (drops the time)", () => {
+    expect(formatDate("2025-11-23T14:30:00Z")).toBe("Nov 23, 2025");
+  });
+
+  it("returns '—' for null/undefined/empty", () => {
+    expect(formatDate(null)).toBe("—");
+    expect(formatDate(undefined)).toBe("—");
+    expect(formatDate("")).toBe("—");
+  });
+
+  it("returns '—' for an unparseable value rather than 'Invalid Date'", () => {
+    expect(formatDate("not-a-date")).toBe("—");
   });
 });
 

@@ -11,12 +11,19 @@ Endpoints:
 """
 from __future__ import annotations
 
+import datetime
+import logging
+
+import psycopg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
 from api.core import get_conn
 from api.auth import require_api_key
+from common.core.planning_date import get_planning_date
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sop"])
 
@@ -49,6 +56,70 @@ class _AdvanceRequest(BaseModel):
 class _ApproveRequest(BaseModel):
     approved_by: str
     plan_version: str
+
+
+class _CreateRequest(BaseModel):
+    facilitated_by: str = "planner"
+    # Optional explicit month (YYYY-MM-01). Defaults to the planning-date month.
+    cycle_month: datetime.date | None = None
+
+
+@router.post("/sop/cycles", status_code=201)
+async def create_sop_cycle(body: _CreateRequest, request: Request):
+    """Seed a new S&OP cycle at the Demand-Review stage (auth required).
+
+    U2.21 — gives the S&OP tab an in-app "Start new cycle" action so a planner
+    no longer has to drop to the CLI/API. The cycle month defaults to the first
+    of the current planning-date month; a duplicate month returns 409.
+    """
+    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+
+    cycle_month = body.cycle_month or get_planning_date().replace(day=1)
+
+    cols = [
+        "cycle_id", "cycle_month", "current_stage",
+        "facilitated_by", "created_at", "updated_at",
+    ]
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT cycle_id FROM fact_sop_cycles WHERE cycle_month = %s",
+                (cycle_month,),
+            )
+            if cur.fetchone() is not None:
+                raise HTTPException(
+                    409, f"An S&OP cycle already exists for {cycle_month.isoformat()}"
+                )
+
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO fact_sop_cycles
+                        (cycle_month, status, facilitated_by)
+                    VALUES (%s, 'demand_review', %s)
+                    RETURNING cycle_id, cycle_month, status,
+                              facilitated_by, created_at, updated_at
+                    """,
+                    (cycle_month, body.facilitated_by),
+                )
+                row = cur.fetchone()
+            except psycopg.errors.UniqueViolation:
+                # Raced another writer between the existence check and insert.
+                conn.rollback()
+                raise HTTPException(
+                    409, f"An S&OP cycle already exists for {cycle_month.isoformat()}"
+                ) from None
+            except psycopg.Error:
+                conn.rollback()
+                logger.exception("failed to create S&OP cycle")
+                raise HTTPException(500, "failed to create S&OP cycle") from None
+        conn.commit()
+
+    cycle = dict(zip(cols, row, strict=False))
+    for field in ("cycle_month", "created_at", "updated_at"):
+        if cycle.get(field) and hasattr(cycle[field], "isoformat"):
+            cycle[field] = cycle[field].isoformat()
+    return cycle
 
 
 @router.get("/sop/cycles")

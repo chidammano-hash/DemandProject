@@ -38,6 +38,7 @@ import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 // Unified chart (demand + supply in one view)
 import { UnifiedChartPanel, loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/UnifiedChartPanel";
+import { itemBreadcrumbLabel } from "./item-analysis/breadcrumb";
 
 // UX-1: deep-state breadcrumbs.
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -426,7 +427,7 @@ export function ItemAnalysisTab() {
   const breadcrumbItems = skuItem
     ? [
         { label: "Item Analysis", onClick: () => { setSkuItem(""); setSkuLocation(""); } },
-        { label: `Item ${skuItem}`, ...(skuLocation ? { onClick: () => setSkuLocation("") } : {}) },
+        { label: itemBreadcrumbLabel(skuItem, skuData?.item_desc), ...(skuLocation ? { onClick: () => setSkuLocation("") } : {}) },
         ...(skuLocation ? [{ label: skuLocation }] : []),
       ]
     : [];

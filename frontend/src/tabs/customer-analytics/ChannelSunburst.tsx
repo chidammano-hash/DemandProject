@@ -10,6 +10,7 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
 import { formatCompactKMB as fmtNum } from "@/lib/formatters";
+import { togglePillClass } from "./togglePill";
 
 type SunburstMetric = "demand" | "customers";
 
@@ -188,7 +189,8 @@ export function ChannelSunburst({ filters }: Props) {
             <button
               key={m}
               onClick={() => setSunburstMetric(m)}
-              className={`px-2 py-0.5 text-xs rounded ${sunburstMetric === m ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+              aria-pressed={sunburstMetric === m}
+              className={togglePillClass(sunburstMetric === m)}
             >
               {m === "demand" ? "Demand Volume" : "Customer Count"}
             </button>

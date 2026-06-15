@@ -75,6 +75,7 @@ vi.mock("@/api/queries", () => ({
   fetchCompletedClusterExperiments: vi.fn().mockResolvedValue({ experiments: [] }),
 
   fetchScenarioEstimate: vi.fn().mockResolvedValue(mockEstimate),
+  fetchClusterCoreFeatures: vi.fn().mockResolvedValue({ features: ["mean_demand", "cv_demand"] }),
   fetchClusteringDefaults: vi.fn().mockResolvedValue({
     feature_params: { time_window_months: 24, min_months_history: 1 },
     model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, all_features: false },

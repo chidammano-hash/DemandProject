@@ -17,7 +17,7 @@ End-to-end runbook for populating, operating, and maintaining every module of th
 | 7 | [Inventory Planning](07-inventory-planning.md) | Safety stock, EOQ, policies, exceptions, projections, KPIs |
 | 8 | [Operations: S&OP, Control Tower, DQ, Jobs](08-operations-sop-control-tower.md) | S&OP cycle, control tower KPIs, events, storyboard, DQ, scheduler |
 | 9 | [AI / LLM Intelligence](09-ai-intelligence.md) | AI Planner, Chat, embeddings, tuning chat, admin LLM reset |
-| 10 | [Frontend, Testing & Maintenance](10-frontend-testing-maintenance.md) | Vite/React dev, type gen, test suites, perf profiling, deploy |
+| 10 | [Frontend, Testing & Maintenance](10-frontend-testing-maintenance.md) | Vite/React dev, type gen, test suites, perf profiling, AI UX loop (`/ux-loop`), deploy |
 
 ---
 

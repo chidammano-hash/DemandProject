@@ -25,6 +25,8 @@ async def dq_dashboard():
                       count(*) FILTER (WHERE status = 'skip') AS skipped,
                       count(*) FILTER (WHERE status = 'fail' AND severity = 'info')
                         AS info_fails,
+                      count(*) FILTER (WHERE status = 'fail' AND severity = 'warning')
+                        AS warning_fails,
                       count(*) AS total
                FROM fact_dq_check_results
                WHERE run_ts >= now() - interval '24 hours'
@@ -40,17 +42,35 @@ async def dq_dashboard():
         warnings = r[3] or 0
         skipped = r[4] or 0
         info_fails = r[5] or 0
+        warning_fails = r[6] or 0
         # Skipped checks (e.g. a check whose source table is absent) carry no
         # signal, so they are excluded from the score denominator: a domain with
         # only passing scored checks reads 100% even with skips present (F7.1).
         # Info-severity fails are likewise informational notices, not breakage —
         # they are excluded from the score denominator so an info-only failing
         # domain reads 100% instead of cratering to 0% alarm-red, while the raw
-        # `failed` count stays visible (U8.3). Both are surfaced explicitly so
-        # the breakdown still reconciles with `total`.
-        scoring_fails = failed - info_fails
-        scored = passed + scoring_fails + warnings
-        score = round(100.0 * passed / scored, 1) if scored else 100.0
+        # `failed` count stays visible (U8.3).
+        #
+        # Warning-severity fails are not hard breakage either: the Check Catalog
+        # labels them "WARNING", so scoring them as red critical fails made three
+        # warning-only domains read a contradictory 0% red (F3.1). Like info fails
+        # and skips, warning-severity fails are EXCLUDED from the score denominator
+        # so a warning-only domain reads 100% instead of cratering to 0% alarm-red,
+        # and are surfaced as `warning_fails` so the red "N fail" chip can show
+        # only CRITICAL fails (they roll into the amber chip in the UI). Genuine
+        # WARN-status rows (`warnings`) still weight the score. All of
+        # skip/info/warning fails are surfaced explicitly so the breakdown still
+        # reconciles with `total`.
+        critical_fails = failed - info_fails - warning_fails
+        scored = passed + critical_fails + warnings
+        # When nothing is scoreable (no passes, no critical fails, no genuine
+        # warns) the score is UNDEFINED, not a perfect 100%. A domain whose only
+        # checks are failing warning/info checks (real orphan/integrity gaps)
+        # must not read an identical green 100% to a domain where everything
+        # passed — that hid the gap behind a "perfect" badge (U4.2). Emit None so
+        # the card renders a neutral "warn-only / —" state. A domain with genuine
+        # passes (scored > 0) and no scored fails still earns a true 100%.
+        score = round(100.0 * passed / scored, 1) if scored else None
         domains.append({
             "domain": r[0],
             "score": score,
@@ -59,7 +79,8 @@ async def dq_dashboard():
             "warnings": warnings,
             "skipped": skipped,
             "info_fails": info_fails,
-            "total": r[6] or 0,
+            "warning_fails": warning_fails,
+            "total": r[7] or 0,
         })
 
     return {"domains": domains}

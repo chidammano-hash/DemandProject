@@ -197,6 +197,18 @@ function renderTab() {
 }
 
 describe("CustomerAnalyticsTab", () => {
+  it("U4.4: opens with a page heading matching its sidebar label + a description", async () => {
+    renderTab();
+    // The tab must lead with a title+description header like every other tab,
+    // not a bare wall of KPI tiles. The heading text must match the sidebar
+    // label ("Customer Analytics").
+    const heading = await screen.findByRole("heading", { name: /Customer Analytics/i });
+    expect(heading).toBeInTheDocument();
+    expect(
+      screen.getByText(/Geographic demand, fill rate, and concentration/i),
+    ).toBeInTheDocument();
+  });
+
   it("renders without crashing", async () => {
     renderTab();
     await waitFor(() => {
@@ -216,10 +228,24 @@ describe("CustomerAnalyticsTab", () => {
     await waitFor(() => {
       // State dropdown
       expect(screen.getByText("All states")).toBeDefined();
-      // Channel dropdown
-      expect(screen.getByText("All channels")).toBeDefined();
-      // Store Type dropdown
-      expect(screen.getByText("All types")).toBeDefined();
+      // Channel is now a searchable combobox (U7.11) with the placeholder shown
+      // on the input, matching the Store Type affordance beside it.
+      expect(screen.getByRole("combobox", { name: "Channel" })).toBeDefined();
+      expect(screen.getByPlaceholderText("All channels")).toBeDefined();
+      // Store Type is a searchable combobox (U5.11) with the placeholder shown
+      // on the input, not a native <option>.
+      expect(screen.getByRole("combobox", { name: "Store Type" })).toBeDefined();
+      expect(screen.getByPlaceholderText("All types")).toBeDefined();
+    });
+  });
+
+  it("U7.11: Channel filter is a searchable combobox matching Store Type (consistent affordance)", async () => {
+    renderTab();
+    await waitFor(() => {
+      // Both Channel and Store Type expose the combobox role — same control type
+      // sitting side by side (previously Channel was a raw native <select>).
+      expect(screen.getByRole("combobox", { name: "Channel" })).toBeDefined();
+      expect(screen.getByRole("combobox", { name: "Store Type" })).toBeDefined();
     });
   });
 

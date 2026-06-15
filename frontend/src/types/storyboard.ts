@@ -7,6 +7,9 @@ export interface StoryboardException {
   exception_type: ExceptionType
   item_id: string
   loc: string
+  /** Human-readable product name resolved via the dim_item join (U2.1). Null on
+   *  the queue-backed path or when the item has no dim_item row. */
+  item_desc?: string | null
   severity: number
   financial_impact: number | null
   headline: string | null

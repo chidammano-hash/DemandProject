@@ -1,8 +1,29 @@
 import { describe, it, expect } from "vitest";
 import {
+  formatAsOfDate,
   formatCompactCurrency,
   shouldRenderStat,
 } from "../todaysPlanFormat";
+
+describe("formatAsOfDate (U1.1)", () => {
+  it("renders an ISO planning date as a human label", () => {
+    expect(formatAsOfDate("2026-04-02")).toBe("Apr 2, 2026");
+  });
+
+  it("parses as a local date so the day does not shift in negative-offset zones", () => {
+    // new Date('2026-04-02') is UTC midnight and would render 'Apr 1' in
+    // negative-offset zones; the local-date parse must keep Apr 2.
+    expect(formatAsOfDate("2026-04-02")).toContain("2");
+    expect(formatAsOfDate("2026-04-02")).not.toContain("Apr 1");
+  });
+
+  it("returns empty string for missing/invalid input (no wall-clock fallback)", () => {
+    expect(formatAsOfDate(undefined)).toBe("");
+    expect(formatAsOfDate(null)).toBe("");
+    expect(formatAsOfDate("")).toBe("");
+    expect(formatAsOfDate("not-a-date")).toBe("");
+  });
+});
 
 describe("formatCompactCurrency (U8.1)", () => {
   it("renders sub-$10K values with one decimal so the banner matches the Action Feed", () => {

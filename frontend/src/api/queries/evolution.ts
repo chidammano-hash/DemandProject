@@ -399,6 +399,18 @@ export async function fetchApprovedPlan(params?: { plan_month?: string; item_id?
 
 // Write mutations — routed through fetchJson so 4xx/5xx surface a sanitized
 // message via the cycle-2 error layer instead of leaking the raw body (U3.1).
+// U2.21 — in-app S&OP cycle creation (guarded POST). Seeds a demand_review
+// cycle for the current planning month so the tab is no longer a CLI dead-end.
+export async function createSopCycle(
+  body: { facilitated_by: string; cycle_month?: string } = { facilitated_by: "planner" },
+): Promise<SopCycle> {
+  return fetchJson(`/sop/cycles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function advanceSopCycle(
   cycle_id: string,
   body: { facilitated_by: string; notes: string | null },

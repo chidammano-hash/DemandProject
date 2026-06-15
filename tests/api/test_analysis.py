@@ -96,6 +96,27 @@ async def test_sku_analysis_response_structure():
 
 
 @pytest.mark.asyncio
+async def test_sku_analysis_returns_item_desc():
+    """U3.5 — the response carries the item's human-readable description so the
+    Item Analysis breadcrumb can show 'Item 185690 — DAMMANN JARDIN BLEU TEA'
+    instead of a bare numeric code. dim_item.item_desc is fetched per item."""
+    pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())
+    cursor.fetchone.return_value = ("DAMMANN JARDIN BLEU TEA(96CT)",)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/sku/analysis",
+                params={"item": "185690", "mode": "item_at_all_locations"},
+            )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "item_desc" in data
+    assert data["item_desc"] == "DAMMANN JARDIN BLEU TEA(96CT)"
+
+
+@pytest.mark.asyncio
 async def test_sku_analysis_mode_reflects_in_response():
     """Response mode field matches the requested mode."""
     pool, conn, cursor = _make_pool(fetchall_side_effect=_empty_4())

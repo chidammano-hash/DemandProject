@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { LazyPanel } from "@/components/LazyPanel";
+import { SearchableSelect } from "@/components/SearchableSelect";
 import {
   customerAnalyticsKeys,
   fetchCustomerAnalyticsItems,
@@ -145,6 +146,16 @@ function CustomerAnalyticsContent() {
 
   return (
     <div className="space-y-4 p-4">
+      {/* 0. Page header — title + one-line description, matching the sidebar
+          label ("Customer Analytics") and every other tab's chrome (U4.4). */}
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Customer Analytics</h2>
+        <p className="text-sm text-muted-foreground">
+          Geographic demand, fill rate, and concentration across customers,
+          channels, and store types.
+        </p>
+      </div>
+
       {/* 1. KPI Summary Cards */}
       <KpiSummaryCards filters={filters} />
 
@@ -177,19 +188,19 @@ function CustomerAnalyticsContent() {
                 {itemId && (
                   <button
                     onClick={() => { setItemId(""); setItemSearch(""); }}
-                    className="absolute right-1 top-1 text-xs text-gray-400 hover:text-gray-600"
+                    className="absolute right-1 top-1 text-xs text-muted-foreground hover:text-foreground"
                   >
                     x
                   </button>
                 )}
               </div>
               {itemSearch && !itemId && (itemsData?.items ?? []).length > 0 && (
-                <div className="absolute z-50 mt-14 bg-white border rounded shadow-lg max-h-40 overflow-y-auto w-52">
+                <div className="absolute z-50 mt-14 bg-popover text-popover-foreground border rounded shadow-lg max-h-40 overflow-y-auto w-52">
                   {itemsData!.items.slice(0, 10).map((it) => (
                     <button
                       key={it.item_id}
                       onClick={() => handleItemSelect(it.item_id)}
-                      className="block w-full text-left px-2 py-1 text-xs hover:bg-gray-100"
+                      className="block w-full text-left px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground"
                     >
                       <span className="font-medium">{it.item_id}</span>
                       <span className="text-muted-foreground ml-1">{it.item_desc}</span>
@@ -227,37 +238,33 @@ function CustomerAnalyticsContent() {
               </select>
             </div>
 
-            {/* Channel dropdown */}
+            {/* Channel dropdown — U7.11: searchable combobox matching the Store
+                Type filter beside it, so both filters share one affordance and
+                the casing-duplicated channel list is type-ahead navigable. */}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-muted-foreground">Channel</label>
-              <select
+              <SearchableSelect
                 value={effectiveChannel}
-                onChange={(e) => {
-                  setChannel(e.target.value);
-                  dispatch({ type: "SET_CHANNEL", payload: e.target.value });
+                options={filterOptions?.channels ?? []}
+                placeholder="All channels"
+                ariaLabel="Channel"
+                onChange={(val) => {
+                  setChannel(val);
+                  dispatch({ type: "SET_CHANNEL", payload: val });
                 }}
-                className="w-36 px-2 py-1 text-sm border rounded"
-              >
-                <option value="">All channels</option>
-                {(filterOptions?.channels ?? []).map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+              />
             </div>
 
             {/* Store Type dropdown */}
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-muted-foreground">Store Type</label>
-              <select
+              <SearchableSelect
                 value={storeType}
-                onChange={(e) => setStoreType(e.target.value)}
-                className="w-36 px-2 py-1 text-sm border rounded"
-              >
-                <option value="">All types</option>
-                {(filterOptions?.store_types ?? []).map((st) => (
-                  <option key={st} value={st}>{st}</option>
-                ))}
-              </select>
+                options={filterOptions?.store_types ?? []}
+                placeholder="All types"
+                ariaLabel="Store Type"
+                onChange={setStoreType}
+              />
             </div>
 
             {/* Active cross-filter badges */}
@@ -284,7 +291,7 @@ function CustomerAnalyticsContent() {
             {/* Clear */}
             <button
               onClick={handleClear}
-              className="px-3 py-1 text-xs bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+              className="px-3 py-1 text-xs bg-muted text-muted-foreground rounded hover:bg-accent hover:text-accent-foreground"
             >
               Clear
             </button>

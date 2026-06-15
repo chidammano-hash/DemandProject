@@ -4,6 +4,7 @@ import { useMatrix } from "@/api/queries/demand-history";
 import { DemandReferencePanel } from "@/components/DemandReferencePanel";
 import { TableSkeleton } from "@/components/Skeleton";
 import { formatInt } from "@/lib/formatters";
+import { interactiveRowProps } from "@/lib/interactiveRow";
 import type { MatrixDim, MatrixMetric } from "@/api/queries/demand-history";
 
 /** 6-stop heatmap from gray (zero) through cool blue to deep indigo. */
@@ -15,7 +16,7 @@ function cellStyle(value: number, max: number): { bg: string; text: string } {
   if (pct > 0.45) return { bg: "bg-blue-400", text: "text-white" };
   if (pct > 0.25) return { bg: "bg-blue-200 dark:bg-blue-800", text: "text-gray-900 dark:text-gray-100" };
   if (pct > 0.1)  return { bg: "bg-blue-100 dark:bg-blue-900/40", text: "text-gray-700 dark:text-gray-300" };
-  return { bg: "bg-blue-50 dark:bg-blue-950/30", text: "text-gray-500 dark:text-gray-400" };
+  return { bg: "bg-blue-50 dark:bg-blue-950/30", text: "text-muted-foreground dark:text-gray-400" };
 }
 
 const METRIC_LABELS: Record<MatrixMetric, string> = {
@@ -76,7 +77,7 @@ export function MatrixPanel() {
       {/* Controls */}
       <div className="flex items-center gap-4 flex-wrap">
         <label className="flex items-center gap-1.5 text-sm">
-          <span className="text-gray-500">Rows:</span>
+          <span className="text-muted-foreground">Rows:</span>
           <select
             value={rowDim}
             onChange={(e) => setRowDim(e.target.value as MatrixDim)}
@@ -88,7 +89,7 @@ export function MatrixPanel() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-sm">
-          <span className="text-gray-500">Cols:</span>
+          <span className="text-muted-foreground">Cols:</span>
           <select
             value={colDim}
             onChange={(e) => setColDim(e.target.value as MatrixDim)}
@@ -100,7 +101,7 @@ export function MatrixPanel() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-sm">
-          <span className="text-gray-500">Metric:</span>
+          <span className="text-muted-foreground">Metric:</span>
           <select
             value={metric}
             onChange={(e) => setMetric(e.target.value as MatrixMetric)}
@@ -112,7 +113,7 @@ export function MatrixPanel() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-sm">
-          <span className="text-gray-500">Months:</span>
+          <span className="text-muted-foreground">Months:</span>
           <select
             value={months}
             onChange={(e) => setMonths(Number(e.target.value))}
@@ -130,7 +131,7 @@ export function MatrixPanel() {
       {isError && <div className="text-center text-red-500 text-sm py-10">Failed to load data</div>}
 
       {!isLoading && !isError && !data && (
-        <div className="flex flex-col items-center py-16 text-gray-400">
+        <div className="flex flex-col items-center py-16 text-muted-foreground">
           <Grid3x3 className="h-12 w-12 mb-3 opacity-30" />
           <p className="text-sm font-medium">No matrix data</p>
           <p className="text-xs mt-1">Adjust dimensions or time range to load the pivot grid</p>
@@ -140,24 +141,24 @@ export function MatrixPanel() {
       {data && (
         <div className="overflow-auto max-h-[600px] border dark:border-gray-700 rounded-lg">
           {/* Legend */}
-          <div className="sticky top-0 z-20 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-[10px] text-gray-500">
+          <div className="sticky top-0 z-20 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-[10px] text-muted-foreground">
             <span className="font-medium">{METRIC_LABELS[metric]}:</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-50 dark:bg-blue-950/30 border" /> Low</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-200" /> Medium</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-600" /> High</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-indigo-700" /> Max</span>
-            <span className="ml-auto text-gray-400">{data.rows.length} rows x {data.cols.length} cols</span>
+            <span className="ml-auto text-muted-foreground">{data.rows.length} rows x {data.cols.length} cols</span>
           </div>
           <table className="text-xs w-full">
             <thead className="sticky top-8 bg-white dark:bg-gray-900 z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-500 border-b dark:border-gray-700 min-w-[120px]">
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b dark:border-gray-700 min-w-[120px]">
                   {rowDim} / {colDim}
                 </th>
                 {data.cols.map((col) => (
                   <th
                     key={col}
-                    className="px-2 py-2 text-center font-medium text-gray-500 border-b dark:border-gray-700 min-w-[70px]"
+                    className="px-2 py-2 text-center font-medium text-muted-foreground border-b dark:border-gray-700 min-w-[70px]"
                     title={data.col_labels[col] || col}
                   >
                     <span className="truncate block max-w-[80px]">
@@ -183,8 +184,8 @@ export function MatrixPanel() {
                       return (
                         <td
                           key={ci}
+                          {...interactiveRowProps(() => handleCellClick(ri, ci))}
                           className={`px-2 py-1.5 text-center border-b dark:border-gray-700/50 cursor-pointer tabular-nums transition-colors ${style.bg} ${style.text}`}
-                          onClick={() => handleCellClick(ri, ci)}
                           title={`${data.row_labels[row] || row} x ${data.col_labels[data.cols[ci]] || data.cols[ci]}: ${formatInt(val)}`}
                         >
                           {val > 0 ? formatInt(val) : "—"}

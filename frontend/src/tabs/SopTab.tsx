@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Clock, ChevronRight, AlertTriangle, ClipboardList } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { severityBadgeClass } from "@/lib/severityBadge";
 import {
   sopKeys,
   fetchSopCycles,
@@ -14,6 +15,7 @@ import {
   fetchApprovedPlan,
   advanceSopCycle,
   approveSopCycle,
+  createSopCycle,
   STALE_EVO,
   type SopCycle,
   type SopGap,
@@ -30,11 +32,13 @@ const STAGE_LABELS: Record<string, string> = {
   closed: "Closed",
 };
 
+// U5.1 — severity chips route through the shared themed helper so they carry a
+// `dark:` tint and stay legible in Dark theme (was hand-rolled, Light-only).
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: "bg-red-100 text-red-700 border-red-200",
-  high: "bg-orange-100 text-orange-700 border-orange-200",
-  medium: "bg-amber-100 text-amber-700 border-amber-200",
-  low: "bg-blue-100 text-blue-700 border-blue-200",
+  critical: severityBadgeClass("critical"),
+  high: severityBadgeClass("high"),
+  medium: severityBadgeClass("medium"),
+  low: severityBadgeClass("low"),
 };
 
 function StageTimeline({ currentStage }: { currentStage: string }) {
@@ -65,7 +69,7 @@ function StageTimeline({ currentStage }: { currentStage: string }) {
 
 function GapCard({ gap }: { gap: SopGap }) {
   return (
-    <div className={`p-3 rounded border ${SEVERITY_COLORS[gap.severity] ?? "bg-gray-50 border-gray-200"}`}>
+    <div className={`p-3 rounded border ${SEVERITY_COLORS[gap.severity] ?? "bg-muted border-border"}`}>
       <div className="flex items-start justify-between mb-1">
         <span className="font-medium text-sm">{gap.category}</span>
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${SEVERITY_COLORS[gap.severity]}`}>
@@ -78,7 +82,7 @@ function GapCard({ gap }: { gap: SopGap }) {
       {gap.resolution_options && (
         <p className="text-xs mt-1 text-muted-foreground">{gap.resolution_options}</p>
       )}
-      <span className={`text-xs mt-1 inline-block px-1.5 py-0.5 rounded ${gap.mitigation_status === "resolved" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+      <span className={`text-xs mt-1 inline-block px-1.5 py-0.5 rounded ${gap.mitigation_status === "resolved" ? severityBadgeClass("success") : severityBadgeClass("neutral")}`}>
         {gap.mitigation_status}
       </span>
     </div>
@@ -129,6 +133,15 @@ export default function SopTab() {
     },
   });
 
+  // U2.21 — in-app cycle creation so the tab is no longer a CLI dead-end.
+  const createMutation = useMutation({
+    mutationFn: () => createSopCycle({ facilitated_by: facilitatedBy || "planner" }),
+    onSuccess: (cycle) => {
+      queryClient.invalidateQueries({ queryKey: sopKeys.cycles({}) });
+      setSelectedCycle(cycle);
+    },
+  });
+
   const cycles = cyclesData?.cycles ?? [];
   const gaps = gapsData?.gaps ?? [];
   const planRows = planData?.rows ?? [];
@@ -163,8 +176,26 @@ export default function SopTab() {
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : !cycles.length ? (
             <Card>
-              <CardContent className="p-4 text-sm text-muted-foreground">
-                No active S&OP cycles. Create one via the API or CLI.
+              <CardContent className="p-4 space-y-3 text-sm text-muted-foreground">
+                <p>
+                  No active S&OP cycles yet. Start one to kick off the monthly
+                  Demand Review.
+                </p>
+                <button
+                  type="button"
+                  disabled={createMutation.isPending}
+                  onClick={() => createMutation.mutate()}
+                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm font-medium disabled:opacity-60"
+                >
+                  {createMutation.isPending ? "Creating…" : "Start new S&OP cycle"}
+                </button>
+                {createMutation.isError && (
+                  <p className="text-xs text-rose-600 dark:text-rose-400">
+                    {createMutation.error instanceof Error
+                      ? createMutation.error.message
+                      : "Could not create a cycle."}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ) : (
@@ -177,7 +208,7 @@ export default function SopTab() {
                 <CardContent className="p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-medium text-sm">{cycle.cycle_month?.slice(0, 7)}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${cycle.current_stage === "approved" ? "bg-green-100 text-green-700" : cycle.current_stage === "closed" ? "bg-gray-100 text-gray-600" : "bg-blue-100 text-blue-700"}`}>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${cycle.current_stage === "approved" ? severityBadgeClass("success") : cycle.current_stage === "closed" ? severityBadgeClass("neutral") : severityBadgeClass("info")}`}>
                       {STAGE_LABELS[cycle.current_stage] ?? cycle.current_stage}
                     </span>
                   </div>
@@ -193,7 +224,12 @@ export default function SopTab() {
           {!selectedCycle ? (
             <Card>
               <CardContent className="p-6 text-center text-sm text-muted-foreground">
-                Select a cycle to view details, gaps, and actions.
+                {/* U5.4 — in the zero-cycle state "Select a cycle" is unactionable
+                    (nothing to select) and contradicts the "Start one…" card next
+                    to it. Point the planner at the primary action instead. */}
+                {cycles.length === 0
+                  ? "Start a cycle to see its stages, gaps, and decisions here."
+                  : "Select a cycle to view details, gaps, and actions."}
               </CardContent>
             </Card>
           ) : (
@@ -345,14 +381,20 @@ export default function SopTab() {
               Approved Plan
             </CardTitle>
             <div className="flex gap-2">
+              {/* U6.11 — label the orphan Approved-Plan filter inputs so a
+                  screen reader announces them and their purpose is clear. */}
               <input
                 type="month"
+                aria-label="Plan month"
+                title="Filter the approved consensus plan by month"
                 value={planMonth}
                 onChange={(e) => setPlanMonth(e.target.value)}
                 className="border rounded px-2 py-1 text-sm"
               />
               <input
                 className="border rounded px-2 py-1 text-sm w-36"
+                aria-label="Item filter"
+                title="Filter the approved consensus plan by item number"
                 value={planItem}
                 onChange={(e) => setPlanItem(e.target.value)}
                 placeholder="Item No"

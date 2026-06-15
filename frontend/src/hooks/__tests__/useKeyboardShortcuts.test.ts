@@ -20,29 +20,27 @@ describe("useKeyboardShortcuts", () => {
     vi.clearAllMocks();
   });
 
-  it("switches tabs with 1-9 keys", () => {
+  it("switches tabs with numeric keys matching the sidebar hints (U6.1)", () => {
     renderHook(() => useKeyboardShortcuts(defaultConfig));
 
+    // Derived from NAV_ITEMS[].shortcut — must match the sidebar <kbd> labels.
     act(() => fireKey("1"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("commandCenter");
 
     act(() => fireKey("2"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("sop");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aggregateAnalysis"); // Portfolio
 
     act(() => fireKey("3"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
 
     act(() => fireKey("4"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");
 
     act(() => fireKey("5"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("clusters");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("sop");
 
     act(() => fireKey("6"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aggregateAnalysis");
-
-    act(() => fireKey("7"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
   });
 
   it("focuses search on /", () => {

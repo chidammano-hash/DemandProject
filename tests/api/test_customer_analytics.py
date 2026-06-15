@@ -437,6 +437,32 @@ async def test_kpis_returns_six_metrics():
 
 
 @pytest.mark.asyncio
+async def test_kpis_concentration_and_ratio_have_null_delta():
+    """U3.4 — concentration_top10 and order_demand_ratio have NO month-over-month
+    computed (no prior-period anchor). They must report delta=null so the UI can
+    show "no prior period" instead of a fabricated "0.0% MoM"."""
+    pool, _, cursor = _make_pool()
+    cursor.fetchone.return_value = (
+        10000.0, 9000.0, 1000.0, 50,
+        10000.0, 9000.0, 1000.0, 50,
+        8000.0, 7000.0, 1000.0, 45,
+        4000.0,
+    )
+    with patch("api.core._get_async_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/kpis")
+    assert resp.status_code == 200
+    kpis = {k["key"]: k for k in resp.json()["kpis"]}
+    assert kpis["concentration_top10"]["delta"] is None
+    assert kpis["order_demand_ratio"]["delta"] is None
+    # A genuinely-computed metric still carries a numeric delta.
+    assert kpis["total_demand"]["delta"] == 25.0
+
+
+@pytest.mark.asyncio
 async def test_kpis_empty():
     pool, _, cursor = _make_pool()
     cursor.fetchone.return_value = None

@@ -11,17 +11,17 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { NUMERIC_SHORTCUTS } from "@/components/AppSidebar";
 
-const SHORTCUTS = [
-  { keys: ["1"], desc: "AI Planner" },
-  { keys: ["2"], desc: "Control Tower" },
-  { keys: ["3"], desc: "Overview" },
-  { keys: ["4"], desc: "Accuracy" },
-  { keys: ["5"], desc: "DFU Analysis" },
-  { keys: ["6"], desc: "Inventory" },
-  { keys: ["7"], desc: "Exceptions" },
-  { keys: ["8"], desc: "Inv. Planning" },
-  { keys: ["9"], desc: "Jobs" },
+interface ShortcutRow {
+  keys: string[];
+  desc: string;
+}
+
+// U6.1 — the numeric tab rows are derived from NAV_ITEMS[].shortcut (via
+// NUMERIC_SHORTCUTS) so the help modal labels always match the sidebar hints
+// and the live key handler. Only the non-numeric global shortcuts are static.
+const NON_NUMERIC_SHORTCUTS: ShortcutRow[] = [
   { keys: ["["], desc: "Toggle sidebar" },
   { keys: ["d"], desc: "Toggle dark / light mode" },
   { keys: ["/"], desc: "Focus search" },
@@ -30,6 +30,11 @@ const SHORTCUTS = [
   { keys: ["→"], desc: "Next page" },
   { keys: ["Ctrl", "E"], desc: "Toggle column fields" },
   { keys: ["?"], desc: "Show / hide this help" },
+];
+
+const SHORTCUTS: ShortcutRow[] = [
+  ...NUMERIC_SHORTCUTS.map((s) => ({ keys: [s.digit], desc: s.label })),
+  ...NON_NUMERIC_SHORTCUTS,
 ];
 
 export function KeyboardShortcutHelp({ onClose }: { onClose: () => void }) {

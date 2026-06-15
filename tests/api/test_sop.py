@@ -170,6 +170,60 @@ async def test_advance_sop_cycle_already_closed():
 
 
 @pytest.mark.asyncio
+async def test_create_sop_cycle_201():
+    """U2.21 — in-app S&OP cycle creation: guarded POST /sop/cycles seeds a
+    demand_review cycle and returns it, so the tab is no longer a CLI dead-end."""
+    pool, conn, cursor = _make_pool()
+    # No existing cycle for the month (dup check), then RETURNING the new row.
+    cursor.fetchone.side_effect = [
+        None,  # no existing cycle for this cycle_month
+        (
+            42,
+            datetime.date(2026, 6, 1),
+            "demand_review",
+            "planner",
+            datetime.datetime(2026, 6, 14, 9, 0, 0),
+            datetime.datetime(2026, 6, 14, 9, 0, 0),
+        ),
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/sop/cycles",
+                json={"facilitated_by": "planner"},
+                headers={"x-api-key": ""},
+            )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["cycle_id"] == 42
+    assert data["current_stage"] == "demand_review"
+    assert data["cycle_month"] == "2026-06-01"
+
+
+@pytest.mark.asyncio
+async def test_create_sop_cycle_duplicate_409():
+    """Creating a cycle for a month that already has one returns 409, not a 500."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (7,)  # existing cycle_id for this month
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/sop/cycles",
+                json={"facilitated_by": "planner", "cycle_month": "2026-06-01"},
+                headers={"x-api-key": ""},
+            )
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_get_approved_plan_200():
     pool, conn, cursor = _make_pool(fetchone_return=(5,))
     cursor.fetchall.return_value = [_APPROVED_PLAN_ROW]

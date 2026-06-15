@@ -133,10 +133,11 @@ export type { PageParams } from "./domains";
 
 export {
   fetchSkuClusters, fetchClusterProfiles, fetchClusteringDefaults,
+  fetchClusterCoreFeatures,
   fetchScenarioEstimate, fetchScenarioStatus, runClusteringScenario, promoteScenario,
 } from "./clustering";
 export type {
-  ClusteringDefaultsPayload, ClusteringScenarioParams, ScenarioProfile,
+  ClusteringDefaultsPayload, ClusterCoreFeaturesPayload, ClusteringScenarioParams, ScenarioProfile,
   PCAScatterPoint, PCAScatterData, ClusteringScenarioResult,
   ScenarioEstimate, ScenarioStatusResponse,
 } from "./clustering";

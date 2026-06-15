@@ -20,6 +20,7 @@ import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePanelToggles } from "@/hooks/usePanelToggles";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/formatters";
 
 import {
   queryKeys,
@@ -351,7 +352,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
           {planDate?.planning_date && (
             <span className="flex items-center gap-1 rounded bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground">
               <CalendarClock className="h-3 w-3" />
-              {planDate.planning_date}
+              Plan as of {formatDate(planDate.planning_date)}
             </span>
           )}
           {hasActiveFilters(filters) && skuCountQ.data && (

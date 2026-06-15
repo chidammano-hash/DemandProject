@@ -113,7 +113,18 @@ export function deltaAriaLabel(delta: number, flat: boolean): string {
   return `${delta >= 0 ? "Up" : "Down"} ${magnitude}`;
 }
 
-function DeltaBadge({ delta, goodDirection }: { delta: number; goodDirection?: "up" | "down" }) {
+function DeltaBadge({ delta, goodDirection }: { delta: number | null; goodDirection?: "up" | "down" }) {
+  // U3.4 — a null delta means the backend has no prior-period anchor (no MoM
+  // computed). Render an explicit "no prior period" affordance instead of a
+  // fabricated "→ 0.0% MoM" that a planner would read as "genuinely unchanged".
+  if (delta == null) {
+    const label = "No prior period to compare";
+    return (
+      <span className="text-xs font-medium text-muted-foreground" aria-label={label} title={label}>
+        — no prior period
+      </span>
+    );
+  }
   const { color, arrow, flat } = deltaPresentation(delta, goodDirection);
   const label = deltaAriaLabel(delta, flat);
   return (
@@ -157,7 +168,7 @@ export function KpiSummaryCards({ filters }: Props) {
           <Card key={def.key}>
             <CardContent className="py-3 px-4">
               <div className="text-xs text-muted-foreground">{def.label}</div>
-              <div className="text-lg font-semibold mt-1 animate-pulse bg-gray-200 rounded w-16 h-6" />
+              <div className="text-lg font-semibold mt-1 animate-pulse bg-muted rounded w-16 h-6" />
             </CardContent>
           </Card>
         ))}

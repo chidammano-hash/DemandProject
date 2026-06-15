@@ -40,6 +40,9 @@ export interface ActionFeedItem {
   severity: string;
   item_id: string;
   loc: string;
+  // Human-readable item description from dim_item (U1.8); null when the SKU
+  // isn't in the item dimension. Surfaced so planners recognize the product.
+  item_desc: string | null;
   title: string;
   detail: string;
   financial_impact: number | null;
@@ -55,6 +58,10 @@ export interface ActionFeedPayload {
     critical: number;
     high: number;
     financial_at_risk: number | null;
+    // Human-readable basis/window for `financial_at_risk` (F1.2), e.g.
+    // "7-day lost gross margin (open exceptions) + proposed order value". The UI
+    // surfaces this so the tile isn't read as total revenue at risk.
+    financial_at_risk_basis?: string;
     // Number of action rows actually returned in `actions` (the display page).
     // The other counts reflect the full candidate population (U9.1).
     displayed?: number;

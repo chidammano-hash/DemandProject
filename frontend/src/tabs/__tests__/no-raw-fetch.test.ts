@@ -17,7 +17,15 @@ const TABS_DIR = resolve(__dirname, "..");
  * (it ignores fetchJson / prefetch / refetch, which legitimately end in
  * "fetch(").
  */
-const WATCHED = ["ItemAnalysisTab.tsx", "SopTab.tsx"];
+// U6.10 — extend the guard to the two lowest-risk single-GET offenders called
+// out this cycle (a profile GET and a core-features GET), now migrated to
+// fetchJson query fetchers.
+const WATCHED = [
+  "ItemAnalysisTab.tsx",
+  "SopTab.tsx",
+  "lgbm-tuning/FeatureLabPanel.tsx",
+  "clusters/ClusterExperimentBuilder.tsx",
+];
 
 // Matches a bare `fetch(` that is NOT preceded by an identifier char or `.`
 // (so fetchJson, prefetch, refetch, queryClient.fetch... are allowed).

@@ -38,6 +38,15 @@ export async function fetchClusteringDefaults(): Promise<ClusteringDefaultsPaylo
   return fetchJson("/clustering/defaults");
 }
 
+/** The canonical clustering feature set (mirrors `GET /clustering/core-features`). U6.10. */
+export interface ClusterCoreFeaturesPayload {
+  features: string[];
+}
+
+export async function fetchClusterCoreFeatures(): Promise<ClusterCoreFeaturesPayload> {
+  return fetchJson("/clustering/core-features");
+}
+
 export interface ClusteringScenarioParams {
   feature_params?: ClusteringDefaultsPayload["feature_params"];
   model_params?: ClusteringDefaultsPayload["model_params"];

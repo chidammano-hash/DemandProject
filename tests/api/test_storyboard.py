@@ -135,6 +135,7 @@ _REPL_ROW = (
     datetime.date(2026, 4, 2),  # exception_date
     1.5,                     # current_dos
     120.0,                   # recommended_order_qty
+    "MENAGE A TROIS A(D/R/S)3P PAD(44",  # item_desc (dim_item join)
 )
 
 
@@ -174,6 +175,66 @@ async def test_list_exceptions_falls_back_to_replenishment_when_queue_empty():
 
 
 @pytest.mark.asyncio
+async def test_replenishment_fallback_headline_uses_friendly_label():
+    """U4.1: the storyboard fallback must NOT leak the raw enum or its naive
+    title-case ("Below Ss") into the headline. ``below_ss`` must render as
+    "Below Safety Stock" — the same label the Inv Planning action feed uses —
+    so the two surfaces name the identical exception identically.
+    """
+    repl_row = (
+        "repl-uuid-2", "below_ss", "664631", "1401-BULK", "critical",
+        292.39, "open", datetime.date(2026, 4, 2), 1.2, 80.0,
+        "TITOS HANDMADE VODKA 80",  # item_desc
+    )
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [(0,), (1,)]
+    cursor.fetchall.return_value = [repl_row]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/storyboard/exceptions?limit=5")
+
+    assert resp.status_code == 200
+    row = resp.json()["rows"][0]
+    assert row["headline"] == "Below Safety Stock — 664631 @ 1401-BULK"
+    assert "below_ss" not in row["headline"]
+    assert "Below Ss" not in row["headline"]
+
+
+@pytest.mark.asyncio
+async def test_replenishment_fallback_includes_item_desc():
+    """U2.1: the storyboard replenishment fallback must LEFT JOIN dim_item and
+    surface ``item_desc`` so Command Center / Control Tower / AI Planner rows show
+    the human-readable product name alongside the code — the same name the Inv
+    Planning Action Feed shows (cycle-1 U1.8 only landed in ActionFeed).
+    """
+    # Fallback row now carries a trailing item_desc column from the dim_item join.
+    repl_row = (
+        "repl-uuid-3", "stockout", "627099", "1401-BULK", "critical",
+        571.98, "open", datetime.date(2026, 4, 2), 1.5, 120.0,
+        "MENAGE A TROIS A(D/R/S)3P PAD(44",  # item_desc
+    )
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [(0,), (1,)]
+    cursor.fetchall.return_value = [repl_row]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/storyboard/exceptions?limit=5")
+
+    assert resp.status_code == 200
+    row = resp.json()["rows"][0]
+    assert row["item_desc"] == "MENAGE A TROIS A(D/R/S)3P PAD(44"
+    # The fallback query must LEFT JOIN dim_item to resolve the description.
+    executed = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list).lower()
+    assert "dim_item" in executed
+
+
+@pytest.mark.asyncio
 async def test_list_exceptions_severity_min_filter():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (5,)
@@ -187,6 +248,50 @@ async def test_list_exceptions_severity_min_filter():
             resp = await client.get("/storyboard/exceptions?severity_min=0.75")
 
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_replenishment_fallback_severity_band_selects_high_only():
+    """U7.10: the Command Center severity chips (Critical/High/Medium/Low) are
+    dead because the feed loads only the top-N-by-severity (all critical). The
+    fix lets the client push a severity BAND down to the server: a band of
+    [0.5, 0.75) over the replenishment fallback must filter to the 'high' text
+    severity (score 0.70) and exclude 'critical' (0.95). The query must constrain
+    severity to that text-severity set, and the returned row must score < 0.75.
+    """
+    repl_row = (
+        "repl-high", "below_rop", "664631", "1401-BULK", "high",
+        292.39, "open", datetime.date(2026, 4, 2), 1.2, 80.0,
+        "TITOS HANDMADE VODKA 80",  # item_desc
+    )
+    pool, conn, cursor = _make_pool()
+    # 1st fetchone: exception_queue COUNT -> 0 (empty, trigger fallback).
+    # 2nd fetchone: replenishment COUNT -> 1.
+    cursor.fetchone.side_effect = [(0,), (1,)]
+    cursor.fetchall.return_value = [repl_row]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/storyboard/exceptions?severity_min=0.5&severity_max=0.75&limit=50"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    row = data["rows"][0]
+    # 'high' scores 0.70 -> below the 0.75 critical cutoff the UI uses.
+    assert row["severity"] < 0.75
+    # The fallback query must constrain the text severity to the high-only band,
+    # i.e. it must NOT allow 'critical' through for a [0.5, 0.75) request.
+    executed = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list)
+    params = [c.args[1] for c in cursor.execute.call_args_list if len(c.args) > 1]
+    flat_params = [p for plist in params for p in (plist if isinstance(plist, (list, tuple)) else [plist])]
+    severity_lists = [p for p in flat_params if isinstance(p, list) and all(isinstance(x, str) for x in p)]
+    assert severity_lists, "expected a text-severity ANY() list bound to the query"
+    assert "critical" not in severity_lists[0]
+    assert "high" in severity_lists[0]
 
 
 @pytest.mark.asyncio

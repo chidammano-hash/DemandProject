@@ -18,6 +18,25 @@ import {
 } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { EmptyState } from "@/components/EmptyState";
+import { severityBadgeClass } from "@/lib/severityBadge";
+
+// U5.1 — map a 0–100 health score / tier to a themed status pill (success /
+// info / warning / critical), each carrying a `dark:` tint so the chip stays
+// legible in Dark theme (was hand-rolled `bg-*-100 text-*-800`, Light-only).
+function healthScoreBadge(score: number | null | undefined): string {
+  if (score == null) return "";
+  if (score >= 80) return severityBadgeClass("success");
+  if (score >= 60) return severityBadgeClass("info");
+  if (score >= 40) return severityBadgeClass("warning");
+  return severityBadgeClass("critical");
+}
+
+const HEALTH_TIER_BADGE: Record<string, string> = {
+  healthy: severityBadgeClass("success"),
+  monitor: severityBadgeClass("info"),
+  at_risk: severityBadgeClass("warning"),
+  critical: severityBadgeClass("critical"),
+};
 import { RecommendedActionCard } from "@/components/RecommendedActionCard";
 import { TableSkeleton } from "@/components/Skeleton";
 import { Activity, HelpCircle } from "lucide-react";
@@ -247,7 +266,7 @@ export function PortfolioHealthPanel() {
                     const score = healthSummary?.avg_health_score;
                     if (score == null) return <span className="font-semibold text-foreground">—</span>;
                     const riskLevel = score >= 80 ? "Low" : score >= 60 ? "Medium" : score >= 40 ? "High" : "Critical";
-                    const riskColor = score >= 80 ? "bg-green-100 text-green-800" : score >= 60 ? "bg-blue-100 text-blue-800" : score >= 40 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
+                    const riskColor = healthScoreBadge(score);
                     return (
                       <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${riskColor}`} title={`Health score: ${score.toFixed(1)}/100`}>
                         {riskLevel}
@@ -347,12 +366,7 @@ export function PortfolioHealthPanel() {
                     {healthHeatmap.x_labels.map((x) => {
                       const cell = healthHeatmap.cells.find((c) => c.x === x && c.y === y);
                       const score = cell?.avg_health_score;
-                      const bg =
-                        score == null ? ""
-                        : score >= 80 ? "bg-green-100 text-green-800"
-                        : score >= 60 ? "bg-blue-100 text-blue-800"
-                        : score >= 40 ? "bg-amber-100 text-amber-800"
-                        : "bg-red-100 text-red-800";
+                      const bg = healthScoreBadge(score);
                       const tier =
                         score == null ? ""
                         : score >= 80 ? "Healthy"
@@ -387,12 +401,7 @@ export function PortfolioHealthPanel() {
           <h4 className="text-sm font-semibold text-foreground">
             Health Detail
             {healthTierFilter && (
-              <span className={`ml-2 px-1.5 py-0.5 rounded text-xs font-medium ${
-                healthTierFilter === "healthy"  ? "bg-green-100 text-green-800" :
-                healthTierFilter === "monitor"  ? "bg-blue-100 text-blue-800" :
-                healthTierFilter === "at_risk"  ? "bg-amber-100 text-amber-800" :
-                "bg-red-100 text-red-800"
-              }`}>
+              <span className={`ml-2 px-1.5 py-0.5 rounded text-xs font-medium ${HEALTH_TIER_BADGE[healthTierFilter] ?? severityBadgeClass("critical")}`}>
                 {TIER_LABEL[healthTierFilter]}
               </span>
             )}
@@ -436,12 +445,7 @@ export function PortfolioHealthPanel() {
                 </thead>
                 <tbody>
                   {(healthDetail?.rows ?? []).map((row: HealthDetailRow) => {
-                    const tierBg: Record<string, string> = {
-                      healthy:  "bg-green-100 text-green-800",
-                      monitor:  "bg-blue-100 text-blue-800",
-                      at_risk:  "bg-amber-100 text-amber-800",
-                      critical: "bg-red-100 text-red-800",
-                    };
+                    const tierBg = HEALTH_TIER_BADGE;
                     return (
                       <tr key={`${row.item_id}-${row.loc}`} className="border-b last:border-0">
                         <td className="py-1 pr-3 font-mono">{row.item_id}</td>

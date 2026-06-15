@@ -202,8 +202,11 @@ async def customer_analytics_kpis(
         {"key": "fill_rate", "value": t_fr, "delta": round(c_fr - p_fr, 1)},
         {"key": "oos_volume", "value": round(t_oos, 1), "delta": _delta(c_oos, p_oos)},
         {"key": "active_customers", "value": t_cust, "delta": _delta(float(c_cust), float(p_cust))},
-        {"key": "concentration_top10", "value": conc, "delta": 0.0},
-        {"key": "order_demand_ratio", "value": odr, "delta": 0.0},
+        # No month-over-month is computed for these two (no prior-period anchor),
+        # so report delta=None rather than a fabricated 0.0 the UI would render as
+        # "→ 0.0% MoM" (U3.4). Null is surfaced as "no prior period".
+        {"key": "concentration_top10", "value": conc, "delta": None},
+        {"key": "order_demand_ratio", "value": odr, "delta": None},
     ]
     return {"kpis": kpis}
 

@@ -23,10 +23,12 @@ _NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
 
 @pytest.mark.asyncio
 async def test_dq_dashboard_200():
-    # Row shape: (domain, passed, failed, warnings, skipped, info_fails, total)
+    # Row shape: (domain, passed, failed, warnings, skipped, info_fails,
+    #             warning_fails, total). The single fail here is critical
+    #             severity (info_fails=0, warning_fails=0).
     pool, conn, cursor = _make_pool(fetchall_return=[
-        ("sales", 8, 1, 1, 0, 0, 10),
-        ("forecast", 5, 3, 2, 0, 0, 10),
+        ("sales", 8, 1, 1, 0, 0, 0, 10),
+        ("forecast", 5, 3, 2, 0, 0, 0, 10),
     ])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -52,9 +54,9 @@ async def test_dq_dashboard_excludes_skipped_from_score_denominator():
     checks were skipped. Skipped checks are surfaced explicitly and dropped from
     the score denominator so "10 pass / 0 fail / 0 warn" no longer reads 62.5%.
     The breakdown must reconcile: passed + failed + warnings + skipped == total."""
-    # item: 10 pass / 0 fail / 0 warn / 6 skip / 0 info_fail / 16 total.
+    # item: 10 pass / 0 fail / 0 warn / 6 skip / 0 info_fail / 0 warn_fail / 16 total.
     pool, conn, cursor = _make_pool(fetchall_return=[
-        ("item", 10, 0, 0, 6, 0, 16),
+        ("item", 10, 0, 0, 6, 0, 0, 16),
     ])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -83,13 +85,16 @@ async def test_dq_dashboard_info_fails_excluded_from_score():
     the score denominator (treated like skips) and surfaced as `info_fails`,
     while the raw `failed` count stays visible.
 
-    Row shape: (domain, passed, failed, warnings, skipped, info_fails, total).
+    Row shape: (domain, passed, failed, warnings, skipped, info_fails,
+    warning_fails, total).
     """
+    # Row shape: (domain, passed, failed, warnings, skipped, info_fails,
+    #             warning_fails, total).
     pool, conn, cursor = _make_pool(fetchall_return=[
         # Only fail is info-severity: 0 passed, 2 failed, both info.
-        ("sku_to_item", 0, 2, 0, 0, 2, 2),
-        # Only fail is a real warning-severity fail.
-        ("inventory", 10, 2, 0, 0, 0, 12),
+        ("sku_to_item", 0, 2, 0, 0, 2, 0, 2),
+        # Only fail is a genuine critical-severity fail (not info, not warning).
+        ("inventory", 10, 2, 0, 0, 0, 0, 12),
     ])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -102,9 +107,11 @@ async def test_dq_dashboard_info_fails_excluded_from_score():
     info_domain = domains["sku_to_item"]
     real_fail_domain = domains["inventory"]
 
-    # Info-only domain: 2 fails but all info -> excluded from denominator ->
-    # nothing scoreable -> 100% (not 0% alarm-red).
-    assert info_domain["score"] == 100.0
+    # Info-only domain: 2 fails but all info -> excluded from the denominator so
+    # it is NOT cratered to 0% alarm-red (U8.3). With 0 pass and nothing
+    # scoreable it now reads a NEUTRAL null score (not a misleading green 100%,
+    # U4.2) — the original intent (never red) is preserved.
+    assert info_domain["score"] is None
     assert info_domain["info_fails"] == 2
     assert info_domain["failed"] == 2  # raw count still visible
 
@@ -112,8 +119,95 @@ async def test_dq_dashboard_info_fails_excluded_from_score():
     assert real_fail_domain["score"] < 100.0
     assert real_fail_domain["info_fails"] == 0
 
-    # The info-only domain scores >= the genuinely-failing domain.
-    assert info_domain["score"] >= real_fail_domain["score"]
+    # The info-only domain is neutral (null) rather than red — it never reads a
+    # lower/redder score than the genuinely-failing domain.
+    assert info_domain["score"] is None
+    assert real_fail_domain["score"] is not None
+
+
+@pytest.mark.asyncio
+async def test_dq_dashboard_warning_fails_excluded_from_score():
+    """F3.1: a domain whose only failures are WARNING severity must not crater to
+    a red 0% badge that contradicts the Check Catalog's WARNING label for the same
+    checks. Warning-severity fails are excluded from the score denominator (like
+    info fails / skips), surfaced as `warning_fails`, and rolled into the amber
+    warn bucket — never counted as a hard red critical fail.
+
+    Row shape: (domain, passed, failed, warnings, skipped, info_fails,
+    warning_fails, total).
+    """
+    pool, conn, cursor = _make_pool(fetchall_return=[
+        # forecast_to_sku: only fail is warning-severity (0 pass, 2 warn-fail).
+        ("forecast_to_sku", 0, 2, 0, 0, 0, 2, 2),
+        # inventory: 8 warning-fails + 2 actual warns, plus 20 pass.
+        ("inventory", 20, 8, 2, 0, 0, 8, 30),
+        # a domain with a genuine CRITICAL fail (not warning, not info).
+        ("hardfail", 1, 1, 0, 0, 0, 0, 2),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/dashboard")
+    assert resp.status_code == 200
+    domains = {d["domain"]: d for d in resp.json()["domains"]}
+
+    warn_only = domains["forecast_to_sku"]
+    # All failures are warnings -> excluded from the score denominator so the
+    # domain is NOT cratered to a red 0% (F3.1). But with NOTHING scoreable and
+    # 0 pass, it must NOT read a green 100% either (U4.2) — that would hide a
+    # real warning-only integrity gap behind a "perfect" badge. Score is null
+    # so the card renders a neutral "warn-only" state.
+    assert warn_only["score"] is None
+    assert warn_only["warning_fails"] == 2
+    assert warn_only["failed"] == 2  # raw count still visible
+
+    # inventory: warning-fails are excluded from the denominator like info/skip,
+    # so they no longer crater the score; only the 2 genuine WARN-status rows
+    # weight it. score = passed / (passed + critical_fails + warnings)
+    # = 20 / (20 + 0 + 2) = 90.9 (was 66.7 when warning-fails were hard fails).
+    inv = domains["inventory"]
+    assert inv["score"] == 90.9
+    assert inv["warning_fails"] == 8
+
+    # A genuine critical fail still scores below 100 and counts as a hard fail.
+    hard = domains["hardfail"]
+    assert hard["score"] == 50.0  # 1 / (1 + 1)
+    assert hard["warning_fails"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dq_dashboard_warn_only_domain_is_neutral_not_green_100():
+    """U4.2: a domain whose ONLY checks are failing warning/info checks (0 pass,
+    nothing scoreable) must NOT show a green 100% — that would read identically
+    to a domain where everything passed, hiding a real integrity gap. It returns
+    a null score (neutral "warn-only") instead. A domain with genuine passes and
+    no scored fails still earns a true green 100%.
+
+    Row shape: (domain, passed, failed, warnings, skipped, info_fails,
+    warning_fails, total).
+    """
+    pool, conn, cursor = _make_pool(fetchall_return=[
+        # warn-only: 0 pass, both fails are warning-severity -> nothing scoreable.
+        ("forecast_to_sku", 0, 2, 0, 0, 0, 2, 2),
+        # info-only: 0 pass, both fails are info-severity -> nothing scoreable.
+        ("sku_to_item", 0, 2, 0, 0, 2, 0, 2),
+        # genuine perfect: 10 pass, 0 scored fails -> real green 100%.
+        ("forecast", 10, 0, 0, 4, 0, 0, 14),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/dashboard")
+    assert resp.status_code == 200
+    domains = {d["domain"]: d for d in resp.json()["domains"]}
+
+    # Warn-only and info-only domains: neutral (null), NOT green 100%.
+    assert domains["forecast_to_sku"]["score"] is None
+    assert domains["sku_to_item"]["score"] is None
+    # A domain with real passes and no scored fails keeps its true 100%.
+    assert domains["forecast"]["score"] == 100.0
 
 
 @pytest.mark.asyncio

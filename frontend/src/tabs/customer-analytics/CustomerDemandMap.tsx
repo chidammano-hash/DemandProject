@@ -12,7 +12,8 @@ import type { CustomerAnalyticsFilters, MapLocation } from "@/api/queries/custom
 import usStatesGeo from "@/assets/us-states.json";
 import { useDashboardFilter } from "./DashboardFilterContext";
 import { ExportButtons } from "./ExportButtons";
-import { formatInt as fmtNum } from "@/lib/formatters";
+import { formatCompactKMB as fmtCompact, formatInt as fmtNum } from "@/lib/formatters";
+import { togglePillClass } from "./togglePill";
 
 const statesGeoJSON = usStatesGeo as unknown as GeoJSON.FeatureCollection;
 
@@ -230,7 +231,8 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
               <button
                 key={g}
                 onClick={() => onGroupByChange(g)}
-                className={`px-2 py-0.5 text-xs rounded ${groupBy === g ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}
+                aria-pressed={groupBy === g}
+                className={togglePillClass(groupBy === g)}
               >
                 {g}
               </button>
@@ -241,7 +243,8 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
               <button
                 key={m}
                 onClick={() => onMetricChange(m)}
-                className={`px-2 py-0.5 text-xs rounded ${metric === m ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+                aria-pressed={metric === m}
+                className={togglePillClass(metric === m)}
               >
                 {METRIC_LABELS[m]}
               </button>
@@ -250,7 +253,7 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
         </div>
         {data && (
           <p className="text-xs text-muted-foreground mt-1">
-            {fmtNum(data.total_customers)} customers | {fmtNum(data.total_demand)} cases total demand
+            {fmtNum(data.total_customers)} customers | {fmtCompact(data.total_demand)} cases total demand
           </p>
         )}
       </CardHeader>

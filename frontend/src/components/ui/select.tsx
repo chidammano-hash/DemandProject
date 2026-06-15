@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Minimal controlled Select with open/close toggle and outside-click dismiss.
-// Matches the shadcn/ui Select API used in AIPlannerTab.
+// Mirrors the shadcn/ui Select API.
 // ---------------------------------------------------------------------------
 
 interface SelectContextValue {

@@ -11,7 +11,7 @@ import { fetchOpenPOs, fetchOpenPOSummary, fetchPastDuePOs } from "@/api/queries
 import { queryKeys } from "@/api/queries/core";
 import { EmptyState } from "@/components/EmptyState";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { formatInt as fmtNum } from "@/lib/formatters";
+import { formatInt as fmtNum, formatDate } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -140,7 +140,7 @@ export function OpenPOPanel() {
           value={fmtNum(summary?.suppliers_with_open_pos ?? null)}
           sub={
             summary?.last_loaded_at
-              ? `Loaded ${new Date(summary.last_loaded_at).toLocaleDateString()}`
+              ? `Loaded ${formatDate(summary.last_loaded_at)}`
               : "No data loaded"
           }
         />

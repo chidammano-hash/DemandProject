@@ -9,6 +9,7 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { togglePillClass } from "./togglePill";
 
 type HeatmapMetric = "demand_qty" | "customer_count" | "fill_rate";
 type ValueMode = "absolute" | "percentile";
@@ -146,7 +147,8 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
               <button
                 key={m}
                 onClick={() => setMetric(m)}
-                className={`px-2 py-0.5 text-xs rounded ${metric === m ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+                aria-pressed={metric === m}
+                className={togglePillClass(metric === m)}
               >
                 {m === "demand_qty" ? "Demand" : m === "customer_count" ? "Customers" : "Fill Rate"}
               </button>
@@ -157,7 +159,8 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
               <button
                 key={vm}
                 onClick={() => setValueMode(vm)}
-                className={`px-2 py-0.5 text-xs rounded ${valueMode === vm ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}
+                aria-pressed={valueMode === vm}
+                className={togglePillClass(valueMode === vm)}
               >
                 {vm === "absolute" ? "Absolute" : "Percentile"}
               </button>
@@ -166,7 +169,7 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
           {(sortCol || sortRow) && (
             <button
               onClick={() => { setSortCol(null); setSortRow(null); }}
-              className="px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-600 hover:bg-gray-200"
+              className={togglePillClass(false)}
             >
               Reset Sort
             </button>

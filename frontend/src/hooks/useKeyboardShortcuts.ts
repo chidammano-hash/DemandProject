@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { NUMERIC_SHORTCUTS } from "@/components/AppSidebar";
 
 interface ShortcutConfig {
   onTabSwitch: (tab: string) => void;
@@ -11,15 +12,12 @@ interface ShortcutConfig {
   onToggleColorMode?: () => void;
 }
 
-const TAB_MAP: Record<string, string> = {
-  "1": "commandCenter",
-  "2": "sop",
-  "3": "jobs",
-  "4": "invPlanning",
-  "5": "clusters",
-  "6": "aggregateAnalysis",
-  "7": "itemAnalysis",
-};
+// U6.1 — derived from the sidebar's NAV_ITEMS[].shortcut so the digit -> tab
+// mapping, the sidebar <kbd> hints, and the help modal can never disagree.
+// Do NOT hand-edit: change a NavItem.shortcut in AppSidebar instead.
+export const TAB_MAP: Record<string, string> = Object.fromEntries(
+  NUMERIC_SHORTCUTS.map((s) => [s.digit, s.key]),
+);
 
 export function useKeyboardShortcuts(config: ShortcutConfig) {
   const [showHelp, setShowHelp] = useState(false);

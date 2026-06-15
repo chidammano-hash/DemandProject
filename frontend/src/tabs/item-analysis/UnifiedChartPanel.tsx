@@ -21,6 +21,7 @@ import type {
 import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
 import { modelLabel } from "@/lib/model-labels";
 import type { DQCorrection } from "@/api/queries/platform";
+import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -585,8 +586,8 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             onChange={(e) => setSkuTimeStart(e.target.value)}
           >
             {skuMonths.map((m) => (
-              <option key={m} value={m}>
-                {m}
+              <option key={m} value={m} disabled={isFromDisabled(m, skuTimeEnd)}>
+                {formatMonthLabel(m)}
               </option>
             ))}
           </select>
@@ -599,8 +600,8 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             onChange={(e) => setSkuTimeEnd(e.target.value)}
           >
             {skuMonths.map((m) => (
-              <option key={m} value={m}>
-                {m}
+              <option key={m} value={m} disabled={isToDisabled(m, skuTimeStart)}>
+                {formatMonthLabel(m)}
               </option>
             ))}
           </select>

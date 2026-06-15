@@ -21,9 +21,15 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
-import torch
 
-from common.ml.expert_panel.foundation_models import (
+# torch/chronos are heavy optional deps; skip the whole module (rather than error at
+# collection) when they are absent from the active env — matches test_model_registry_build.py.
+pytest.importorskip("torch")
+pytest.importorskip("chronos")
+
+import torch  # noqa: E402 — guarded by importorskip above
+
+from common.ml.expert_panel.foundation_models import (  # noqa: E402
     _run_chronos,
     run_foundation_models,
     _FOUNDATION_DISPATCH,

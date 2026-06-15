@@ -14,6 +14,32 @@ import pytest
 from tests.api.conftest import make_async_pool as _make_async_pool
 
 
+def test_high_severity_scores_into_high_band_not_critical():
+    """F4.1: a ``high``-severity exception must score strictly BELOW the urgent
+    threshold so it lands in the [high, urgent) band — not get swept into the
+    Critical bucket.
+
+    Regression guard for the off-by-boundary defect where ``'high'`` mapped to
+    exactly 0.75 (== the urgent threshold) so the ``critical = score >= 0.75``
+    filter swallowed every high-severity exception and the "High Priority" KPI
+    read 0 despite 1,715 open high rows.
+    """
+    from api.routers.inventory.inv_planning_insights import (
+        _SEVERITY_URGENCY_SCORE,
+        _URGENCY_THRESHOLDS,
+    )
+
+    urgent = _URGENCY_THRESHOLDS["urgent"]
+    high_floor = _URGENCY_THRESHOLDS["high"]
+
+    # critical stays at/above urgent; high lands in [high_floor, urgent).
+    assert _SEVERITY_URGENCY_SCORE["critical"] >= urgent
+    assert high_floor <= _SEVERITY_URGENCY_SCORE["high"] < urgent
+    assert high_floor <= _SEVERITY_URGENCY_SCORE["medium"] < urgent or (
+        _SEVERITY_URGENCY_SCORE["medium"] < high_floor
+    )
+
+
 @pytest.mark.asyncio
 async def test_action_feed_returns_open_exceptions():
     """Source 1 (open exceptions) populates the feed and summary counts."""
@@ -49,6 +75,39 @@ async def test_action_feed_returns_open_exceptions():
 
 
 @pytest.mark.asyncio
+async def test_action_feed_surfaces_item_description():
+    """U1.8: each action row must carry the human-readable item description
+    (from dim_item.item_desc) alongside the raw item_id, so a planner triaging
+    the morning queue can recognize "Tito's Handmade Vodka 80" rather than a
+    bare numeric id "627099". The description must appear in the row payload
+    AND in the detail subtitle.
+    """
+    # 9-column rows: the SELECT now joins dim_item and appends item_desc as the
+    # final column.
+    exc_rows = [
+        ("exception", "627099", "1401-BULK", "stockout", 0.95, 571.98,
+         "stockout", "2026-04-02", "TITOS HANDMADE VODKA 80"),
+    ]
+    pool, _conn, cursor = _make_async_pool(fetchall_returns=[exc_rows, [], []])
+    cursor.fetchone.side_effect = [(1, 1, 0, 571.98)]
+
+    with patch("api.core._get_async_pool", return_value=pool):
+        from httpx import ASGITransport, AsyncClient
+
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inv-planning/action-feed?limit=20")
+
+    assert resp.status_code == 200
+    action = resp.json()["actions"][0]
+    assert action["item_desc"] == "TITOS HANDMADE VODKA 80"
+    # The description appears in the detail subtitle next to the id+loc.
+    assert "TITOS HANDMADE VODKA 80" in action["detail"]
+    assert "627099" in action["detail"]
+
+
+@pytest.mark.asyncio
 async def test_action_feed_humanizes_exception_enum_in_title_and_detail():
     """U2.11: raw DB enum (e.g. ``below_ss``) must never leak into the UI.
 
@@ -77,6 +136,37 @@ async def test_action_feed_humanizes_exception_enum_in_title_and_detail():
     # No raw enum / naive title-case leaks.
     assert "below_ss" not in action["title"]
     assert "Below Ss" not in action["detail"]
+
+
+@pytest.mark.asyncio
+async def test_action_feed_summary_declares_financial_at_risk_basis():
+    """F1.2: the headline "$ at risk" is 7-day lost gross margin for the open
+    exceptions (plus proposed-order value / annualized holding for the other
+    sources) — NOT a total revenue-at-risk figure. The response must name the
+    window/basis so the UI can label it ("7-day lost margin at risk") instead of
+    a bare "$ at risk" that reads as a broken/implausibly-tiny metric.
+    """
+    exc_rows = [
+        ("exception", "627099", "1401-BULK", "stockout", 0.95, 571.98,
+         "stockout", "2026-04-02", "TITOS HANDMADE VODKA 80"),
+    ]
+    pool, _conn, cursor = _make_async_pool(fetchall_returns=[exc_rows, [], []])
+    cursor.fetchone.side_effect = [(1, 1, 0, 571.98)]
+
+    with patch("api.core._get_async_pool", return_value=pool):
+        from httpx import ASGITransport, AsyncClient
+
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inv-planning/action-feed?limit=20")
+
+    assert resp.status_code == 200
+    summary = resp.json()["summary"]
+    basis = summary["financial_at_risk_basis"]
+    # Names the 7-day window and the margin basis a planner can defend.
+    assert "7" in basis
+    assert "margin" in basis.lower()
 
 
 @pytest.mark.asyncio

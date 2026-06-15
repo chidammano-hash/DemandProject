@@ -86,13 +86,13 @@ export function DecompositionPanel() {
         <div className="ml-auto flex gap-1">
           <button
             onClick={() => setViewMode("absolute")}
-            className={`px-2 py-1 text-xs rounded ${viewMode === "absolute" ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" : "text-gray-500 hover:bg-gray-100"}`}
+            className={`px-2 py-1 text-xs rounded ${viewMode === "absolute" ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" : "text-muted-foreground hover:bg-muted"}`}
           >
             Absolute
           </button>
           <button
             onClick={() => setViewMode("percent")}
-            className={`px-2 py-1 text-xs rounded ${viewMode === "percent" ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" : "text-gray-500 hover:bg-gray-100"}`}
+            className={`px-2 py-1 text-xs rounded ${viewMode === "percent" ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" : "text-muted-foreground hover:bg-muted"}`}
           >
             % Share
           </button>
@@ -100,7 +100,7 @@ export function DecompositionPanel() {
       </div>
 
       {!hasSelection && (
-        <div className="flex flex-col items-center py-16 text-gray-400">
+        <div className="flex flex-col items-center py-16 text-muted-foreground">
           <PieChart className="h-12 w-12 mb-3 opacity-30" />
           <p className="text-sm font-medium">No item selected</p>
           <p className="text-xs mt-1">Enter an Item ID and Location, or select from the Workbench panel</p>
@@ -125,7 +125,7 @@ export function DecompositionPanel() {
         <div className="flex gap-6">
           {/* Stacked area chart */}
           <div className="flex-1">
-            <h4 className="text-xs font-medium text-gray-500 mb-2">
+            <h4 className="text-xs font-medium text-muted-foreground mb-2">
               Customer Demand {viewMode === "percent" ? "(% Share)" : "(Qty)"}
             </h4>
             <ResponsiveContainer width="100%" height={360}>
@@ -168,7 +168,7 @@ export function DecompositionPanel() {
 
           {/* Pareto sidebar */}
           <div className="w-72 flex-shrink-0">
-            <h4 className="text-xs font-medium text-gray-500 mb-2">Pareto Analysis</h4>
+            <h4 className="text-xs font-medium text-muted-foreground mb-2">Pareto Analysis</h4>
             <ResponsiveContainer width="100%" height={360}>
               <ComposedChart data={data.pareto} layout="vertical">
                 <XAxis type="number" tick={{ fontSize: 10, fill: chartColors.axis }} />

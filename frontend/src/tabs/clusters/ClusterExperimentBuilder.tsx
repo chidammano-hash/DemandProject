@@ -24,7 +24,7 @@ import {
   type ModelParams,
   type LabelParams,
 } from "@/api/queries";
-import { fetchScenarioEstimate, STALE } from "@/api/queries";
+import { fetchScenarioEstimate, fetchClusterCoreFeatures, STALE } from "@/api/queries";
 import { ClusterParamsForm } from "./ClusterParamsForm";
 
 // ---------------------------------------------------------------------------
@@ -120,13 +120,9 @@ export function ClusterExperimentBuilder({
   const templates: ClusterExperimentTemplate[] = templatesData?.templates ?? [];
 
   // ---- Fetch core features (fallback handled in ClusterParamsForm) -----------
-  const { data: coreFeaturesData } = useQuery<{ features: string[] }>({
+  const { data: coreFeaturesData } = useQuery({
     queryKey: ["clustering", "core-features"],
-    queryFn: async () => {
-      const res = await fetch("/clustering/core-features");
-      if (!res.ok) throw new Error("Failed to fetch core features");
-      return res.json();
-    },
+    queryFn: fetchClusterCoreFeatures, // fetchJson query fetcher — U6.10
     staleTime: 5 * 60 * 1000, // 5 min — rarely changes
     enabled: open,
   });

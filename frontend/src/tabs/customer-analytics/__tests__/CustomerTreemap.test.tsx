@@ -96,3 +96,32 @@ describe("CustomerTreemap (U7.1 — must not use the broken visualMap.dimension 
     expect(typeof child?.itemStyle?.color).toBe("string");
   });
 });
+
+describe("CustomerTreemap fill-rate band (U3.11 — 0-100 ramp hides the 95-100 spread)", () => {
+  it("anchors the color ramp to a business band, not 0-100, so a 95% node differs from a 99% node", async () => {
+    const { fillRateColor, FILL_RATE_BAND } = await import("../CustomerTreemap");
+    // The real data sits entirely in ~95-100%; a 0-100 ramp paints it all green.
+    // The band must NOT be the full 0-100 range.
+    expect(FILL_RATE_BAND[0]).toBeGreaterThan(0);
+    expect(FILL_RATE_BAND[1]).toBeLessThanOrEqual(100);
+    // Two nearby in-band values must render visibly different colors.
+    expect(fillRateColor(95)).not.toBe(fillRateColor(99));
+    // The band floor is the red end and the band ceiling is the green end.
+    const floor = fillRateColor(FILL_RATE_BAND[0]);
+    const ceil = fillRateColor(FILL_RATE_BAND[1]);
+    expect(floor).not.toBe(ceil);
+    // Below the floor clamps to the red end; above the ceiling clamps to green.
+    expect(fillRateColor(FILL_RATE_BAND[0] - 10)).toBe(floor);
+    expect(fillRateColor(FILL_RATE_BAND[1] + 10)).toBe(ceil);
+  });
+
+  it("labels the legend with the band endpoints, not a static 0% / 100%", async () => {
+    render(wrap(<CustomerTreemap filters={filters} />));
+    await waitFor(() => expect(screen.getByTestId("treemap-echart")).toBeInTheDocument());
+    const { FILL_RATE_BAND } = await import("../CustomerTreemap");
+    // Legend reflects the real data band (e.g. "90%" .. "100% fill rate"),
+    // never the misleading static "0%".
+    expect(screen.getByText(`${FILL_RATE_BAND[0]}%`)).toBeInTheDocument();
+    expect(screen.queryByText("0%")).toBeNull();
+  });
+});

@@ -48,6 +48,19 @@ def _safe_float(v) -> float | None:
         return None
 
 
+def _item_desc(row) -> str | None:
+    """Read the trailing item_desc column from an action-feed source row (U1.8).
+
+    The three source SELECTs append ``dim_item.item_desc`` as the final column.
+    Tolerates legacy rows without that column (returns None) so a schema/mock
+    drift degrades to an id-only label rather than IndexError-ing the feed.
+    """
+    if len(row) <= 8:
+        return None
+    desc = row[8]
+    return str(desc) if desc else None
+
+
 def _tier_for_dos(dos: float | None) -> str:
     """Return a color tier label for days-of-supply value."""
     if dos is None:
@@ -79,6 +92,40 @@ def _trend_label(current: float | None, prior: float | None) -> str:
 # ───────────────────────────────────────────────────────────────────────────
 
 _URGENCY_THRESHOLDS = {"urgent": 0.75, "high": 0.5, "medium": 0.0}
+
+# Urgency score assigned to each raw exception severity. ``high`` MUST score
+# strictly below the urgent threshold (0.75) so the summary's
+# ``critical = score >= 0.75`` filter does NOT swallow high-severity rows into
+# the Critical bucket — otherwise the "High Priority" KPI reads 0 while every
+# high exception inflates Critical (F4.1, off-by-boundary). 0.70 lands ``high``
+# squarely in the [0.5, 0.75) band the summary counts as "high".
+_SEVERITY_URGENCY_SCORE = {
+    "critical": 0.95,
+    "high": 0.70,
+    "medium": 0.50,
+    "low": 0.25,
+}
+_DEFAULT_SEVERITY_SCORE = 0.25
+
+# F1.2 — human-readable basis for the action-feed "$ at risk" headline. The
+# exception contribution is 7-day lost gross margin (a fraction of revenue), not
+# total revenue at risk; the UI surfaces this so a planner can defend the figure
+# in an S&OP meeting rather than read an implausibly tiny "$ at risk".
+_FINANCIAL_AT_RISK_BASIS = "7-day lost gross margin (open exceptions) + proposed order value"
+
+
+def _severity_urgency_case(column: str = "severity") -> str:
+    """Build the SQL ``CASE`` that maps a severity column to an urgency score.
+
+    Centralising it keeps the per-row detail query and the full-population
+    aggregate query in lock-step, so the score→bucket boundary can never drift
+    between them again (F4.1).
+    """
+    whens = "\n".join(
+        f"    WHEN '{sev}' THEN {score}"
+        for sev, score in _SEVERITY_URGENCY_SCORE.items()
+    )
+    return f"CASE {column}\n{whens}\n    ELSE {_DEFAULT_SEVERITY_SCORE}\nEND"
 
 
 def _urgency_label(score: float) -> str:
@@ -166,20 +213,17 @@ async def get_action_feed(
                 # --- Source 1: Open exceptions by financial impact ---
                 try:
                     async with conn.transaction():
-                        await cur.execute("""
+                        await cur.execute(f"""
                             SELECT 'exception' AS source,
-                                   item_id, loc, exception_type AS action_type,
-                                   CASE severity
-                                       WHEN 'critical' THEN 0.95
-                                       WHEN 'high' THEN 0.75
-                                       WHEN 'medium' THEN 0.50
-                                       ELSE 0.25
-                                   END AS urgency_score,
-                                   COALESCE(financial_impact_total, estimated_order_value, 0) AS financial_impact,
-                                   exception_type AS action_label,
-                                   exception_date
-                            FROM fact_replenishment_exceptions
-                            WHERE status = 'open'
+                                   e.item_id, e.loc, e.exception_type AS action_type,
+                                   {_severity_urgency_case('e.severity')} AS urgency_score,
+                                   COALESCE(e.financial_impact_total, e.estimated_order_value, 0) AS financial_impact,
+                                   e.exception_type AS action_label,
+                                   e.exception_date,
+                                   di.item_desc
+                            FROM fact_replenishment_exceptions e
+                            LEFT JOIN dim_item di ON di.item_id = e.item_id
+                            WHERE e.status = 'open'
                             ORDER BY urgency_score DESC, financial_impact DESC NULLS LAST
                             LIMIT %s
                         """, [limit * 2])
@@ -194,6 +238,7 @@ async def get_action_feed(
                             "financial_impact": _safe_float(r[5]),
                             "action_label": r[6],
                             "created_at": str(r[7]) if r[7] else None,
+                            "item_desc": _item_desc(r),
                         })
                 except psycopg.Error as exc:
                     logger.warning("action-inbox: exceptions table query failed: %s", exc)
@@ -203,14 +248,16 @@ async def get_action_feed(
                     async with conn.transaction():
                         await cur.execute("""
                             SELECT 'planned_order' AS source,
-                                   item_id, loc, 'approve_order' AS action_type,
-                                   CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
-                                   COALESCE(order_value, 0) AS financial_impact,
-                                   'Approve order: ' || recommended_qty || ' units' AS action_label,
-                                   created_at
-                            FROM fact_planned_orders
-                            WHERE status = 'proposed'
-                            ORDER BY urgency_score DESC, order_value DESC NULLS LAST
+                                   po.item_id, po.loc, 'approve_order' AS action_type,
+                                   CASE WHEN po.is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
+                                   COALESCE(po.order_value, 0) AS financial_impact,
+                                   'Approve order: ' || po.recommended_qty || ' units' AS action_label,
+                                   po.created_at,
+                                   di.item_desc
+                            FROM fact_planned_orders po
+                            LEFT JOIN dim_item di ON di.item_id = po.item_id
+                            WHERE po.status = 'proposed'
+                            ORDER BY urgency_score DESC, po.order_value DESC NULLS LAST
                             LIMIT %s
                         """, [limit * 2])
                         rows = await cur.fetchall()
@@ -224,6 +271,7 @@ async def get_action_feed(
                             "financial_impact": _safe_float(r[5]),
                             "action_label": r[6],
                             "created_at": str(r[7]) if r[7] else None,
+                            "item_desc": _item_desc(r),
                         })
                 except psycopg.Error as exc:
                     logger.warning("action-inbox: planned_orders table query failed: %s", exc)
@@ -238,8 +286,10 @@ async def get_action_feed(
                                    t.stockout_risk_score / 100.0 AS urgency_score,
                                    t.monthly_total_holding_cost * 12 AS financial_impact,
                                    'Review stockout risk (score: ' || t.stockout_risk_score || ')' AS action_label,
-                                   t.computed_at AS created_at
+                                   t.computed_at AS created_at,
+                                   di.item_desc
                             FROM mv_integrated_planning_targets t
+                            LEFT JOIN dim_item di ON di.item_id = t.item_id
                             WHERE t.stockout_risk_score >= 60
                               AND NOT EXISTS (
                                   SELECT 1 FROM fact_replenishment_exceptions e
@@ -261,6 +311,7 @@ async def get_action_feed(
                             "financial_impact": _safe_float(r[5]),
                             "action_label": r[6],
                             "created_at": str(r[7]) if r[7] else None,
+                            "item_desc": _item_desc(r),
                         })
                 except psycopg.Error as exc:
                     logger.warning("action-inbox: integrated_targets MV query failed: %s", exc)
@@ -276,15 +327,10 @@ async def get_action_feed(
                 try:
                     async with conn.transaction():
                         await cur.execute(
-                            """
+                            f"""
                             WITH pop AS (
                                 SELECT
-                                    CASE severity
-                                        WHEN 'critical' THEN 0.95
-                                        WHEN 'high' THEN 0.75
-                                        WHEN 'medium' THEN 0.50
-                                        ELSE 0.25
-                                    END AS urgency_score,
+                                    {_severity_urgency_case()} AS urgency_score,
                                     COALESCE(financial_impact_total, estimated_order_value, 0) AS fin
                                 FROM fact_replenishment_exceptions
                                 WHERE status = 'open'
@@ -367,7 +413,13 @@ async def get_action_feed(
             a["title"] = f"Resolve {_humanize_action_type(action_label)}"
         else:
             a["title"] = action_label
-        a["detail"] = f"{_humanize_action_type(a['action_type'])} — {a['item_id']} @ {a['loc']}"
+        # U1.8 — lead the subtitle with the human-readable item description when
+        # available, then the id+loc, so a planner recognizes the SKU without
+        # clicking through (e.g. "Stockout — Tito's Handmade Vodka 80 (627099 @
+        # 1401-BULK)"). Falls back to the bare id+loc when no description exists.
+        desc = a.get("item_desc")
+        item_ref = f"{desc} ({a['item_id']} @ {a['loc']})" if desc else f"{a['item_id']} @ {a['loc']}"
+        a["detail"] = f"{_humanize_action_type(a['action_type'])} — {item_ref}"
         a["action_url"] = None
 
     # Headline KPIs reflect the FULL candidate population (U9.1) when the
@@ -403,6 +455,14 @@ async def get_action_feed(
     # The action list is a truncated top-N by urgency × impact; expose how many
     # rows are shown so the UI can caption "showing top N of {total}".
     summary["displayed"] = len(actions)
+
+    # F1.2 — name the basis of the "$ at risk" headline. The exception rows
+    # contribute 7-day lost gross margin (financial_impact_total = daily_demand *
+    # margin * min(7, days_at_risk)); planned orders contribute proposed order
+    # value and stockout-risk rows annualized holding cost. The dominant /
+    # defining basis is the 7-day lost margin -- surfaced so the UI labels the
+    # tile honestly instead of implying total revenue at risk.
+    summary["financial_at_risk_basis"] = _FINANCIAL_AT_RISK_BASIS
 
     return {"actions": actions, "summary": summary}
 

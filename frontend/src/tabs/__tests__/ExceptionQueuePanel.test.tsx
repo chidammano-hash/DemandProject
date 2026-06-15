@@ -77,6 +77,27 @@ describe("ExceptionQueuePanel", () => {
     expect(await screen.findByText("URGENT")).toBeInTheDocument();
   });
 
+  it("makes the drill-in exception row keyboard-operable (U6.2)", async () => {
+    render(
+      <TestQueryWrapper>
+        <ExceptionQueuePanel />
+      </TestQueryWrapper>,
+    );
+    // The clickable <tr> exposes button role + tab focusability.
+    const itemCell = await screen.findByText("100320");
+    const row = itemCell.closest("tr") as HTMLTableRowElement;
+    expect(row).toBeTruthy();
+    expect(row.getAttribute("role")).toBe("button");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+
+    // Enter activates the same handler as a click — row expands.
+    fireEvent.keyDown(row, { key: "Enter" });
+    await waitFor(() => {
+      expect(row.getAttribute("aria-expanded")).toBe("true");
+    });
+  });
+
   it("renders Generate Exceptions button", async () => {
     render(
       <TestQueryWrapper>

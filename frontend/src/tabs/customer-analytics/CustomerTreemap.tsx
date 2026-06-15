@@ -16,15 +16,23 @@ interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
-// Fill-rate color ramp: red (0%) -> amber (50%) -> green (100%). Applied per node
-// via itemStyle.color rather than ECharts `visualMap.dimension`, which expects a
+// Fill-rate color ramp: red -> amber -> green. Applied per node via
+// itemStyle.color rather than ECharts `visualMap.dimension`, which expects a
 // numeric index into a node's `value` array — a treemap node's `value` is a
 // scalar, so the old `dimension: "fill_rate"` resolved every node out-of-range
 // and painted the whole treemap transparent/blank (U7.1).
-const RAMP_LOW = "#ef4444"; // red @ 0%
-const RAMP_MID = "#eab308"; // amber @ 50%
-const RAMP_HIGH = "#22c55e"; // green @ 100%
+const RAMP_LOW = "#ef4444"; // red — band floor
+const RAMP_MID = "#eab308"; // amber — band midpoint
+const RAMP_HIGH = "#22c55e"; // green — band ceiling
 const NEUTRAL = "#94a3b8"; // slate — node with no fill_rate
+
+// Business band the ramp spans. Real fill rates cluster in ~95-100%, so a 0-100
+// ramp painted every node the same green and the legend (0%..100%) implied a
+// dynamic range the data never uses — a 95.1% node (worth attention) looked
+// identical to a 99.9% node (U3.11). Anchoring the ramp to 90-100% restores
+// perceivable variation across the band the data actually occupies; values
+// outside the band clamp to the endpoints.
+export const FILL_RATE_BAND: readonly [number, number] = [90, 100];
 
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -35,9 +43,14 @@ function lerp(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * t);
 }
 
-function fillRateColor(fr: number | undefined): string {
+/** Map a fill rate to a ramp color across {@link FILL_RATE_BAND}. Values below
+ *  the band floor clamp to red; above the ceiling clamp to green. Exported for
+ *  unit testing the band mapping (U3.11). */
+export function fillRateColor(fr: number | undefined): string {
   if (fr == null || Number.isNaN(fr)) return NEUTRAL;
-  const pct = Math.max(0, Math.min(100, fr)) / 100;
+  const [lo, hi] = FILL_RATE_BAND;
+  // Normalize within the band rather than 0-100 so the 95-100 spread is visible.
+  const pct = Math.max(0, Math.min(1, (fr - lo) / (hi - lo)));
   // Two-segment ramp: low->mid for the bottom half, mid->high for the top half.
   const [from, to, t] =
     pct <= 0.5
@@ -111,7 +124,7 @@ export function CustomerTreemap({ filters }: Props) {
           <CardTitle className="text-base">Customer Concentration</CardTitle>
           <ExportButtons panelId="treemap" getData={() => data?.tree ?? []} />
         </div>
-        <p className="text-xs text-muted-foreground">State &gt; Channel &gt; Customer by demand. Color = fill rate.</p>
+        <p className="text-xs text-muted-foreground">State &gt; Channel &gt; Customer by demand. Color = fill rate ({FILL_RATE_BAND[0]}&ndash;{FILL_RATE_BAND[1]}% band).</p>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -125,15 +138,17 @@ export function CustomerTreemap({ filters }: Props) {
           <div role="img" aria-roledescription="Customer concentration treemap chart" className="w-full">
             <ReactECharts option={option} style={{ height: 360, width: "100%" }} lazyUpdate notMerge={false} />
             {/* Static fill-rate legend — replaces the removed ECharts visualMap
-                (U7.1). Mirrors the red->amber->green node ramp. */}
+                (U7.1). Mirrors the red->amber->green node ramp, labeled with the
+                real business band endpoints (90-100%) so the legend reflects the
+                data's actual range rather than a misleading 0-100 (U3.11). */}
             <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-              <span>0%</span>
+              <span>{FILL_RATE_BAND[0]}%</span>
               <span
                 aria-hidden
                 className="h-2 w-40 rounded"
                 style={{ background: `linear-gradient(to right, ${RAMP_LOW}, ${RAMP_MID}, ${RAMP_HIGH})` }}
               />
-              <span>100% fill rate</span>
+              <span>{FILL_RATE_BAND[1]}% fill rate</span>
             </div>
           </div>
         )}

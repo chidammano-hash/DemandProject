@@ -101,6 +101,17 @@ export function HeatmapGrid({
               const hasCounts = row.counts != null && row.counts.length > 0;
               const isEmpty = hasCounts && (skuCount ?? 0) === 0;
               const bg = isEmpty ? "var(--color-muted, #e5e7eb)" : colorScale(value);
+              const formatted = isEmpty ? "" : valueFormat(value);
+              const cellLabel = isEmpty
+                ? `${row.label}, ${columnLabels[colIdx]}: no data`
+                : `${row.label}, ${columnLabels[colIdx]}: ${formatted}${skuCount != null ? `, ${skuCount} SKUs` : ""}`;
+              // U7.13 — give sighted hover the same context AT users already get
+              // via aria-label, and on a floored "<0%*" cell append the low-base
+              // note so a planner learns the marker's meaning without scrolling
+              // to the caption below the grid.
+              const cellTitle = !isEmpty && formatted.includes("<0%*")
+                ? `${cellLabel} — Accuracy = 100 − WAPE; <0%* = tiny actual base, review WAPE`
+                : cellLabel;
               return (
                 <div
                   key={`${row.label}-${colIdx}`}
@@ -117,9 +128,8 @@ export function HeatmapGrid({
                   onMouseLeave={() => setHoveredCell(null)}
                   onClick={() => !isEmpty && onCellClick?.(row.label, columnLabels[colIdx])}
                   role="gridcell"
-                  aria-label={isEmpty
-                    ? `${row.label}, ${columnLabels[colIdx]}: no data`
-                    : `${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}${skuCount != null ? `, ${skuCount} SKUs` : ""}`}
+                  aria-label={cellLabel}
+                  title={cellTitle}
                 >
                   {isEmpty
                     ? "\u00A0"

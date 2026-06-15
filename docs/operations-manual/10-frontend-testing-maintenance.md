@@ -431,7 +431,71 @@ Stage 1 installs deps with `npm ci`, runs `tsc -b && vite build`, and produces `
 
 ---
 
-## 11. Quick Reference
+## 11. AI UX Hardening Loop (`/ux-loop`)
+
+An AI-driven, persona-based critique→fix loop that drives the **live** app with Playwright,
+finds UX/UI defects from screenshots + code, fixes them under strict test-first TDD, and
+re-validates against live endpoints. Each cycle runs three agents: a **Demand Planner**
+(acceptance-tests the planner workflows), a **Usability/Simplification** reviewer, and a
+**Technical Fixer** (red→green TDD). Use it to push the UI toward best-in-class between releases.
+
+### 11.1 Run it
+
+Inside Claude Code, invoke the slash command (defined in `.claude/commands/ux-loop.md`):
+
+```
+/ux-loop 10        # run 10 cycles (the number is the cycle count)
+/ux-loop           # defaults to 5 cycles
+```
+
+It stops early if **2 consecutive cycles** find no new P0/P1/P2 issues (the app is clean).
+To force exactly N cycles, raise `dryStop` above N (see the command file).
+
+### 11.2 What one cycle does
+
+| Phase | Agent / step | Output |
+|---|---|---|
+| Capture | Playwright over 14 planner tabs → screenshots + visible text + console errors | `usertestinputs/cycleN/screens/`, `capture-digest.md` |
+| Critique | Demand Planner + Usability reviewer (read screenshots + code) | `testinputN.md`, `usabilityN.md` |
+| Fix | Technical Fixer — failing test → implement → green → refactor → live re-verify | `cycleN/fixes-applied.md` (with red→green evidence) |
+| Ledger | Append issue → FIXED/DEFERRED | `usertestinputs/LEDGER.md` |
+
+### 11.3 Prerequisite — host API must serve current code (CRITICAL)
+
+The Docker API (`demandproject-api-1`) ships a **static image with no `--reload`**, so fixes
+won't be live for the next cycle's scan unless a **host** uvicorn owns `:8000`. The command
+sets this up automatically; to do it manually:
+
+```bash
+docker stop demandproject-api-1                                   # free :8000
+~/.local/bin/uv run uvicorn api.main:app --reload --port 8000     # host API, hot-reload
+curl -s -m3 http://localhost:8000/health                          # expect status: ok
+```
+
+Postgres/Redis stay in Docker and are reachable from the host via the defaults in
+`common/core/db.py` (Postgres `localhost:5440`, db `demand_mvp`, user/pass `demand`/`demand`).
+To revert: `docker start demandproject-api-1`. Vite must also be up on `:5173` (`make ui`).
+
+### 11.4 Capture-only (no AI)
+
+For just the Playwright capture + screenshots, without the critique/fix agents:
+
+```bash
+cd frontend && node ../usertestinputs/_harness/capture.mjs /abs/path/to/outdir
+# writes <outdir>/screens/*.png, capture-digest.md, capture-dump.json
+```
+
+### 11.5 Outputs, review & hygiene
+
+- The harness scripts live in `usertestinputs/_harness/` (`capture.mjs`, `improvement-loop.mjs`).
+- Findings, `LEDGER.md`, and `SUMMARY.md` are kept; screenshots (`**/screens/`) and raw
+  `capture-dump.json` are gitignored (`usertestinputs/.gitignore`, ~20MB of PNGs).
+- The loop **edits the working tree but does not commit** — review with `git diff`, run
+  `make test-all`, then commit when satisfied.
+
+---
+
+## 12. Quick Reference
 
 ```bash
 # Dev loop
@@ -462,4 +526,7 @@ make perf-pipeline                   # ETL pipelines
 
 # Maintenance
 make audit-routers                   # router/proxy drift check
+
+# AI UX hardening (Claude Code slash command)
+/ux-loop 10                          # 10 live-app critique→TDD-fix→validate cycles
 ```

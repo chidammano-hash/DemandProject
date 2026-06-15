@@ -10,7 +10,7 @@ import {
   Plug,
   Brain, Monitor,
   CalendarDays,
-  Shield, BarChart3, MapPin, FlaskConical,
+  Shield, BarChart3, MapPin, FlaskConical, Beaker,
   Settings2,
   TerminalSquare,
   History,
@@ -44,7 +44,10 @@ const NAV_ITEMS: NavItem[] = [
   { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "2" },
   { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "3" },
   { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
-  { key: "aiPlannerFva",      label: "AI FVA Backtest",icon: BarChart3,       section: "demand" },
+  // U5.2 — distinct icon from "FVA & ROI" (BarChart3): the AI backtest is a
+  // walk-forward experiment run-runner, so a beaker/experiment glyph disambiguates
+  // the two consecutive Demand rows — critical in collapsed (icon-only) mode.
+  { key: "aiPlannerFva",      label: "AI FVA Backtest",icon: Beaker,          section: "demand" },
   { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
   { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
   { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },
@@ -224,4 +227,22 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
   );
 }
 
+// ---------------------------------------------------------------------------
+// Single source of truth for numeric tab shortcuts (U6.1)
+// ---------------------------------------------------------------------------
+// The sidebar <kbd> hints, the key handler (TAB_MAP), and the help modal all
+// derive their digit -> tab mapping from NAV_ITEMS[].shortcut so the three can
+// never drift. A NavItem with `shortcut: "2"` and `key: "aggregateAnalysis"`
+// makes `2` navigate to Portfolio everywhere.
+export interface NumericShortcut {
+  digit: string;
+  key: string;
+  label: string;
+}
+
+export const NUMERIC_SHORTCUTS: NumericShortcut[] = NAV_ITEMS
+  .filter((i): i is NavItem & { shortcut: string } => Boolean(i.shortcut))
+  .map((i) => ({ digit: i.shortcut, key: i.key, label: i.label }));
+
 export { NAV_ITEMS };
+export type { NavItem };

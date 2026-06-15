@@ -23,6 +23,30 @@ export function formatCompactCurrency(value: number | null | undefined): string 
 }
 
 /**
+ * Format the planning/data as-of date for the banner header (U1.1).
+ *
+ * Takes the daily-briefing `date` (an ISO `YYYY-MM-DD` string, e.g.
+ * "2026-04-02") and renders it as "Apr 2, 2026". Parsed as a LOCAL date — not
+ * via `new Date("2026-04-02")` which is interpreted as UTC midnight and can
+ * shift the day backwards in negative-offset timezones. Returns "" for a
+ * missing/invalid value so the caller renders no date until the briefing
+ * resolves (never the browser wall clock).
+ */
+export function formatAsOfDate(value: string | null | undefined): string {
+  if (!value) return "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return "";
+  const [, y, m, d] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/**
  * Whether a daily-briefing stat carries real signal.
  *
  * The live `/inv-planning/daily-briefing` payload leaves `total_skus`,

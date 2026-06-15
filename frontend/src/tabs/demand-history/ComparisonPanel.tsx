@@ -82,7 +82,7 @@ export function ComparisonPanel() {
       </div>
 
       {!hasSelection && (
-        <div className="flex flex-col items-center py-16 text-gray-400">
+        <div className="flex flex-col items-center py-16 text-muted-foreground">
           <GitCompare className="h-12 w-12 mb-3 opacity-30" />
           <p className="text-sm font-medium">No item selected</p>
           <p className="text-xs mt-1">Enter an Item ID and Location, or select from the Workbench panel</p>

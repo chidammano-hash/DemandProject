@@ -8,7 +8,28 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters, SegmentRow } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
-import { formatCompactKMB as fmtNum } from "@/lib/formatters";
+import { formatCompactKMB as fmtNum, isEmptyCell } from "@/lib/formatters";
+import { useChartColors } from "@/hooks/useChartColors";
+import { togglePillClass } from "./togglePill";
+
+/**
+ * Derive the sparkline series stroke + fill from a theme series color so the
+ * panel honors Soft/Dark themes (CLAUDE.md: no inline hex in tabs) — U5.12.
+ * The fill is the same hue at low opacity (hex 8-digit alpha "26" ≈ 15%).
+ */
+export function sparklineColors(seriesColor: string): { stroke: string; fill: string } {
+  return { stroke: seriesColor, fill: `${seriesColor}26` };
+}
+
+// Customers with no store-type (or other dimension) code surface as a nullish
+// segment. For store_type this single bucket is ~86% of demand, so we label it
+// rather than drop it (hiding the majority of demand would mislead) — U5.10.
+const UNCLASSIFIED_LABEL = "Unclassified";
+
+/** Display label for a segment, mapping nullish/sentinel names to "Unclassified". */
+export function segmentDisplayLabel(segment: string): string {
+  return isEmptyCell(segment) ? UNCLASSIFIED_LABEL : segment;
+}
 
 type SegmentBy = "rpt_channel_desc" | "store_type_desc" | "chain_type_desc" | "state";
 
@@ -30,6 +51,8 @@ type SortField = "segment" | "total_customers" | "total_demand" | "fill_rate" | 
 export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Props) {
   const [sortField, setSortField] = useState<SortField>("total_demand");
   const [sortAsc, setSortAsc] = useState(false);
+  const { trendColors } = useChartColors();
+  const { stroke: areaStroke, fill: areaFill } = sparklineColors(trendColors[0]);
 
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.segmentTrends(segmentBy, filters),
@@ -38,7 +61,12 @@ export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Pro
     placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
-  const rawSegments = data?.segments ?? [];
+  const rawSegments = useMemo(() => data?.segments ?? [], [data?.segments]);
+
+  const hasUnclassified = useMemo(
+    () => rawSegments.some((s) => isEmptyCell(s.segment)),
+    [rawSegments],
+  );
 
   const segments = useMemo(() => {
     const sorted = [...rawSegments].sort((a, b) => {
@@ -80,7 +108,8 @@ export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Pro
             <button
               key={s}
               onClick={() => onSegmentByChange(s)}
-              className={`px-2 py-0.5 text-xs rounded ${segmentBy === s ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+              aria-pressed={segmentBy === s}
+              className={togglePillClass(segmentBy === s)}
             >
               {SEGMENT_LABELS[s]}
             </button>
@@ -105,9 +134,9 @@ export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Pro
             {segments.map((seg) => (
               <div
                 key={seg.segment}
-                className={`grid grid-cols-[1fr_80px_80px_100px_60px_60px] gap-2 items-center text-xs px-1 py-1 rounded ${seg.mom_change < 0 ? "bg-red-50" : "hover:bg-gray-50"}`}
+                className={`grid grid-cols-[1fr_80px_80px_100px_60px_60px] gap-2 items-center text-xs px-1 py-1 rounded ${seg.mom_change < 0 ? "bg-destructive/10" : "hover:bg-accent"}`}
               >
-                <span className="truncate font-medium">{seg.segment}</span>
+                <span className="truncate font-medium">{segmentDisplayLabel(seg.segment)}</span>
                 <span className="text-right">{seg.total_customers.toLocaleString()}</span>
                 <span className="text-right">{fmtNum(seg.total_demand)}</span>
                 <div className="h-6">
@@ -116,8 +145,8 @@ export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Pro
                       <Area
                         type="monotone"
                         dataKey="demand_qty"
-                        stroke="#6366f1"
-                        fill="#e0e7ff"
+                        stroke={areaStroke}
+                        fill={areaFill}
                         strokeWidth={1.5}
                         dot={false}
                       />
@@ -132,6 +161,11 @@ export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Pro
                 </span>
               </div>
             ))}
+            {hasUnclassified && (
+              <p className="text-[11px] text-muted-foreground pt-2">
+                Unclassified = customers with no {SEGMENT_LABELS[segmentBy].toLowerCase()} code.
+              </p>
+            )}
           </div>
         )}
       </CardContent>

@@ -30,12 +30,19 @@ export async function fetchSbExceptions(params: {
   loc?: string;
   limit?: number;
   offset?: number;
+  // U7.10 — optional severity band [severity_min, severity_max). Lets the
+  // Command Center severity chips reload the feed with the matching band instead
+  // of filtering an already-sliced (critical-first) page client-side.
+  severity_min?: number;
+  severity_max?: number;
 }): Promise<{ total: number; rows: StoryboardException[] }> {
   const qs = buildSearchParams({
     status: params.status && params.status !== "all" ? params.status : undefined,
     exception_type: params.exception_type && params.exception_type !== "all" ? params.exception_type : undefined,
     item: params.item,
     loc: params.loc,
+    severity_min: params.severity_min,
+    severity_max: params.severity_max,
     limit: params.limit ?? 20,
     offset: params.offset ?? 0,
   });

@@ -52,6 +52,15 @@ vi.mock("@/api/queries", () => ({
       { category: "external", color: "#8b5cf6", count: 2 },
     ],
   }),
+  // Per-cluster section fetches the cluster list via the cluster-eda profile
+  // fetcher (U6.10 — was a raw fetch).
+  clusterEdaKeys: { profile: () => ["cluster-eda", "profile"] },
+  fetchClusterProfile: vi.fn().mockResolvedValue({
+    rows: [
+      { cluster: 0, n_dfus: 100, mean_demand: 50, cv: 0.3, zero_pct: 0.1 },
+      { cluster: 1, n_dfus: 80, mean_demand: 20, cv: 0.6, zero_pct: 0.4 },
+    ],
+  }),
   // Barrel stubs
   queryKeys: {},
   STALE_INSIGHTS: 300000,

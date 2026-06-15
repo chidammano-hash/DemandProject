@@ -26,6 +26,7 @@ import {
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { Skeleton } from "@/components/Skeleton";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/formatters";
 
 import { ExceptionCard } from "./storyboard/ExceptionCard";
 import { SbKpiCard } from "./storyboard/SbKpiCard";
@@ -559,7 +560,7 @@ export default function StoryboardTab() {
                                   {d.decision_type.replace(/_/g, " ")}
                                 </span>
                                 <span className="text-muted-foreground">
-                                  {d.decided_by} &middot; {new Date(d.decided_at).toLocaleDateString()}
+                                  {d.decided_by} &middot; {formatDate(d.decided_at)}
                                 </span>
                               </div>
                               {d.rationale && (

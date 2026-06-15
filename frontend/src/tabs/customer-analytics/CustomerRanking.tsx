@@ -30,7 +30,7 @@ function VirtualizedRankingTable({ rows, maxDemand }: { rows: RankedCustomer[]; 
       className="overflow-y-auto"
       style={{ maxHeight: VIEWPORT_HEIGHT }}
     >
-      <div className="grid grid-cols-[1fr_50px_120px_80px_160px_60px_60px] gap-2 text-xs font-medium text-muted-foreground sticky top-0 bg-white z-10 px-2 py-1 border-b">
+      <div className="grid grid-cols-[1fr_50px_120px_80px_160px_60px_60px] gap-2 text-xs font-medium text-muted-foreground sticky top-0 bg-card z-10 px-2 py-1 border-b">
         <span>Customer</span>
         <span>State</span>
         <span>Channel</span>
@@ -46,14 +46,14 @@ function VirtualizedRankingTable({ rows, maxDemand }: { rows: RankedCustomer[]; 
           return (
             <div
               key={c.customer_no}
-              className="grid grid-cols-[1fr_50px_120px_80px_160px_60px_60px] gap-2 items-center text-xs px-2 border-b hover:bg-gray-50 absolute left-0 right-0"
+              className="grid grid-cols-[1fr_50px_120px_80px_160px_60px_60px] gap-2 items-center text-xs px-2 border-b hover:bg-muted/50 absolute left-0 right-0"
               style={{ height: ROW_HEIGHT, transform: `translateY(${vRow.start}px)` }}
             >
               <span className="truncate font-medium" title={c.customer_name}>{c.customer_name}</span>
               <span>{c.state}</span>
               <span className="truncate">{c.channel}</span>
               <span className="text-right tabular-nums">{fmtNum(c.demand_qty)}</span>
-              <div className="bg-gray-100 rounded-sm h-3">
+              <div className="bg-muted rounded-sm h-3">
                 <div
                   className="h-3 rounded-sm"
                   style={{ width: `${barWidth}%`, backgroundColor: fillRateColor(c.fill_rate) }}
@@ -123,13 +123,13 @@ export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {
           <div className="flex gap-1">
             <button
               onClick={() => onSortChange("demand_desc")}
-              className={`px-2 py-0.5 text-xs rounded ${sort === "demand_desc" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+              className={`px-2 py-0.5 text-xs rounded ${sort === "demand_desc" ? "bg-indigo-600 text-white" : "bg-muted text-muted-foreground"}`}
             >
               Top by Demand
             </button>
             <button
               onClick={() => onSortChange("fill_rate_asc")}
-              className={`px-2 py-0.5 text-xs rounded ${sort === "fill_rate_asc" ? "bg-red-600 text-white" : "bg-gray-100 text-gray-600"}`}
+              className={`px-2 py-0.5 text-xs rounded ${sort === "fill_rate_asc" ? "bg-red-600 text-white" : "bg-muted text-muted-foreground"}`}
             >
               Worst Fill Rate
             </button>

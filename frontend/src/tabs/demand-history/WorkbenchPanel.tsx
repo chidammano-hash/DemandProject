@@ -194,7 +194,7 @@ function SparkAndDelta({
         />
       </svg>
       {lastVal != null && (
-        <span className="text-[10px] text-gray-400 tabular-nums">
+        <span className="text-[10px] text-muted-foreground tabular-nums">
           {formatCompactNumber(lastVal)}
         </span>
       )}
@@ -254,19 +254,19 @@ function TreeNode({
       <div className="flex items-center gap-2">
         {canDrillDown && (
           <ChevronRight className={`h-3.5 w-3.5 flex-shrink-0 transition-transform ${
-            isSelected ? "text-blue-500 rotate-90" : "text-gray-400 group-hover:text-gray-500"
+            isSelected ? "text-blue-500 rotate-90" : "text-muted-foreground group-hover:text-foreground"
           }`} />
         )}
         {/* U6.4: append the id so duplicate descriptions (e.g. four "TITOS ... 80"
             rows that are distinct item_ids) are visually distinguishable. */}
         <span className="truncate font-medium flex-1">{series.label || series.key}</span>
         {series.key && series.label && series.label !== series.key && (
-          <span className="text-[10px] tabular-nums text-gray-400 flex-shrink-0">
+          <span className="text-[10px] tabular-nums text-muted-foreground flex-shrink-0">
             #{series.key.replace(/\|\|/g, " · ")}
           </span>
         )}
         <span className={`text-xs tabular-nums flex-shrink-0 ${
-          isSelected ? "text-blue-500 font-medium" : "text-gray-400"
+          isSelected ? "text-blue-500 font-medium" : "text-muted-foreground"
         }`}>
           {formatInt(series.total_demand)}
         </span>
@@ -390,13 +390,13 @@ export function DemandWorkbenchPanel() {
         {/* Collapse toggle */}
         <div className="flex items-center justify-between mb-2">
           {!railCollapsed && (
-            <span className="text-[10px] uppercase tracking-wider text-gray-400 px-1">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground px-1">
               Series
             </span>
           )}
           <button
             onClick={() => setRailCollapsed((v) => !v)}
-            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 ml-auto"
+            className="p-1 rounded hover:bg-muted dark:hover:bg-gray-800 text-muted-foreground ml-auto"
             title={railCollapsed ? "Expand rail" : "Collapse rail"}
           >
             {railCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
@@ -414,7 +414,7 @@ export function DemandWorkbenchPanel() {
                   className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
                     grain === g
                       ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-                      : "text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      : "text-muted-foreground hover:bg-muted dark:hover:bg-gray-800"
                   }`}
                 >
                   {GRAIN_LABELS[g]}
@@ -424,15 +424,15 @@ export function DemandWorkbenchPanel() {
 
             {/* Period selector */}
             <div className="flex gap-1 mb-3 pr-3">
-              <span className="text-[10px] uppercase tracking-wider text-gray-400 self-center">Period</span>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground self-center">Period</span>
               {PERIOD_OPTIONS.map((p) => (
                 <button
                   key={p.value}
                   onClick={() => setPeriod(p.value)}
                   className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${
                     period === p.value
-                      ? "bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-100"
-                      : "text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      ? "bg-muted text-gray-800 dark:bg-gray-700 dark:text-gray-100"
+                      : "text-muted-foreground hover:bg-muted dark:hover:bg-gray-800"
                   }`}
                 >
                   {p.label}
@@ -442,7 +442,7 @@ export function DemandWorkbenchPanel() {
 
             {/* Search */}
             <div className="relative mb-3 pr-3">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <input
                 type="text"
                 value={search}
@@ -456,7 +456,7 @@ export function DemandWorkbenchPanel() {
             {!isLoading && data?.series && (
               <div className="flex items-center justify-between text-[10px] mb-2 px-1 pr-3">
                 <span
-                  className="text-gray-400 uppercase tracking-wider"
+                  className="text-muted-foreground uppercase tracking-wider"
                   title="Each row: total demand · sparkline · month-over-month change (last vs prior month; * = low-base spike)"
                 >
                   {filteredSeries.length} of {data.series.length} series · last · MoM&nbsp;%
@@ -493,7 +493,7 @@ export function DemandWorkbenchPanel() {
                 );
               })}
               {!isLoading && filteredSeries.length === 0 && (
-                <div className="flex flex-col items-center py-8 text-gray-400">
+                <div className="flex flex-col items-center py-8 text-muted-foreground">
                   <Search className="h-8 w-8 mb-2 opacity-40" />
                   <p className="text-sm">No series found</p>
                   {search && (
@@ -529,7 +529,7 @@ export function DemandWorkbenchPanel() {
         {/* Chart toolbar */}
         {selectedSeriesList.length > 0 && (
           <div className="flex items-center justify-between mb-2 gap-3">
-            <div className="text-xs text-gray-500 truncate">
+            <div className="text-xs text-muted-foreground truncate">
               {selectedSeriesList.length === 1
                 ? formatSeriesTitle(selectedSeriesList[0])
                 : `Comparing ${selectedSeriesList.length} series`}
@@ -538,8 +538,8 @@ export function DemandWorkbenchPanel() {
               <label
                 className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded ${
                   selectedSeriesList.length === 1 && grain !== "item_loc_customer"
-                    ? "text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
-                    : "text-gray-400 cursor-not-allowed"
+                    ? "text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-muted dark:hover:bg-gray-800"
+                    : "text-muted-foreground cursor-not-allowed"
                 }`}
                 title={
                   selectedSeriesList.length === 1 && grain !== "item_loc_customer"
@@ -560,7 +560,7 @@ export function DemandWorkbenchPanel() {
               </label>
               <button
                 onClick={() => exportSeriesCsv(selectedSeriesList)}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded text-muted-foreground dark:text-gray-300 hover:bg-muted dark:hover:bg-gray-800"
                 title="Download visible series as CSV"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -573,7 +573,7 @@ export function DemandWorkbenchPanel() {
         {isLoading && selectedKeys.length > 0 ? (
           <Skeleton className="flex-1 rounded-lg" />
         ) : selectedSeriesList.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
             <BarChart3 className="h-12 w-12 mb-3 opacity-30" />
             <p className="text-sm font-medium">No series selected</p>
             <p className="text-xs mt-1">Click a series to view, cmd/ctrl-click to overlay (max {MAX_OVERLAY})</p>
@@ -690,14 +690,14 @@ function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, t
       {isSingle && headerStats && (
         <div className="mb-2">
           <div className="flex items-baseline gap-3">
-            <span className="text-xs text-gray-400 tabular-nums">
+            <span className="text-xs text-muted-foreground tabular-nums">
               Total: {formatInt(single.total_demand)}
             </span>
             {forecastLoading && (
-              <span className="text-[11px] text-gray-400">Loading forecast...</span>
+              <span className="text-[11px] text-muted-foreground">Loading forecast...</span>
             )}
           </div>
-          <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+          <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground dark:text-gray-400">
             <span>
               Period: <span className="text-gray-700 dark:text-gray-200 tabular-nums">{formatMonthShort(headerStats.first)} - {formatMonthShort(headerStats.last)}</span> ({headerStats.count} mo)
             </span>
@@ -706,7 +706,7 @@ function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, t
             </span>
             <span>
               Peak: <span className="text-gray-700 dark:text-gray-200 tabular-nums">{formatCompactNumber(headerStats.peak)}</span>{" "}
-              <span className="text-gray-400">({formatMonthShort(headerStats.peakMonth)})</span>
+              <span className="text-muted-foreground">({formatMonthShort(headerStats.peakMonth)})</span>
             </span>
           </div>
         </div>

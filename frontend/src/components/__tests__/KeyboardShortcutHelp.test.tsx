@@ -11,16 +11,23 @@ describe("KeyboardShortcutHelp", () => {
     expect(screen.getByText("Keyboard Shortcuts")).toBeInTheDocument();
   });
 
-  it("lists all shortcuts", () => {
+  it("lists live tab labels (U6.1 — no retired pre-restructure names)", () => {
     render(<KeyboardShortcutHelp onClose={vi.fn()} />);
-    expect(screen.getByText("AI Planner")).toBeInTheDocument();
-    expect(screen.getByText("Control Tower")).toBeInTheDocument();
-    expect(screen.getByText("DFU Analysis")).toBeInTheDocument();
-    expect(screen.getByText("Accuracy")).toBeInTheDocument();
+    // Numeric rows are derived from NAV_ITEMS — show the current IA labels.
+    expect(screen.getByText("Command Center")).toBeInTheDocument();
+    expect(screen.getByText("Portfolio")).toBeInTheDocument();
+    expect(screen.getByText("Item Analysis")).toBeInTheDocument();
     expect(screen.getByText("Inv. Planning")).toBeInTheDocument();
+    expect(screen.getByText("S&OP")).toBeInTheDocument();
+    expect(screen.getByText("Jobs")).toBeInTheDocument();
+    // global shortcuts
     expect(screen.getByText("Focus search")).toBeInTheDocument();
     expect(screen.getByText("Close panel / help")).toBeInTheDocument();
     expect(screen.getByText("Toggle column fields")).toBeInTheDocument();
+    // retired labels must NOT appear
+    expect(screen.queryByText("Control Tower")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI Planner")).not.toBeInTheDocument();
+    expect(screen.queryByText("DFU Analysis")).not.toBeInTheDocument();
   });
 
   it("calls onClose when Escape is pressed (Radix Dialog default)", async () => {

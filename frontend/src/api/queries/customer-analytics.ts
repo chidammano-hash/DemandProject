@@ -29,7 +29,8 @@ export interface ChannelMixPayloadExtended extends ChannelMixPayload {
 
 export interface KpiMetric {
   value: number;
-  delta: number;
+  // null when the backend has no prior-period anchor to compute MoM (U3.4).
+  delta: number | null;
 }
 
 export interface KpiPayload {

@@ -17,7 +17,7 @@ import {
   type ActionFeedItem,
 } from "@/api/queries";
 import { ChevronUp } from "lucide-react";
-import { formatCompactCurrency, shouldRenderStat } from "./todaysPlanFormat";
+import { formatAsOfDate, formatCompactCurrency, shouldRenderStat } from "./todaysPlanFormat";
 
 // ---------------------------------------------------------------------------
 // Priority badge sub-component
@@ -33,16 +33,25 @@ function PriorityBadge({
   count,
   value,
   color,
+  title,
 }: {
   label: string;
   count?: number;
   value?: string;
   color: string;
+  /** Optional tooltip naming the metric's basis (e.g. the at-risk window). */
+  title?: string;
 }) {
+  // U2.2 — comma-format the integer count so the priority ribbon matches the
+  // comma-formatted Action-Feed KPIs stacked directly below it on the same tab.
+  const display = value ?? (count != null ? count.toLocaleString() : "0");
   return (
-    <div className={`rounded-md border px-3 py-1.5 ${COLOR_MAP[color] ?? COLOR_MAP.blue}`}>
+    <div
+      className={`rounded-md border px-3 py-1.5 ${COLOR_MAP[color] ?? COLOR_MAP.blue}`}
+      title={title}
+    >
       <p className="text-[10px] text-muted-foreground">{label}</p>
-      <p className="text-lg font-bold leading-tight">{value ?? count ?? 0}</p>
+      <p className="text-lg font-bold leading-tight">{display}</p>
     </div>
   );
 }
@@ -67,18 +76,24 @@ export function TodaysPlanBanner({ onCollapse }: { onCollapse: () => void }) {
   const topActions: ActionFeedItem[] = data?.actions?.slice(0, 3) ?? [];
   const stats = briefing?.stats;
 
+  // U1.1 — stamp the banner with the planning/data as-of date the action feed
+  // and KPIs are computed against (briefing.date, e.g. "2026-04-02"), NOT the
+  // browser wall clock. Deriving a user-facing data anchor from `new Date()`
+  // makes "Today's Plan" imply same-day data when the figures are frozen to a
+  // prior planning date. Falls back to "Today's Plan" with no date until the
+  // briefing resolves.
+  const asOfLabel = formatAsOfDate(briefing?.date);
+
   return (
     <div className="rounded-lg border bg-card p-4 mb-4 max-h-[170px] overflow-hidden">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold">Today&apos;s Plan</h2>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground">
-            {new Date().toLocaleDateString("en-US", {
-              weekday: "long",
-              month: "short",
-              day: "numeric",
-            })}
-          </span>
+          {asOfLabel && (
+            <span className="text-[10px] text-muted-foreground">
+              Plan as of {asOfLabel}
+            </span>
+          )}
           <button
             onClick={onCollapse}
             className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded"
@@ -94,10 +109,16 @@ export function TodaysPlanBanner({ onCollapse }: { onCollapse: () => void }) {
         <div className="flex gap-2 flex-shrink-0">
           <PriorityBadge label="Urgent" count={summary?.critical ?? 0} color="red" />
           <PriorityBadge label="High" count={summary?.high ?? 0} color="amber" />
+          {/* F2.1 — name the at-risk basis on the chip (label + tooltip) so this
+              banner figure is self-explaining and isn't read as the same metric
+              as the Command Center "Order Value at Risk" tile (a different,
+              larger number). The basis text matches the Action Feed panel
+              sublabel on this same tab. */}
           <PriorityBadge
-            label="At Risk"
+            label="$ at Risk"
             value={formatCompactCurrency(summary?.financial_at_risk)}
             color="blue"
+            title={summary?.financial_at_risk_basis}
           />
         </div>
 

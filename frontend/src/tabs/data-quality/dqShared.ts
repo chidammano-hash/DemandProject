@@ -37,16 +37,33 @@ export const SEVERITY_STYLE: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
-export function scoreBadgeClass(score: number): string {
+// A null score means "nothing scoreable" — the domain ran only warning/info
+// checks (all flagging) so there is no pass-rate to grade. It must render a
+// NEUTRAL/muted badge, never a green 100% (which would hide a real warning-only
+// integrity gap) or a red 0% (which would over-alarm a non-critical warn-only
+// domain). U4.2.
+const NEUTRAL_BADGE =
+  "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
+
+export function scoreBadgeClass(score: number | null): string {
+  if (score === null) return NEUTRAL_BADGE;
   if (score > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
   if (score >= 50) return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
   return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
 }
 
-export function scoreRingColor(score: number): string {
+export function scoreRingColor(score: number | null): string {
+  if (score === null) return "border-slate-400";
   if (score > 80) return "border-green-500";
   if (score >= 50) return "border-amber-500";
   return "border-red-500";
+}
+
+// Render a domain/overall score for display: a number renders as "NN%", a null
+// (warn-only / nothing scoreable) renders an em-dash so the badge never shows a
+// misleading "100%" or "0%".
+export function formatScore(score: number | null): string {
+  return score === null ? "—" : `${score}%`;
 }
 
 export function relativeTime(isoStr: string | null): string {

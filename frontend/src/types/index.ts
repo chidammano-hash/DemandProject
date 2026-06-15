@@ -123,6 +123,8 @@ export type SkuAnalysisPayload = {
   series: Record<string, number | string>[];
   model_monthly: Record<string, SkuModelMonthly[]>;
   dfu_attributes: Record<string, string | null>[];
+  // Human-readable item description (dim_item.item_desc) for the breadcrumb (U3.5).
+  item_desc?: string | null;
   scope_count?: number;
 };
 

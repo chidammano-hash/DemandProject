@@ -207,6 +207,37 @@ describe("HeatmapGrid zero-DFU cells", () => {
   });
 });
 
+describe("HeatmapGrid cell title tooltips (U7.13)", () => {
+  it("gives each data cell a visual `title` matching its aria-label", () => {
+    render(
+      <HeatmapGrid
+        rows={sampleRows}
+        columnLabels={sampleColumns}
+        colorScale={colorScale}
+      />
+    );
+    const cell = screen.getByLabelText("Category A, Jan: 92.5%");
+    expect(cell).toHaveAttribute("title", "Category A, Jan: 92.5%");
+  });
+
+  it("appends a WAPE low-base note on floored `<0%*` cells so a hover explains the marker", () => {
+    // formatHeatmapAccuracy renders negative accuracy as "<0%*". A sighted
+    // planner hovering such a cell must learn what it means without scrolling to
+    // the caption below the grid.
+    const flooredFormat = (v: number) => (v < 0 ? "<0%*" : `${v.toFixed(1)}%`);
+    render(
+      <HeatmapGrid
+        rows={[{ label: "BEER", values: [-12.89] }]}
+        columnLabels={["Jan"]}
+        colorScale={colorScale}
+        valueFormat={flooredFormat}
+      />
+    );
+    const cell = screen.getByLabelText("BEER, Jan: <0%*");
+    expect(cell.getAttribute("title")).toContain("WAPE");
+  });
+});
+
 describe("makeHeatmapScale", () => {
   const scale = ["#00ff00", "#88ff00", "#ffff00", "#ff8800", "#ff0000"];
   const getColor = makeHeatmapScale(scale);
