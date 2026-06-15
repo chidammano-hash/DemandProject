@@ -27,13 +27,12 @@ from pathlib import Path
 
 import pandas as pd
 import psycopg
-import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
-from common.services.perf_profiler import profiled_section
 from common.core.utils import load_config as _load_config
+from common.services.perf_profiler import profiled_section
 
 
 def load_config() -> dict:
@@ -47,7 +46,7 @@ def _parse_date(val) -> date | None:
         return val
     try:
         return pd.to_datetime(str(val)).date()
-    except Exception:
+    except (ValueError, TypeError, pd.errors.ParserError):
         return None
 
 
@@ -87,7 +86,6 @@ def load_suppliers(filepath: str, conn, dry_run: bool) -> int:
         df = pd.read_csv(filepath, dtype=str)
         df.columns = [c.strip().lower() for c in df.columns]
 
-        count = 0
         sql = """
             INSERT INTO dim_supplier
                 (supplier_id, supplier_name, country_code, address_line1, city,
@@ -104,9 +102,10 @@ def load_suppliers(filepath: str, conn, dry_run: bool) -> int:
                 is_active               = EXCLUDED.is_active,
                 modified_ts             = NOW()
         """
+        batch = []
         for _, row in df.iterrows():
             is_active = str(row.get("is_active", "true")).lower() in ("true", "1", "yes")
-            params = (
+            batch.append((
                 row.get("supplier_id"), row.get("supplier_name"),
                 row.get("country_code") or None, row.get("address_line1") or None,
                 row.get("city") or None, row.get("state_province") or None,
@@ -115,13 +114,12 @@ def load_suppliers(filepath: str, conn, dry_run: bool) -> int:
                 float(row["reliability_score"]) if not pd.isna(row.get("reliability_score", "")) else None,
                 float(row["on_time_pct"]) if not pd.isna(row.get("on_time_pct", "")) else None,
                 is_active,
-            )
-            if not dry_run:
-                with conn.cursor() as cur:
-                    cur.execute(sql, params)
-            count += 1
+            ))
+        count = len(batch)
 
-        if not dry_run:
+        if not dry_run and batch:
+            with conn.cursor() as cur:
+                cur.executemany(sql, batch)
             conn.commit()
         print(f"  Suppliers: {count} rows upserted{' (dry-run)' if dry_run else ''}")
         return count
@@ -133,9 +131,9 @@ def load_pos(filepath: str, conn, dry_run: bool, config: dict) -> tuple[int, int
         df = pd.read_csv(filepath, dtype=str)
         df.columns = [c.strip().lower() for c in df.columns]
 
-        loaded = 0
         skipped = 0
         reasons: dict[str, int] = {}
+        batch = []
 
         sql = """
             INSERT INTO fact_open_purchase_orders
@@ -180,19 +178,19 @@ def load_pos(filepath: str, conn, dry_run: bool, config: dict) -> tuple[int, int
                 reasons[reason] = reasons.get(reason, 0) + 1
                 continue
 
-            if not dry_run:
-                with conn.cursor() as cur:
-                    cur.execute(sql, (
-                        r["po_number"], r["po_line_number"], r["item_id"], r["loc"],
-                        r["supplier_id"], r["po_date"], r["ordered_qty"], r["confirmed_qty"],
-                        r["received_qty"], r["unit_cost"], r["currency"],
-                        r["promised_delivery_date"], r["confirmed_delivery_date"],
-                        r["revised_delivery_date"], r["po_status"], r["line_status"],
-                        os.path.basename(filepath),
-                    ))
-            loaded += 1
+            batch.append((
+                r["po_number"], r["po_line_number"], r["item_id"], r["loc"],
+                r["supplier_id"], r["po_date"], r["ordered_qty"], r["confirmed_qty"],
+                r["received_qty"], r["unit_cost"], r["currency"],
+                r["promised_delivery_date"], r["confirmed_delivery_date"],
+                r["revised_delivery_date"], r["po_status"], r["line_status"],
+                os.path.basename(filepath),
+            ))
 
-        if not dry_run:
+        loaded = len(batch)
+        if not dry_run and batch:
+            with conn.cursor() as cur:
+                cur.executemany(sql, batch)
             conn.commit()
         return loaded, skipped, reasons
 
@@ -203,7 +201,6 @@ def load_receipts(filepath: str, conn, dry_run: bool) -> int:
         df = pd.read_csv(filepath, dtype=str)
         df.columns = [c.strip().lower() for c in df.columns]
 
-        count = 0
         sql = """
             INSERT INTO fact_po_receipts
                 (receipt_number, po_number, po_line_number, item_id, loc,
@@ -214,24 +211,24 @@ def load_receipts(filepath: str, conn, dry_run: bool) -> int:
                 actual_receipt_date = EXCLUDED.actual_receipt_date,
                 receipt_status      = EXCLUDED.receipt_status
         """
+        batch = []
         for _, row in df.iterrows():
             receipt_date = _parse_date(row.get("actual_receipt_date"))
             if not receipt_date:
                 continue
-            params = (
+            batch.append((
                 row.get("receipt_number"), row.get("po_number"),
                 int(row.get("po_line_number", 1)), row.get("item_id"), row.get("loc"),
                 float(row.get("received_qty") or 0),
                 float(row["unit_cost"]) if not pd.isna(row.get("unit_cost", "")) else None,
                 receipt_date, row.get("receipt_status") or "posted",
                 os.path.basename(filepath),
-            )
-            if not dry_run:
-                with conn.cursor() as cur:
-                    cur.execute(sql, params)
-            count += 1
+            ))
+        count = len(batch)
 
-        if not dry_run:
+        if not dry_run and batch:
+            with conn.cursor() as cur:
+                cur.executemany(sql, batch)
             conn.commit()
         print(f"  Receipts: {count} rows upserted{' (dry-run)' if dry_run else ''}")
         return count
