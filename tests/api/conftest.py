@@ -185,39 +185,3 @@ async def async_client(mock_pool):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
-
-
-class ApiTestHelper:
-    """Convenience methods for API test setup — reduces boilerplate."""
-
-    @staticmethod
-    def mock_single_query(cursor, rows):
-        """Set up cursor for a single fetchall() call."""
-        cursor.fetchall.return_value = rows
-
-    @staticmethod
-    def mock_multi_query(cursor, *query_results):
-        """Set up cursor for multiple sequential fetchall() calls."""
-        cursor.fetchall.side_effect = list(query_results)
-
-    @staticmethod
-    def mock_fetchone(cursor, row):
-        """Set up cursor for a single fetchone() call."""
-        cursor.fetchone.return_value = row
-
-    @staticmethod
-    def mock_empty(cursor):
-        """Set up cursor to return empty results."""
-        cursor.fetchall.return_value = []
-        cursor.fetchone.return_value = None
-
-    @staticmethod
-    def mock_count(cursor, count):
-        """Set up cursor for count query (fetchone returns (count,))."""
-        cursor.fetchone.return_value = (count,)
-
-    @staticmethod
-    def mock_returning(cursor, row):
-        """Set up cursor for INSERT/UPDATE RETURNING (fetchone)."""
-        cursor.fetchone.return_value = row
-        cursor.rowcount = 1

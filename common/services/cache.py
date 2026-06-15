@@ -6,7 +6,7 @@ Two backends:
 - InMemoryBackend: per-process dict; used as automatic fallback when Redis is
   unreachable, the redis package is missing, or backend=memory in config.
 
-@cached / @cached_sync decorators for router handlers with TTL and invalidation
+@cached_sync / @cached_async decorators for router handlers with TTL and invalidation
 support. The selected backend is determined by config/platform/cache_config.yaml
 (backend: redis|memory). The REDIS_URL env var overrides the YAML redis_url.
 """
@@ -409,25 +409,8 @@ def cache_key_for(endpoint: str, params: dict | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# @cached decorator
+# @cached_sync / @cached_async decorators
 # ---------------------------------------------------------------------------
-def cached(ttl: int = 120, group: str = "default"):
-    """Decorator that caches the return value of an async route handler."""
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            backend = get_cache()
-            key = cache_key_for(f"{group}:{func.__name__}", kwargs or None)
-            hit = backend.get(key)
-            if hit is not None:
-                return hit
-            result = await func(*args, **kwargs)
-            backend.set(key, result, ttl)
-            return result
-        return wrapper
-    return decorator
-
-
 def cached_sync(ttl: int = 300, group: str = "default", skip_kwargs: tuple[str, ...] = ("response",)):
     """Cache decorator for sync FastAPI route handlers.
 
