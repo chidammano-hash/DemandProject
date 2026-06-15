@@ -107,6 +107,15 @@ class TestJobTypeRegistry:
         }
         assert expected.issubset(set(JOB_TYPE_REGISTRY.keys()))
 
+    def test_load_domain_job_registered(self):
+        # US17c: per-domain integration loads run as a JobManager job in the
+        # 'etl' group (one ingestion run at a time, shared with etl_pipeline).
+        from common.services.job_registry import JOB_TYPE_REGISTRY
+        assert "load_domain" in JOB_TYPE_REGISTRY
+        td = JOB_TYPE_REGISTRY["load_domain"]
+        assert td.group == "etl"
+        assert callable(td.callable)
+
     def test_all_registry_entries_are_job_type_def(self):
         from common.services.job_registry import JOB_TYPE_REGISTRY
         for key, val in JOB_TYPE_REGISTRY.items():

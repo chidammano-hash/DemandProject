@@ -1558,3 +1558,94 @@ def _run_etl_pipeline(
         "output_log": f"{mode} pipeline: {loaded} loaded, {skipped} skipped "
                       f"across {len(domains)} domain(s)",
     }
+
+
+def _run_load_domain(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a single-domain ETL load as a managed job (US17c).
+
+    Shells out to the one unified load engine (``scripts.etl.load``) — the same
+    path the legacy IntegrationRunner used — and records parsed row metrics in
+    the job result so the ``integration_job_unified`` view (US17b) can surface
+    them. Exit codes mirror the legacy runner: 0 -> loaded, 2 -> skipped (no
+    work), any other -> failure (raise, so JobManager marks the job failed).
+
+    params:
+        domain:  domain name (required)
+        mode:    onetime | delta | file (default "delta")
+        slice:   optional partition slice (e.g. "2026-04")
+        file:    optional explicit file path
+        reindex: optional bool — REINDEX after a bulk upsert
+    """
+    # IntegrationRunner owns the single source of truth for parsing the
+    # dispatcher's final JSON line; reuse it rather than duplicating.
+    from common.services.integration_runner import IntegrationRunner
+
+    domain = params.get("domain")
+    if not domain:
+        raise ValueError("load_domain requires a 'domain' param")
+    mode = params.get("mode", "delta")
+    if mode not in ("onetime", "delta", "file"):
+        raise ValueError(f"invalid load_domain mode: {mode!r}")
+    slice_ = params.get("slice")
+    file = params.get("file")
+    reindex = bool(params.get("reindex", False))
+
+    cmd = [_UV, "run", "python", "-m", "scripts.etl.load",
+           "--domain", domain, "--mode", mode]
+    if slice_:
+        cmd += ["--slice", slice_]
+    if file:
+        cmd += ["--file", file]
+    if reindex:
+        cmd.append("--reindex")
+
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Loading {domain} ({mode})")
+
+    # argv is built from the validated domain/mode/slice/file inputs (never shell).
+    proc = subprocess.run(
+        cmd,
+        cwd=str(_SCRIPTS_DIR.parent),
+        capture_output=True,
+        text=True,
+        timeout=_SUBPROCESS_TIMEOUT,
+        check=False,
+    )
+    metrics = IntegrationRunner._parse_final_json(proc.stdout)
+
+    if proc.returncode == 0:
+        skipped = False
+    elif proc.returncode == 2:
+        skipped = True  # dispatcher had no work to do (e.g. delta, no new files)
+    else:
+        err = (
+            metrics["error"]
+            or (proc.stderr.strip()[-2000:] if proc.stderr else None)
+            or f"exit code {proc.returncode}"
+        )
+        raise RuntimeError(f"load {domain} failed: {err}")
+
+    rows_loaded = metrics["rows_loaded"]
+    if progress_cb:
+        progress_cb(
+            pct=100,
+            msg=f"{domain} {'skipped' if skipped else 'loaded'}: {rows_loaded} rows",
+        )
+    return {
+        "domain": domain,
+        "mode": mode,
+        "slice": slice_,
+        "file": file,
+        "skipped": skipped,
+        "rows_loaded": rows_loaded,
+        "rows_inserted": metrics["rows_inserted"],
+        "rows_updated": metrics["rows_updated"],
+        "rows_deleted": metrics["rows_deleted"],
+        "output_log": f"load {domain} ({mode}): {rows_loaded} rows"
+                      f"{' [skipped]' if skipped else ''}",
+    }

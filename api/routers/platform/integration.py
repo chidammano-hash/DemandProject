@@ -110,7 +110,7 @@ class SubmitJobRequest(BaseModel):
 class SubmitJobResponse(BaseModel):
     """Response body for ``POST /integration/jobs``."""
 
-    job_id: str = Field(..., description="UUID of the queued integration job.")
+    job_id: str = Field(..., description="ID of the queued load_domain job (poll via /integration/jobs/{id} or /jobs/{id}).")
     status: Literal["queued"] = Field(default="queued", description="Initial job status — always 'queued' on accept.")
 
 
@@ -347,14 +347,31 @@ def submit_job(
                 ),
             )
 
-    job_id = runner.submit(
-        domain=req.domain,
-        mode=req.mode,
-        slice=req.slice,
-        file=req.file,
-        triggered_by=req.triggered_by or "api",
-        reindex=req.reindex,
-    )
+    # US17c: per-domain loads now run as a `load_domain` JobManager job (lands in
+    # job_history). The gates above (domain allowlist, partition-slice rule, file
+    # sandbox, destructive-cascade guard) all run BEFORE submission, so a rejected
+    # request never creates a job row. The unified view (US17b) keeps the
+    # /integration/jobs read shape stable across both backends.
+    from common.services.job_registry import JobManager
+    try:
+        job_id = JobManager().submit_job(
+            "load_domain",
+            params={
+                "domain": req.domain,
+                "mode": req.mode,
+                "slice": req.slice,
+                "file": req.file,
+                "reindex": req.reindex,
+            },
+            label=f"Load {req.domain} ({req.mode})",
+            triggered_by=req.triggered_by or "api",
+        )
+    except ValueError as exc:
+        logger.warning("load_domain submit rejected: %s", exc)
+        raise HTTPException(status_code=422, detail="invalid load job request") from exc
+    except (psycopg.Error, OSError):
+        logger.exception("failed to submit load_domain job")
+        raise HTTPException(status_code=500, detail="could not start load") from None
     return SubmitJobResponse(job_id=job_id, status="queued")
 
 

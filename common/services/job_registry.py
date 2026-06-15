@@ -71,6 +71,7 @@ from common.services.job_state import (
     _run_data_quality,
     _run_etl_pipeline,
     _run_generate_ai_insights,
+    _run_load_domain,
     _run_generate_exceptions,
     _run_generate_production_forecast,
     _run_train_production_model,
@@ -485,6 +486,16 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="etl",  # one ingestion run at a time
         callable=_run_etl_pipeline,
         params_schema={"mode": "refresh", "domains": None, "parallel": False},
+    ),
+    "load_domain": JobTypeDef(
+        type_id="load_domain",
+        label="Load Domain",
+        description="Load a single domain via the unified ETL engine "
+                    "(onetime / delta / file); records row metrics in job_history",
+        group="etl",  # shares the single-ingestion-at-a-time group with etl_pipeline
+        callable=_run_load_domain,
+        params_schema={"domain": None, "mode": "delta", "slice": None,
+                       "file": None, "reindex": False},
     ),
 }
 

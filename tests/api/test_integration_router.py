@@ -40,6 +40,15 @@ def override_runner(fake_runner):
 
 
 @pytest.fixture
+def fake_jobmanager():
+    """Patch JobManager so submission (US17c) does not touch the real backend."""
+    mgr = MagicMock()
+    mgr.submit_job.return_value = "jm-job-1"
+    with patch("common.services.job_registry.JobManager", return_value=mgr):
+        yield mgr
+
+
+@pytest.fixture
 async def client(mock_pool):
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool):
@@ -119,16 +128,18 @@ async def test_submit_job_requires_api_key(client, override_runner, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_submit_job_success(client, override_runner):
+async def test_submit_job_success(client, override_runner, fake_jobmanager):
     resp = await client.post(
         "/integration/jobs",
         json={"domain": "sales", "mode": "onetime"},
     )
     assert resp.status_code == 202
     body = resp.json()
-    assert body["job_id"] == "fake-job-id-123"
+    # US17c: submission now lands in job_history via JobManager
+    assert body["job_id"] == "jm-job-1"
     assert body["status"] == "queued"
-    override_runner.submit.assert_called_once()
+    fake_jobmanager.submit_job.assert_called_once()
+    assert fake_jobmanager.submit_job.call_args.args[0] == "load_domain"
 
 
 @pytest.mark.asyncio
@@ -164,7 +175,7 @@ async def test_submit_job_file_mode_partitioned_requires_slice(client, override_
 
 
 @pytest.mark.asyncio
-async def test_submit_job_file_mode_partitioned_with_slice_ok(client, override_runner):
+async def test_submit_job_file_mode_partitioned_with_slice_ok(client, override_runner, fake_jobmanager):
     resp = await client.post(
         "/integration/jobs",
         json={"domain": "customer_demand", "mode": "file", "slice": "2026-04"},
@@ -175,7 +186,7 @@ async def test_submit_job_file_mode_partitioned_with_slice_ok(client, override_r
 
 
 @pytest.mark.asyncio
-async def test_submit_job_file_mode_partitioned_with_file_ok(client, override_runner):
+async def test_submit_job_file_mode_partitioned_with_file_ok(client, override_runner, fake_jobmanager):
     """Files inside the project data root are accepted."""
     from pathlib import Path
     valid = str(Path(__file__).resolve().parents[2] / "data" / "staged" / "customer_demand_clean.csv")
@@ -198,7 +209,7 @@ async def test_submit_job_file_path_outside_data_root_rejected(client, override_
 
 
 @pytest.mark.asyncio
-async def test_submit_job_file_mode_unpartitioned_no_slice_required(client, override_runner):
+async def test_submit_job_file_mode_unpartitioned_no_slice_required(client, override_runner, fake_jobmanager):
     """Non-partitioned domains accept file mode with no slice."""
     resp = await client.post(
         "/integration/jobs",
@@ -208,17 +219,64 @@ async def test_submit_job_file_mode_unpartitioned_no_slice_required(client, over
 
 
 @pytest.mark.asyncio
-async def test_submit_job_passes_request_to_runner(client, override_runner):
+async def test_submit_routes_to_jobmanager(client, override_runner, fake_jobmanager):
+    """US17c: per-domain loads submit a load_domain JobManager job (not a
+    legacy integration_job insert), preserving domain/mode/slice in params."""
     await client.post(
         "/integration/jobs",
         json={"domain": "forecast", "mode": "delta", "slice": "2026-03"},
     )
-    override_runner.submit.assert_called_once()
-    kwargs = override_runner.submit.call_args.kwargs
-    assert kwargs["domain"] == "forecast"
-    assert kwargs["mode"] == "delta"
-    assert kwargs["slice"] == "2026-03"
-    assert kwargs["triggered_by"] == "api"
+    fake_jobmanager.submit_job.assert_called_once()
+    assert fake_jobmanager.submit_job.call_args.args[0] == "load_domain"
+    params = fake_jobmanager.submit_job.call_args.kwargs["params"]
+    assert params["domain"] == "forecast"
+    assert params["mode"] == "delta"
+    assert params["slice"] == "2026-03"
+    assert fake_jobmanager.submit_job.call_args.kwargs["triggered_by"] == "api"
+    # the legacy runner submit path is no longer used
+    override_runner.submit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_preserves_cascade_guard(client, override_runner, fake_jobmanager):
+    """The destructive-cascade gate still rejects (409) BEFORE any job row is
+    created — JobManager must not be reached."""
+    with patch(
+        "api.routers.platform.integration._cascade_map",
+        return_value={"sales": ["fact_sales_monthly"]},
+    ):
+        resp = await client.post(
+            "/integration/jobs",
+            json={"domain": "sales", "mode": "onetime"},
+        )
+    assert resp.status_code == 409
+    fake_jobmanager.submit_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_cascade_guard_confirm_allows(client, override_runner, fake_jobmanager):
+    """confirm_destructive=true bypasses the cascade gate and submits."""
+    with patch(
+        "api.routers.platform.integration._cascade_map",
+        return_value={"sales": ["fact_sales_monthly"]},
+    ):
+        resp = await client.post(
+            "/integration/jobs",
+            json={"domain": "sales", "mode": "onetime", "confirm_destructive": True},
+        )
+    assert resp.status_code == 202
+    fake_jobmanager.submit_job.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_preserves_file_sandbox(client, override_runner, fake_jobmanager):
+    """The file-path sandbox still rejects (422) before submission."""
+    resp = await client.post(
+        "/integration/jobs",
+        json={"domain": "customer_demand", "mode": "file", "file": "/etc/passwd"},
+    )
+    assert resp.status_code == 422
+    fake_jobmanager.submit_job.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +402,35 @@ async def test_get_job_returns_job_when_exists(client, override_runner):
     assert body["id"] == "real-id"
     assert body["status"] == "running"
     override_runner.get.assert_called_once_with("real-id")
+
+
+@pytest.mark.asyncio
+async def test_get_job_resolves_load_domain_id(mock_pool, client):
+    """US17c/AC6: a load_domain job id (TEXT, in job_history) resolves through
+    the unified view — the real runner reads it with completed->success applied."""
+    from common.services.integration_runner import IntegrationRunner
+
+    pool, _, cursor = mock_pool
+    app.dependency_overrides[_get_runner] = lambda: IntegrationRunner(pool)
+    cursor.description = [
+        ("id",), ("domain",), ("mode",), ("slice",), ("file_path",),
+        ("status",), ("rows_loaded",), ("rows_inserted",), ("rows_updated",),
+        ("rows_deleted",), ("error_message",), ("started_at",),
+        ("completed_at",), ("duration_ms",), ("triggered_by",),
+    ]
+    cursor.fetchone.return_value = (
+        "load_20260601_1200", "sales", "delta", None, None,
+        "success", 10, 10, 0, 0, None, "2026-06-01T12:00:00",
+        "2026-06-01T12:01:00", 60000, "ui",
+    )
+    try:
+        resp = await client.get("/integration/jobs/load_20260601_1200")
+    finally:
+        app.dependency_overrides.pop(_get_runner, None)
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "load_20260601_1200"
+    sql = cursor.execute.call_args.args[0]
+    assert "integration_job_unified" in sql
 
 
 # ---------------------------------------------------------------------------

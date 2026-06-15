@@ -35,7 +35,7 @@ Split into 17a–17e (see `README.md`). Shipping bottom-up, lowest risk first.
 |---|---|---|
 | US17a | ✅ | `common/services/job_shape.py` — pure row→`Job` shape + `completed↔success` status map (read-only, zero behavior change) |
 | US17b | ✅ | `integration_job_unified` view (sql/188); `IntegrationRunner.list/get` read it — merges `integration_job` + `job_history` ETL jobs, `completed→success` in SQL |
-| US17c | ⏳ | Submission cutover → `load_domain` JobManager job (HIGH — ship alone) |
+| US17c | ✅ | `load_domain` JobManager job type (group `etl`); `POST /integration/jobs` submits it — gates (allowlist/slice/sandbox/cascade) enforced pre-submission; new loads land in `job_history`, legacy rows still readable |
 | US17d | ⏳ | Chains on JobManager `submit_pipeline` |
 | US17e | ⏳ | UI convergence + legacy retirement |
 
