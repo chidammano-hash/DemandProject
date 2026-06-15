@@ -59,13 +59,12 @@ def _auto_load_script_config(script_name: str) -> dict | None:
 
     Maps script names to config files:
       compute_eoq -> config/inventory/eoq_config.yaml
-      compute_demand_variability -> config/forecasting/forecast_domain_config.yaml
+      compute_sku_features -> config/forecasting/sku_features_config.yaml
     """
     import yaml  # type: ignore[import-untyped]
 
     # Explicit overrides for scripts whose config doesn't match naming convention
     _CONFIG_MAP = {
-        "compute_demand_variability": "forecast_domain_config.yaml",
         "compute_lead_time_variability": "inventory_planning_config.yaml",
         "compute_service_level_actuals": "service_level_config.yaml",
         "run_ss_simulation": "inventory_planning_config.yaml",

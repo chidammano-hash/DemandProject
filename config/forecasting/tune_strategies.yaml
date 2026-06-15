@@ -2,9 +2,9 @@
 # Merged from: auto_tune_strategies.yaml, catboost_tune_strategies.yaml, xgboost_tune_strategies.yaml
 #
 # Each strategy is a named set of overrides applied on top of the base
-# algorithm_config.yaml section for that model.  Only the keys that differ
-# from the current production config need to be specified — everything else
-# is inherited.
+# forecast_pipeline_config.yaml `algorithms.<model>` section.  Only the keys
+# that differ from the current production config need to be specified —
+# everything else is inherited.
 #
 # Usage:
 #   make lgbm-auto-tune RUNS=5          # run first 5 LGBM strategies
@@ -13,7 +13,7 @@
 #   uv run python scripts/ml/auto_tune.py --model xgboost --runs 10
 #
 # After all runs complete the script prints a leaderboard and optionally
-# promotes the best run's params into algorithm_config.yaml.
+# promotes the best run's params into forecast_pipeline_config.yaml.
 #
 # Consumed by: scripts/ml/auto_tune.py (load_strategies -> apply_overrides)
 # Each strategy generates a temp forecast_pipeline_config.yaml, runs a

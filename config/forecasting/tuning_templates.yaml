@@ -5,7 +5,7 @@
 # Each template provides a starting point for a tuning experiment — users can
 # run as-is or customize individual params.
 #
-# Loaded by: api/routers/forecasting/unified_model_tuning.py
+# Loaded by: api/routers/forecasting/tuning/ (the model-tuning sub-router package)
 #            (GET /model-tuning/{model}/templates)
 #
 # Template fields:
