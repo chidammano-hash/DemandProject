@@ -1,12 +1,25 @@
 """Shared fixtures for API tests."""
 
-import pytest
-import pytest_asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
-from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
+import pytest_asyncio
 from httpx import ASGITransport
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset the global write rate-limiter between tests.
+
+    The rate_limit_middleware (api/main.py) counts POST/PUT/DELETE per client_ip
+    in a process-global singleton. Without this, cumulative write requests across
+    the session eventually trip the 300/min limit and unrelated tests get 429s.
+    """
+    from common.services.rate_limiter import get_rate_limiter
+    get_rate_limiter().reset()
+    yield
+    get_rate_limiter().reset()
 
 
 def _make_async_cm(value):
