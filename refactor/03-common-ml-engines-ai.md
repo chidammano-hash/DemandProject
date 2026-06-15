@@ -5,7 +5,7 @@ _Scope: `common/ml/` (+ subpackages), `common/engines/`, `common/ai/`. Read-only
 ### Quick wins
 - Dead: `dq_engine.py:25-26` `_reset_config()` defined, never called → delete.
 - Dead: `comparison.py:591` `missing_keys` assigned, never used → delete.
-- Dead/orphaned: `exception_engine.py:225-517` four `detect_*` pure functions are never called (orchestration reimplements inline) → delete or wire in. (`generate_headline` at 566-601 IS used — keep.)
+- ~~Dead/orphaned: `exception_engine.py:225-517` four `detect_*` pure functions are never called~~ **CORRECTION (verified):** the four `detect_*` functions ARE the unit-tested public API (~50 call sites in `test_exception_engine.py` + `test_exception_financial_impact.py`) — NOT dead. Only *production* `run_exception_detection` reimplements them inline. The real fix is rewiring orchestration to call the pure detectors and deleting the INLINE copies (see #1) — do NOT delete the pure functions. (`generate_headline` at 566-601 IS used — keep.)
 - Magic number `0.74` rule-score cap repeated at `exception_engine.py:278,421,485,690,774,892,965` → one config key.
 - Hardcoded `margin_assumption = 0.30` at `exception_engine.py:652,742,825` → config key.
 - `dl_models.py:91` `params.get("learning_rate", 0.001)` — only Python-side ML default left; move to `forecast_pipeline_config.yaml`.

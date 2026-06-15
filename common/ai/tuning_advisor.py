@@ -20,6 +20,7 @@ from typing import Any
 
 import psycopg
 
+from common.ai.llm_client import tools_to_openai as _tools_to_openai
 from common.core.db import get_db_params
 from common.core.utils import load_config
 
@@ -379,19 +380,6 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
-def _tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert Anthropic-format tool definitions to OpenAI function-calling format."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["input_schema"],
-            },
-        }
-        for t in tools
-    ]
 
 
 # ---------------------------------------------------------------------------

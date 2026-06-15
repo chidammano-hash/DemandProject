@@ -273,3 +273,22 @@ def build_from_config(config: dict, *, override_provider: str | None = None) -> 
 
     return LLMClient(provider=provider, model=model, base_url=base_url,
                      timeout=timeout, extra=extra)
+
+
+def tools_to_openai(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic-format tool definitions to OpenAI function-calling format.
+
+    Shared by the agentic agents (ai_planner, tuning_advisor) which author tool
+    schemas in Anthropic shape but also drive OpenAI-compatible providers.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]
