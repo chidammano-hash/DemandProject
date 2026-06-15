@@ -341,3 +341,46 @@ class TestPrintSummary:
         assert "item" in captured.out
         assert "1,000" in captured.out
         assert "950" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# US15: customer_demand participates in incremental change detection + refresh
+# ---------------------------------------------------------------------------
+
+class TestCustomerDemandRefresh:
+    def test_in_config_domain_order(self):
+        from common.core.utils import load_config
+        order = (load_config("etl/etl_config.yaml") or {}).get("domain_order") or []
+        assert "customer_demand" in order
+
+    def test_mv_mapping_includes_ca_views(self):
+        from scripts.etl.run_pipeline import get_mvs_for_domains
+        mvs = get_mvs_for_domains(["customer_demand"])
+        assert "mv_customer_activity_monthly" in mvs
+        assert "mv_ca_segment_trends" in mvs
+
+    def test_normalize_customer_demand_invokes_dedicated_script(self):
+        from pathlib import Path
+
+        from scripts.etl import run_pipeline as rp
+        fake = MagicMock(returncode=0, stderr="")
+        with patch("subprocess.run", return_value=fake) as mock_run:
+            assert rp.normalize_customer_demand(Path("/data/input")) is True
+        cmd = mock_run.call_args.args[0]
+        assert any("normalize_customer_demand_csv.py" in str(c) for c in cmd)
+
+    def test_load_customer_demand_invokes_dedicated_loader(self):
+        from scripts.etl import run_pipeline as rp
+        fake = MagicMock(returncode=0, stderr="")
+        with patch("subprocess.run", return_value=fake) as mock_run:
+            result = rp.load_customer_demand()
+        assert result["domain"] == "customer_demand"
+        cmd = mock_run.call_args.args[0]
+        assert any("load_customer_demand_postgres.py" in str(c) for c in cmd)
+
+    def test_load_customer_demand_failure_marks_skipped(self):
+        from scripts.etl import run_pipeline as rp
+        fake = MagicMock(returncode=1, stderr="boom")
+        with patch("subprocess.run", return_value=fake):
+            result = rp.load_customer_demand()
+        assert result["skipped"] is True

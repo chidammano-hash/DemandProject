@@ -53,6 +53,12 @@ mv_refresh:
     - mv_supplier_performance           # Supplier on-time delivery and quality metrics
     - mv_fill_rate_monthly              # Monthly fill rate by item+location
     - mv_intramonth_stockout            # Intra-month stockout detection
+  customer_demand:                      # fact_customer_demand_monthly (customer analytics MVs)
+    - mv_customer_activity_monthly      # Monthly customer activity (sql/169, geo cols sql/174)
+    - mv_ca_segment_trends              # Customer segment trends (sql/180)
+    - mv_ca_demand_at_risk              # Demand-at-risk by customer (sql/181)
+    - mv_ca_order_patterns              # Order pattern analytics (sql/182)
+    - mv_ca_item_state                  # Customer item-state matrix (sql/187)
   item: []                              # No MVs depend solely on dim_item
   location: []                          # No MVs depend solely on dim_location
   customer: []                          # No MVs depend solely on dim_customer

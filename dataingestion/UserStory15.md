@@ -33,3 +33,11 @@ As a **planner**, I want **customer_demand to participate in incremental change 
 ## Definition of Done
 - [ ] `customer_demand` behaves like other domains under `pipeline-refresh`.
 - [ ] `make test-all` green; `make audit-routers` unaffected.
+
+> **Scope note (implementation):** customer_demand is wired into the **refresh**
+> path of run_pipeline (dedicated normalize_customer_demand + load_customer_demand
+> helpers, special-cased like inventory) and the mv_refresh map (CA views). It is
+> change-detected via the existing audit_load_batch hash (US5). The **full-load**
+> path keeps its dedicated `make load-customer-demand --replace` target (the
+> primary full-load route), so run_full was left unchanged to avoid regressing
+> its generic/parallel flow.

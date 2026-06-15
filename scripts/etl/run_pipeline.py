@@ -195,6 +195,36 @@ def load_domain(domain: str, csv_path: Path,
     return _load(spec, csv_path, incremental_delete=incremental_delete)
 
 
+# customer_demand has its own normalizer + partitioned parallel loader, so it
+# can't go through the generic normalize_domain/load_domain paths (US15).
+
+def normalize_customer_demand(source_dir: Path) -> bool:
+    """Normalize customer demand via its dedicated subprocess. True on success."""
+    script = ROOT / "scripts" / "etl" / "normalize_customer_demand_csv.py"
+    cmd = [sys.executable, str(script), "--source-dir", str(source_dir)]
+    logger.info("  Normalizing customer_demand ...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error("  FAILED: customer_demand\n%s", result.stderr)
+        return False
+    return True
+
+
+def load_customer_demand() -> dict:
+    """Load customer demand via its dedicated loader (default UPSERT mode).
+
+    UPSERT (no --replace) is the incremental-friendly path: changed rows are
+    merged via ON CONFLICT, leaving untouched months intact.
+    """
+    script = ROOT / "scripts" / "etl" / "load_customer_demand_postgres.py"
+    cmd = [sys.executable, str(script)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error("  FAILED to load customer_demand\n%s", result.stderr)
+        return {"domain": "customer_demand", "skipped": True}
+    return {"domain": "customer_demand", "loaded": True}
+
+
 # ---------------------------------------------------------------------------
 # Materialized View Refresh
 # ---------------------------------------------------------------------------
@@ -493,6 +523,11 @@ def run_refresh(domains: list[str], source_dir: Path,
                         incr_output = data_dir / "inventory_incremental.csv"
                         normalize_inventory(source_dir, output=incr_output,
                                             files=inv_changed_files)
+                elif domain == "customer_demand":
+                    if dry_run:
+                        logger.info("  [DRY-RUN] Would normalize: customer_demand")
+                    else:
+                        normalize_customer_demand(source_dir)
                 else:
                     if dry_run:
                         logger.info("  [DRY-RUN] Would normalize: %s", domain)
@@ -506,6 +541,18 @@ def run_refresh(domains: list[str], source_dir: Path,
 
         with profiled_section("load_changed_domains"):
             for domain in changed_domains:
+                if domain == "customer_demand":
+                    if dry_run:
+                        logger.info("  [DRY-RUN] Would load: customer_demand")
+                        results.append({"domain": domain, "dry_run": True})
+                        continue
+                    logger.info("  Loading customer_demand ...")
+                    t0 = time.time()
+                    result = load_customer_demand()
+                    result["elapsed"] = _elapsed(t0)
+                    results.append(result)
+                    continue
+
                 spec = get_spec(domain)
                 incr_delete = None
 
