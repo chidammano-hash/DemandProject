@@ -4,8 +4,8 @@ _Scope: `sql/` (146 numeric-prefixed DDL migrations) and `config/` (43 YAML file
 
 ### Quick wins
 - `config/forecasting/elasticity_config.yaml` is orphaned — its only consumer `scripts/ml/fit_elasticity.py` does not exist; no `load_config`, no whitelist entry. Delete it.
-- `sql/88_backtest_run.sql` has an unpadded prefix; under `db-apply-sql`'s `ls sql/*.sql | sort` it lands LAST (after `187_*`). Rename to a zero-padded 3-digit prefix.
-- Six duplicate numeric prefixes: `039`, `041`, `090`, `091`, `092`, `095` each used by two unrelated migrations. Renumber the later one in each pair.
+- ~~`sql/88_backtest_run.sql` has an unpadded prefix; under `db-apply-sql`'s `ls sql/*.sql | sort` it lands LAST (after `187_*`). Rename to a zero-padded 3-digit prefix.~~ **DONE** — renamed to `sql/089_backtest_run.sql` (free slot adjacent to its intended position; `backtest_run` is standalone so applying earlier is safe; no filename references).
+- Six duplicate numeric prefixes: `039`, `041`, `090`, `091`, `092`, `095` each used by two unrelated migrations. Renumber the later one in each pair. **DEFERRED** — apply order is deterministic today (stable sort + alpha tiebreak), no integer slot is free adjacent (so any renumber *reorders* a deployed schema), and 5 of these files are referenced by explicit Makefile targets / docs / `tuning_tracker.py`. Risk outweighs the readability benefit; revisit at a schema squash/baseline.
 - `config/forecasting/tuning_templates.yaml:8` header cites `api/routers/forecasting/unified_model_tuning.py` — that module no longer exists (now the `tuning/` package). Fix the comment.
 - `config/forecasting/tune_strategies.yaml:5,16` reference the DELETED `algorithm_config.yaml` as a live promotion target. Update to `forecast_pipeline_config.yaml`.
 - `config/ai/agent_autonomy.yaml` has inline comments on only 4 of 47 key lines — violates the "every key documented" rule.
