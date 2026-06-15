@@ -75,9 +75,18 @@ filters:
                                         # Read by common/core/etl_helpers.unmatched_warn_pct().
 
 # ═══ PERFORMANCE ═══
-# Loader performance tuning knobs (see common/core/etl_helpers.py).
+# Loader performance tuning knobs (read via common/core/etl_helpers.perf_setting).
 performance:
   index_drop_row_threshold: 50000       # Drop+recreate secondary indexes around a bulk load only
                                         # when the table's estimated row count (pg_class.reltuples)
                                         # is >= this. Small dimensions load faster keeping indexes.
                                         # Never-analyzed tables (reltuples=-1) are treated as large.
+  batch_size: 2000000                   # Rows per INSERT batch in the forecast/archive loaders
+                                        # (load_backtest_forecasts, load_ext_ml_forecasts). Default 2,000,000.
+  pg_work_mem: "512MB"                  # work_mem for the dataset loader session (load_dataset_postgres).
+  pg_maintenance_work_mem: "1GB"        # maintenance_work_mem for the dataset loader (index rebuilds).
+  customer_demand_work_mem: "256MB"     # work_mem for the customer-demand loader — intentionally lower
+                                        # than pg_work_mem because it runs up to
+                                        # customer_demand_max_workers parallel per-month inserts.
+  customer_demand_maintenance_work_mem: "512MB"  # maintenance_work_mem for the customer-demand loader.
+  customer_demand_max_workers: 6        # Max parallel per-month INSERT workers (customer-demand --replace).

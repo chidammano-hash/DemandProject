@@ -40,6 +40,32 @@ class TestGetUniqueConstraints:
         assert "pg_constraint" in _executed_sql(cur)
 
 
+class TestPerfSetting:
+    def test_reads_value_from_config(self):
+        with patch("common.core.utils.load_config",
+                   return_value={"performance": {"batch_size": 500_000}}):
+            assert eh.perf_setting("batch_size", 2_000_000) == 500_000
+
+    def test_default_when_key_absent(self):
+        with patch("common.core.utils.load_config", return_value={"performance": {}}):
+            assert eh.perf_setting("batch_size", 2_000_000) == 2_000_000
+
+    def test_default_when_config_missing(self):
+        with patch("common.core.utils.load_config", side_effect=FileNotFoundError):
+            assert eh.perf_setting("pg_work_mem", "256MB") == "256MB"
+
+    def test_real_config_documents_perf_keys(self):
+        # AC: the keys the loaders read are present in the real etl_config.yaml.
+        from common.core.utils import load_config
+        perf = (load_config("etl/etl_config.yaml") or {}).get("performance") or {}
+        for key in (
+            "batch_size", "pg_work_mem", "pg_maintenance_work_mem",
+            "customer_demand_work_mem", "customer_demand_maintenance_work_mem",
+            "customer_demand_max_workers", "index_drop_row_threshold",
+        ):
+            assert key in perf, f"missing performance.{key} in etl_config.yaml"
+
+
 class TestSizeBasedIndexDrop:
     def test_estimate_row_count_reads_reltuples(self):
         cur = MagicMock()

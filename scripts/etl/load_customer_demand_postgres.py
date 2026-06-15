@@ -44,6 +44,7 @@ from common.core.etl_helpers import (
     ensure_monthly_partition,
     month_bounds,
     monthly_partition_name,
+    perf_setting,
     record_load_batch,
     staging_table_name,
 )
@@ -55,9 +56,9 @@ logger = logging.getLogger(__name__)
 _TABLE = "fact_customer_demand_monthly"
 _STG = staging_table_name("customer_demand")
 
-_PG_WORK_MEM = "256MB"
-_PG_MAINTENANCE_WORK_MEM = "512MB"
-_MAX_PARALLEL_WORKERS = 6
+_PG_WORK_MEM = perf_setting("customer_demand_work_mem", "256MB")
+_PG_MAINTENANCE_WORK_MEM = perf_setting("customer_demand_maintenance_work_mem", "512MB")
+_MAX_PARALLEL_WORKERS = perf_setting("customer_demand_max_workers", 6)
 
 
 # ---------------------------------------------------------------------------

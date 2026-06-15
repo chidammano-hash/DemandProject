@@ -164,6 +164,21 @@ def get_unique_constraints(cur, table: str) -> list[tuple[str, str, list[str]]]:
     return [(r[0], r[1], r[2]) for r in cur.fetchall()]
 
 
+def perf_setting(key: str, default):
+    """Read a value from etl_config.yaml ``performance`` section, else ``default``.
+
+    Single accessor for loader tuning knobs (batch size, work_mem, worker counts)
+    so they live in config, not as Python magic numbers. The ``default`` keeps
+    each call site's historical value when the key is absent.
+    """
+    try:
+        from common.core.utils import load_config
+        perf = (load_config("etl/etl_config.yaml") or {}).get("performance") or {}
+    except (FileNotFoundError, OSError, ValueError):
+        return default
+    return perf.get(key, default)
+
+
 def estimate_row_count(cur, table: str) -> int:
     """Cheap row estimate via pg_class.reltuples (no COUNT(*) scan).
 

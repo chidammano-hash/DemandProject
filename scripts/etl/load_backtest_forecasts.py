@@ -26,6 +26,7 @@ from common.core.db import get_db_params
 from common.core.etl_helpers import (
     drop_forecast_archive_indexes_and_constraints,
     drop_forecast_indexes_and_constraints,
+    perf_setting,
     recreate_forecast_archive_indexes_and_constraints,
     recreate_forecast_indexes_and_constraints,
 )
@@ -37,7 +38,7 @@ LOAD_COLS = [
     FORECAST_QTY_COL, "tothist_dmd", "model_id",
 ]
 
-BATCH_SIZE = 2_000_000
+BATCH_SIZE = perf_setting("batch_size", 2_000_000)
 
 _TABLE = "fact_external_forecast_monthly"
 

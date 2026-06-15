@@ -34,6 +34,7 @@ from common.core.etl_helpers import (
     get_secondary_indexes,
     get_unique_constraints,
     is_pg_partitioned,
+    perf_setting,
     recreate_indexes,
     recreate_unique_constraints,
     should_drop_indexes,
@@ -56,8 +57,8 @@ from common.services.perf_profiler import profiled_section
 logger = logging.getLogger(__name__)
 
 # PG session tuning
-_PG_WORK_MEM = "512MB"
-_PG_MAINTENANCE_WORK_MEM = "1GB"
+_PG_WORK_MEM = perf_setting("pg_work_mem", "512MB")
+_PG_MAINTENANCE_WORK_MEM = perf_setting("pg_maintenance_work_mem", "1GB")
 
 
 
