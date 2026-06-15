@@ -74,6 +74,25 @@ export type SubmitJobRequest = {
 /** Response from POST /integration/jobs (202 accepted). */
 export type SubmitJobResponse = { job_id: string; status: string };
 
+/** Whole-pipeline run mode. */
+export type PipelineMode = "full" | "refresh";
+
+/** Request body for POST /integration/pipeline (whole-pipeline run). */
+export type RunPipelineRequest = {
+  mode: PipelineMode;
+  /** Optional subset of domains (default: all). */
+  domains?: string[] | null;
+  /** Parallelize normalize/load/MV refresh (full mode). */
+  parallel?: boolean;
+};
+
+/** Response from POST /integration/pipeline (202 accepted). */
+export type RunPipelineResponse = {
+  job_id: string;
+  mode: PipelineMode;
+  status: string;
+};
+
 // ---------------------------------------------------------------------------
 // React Query key factory
 // ---------------------------------------------------------------------------
@@ -120,6 +139,16 @@ export async function getJob(id: string): Promise<Job> {
 }
 
 /** POST /integration/jobs — enqueue a new load job; returns the job id + status. */
+/** Run the whole ingestion pipeline (full reload or incremental refresh). */
+export async function runPipeline(
+  req: RunPipelineRequest,
+): Promise<RunPipelineResponse> {
+  return fetchJson<RunPipelineResponse>("/integration/pipeline", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 export async function submitJob(req: SubmitJobRequest): Promise<SubmitJobResponse> {
   return fetchJson<SubmitJobResponse>("/integration/jobs", {
     method: "POST",

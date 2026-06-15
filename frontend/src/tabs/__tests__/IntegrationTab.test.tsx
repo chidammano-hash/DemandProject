@@ -13,8 +13,13 @@ vi.mock("../../api/queries/integration", () => ({
   listDomains: vi.fn(),
   listJobs: vi.fn(),
   submitJob: vi.fn(),
+  runPipeline: vi.fn(),
   getJob: vi.fn(),
   purgeJobs: vi.fn().mockResolvedValue({ deleted: 0 }),
+}));
+
+vi.mock("../../api/queries/jobs", () => ({
+  fetchJobDetail: vi.fn(),
 }));
 
 const DOMAINS = [

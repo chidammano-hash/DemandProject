@@ -10,6 +10,7 @@ import {
 } from "@/api/queries/integration";
 import type { ScanResult } from "@/api/queries/integration_chain";
 import { DomainSelector } from "@/components/integration/DomainSelector";
+import { PipelineRunner } from "@/components/integration/PipelineRunner";
 import { ModeSelector } from "@/components/integration/ModeSelector";
 import { JobHistoryTable } from "@/components/integration/JobHistoryTable";
 import { ScanPanel } from "@/components/integration/ScanPanel";
@@ -170,6 +171,11 @@ export default function IntegrationTab(): JSX.Element {
           onClose={() => setActiveChainId(null)}
         />
       )}
+
+      {/* Run whole pipeline (full reload / incremental refresh) */}
+      <CollapsibleSection title="Run Pipeline" storageKey="integration.run_pipeline">
+        <PipelineRunner />
+      </CollapsibleSection>
 
       {/* Submit Job */}
       <CollapsibleSection title="Submit Job" storageKey="integration.submit_job">
