@@ -39,7 +39,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,12 +52,16 @@ if str(ROOT) not in sys.path:
 
 from common.core.db import get_db_params
 from common.core.domain_partition import (
-    PARTITION_SPECS,
     get_partition,
     is_partitioned,
     slice_to_date_range,
 )
-from common.core.etl_helpers import delete_partition_range
+from common.core.etl_helpers import (
+    create_monthly_partition,
+    delete_partition_range,
+    is_pg_partitioned,
+    monthly_partition_name,
+)
 from common.engines.medallion import file_hash
 
 logger = logging.getLogger(__name__)
@@ -863,15 +867,9 @@ def _resolve_conflict_target(cur, table: str, ck_field: str | None) -> list[str]
     return list(min(candidates, key=lambda r: len(r[1]))[1])
 
 
-def _is_pg_partitioned(cur, table: str) -> bool:
-    """True when the table is declarative-partitioned (relkind='p')."""
-    cur.execute(
-        "SELECT relkind = 'p' FROM pg_class WHERE relname = %s "
-        "AND relnamespace = 'public'::regnamespace",
-        (table,),
-    )
-    row = cur.fetchone()
-    return bool(row and row[0])
+# _is_pg_partitioned delegates to common/core/etl_helpers.is_pg_partitioned so
+# the dispatcher and the bulk loader share one partitioned-check (US6).
+_is_pg_partitioned = is_pg_partitioned
 
 
 def _ensure_monthly_partitions(
@@ -879,7 +877,8 @@ def _ensure_monthly_partitions(
 ) -> int:
     """Pre-create any monthly partitions referenced by the staging table.
 
-    Mirrors the loader's per-month partition pattern (e.g. fact_inventory_snapshot_2026_03).
+    Discovers the distinct months in staging, then delegates per-month creation
+    to common/core/etl_helpers.ensure_monthly_partition (US6 convergence).
     Returns the count of partitions created.
     """
     cur.execute(
@@ -889,19 +888,14 @@ def _ensure_monthly_partitions(
     months = [r[0] for r in cur.fetchall()]
     created = 0
     for m in months:
-        end = date(m.year + 1, 1, 1) if m.month == 12 else date(m.year, m.month + 1, 1)
-        part_name = f"{table}_{m.year:04d}_{m.month:02d}"
         cur.execute(
             "SELECT 1 FROM pg_class WHERE relname = %s "
             "AND relnamespace = 'public'::regnamespace",
-            (part_name,),
+            (monthly_partition_name(table, m),),
         )
         if cur.fetchone():
             continue
-        cur.execute(
-            f'CREATE TABLE "{part_name}" PARTITION OF "{table}" '
-            f"FOR VALUES FROM ('{m.isoformat()}') TO ('{end.isoformat()}')"
-        )
+        create_monthly_partition(cur, table, m)
         created += 1
     if created:
         logger.info("created %d new partition(s) on %s", created, table)

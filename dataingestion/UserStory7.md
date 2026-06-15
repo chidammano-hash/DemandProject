@@ -4,6 +4,14 @@
 **Depends on:** US6
 **Complexity:** M  **Risk:** HIGH
 
+> **REFRAMED during implementation (user-approved).** Since US6 established
+> that `load.py` *is* the canonical mode dispatcher that `IntegrationRunner`
+> already invokes (and which delegates bulk loads to `load_dataset_postgres.py`),
+> `load.py` is **NOT deleted**. US7 reduces to: verify `IntegrationRunner`
+> already targets the unified engine, confirm its cascade-safety / file-sandbox
+> gates are intact, and confirm onetime delegates to the bulk loader. No
+> reimplementation of the JSON/audit contract.
+
 ## Story
 As a **platform engineer**, I want **IntegrationRunner to call the unified engine and load.py removed**, so that **the UI and CLI share one code path with no divergence**.
 

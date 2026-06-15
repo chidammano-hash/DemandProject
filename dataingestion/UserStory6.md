@@ -4,6 +4,16 @@
 **Depends on:** US3, US4, US5
 **Complexity:** L  **Risk:** HIGH
 
+> **REFRAMED during implementation (user-approved).** Reading `load.py`'s
+> internals showed it is *not* a duplicate engine — it is already the
+> mode-aware dispatcher (`--mode onetime|delta|file`, `--slice`, `--file`,
+> JSON event emission for `IntegrationRunner`, audit-hash recording) and it
+> *delegates onetime bulk loads to `load_dataset_postgres.py`*. So `load.py`
+> stays the canonical engine. US6 = **converge its modes onto the shared
+> Phase-1 helpers** (kill the partition/partitioned-check duplication), not a
+> physical fusion. US7 becomes a *verify* (no delete). See the commit for the
+> delivered scope.
+
 ## Story
 As a **platform engineer**, I want **one load engine parameterized by mode (`full` | `delta` | `file`)**, so that **full load is literally "delta with an empty watermark" and there is no second loader to keep in sync**.
 

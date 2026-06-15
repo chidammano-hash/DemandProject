@@ -74,9 +74,37 @@ class TestStagingTableName:
         assert eh.staging_table_name("customer_demand") == "stg_customer_demand"
 
 
+class TestIsPgPartitioned:
+    def test_true(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (True,)
+        assert eh.is_pg_partitioned(cur, "fact_inventory_snapshot") is True
+        assert "relkind" in _executed_sql(cur)
+
+    def test_false(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (False,)
+        assert eh.is_pg_partitioned(cur, "fact_sales_monthly") is False
+
+    def test_missing(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = None
+        assert eh.is_pg_partitioned(cur, "nope") is False
+
+
 class TestMonthlyPartitions:
     def test_partition_name(self):
         assert eh.monthly_partition_name("fact_x", date(2024, 1, 1)) == "fact_x_2024_01"
+
+    def test_create_monthly_partition_unconditional(self):
+        cur = MagicMock()
+        name = eh.create_monthly_partition(cur, "fact_x", date(2024, 5, 1))
+        assert name == "fact_x_2024_05"
+        sql = _executed_sql(cur)
+        assert "CREATE TABLE" in sql and "PARTITION OF" in sql
+        assert "FOR VALUES FROM ('2024-05-01') TO ('2024-06-01')" in sql
+        # no existence SELECT — unconditional
+        assert cur.execute.call_count == 1
 
     def test_month_bounds_mid_year(self):
         assert eh.month_bounds(date(2024, 3, 1)) == ("2024-03-01", "2024-04-01")

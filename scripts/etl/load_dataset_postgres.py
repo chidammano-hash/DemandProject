@@ -34,6 +34,7 @@ from common.core.etl_helpers import (
     filter_unmatched_dfus,
     get_secondary_indexes,
     get_unique_constraints,
+    is_pg_partitioned,
     recreate_indexes,
     recreate_unique_constraints,
     unmatched_warn_pct,
@@ -71,15 +72,8 @@ _PG_MAINTENANCE_WORK_MEM = "1GB"
 # Partition helpers — for partitioned tables (e.g., fact_inventory_snapshot)
 # ---------------------------------------------------------------------------
 
-def _is_partitioned(cur, table: str) -> bool:
-    """Check if a table uses declarative partitioning."""
-    cur.execute("""
-        SELECT relkind = 'p'
-        FROM pg_class
-        WHERE relname = %s AND relnamespace = 'public'::regnamespace
-    """, (table,))
-    row = cur.fetchone()
-    return bool(row and row[0])
+# _is_partitioned delegates to the shared partitioned-check (US6 convergence).
+_is_partitioned = is_pg_partitioned
 
 
 def _ensure_partition_exists(cur, parent: str, start_date: str, end_date: str) -> str:

@@ -47,6 +47,17 @@ def staging_table_name(domain: str) -> str:
 # operations live here so they're not re-implemented per loader.
 # ---------------------------------------------------------------------------
 
+def is_pg_partitioned(cur, table: str) -> bool:
+    """True when ``table`` is declaratively partitioned (pg_class.relkind = 'p')."""
+    cur.execute(
+        "SELECT relkind = 'p' FROM pg_class WHERE relname = %s "
+        "AND relnamespace = 'public'::regnamespace",
+        (table,),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
 def monthly_partition_name(parent: str, month_start: date) -> str:
     """Deterministic monthly partition name: ``<parent>_<YYYY>_<MM>``."""
     return f"{parent}_{month_start:%Y_%m}"
@@ -59,21 +70,32 @@ def month_bounds(month_start: date) -> tuple[str, str]:
     return month_start.isoformat(), end.isoformat()
 
 
+def create_monthly_partition(cur, parent: str, month_start: date) -> str:
+    """Unconditionally create the monthly partition of ``parent``. Returns its name.
+
+    Callers that already know the partition is absent use this directly to avoid
+    a redundant existence check.
+    """
+    part_name = monthly_partition_name(parent, month_start)
+    start_str, end_str = month_bounds(month_start)
+    # DDL can't bind %s; start/end are validated YYYY-MM-DD literals.
+    cur.execute(
+        f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(parent)} "
+        f"FOR VALUES FROM ('{start_str}') TO ('{end_str}')"
+    )
+    return part_name
+
+
 def ensure_monthly_partition(cur, parent: str, month_start: date) -> str:
     """Create the monthly partition of ``parent`` if absent. Returns its name."""
     part_name = monthly_partition_name(parent, month_start)
-    start_str, end_str = month_bounds(month_start)
     cur.execute(
         "SELECT 1 FROM pg_class WHERE relname = %s "
         "AND relnamespace = 'public'::regnamespace",
         (part_name,),
     )
     if not cur.fetchone():
-        # DDL can't bind %s; start/end are validated YYYY-MM-DD literals.
-        cur.execute(
-            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(parent)} "
-            f"FOR VALUES FROM ('{start_str}') TO ('{end_str}')"
-        )
+        create_monthly_partition(cur, parent, month_start)
     return part_name
 
 
