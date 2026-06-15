@@ -6,6 +6,7 @@ forecast assertions preserve the exact SQL the loaders emitted before the
 consolidation (parity with US1 characterization).
 """
 
+from datetime import date
 from unittest.mock import MagicMock
 
 from common.core import etl_helpers as eh
@@ -66,6 +67,74 @@ class TestDropAndRecreate:
 # ---------------------------------------------------------------------------
 # Forecast / archive specs + functions (parity with prior loader behavior)
 # ---------------------------------------------------------------------------
+
+class TestStagingTableName:
+    def test_deterministic_convention(self):
+        assert eh.staging_table_name("sales") == "stg_sales"
+        assert eh.staging_table_name("customer_demand") == "stg_customer_demand"
+
+
+class TestMonthlyPartitions:
+    def test_partition_name(self):
+        assert eh.monthly_partition_name("fact_x", date(2024, 1, 1)) == "fact_x_2024_01"
+
+    def test_month_bounds_mid_year(self):
+        assert eh.month_bounds(date(2024, 3, 1)) == ("2024-03-01", "2024-04-01")
+
+    def test_month_bounds_december_wraps(self):
+        assert eh.month_bounds(date(2024, 12, 1)) == ("2024-12-01", "2025-01-01")
+
+    def test_ensure_creates_when_absent(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = None
+        name = eh.ensure_monthly_partition(cur, "fact_x", date(2024, 5, 1))
+        assert name == "fact_x_2024_05"
+        assert cur.execute.call_count == 2  # SELECT + CREATE
+        sql = _executed_sql(cur)
+        assert "PARTITION OF" in sql
+        assert "FOR VALUES FROM ('2024-05-01') TO ('2024-06-01')" in sql
+
+    def test_ensure_skips_when_present(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (1,)
+        eh.ensure_monthly_partition(cur, "fact_x", date(2024, 5, 1))
+        assert cur.execute.call_count == 1  # SELECT only
+        assert "CREATE TABLE" not in _executed_sql(cur)
+
+    def test_drop_partition(self):
+        cur = MagicMock()
+        eh.drop_monthly_partition(cur, "fact_x", date(2024, 7, 1))
+        assert 'DROP TABLE IF EXISTS "fact_x_2024_07"' in _executed_sql(cur)
+
+
+class TestSliceDeleteMetadataParity:
+    """The removed load.py _SLICE_DELETE_TABLES map is now derived from
+    DomainSpec.table + DomainPartition.field — verify they still agree."""
+
+    def test_derived_table_and_column_match_legacy_map(self):
+        from common.core.domain_partition import get_partition
+        from common.core.domain_specs import get_spec
+
+        legacy = {
+            "inventory": ("fact_inventory_snapshot", "snapshot_date"),
+            "forecast": ("fact_external_forecast_monthly", "fcstdate"),
+            "sales": ("fact_sales_monthly", "startdate"),
+        }
+        for domain, (table, col) in legacy.items():
+            assert get_spec(domain).table == table
+            assert get_partition(domain).field == col
+
+
+class TestDeletePartitionRange:
+    def test_half_open_interval(self):
+        cur = MagicMock()
+        cur.rowcount = 42
+        deleted = eh.delete_partition_range(cur, "fact_x", "startdate", "2024-03-01", "2024-04-01")
+        assert deleted == 42
+        call = cur.execute.call_args
+        assert '>= %s AND "startdate" < %s' in call.args[0]
+        assert call.args[1] == ("2024-03-01", "2024-04-01")
+
 
 class TestForecastConstants:
     def test_table_and_unique_constraint_names(self):

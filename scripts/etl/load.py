@@ -57,19 +57,16 @@ from common.core.domain_partition import (
     is_partitioned,
     slice_to_date_range,
 )
+from common.core.etl_helpers import delete_partition_range
 from common.engines.medallion import file_hash
 
 logger = logging.getLogger(__name__)
 
 ALLOWED_MODES = ("onetime", "delta", "file")
 
-# Per-partitioned-domain DELETE config: (table, date_column).
+# Slice-delete table/column are derived from the domain's DomainSpec.table and
+# its DomainPartition.field (common/core/domain_partition.py) — no separate map.
 # customer_demand is handled by its own loader's --month flag (partition drop+recreate).
-_SLICE_DELETE_TABLES: dict[str, tuple[str, str]] = {
-    "inventory": ("fact_inventory_snapshot", "snapshot_date"),
-    "forecast":  ("fact_external_forecast_monthly", "fcstdate"),
-    "sales":     ("fact_sales_monthly", "startdate"),
-}
 
 CUSTOMER_DEMAND = "customer_demand"
 
@@ -159,18 +156,15 @@ def _fetch_last_hash(domain: str) -> str | None:
 
 def _delete_slice_rows(domain: str, slice_str: str) -> int:
     """For partitioned non-customer-demand domains, DELETE rows in the slice range."""
-    spec = get_partition(domain)
-    if spec is None:
+    from common.core.domain_specs import get_spec
+
+    part = get_partition(domain)
+    if part is None:
         raise ValueError(f"{domain} is not partitioned")
-    table_info = _SLICE_DELETE_TABLES.get(domain)
-    if table_info is None:
-        raise ValueError(f"no slice-delete table mapping for domain {domain!r}")
-    start_d, end_d = slice_to_date_range(slice_str, spec.format)
-    table, col = table_info
-    sql = f'DELETE FROM "{table}" WHERE "{col}" >= %s AND "{col}" < %s'
+    table = get_spec(domain).table
+    start_d, end_d = slice_to_date_range(slice_str, part.format)
     with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
-        cur.execute(sql, (start_d, end_d))
-        deleted = cur.rowcount
+        deleted = delete_partition_range(cur, table, part.field, start_d, end_d)
         conn.commit()
     logger.info("Deleted %d rows from %s for slice %s", deleted, table, slice_str)
     return deleted

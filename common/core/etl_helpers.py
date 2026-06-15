@@ -19,10 +19,78 @@ forecast specs below are hardcoded module constants (never user input).
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from common.core.sql_helpers import qident
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Staging table naming — one convention across all loaders
+# ---------------------------------------------------------------------------
+
+def staging_table_name(domain: str) -> str:
+    """Canonical staging table name for a domain (replaces the per-loader
+    ``_stg_*`` / ``_stg_<domain>_bulk`` / ``_slice_stg`` variants)."""
+    return f"stg_{domain}"
+
+
+# ---------------------------------------------------------------------------
+# Monthly partition management — for declaratively-partitioned fact tables
+# (fact_inventory_snapshot, fact_customer_demand_monthly, ...). Partition
+# *field* metadata lives in common/core/domain_partition.py; the cursor DDL
+# operations live here so they're not re-implemented per loader.
+# ---------------------------------------------------------------------------
+
+def monthly_partition_name(parent: str, month_start: date) -> str:
+    """Deterministic monthly partition name: ``<parent>_<YYYY>_<MM>``."""
+    return f"{parent}_{month_start:%Y_%m}"
+
+
+def month_bounds(month_start: date) -> tuple[str, str]:
+    """Half-open ISO date range ``[month_start, next_month_start)``."""
+    year, month = month_start.year, month_start.month
+    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return month_start.isoformat(), end.isoformat()
+
+
+def ensure_monthly_partition(cur, parent: str, month_start: date) -> str:
+    """Create the monthly partition of ``parent`` if absent. Returns its name."""
+    part_name = monthly_partition_name(parent, month_start)
+    start_str, end_str = month_bounds(month_start)
+    cur.execute(
+        "SELECT 1 FROM pg_class WHERE relname = %s "
+        "AND relnamespace = 'public'::regnamespace",
+        (part_name,),
+    )
+    if not cur.fetchone():
+        # DDL can't bind %s; start/end are validated YYYY-MM-DD literals.
+        cur.execute(
+            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(parent)} "
+            f"FOR VALUES FROM ('{start_str}') TO ('{end_str}')"
+        )
+    return part_name
+
+
+def drop_monthly_partition(cur, parent: str, month_start: date) -> None:
+    """Drop the monthly partition of ``parent`` if it exists."""
+    cur.execute(
+        f"DROP TABLE IF EXISTS {qident(monthly_partition_name(parent, month_start))}"
+    )
+
+
+def delete_partition_range(cur, table: str, date_col: str, start, end) -> int:
+    """Delete rows in the half-open range ``[start, end)``. Returns rowcount.
+
+    ``start``/``end`` may be ``date`` objects or ISO ``YYYY-MM-DD`` strings.
+    """
+    cur.execute(
+        f"DELETE FROM {qident(table)} "
+        f"WHERE {qident(date_col)} >= %s AND {qident(date_col)} < %s",
+        (str(start), str(end)),
+    )
+    return cur.rowcount
 
 
 # ---------------------------------------------------------------------------

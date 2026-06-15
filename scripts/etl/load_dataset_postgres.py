@@ -27,6 +27,7 @@ from common.core.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 from common.core.etl_helpers import (
     drop_indexes,
     drop_unique_constraints,
+    ensure_monthly_partition,
     get_secondary_indexes,
     get_unique_constraints,
     recreate_indexes,
@@ -79,23 +80,13 @@ def _is_partitioned(cur, table: str) -> bool:
 
 
 def _ensure_partition_exists(cur, parent: str, start_date: str, end_date: str) -> str:
-    """Create a monthly partition if it doesn't exist. Returns partition name."""
-    # Parse YYYY-MM from start_date
-    parts = start_date.split("-")
-    part_name = f"{parent}_{parts[0]}_{parts[1]}"
-    cur.execute("""
-        SELECT 1 FROM pg_class
-        WHERE relname = %s AND relnamespace = 'public'::regnamespace
-    """, (part_name,))
-    if not cur.fetchone():
-        # DDL doesn't support %s parameters — use validated date literals
-        # start_date/end_date are always YYYY-MM-DD from _month_range_from_filename
-        cur.execute(
-            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(parent)} "
-            f"FOR VALUES FROM ('{start_date}') TO ('{end_date}')"
-        )
-        logger.info("  Created partition %s", part_name)
-    return part_name
+    """Create a monthly partition if it doesn't exist. Returns partition name.
+
+    Thin wrapper over common/core/etl_helpers.ensure_monthly_partition: the
+    inventory path supplies YYYY-MM-DD month bounds from the snapshot filename;
+    we parse the month start and delegate (end recomputed as next-month start).
+    """
+    return ensure_monthly_partition(cur, parent, date.fromisoformat(start_date))
 
 
 # ---------------------------------------------------------------------------

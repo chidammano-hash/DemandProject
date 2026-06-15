@@ -40,12 +40,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params
+from common.core.etl_helpers import (
+    drop_monthly_partition,
+    ensure_monthly_partition,
+    month_bounds,
+    monthly_partition_name,
+    staging_table_name,
+)
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
 
 _TABLE = "fact_customer_demand_monthly"
-_STG = "_stg_customer_demand_bulk"
+_STG = staging_table_name("customer_demand")
 
 _PG_WORK_MEM = "256MB"
 _PG_MAINTENANCE_WORK_MEM = "512MB"
@@ -53,36 +60,23 @@ _MAX_PARALLEL_WORKERS = 6
 
 
 # ---------------------------------------------------------------------------
-# Partition helpers
+# Partition helpers — thin domain bindings over common/core/etl_helpers.py
 # ---------------------------------------------------------------------------
 
 def _partition_name(month_start: date) -> str:
-    return f"{_TABLE}_{month_start:%Y_%m}"
+    return monthly_partition_name(_TABLE, month_start)
 
 
 def _month_range(month_start: date) -> tuple[str, str]:
-    year, month = month_start.year, month_start.month
-    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    return month_start.isoformat(), end.isoformat()
+    return month_bounds(month_start)
 
 
 def _ensure_partition_exists(cur: psycopg.Cursor, month_start: date) -> str:
-    part_name = _partition_name(month_start)
-    start_str, end_str = _month_range(month_start)
-    cur.execute("""
-        SELECT 1 FROM pg_class
-        WHERE relname = %s AND relnamespace = 'public'::regnamespace
-    """, (part_name,))
-    if not cur.fetchone():
-        cur.execute(
-            f'CREATE TABLE "{part_name}" PARTITION OF "{_TABLE}" '
-            f"FOR VALUES FROM ('{start_str}') TO ('{end_str}')"
-        )
-    return part_name
+    return ensure_monthly_partition(cur, _TABLE, month_start)
 
 
 def _drop_partition(cur: psycopg.Cursor, month_start: date) -> None:
-    cur.execute(f'DROP TABLE IF EXISTS "{_partition_name(month_start)}"')
+    drop_monthly_partition(cur, _TABLE, month_start)
 
 
 def _get_existing_partitions(cur: psycopg.Cursor) -> list[str]:
