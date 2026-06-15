@@ -73,3 +73,11 @@ filters:
   unmatched_dfu_warn_pct: 10.0          # Warn if > this % of staging rows are dropped for
                                         # having no matching DFU in dim_sku (0–100; default 10.0).
                                         # Read by common/core/etl_helpers.unmatched_warn_pct().
+
+# ═══ PERFORMANCE ═══
+# Loader performance tuning knobs (see common/core/etl_helpers.py).
+performance:
+  index_drop_row_threshold: 50000       # Drop+recreate secondary indexes around a bulk load only
+                                        # when the table's estimated row count (pg_class.reltuples)
+                                        # is >= this. Small dimensions load faster keeping indexes.
+                                        # Never-analyzed tables (reltuples=-1) are treated as large.

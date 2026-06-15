@@ -36,6 +36,7 @@ from common.core.etl_helpers import (
     is_pg_partitioned,
     recreate_indexes,
     recreate_unique_constraints,
+    should_drop_indexes,
     unmatched_warn_pct,
 )
 from common.core.planning_date import get_planning_date
@@ -457,11 +458,16 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                 with profiled_section("drop_indexes"):
                     logger.info("[2/4] Preparing %s ...", spec.table)
                     t0 = time.time()
-                    saved_indexes = get_secondary_indexes(cur, spec.table)
-                    saved_constraints = get_unique_constraints(cur, spec.table)
-                    # Drop UNIQUE constraints FIRST (they depend on backing indexes)
-                    drop_unique_constraints(cur, spec.table, saved_constraints)
-                    drop_indexes(cur, saved_indexes)
+                    # US10: only drop/recreate indexes for large tables — small
+                    # dimensions load faster keeping their indexes in place.
+                    if should_drop_indexes(cur, spec.table):
+                        saved_indexes = get_secondary_indexes(cur, spec.table)
+                        saved_constraints = get_unique_constraints(cur, spec.table)
+                        # Drop UNIQUE constraints FIRST (they back the indexes)
+                        drop_unique_constraints(cur, spec.table, saved_constraints)
+                        drop_indexes(cur, saved_indexes)
+                    else:
+                        logger.info("  Keeping indexes (table below drop threshold)")
 
                 if replace_mode and is_forecast:
                     cur.execute(

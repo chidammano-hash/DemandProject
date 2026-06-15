@@ -1,15 +1,15 @@
 """Tests for scripts/load_dataset_postgres.py — simplified loader."""
 
+import os
+import sys
 from unittest.mock import MagicMock, patch
 
-import sys
-import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl.load_dataset_postgres import (
-    _resolve_forecast_execution_lag,
-    _is_partitioned,
     _ensure_partition_exists,
+    _is_partitioned,
+    _resolve_forecast_execution_lag,
     load_domain,
 )
 
@@ -119,9 +119,10 @@ class TestLoadDomain:
 
         cur = MagicMock()
         # fetchone calls: staging count, _is_partitioned (False),
+        # should_drop_indexes reltuples estimate (large -> drop path),
         # DFU filter EXISTS check (False=skip),
         # FK orphan filter: dim_location EXISTS (False), dim_item EXISTS (False)
-        cur.fetchone.side_effect = [(1,), (False,), (False,), (False,), (False,)]
+        cur.fetchone.side_effect = [(1,), (False,), (1_000_000,), (False,), (False,), (False,)]
         cur.fetchall.return_value = []    # no indexes/constraints
         cur.rowcount = 1
 

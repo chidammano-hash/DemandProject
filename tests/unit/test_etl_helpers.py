@@ -40,6 +40,45 @@ class TestGetUniqueConstraints:
         assert "pg_constraint" in _executed_sql(cur)
 
 
+class TestSizeBasedIndexDrop:
+    def test_estimate_row_count_reads_reltuples(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (12345,)
+        assert eh.estimate_row_count(cur, "fact_x") == 12345
+        assert "reltuples" in _executed_sql(cur)
+
+    def test_estimate_row_count_missing_table_zero(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = None
+        assert eh.estimate_row_count(cur, "nope") == 0
+
+    def test_should_drop_above_threshold(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (100_000,)
+        assert eh.should_drop_indexes(cur, "fact_x", threshold=50_000) is True
+
+    def test_should_keep_below_threshold(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (1_000,)
+        assert eh.should_drop_indexes(cur, "dim_x", threshold=50_000) is False
+
+    def test_never_analyzed_treated_as_large(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (-1,)  # PG "unknown"
+        assert eh.should_drop_indexes(cur, "fact_new", threshold=50_000) is True
+
+    def test_threshold_from_config(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (5_000,)
+        with patch("common.core.utils.load_config",
+                   return_value={"performance": {"index_drop_row_threshold": 1_000}}):
+            assert eh.should_drop_indexes(cur, "t") is True  # 5000 >= 1000
+
+    def test_threshold_default_when_config_missing(self):
+        with patch("common.core.utils.load_config", side_effect=FileNotFoundError):
+            assert eh.index_drop_row_threshold() == eh._DEFAULT_INDEX_DROP_ROW_THRESHOLD
+
+
 class TestDropAndRecreate:
     def test_drop_indexes_quotes_identifiers(self):
         cur = MagicMock()

@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 # Default unmatched-DFU warning threshold (%) when etl_config is unavailable.
 _DEFAULT_UNMATCHED_WARN_PCT = 10.0
 
+# Default row-count threshold above which secondary indexes are dropped before
+# a bulk load and recreated after (small dimensions stay indexed).
+_DEFAULT_INDEX_DROP_ROW_THRESHOLD = 50_000
+
 
 # ---------------------------------------------------------------------------
 # Staging table naming — one convention across all loaders
@@ -158,6 +162,45 @@ def get_unique_constraints(cur, table: str) -> list[tuple[str, str, list[str]]]:
         GROUP BY con.conname, con.contype
     """, (table,))
     return [(r[0], r[1], r[2]) for r in cur.fetchall()]
+
+
+def estimate_row_count(cur, table: str) -> int:
+    """Cheap row estimate via pg_class.reltuples (no COUNT(*) scan).
+
+    Returns -1 when the table has never been ANALYZEd (PG's "unknown").
+    """
+    cur.execute(
+        "SELECT reltuples::bigint FROM pg_class WHERE relname = %s "
+        "AND relnamespace = 'public'::regnamespace",
+        (table,),
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def index_drop_row_threshold() -> int:
+    """Row-count threshold for dropping indexes during bulk load, from config."""
+    try:
+        from common.core.utils import load_config
+        cfg = load_config("etl/etl_config.yaml") or {}
+    except (FileNotFoundError, OSError, ValueError):
+        return _DEFAULT_INDEX_DROP_ROW_THRESHOLD
+    return int(
+        (cfg.get("performance") or {}).get(
+            "index_drop_row_threshold", _DEFAULT_INDEX_DROP_ROW_THRESHOLD
+        )
+    )
+
+
+def should_drop_indexes(cur, table: str, threshold: int | None = None) -> bool:
+    """True when ``table`` is large enough that dropping/recreating its secondary
+    indexes around a bulk load is worthwhile. Never-analyzed tables (reltuples=-1)
+    are treated as large (drop), to stay safe on a freshly created big fact table.
+    """
+    if threshold is None:
+        threshold = index_drop_row_threshold()
+    est = estimate_row_count(cur, table)
+    return est < 0 or est >= threshold
 
 
 def drop_indexes(cur, indexes: list[tuple[str, str]]) -> None:
