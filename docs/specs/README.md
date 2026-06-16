@@ -50,7 +50,6 @@ The data layer everything else depends on.
 | 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
 | 07 | [Customer Demand Fact](01-foundation/07-customer-demand-fact.md) | Customer-level demand fact table, monthly range-partitioned by startdate |
 | 08 | [Known Gaps](01-foundation/08-known-gaps.md) | Technical debt and known limitations tracked for future resolution |
-| 09 | [Pipeline Validation Report](01-foundation/09-pipeline-validation-report.md) | Full pipeline load + validation report (row counts, MV refresh, fill rate findings, gap tickets) |
 
 ---
 
@@ -195,7 +194,6 @@ Top-level specs that span multiple domains.
 | File | Summary |
 |------|---------|
 | [10-gen4-roadmap](10-gen4-roadmap.md) | Gen-4 multi-agent design review synthesis — 31-agent review, cross-cutting priorities, P0/P1 implementation plan |
-| [11-parking-lot-improvements](11-parking-lot-improvements.md) | 135 ranked improvements (Critical → Future) covering inventory planning, backtesting, and UI/UX, scored by 3 expert judges |
 
 ---
 

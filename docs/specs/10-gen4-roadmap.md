@@ -230,7 +230,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 - ✅ `api/pool.py` now delegates to `common.core.db.get_db_params()` (single env-var source); added `open_pool`/`close_pool` for lifespan. (2026-04-23)
 
 **P1**
-- ✅ 29 bare `except Exception` narrowed + 11 documented `noqa: BLE001`; pre-existing `NameError: logger` in `clusters.py` also fixed. `docs/specs/todo-bare-except-sweep.md` tracks remaining ~190 sites. (2026-04-23)
+- ✅ 29 bare `except Exception` narrowed + 11 documented `noqa: BLE001`; pre-existing `NameError: logger` in `clusters.py` also fixed. ~190 sites remain (tracked via the `check_unenforced_rules.sh` bare-except gate + allowlists). (2026-04-23)
 - ⏭ Mount `require_api_key` at router level — **skipped with rationale**: audit showed no router has auth on every endpoint (GETs are intentionally unprotected); router-level mounting would break public reads.
 - ✅ `scripts/tools/check_fstring_sql.py` — tokenize-based grep flags `cur.execute(f"…{var}…")` with variable interpolation; exits non-zero; 6-test coverage. (2026-04-23)
 
