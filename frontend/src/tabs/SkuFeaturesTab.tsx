@@ -54,22 +54,28 @@ export default function SkuFeaturesTab() {
   );
 
   // Queries
+  // refetchOnMount: "always" so re-opening the tab always reflects the latest
+  // compute job — without it a stale empty ("0 / Never") cache from before a
+  // successful run lingers until staleTime elapses, hiding freshly computed data.
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: skuFeatureKeys.summary,
     queryFn: fetchSkuFeaturesSummary,
     staleTime: STALE_SKU_FEATURES.SUMMARY,
+    refetchOnMount: "always",
   });
 
   const { data: distributions, isLoading: distLoading } = useQuery({
     queryKey: skuFeatureKeys.distributions,
     queryFn: () => fetchSkuFeaturesDistributions(),
     staleTime: STALE_SKU_FEATURES.DISTRIBUTIONS,
+    refetchOnMount: "always",
   });
 
   const { data: listData, isLoading: listLoading } = useQuery({
     queryKey: skuFeatureKeys.list(listParams as Record<string, unknown>),
     queryFn: () => fetchSkuFeaturesList(listParams),
     staleTime: STALE_SKU_FEATURES.LIST,
+    refetchOnMount: "always",
   });
 
   const rows: SkuFeatureRow[] = listData?.rows ?? [];

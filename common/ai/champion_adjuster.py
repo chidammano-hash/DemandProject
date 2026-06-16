@@ -1,15 +1,18 @@
-"""AI Planner Forecast Value Add (FVA) — recommendation prompt, parsing, and apply rules.
+"""AI Champion adjuster — recommendation prompt, parsing, and apply rules.
 
-Spec: docs/specs/PRD/PRD-ai-planner-fva-backtest.md (§4.1, §4.2)
+Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
 
-Three responsibilities:
-  1. Build the per-DFU prompt (point-in-time context only — see PRD §4.3).
+Repurposed from the (removed) AI FVA backtest recommender into a forward-only
+champion adjuster. Three responsibilities:
+  1. Build the per-DFU prompt from current context (recent actuals + the champion
+     forward forecast + metadata + optional event notes).
   2. Validate the LLM's structured response against the recommendation schema.
-  3. Apply the recommendation deterministically to produce the AI-adjusted forecast.
+  3. Apply the recommendation deterministically to produce the AI-adjusted
+     ("ai_champion") forward forecast.
 
-This module is *pure* — no DB calls. The runner script (scripts/forecasting/
-run_ai_fva_backtest.py) is responsible for fetching point-in-time context and
-persisting results.
+This module is *pure* — no DB calls. The generator script
+(scripts/forecasting/generate_ai_champion_forecast.py) fetches context and
+persists the adjusted forecast.
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ RecommendationCode = Literal[
 
 
 class Recommendation(BaseModel):
-    """Validated AI Planner forecast recommendation. Mirrors PRD §4.2."""
+    """Validated AI Champion forecast recommendation."""
     model_config = ConfigDict(extra="forbid")
 
     recommendation_code: RecommendationCode
@@ -54,13 +57,13 @@ class Recommendation(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Per-DFU context built by the runner (point-in-time)
+# Per-DFU context built by the generator (current planning date)
 # ---------------------------------------------------------------------------
 
 @dataclass
 class CustomerHistory:
     """Per-customer monthly sales history for one (item_id, location_id).
-    Strictly point-in-time — all months are < T (forecast run month)."""
+    All months are actuals up to the planning date."""
     customer_no: str
     customer_name: str | None
     monthly: list[tuple[str, float]]   # [(YYYY-MM, qty), ...] chronological
@@ -71,12 +74,12 @@ class CustomerHistory:
 
 @dataclass
 class DfuContext:
-    """Point-in-time context for one DFU at one forecast_run_month."""
+    """Context for one DFU at the current planning date (T)."""
     item_id: str
     loc: str
-    forecast_run_month: date            # T
+    forecast_run_month: date            # T = planning date / champion plan month
     actuals_last_24m: list[tuple[str, float]]   # [(YYYY-MM, qty), ...] ending at T
-    baseline_forecast: list[tuple[str, float]]  # [(YYYY-MM, qty), ...] for T+1..T+H
+    baseline_forecast: list[tuple[str, float]]  # champion forward forecast for T+1..T+H
     cluster: str | None = None
     demand_pattern: str | None = None
     abc_vol: str | None = None
@@ -112,16 +115,17 @@ class DfuContext:
 SYSTEM_PROMPT = """You are an expert demand-planning reviewer assisting a supply-chain forecasting system.
 
 For each DFU (item x location), you are given:
-  * the recent actuals history (up to 24 months ending at the forecast run month T)
-  * the champion model's baseline forecast for the next H months (T+1 through T+H)
+  * the recent actuals history (up to 24 months ending at the planning month T)
+  * the champion model's forward forecast for the next H months (T+1 through T+H)
   * DFU metadata (cluster, demand pattern, ABC class)
   * top customers buying this item at this location, with their recent per-month sales
     (use this to spot customer concentration, single-customer ramps/drops,
     and churn driving the DFU-level pattern)
   * any anomaly or customer-event notes
 
-Your job is to decide whether the baseline forecast should be ADJUSTED by a
-human-grade override. You must respond with a JSON object matching this schema:
+Your job is to decide whether the champion forward forecast should be ADJUSTED by a
+human-grade override to produce the "AI Champion" forecast. You must respond with a
+JSON object matching this schema:
 
 {
   "recommendation_code": "KEEP" | "SCALE_UP" | "SCALE_DOWN" | "REPLACE" | "SHIFT_TIMING" | "OVERRIDE_TO_BASELINE",
@@ -142,7 +146,7 @@ Decision principles:
   - SHIFT_TIMING when demand was pulled forward / pushed back (typically promotions).
   - OVERRIDE_TO_BASELINE if context is too sparse to justify a confident judgment.
   - Penalize confidence below 0.6 when evidence is weak — that triggers KEEP downstream.
-  - You see ONLY data through month T. Do NOT speculate beyond what is shown.
+  - Base your judgment on the data shown plus any event notes provided.
   - When the customer mix shows high concentration (one customer is a large share of
     volume) and that customer's recent monthly trend diverges from the baseline,
     weight that signal heavily. Use evidence_keys like "customer_concentration",
@@ -152,7 +156,7 @@ Respond ONLY with the JSON. No prose, no markdown, no code fences."""
 
 
 def build_user_prompt(ctx: DfuContext) -> str:
-    """Format a per-DFU user message with the point-in-time context."""
+    """Format a per-DFU user message with the current context."""
     actuals_str = ", ".join(f"{m}={q:.0f}" for m, q in ctx.actuals_last_24m)
     baseline_str = ", ".join(f"{m}={q:.0f}" for m, q in ctx.baseline_forecast)
     meta = []
@@ -166,10 +170,10 @@ def build_user_prompt(ctx: DfuContext) -> str:
 
     parts = [
         f"DFU: item_id={ctx.item_id}, location={ctx.loc}",
-        f"Forecast run month T = {ctx.forecast_run_month.isoformat()}",
+        f"Planning month T = {ctx.forecast_run_month.isoformat()}",
         f"Metadata: {meta_str}",
         f"Actuals (last {len(ctx.actuals_last_24m)} months ending at T): {actuals_str}",
-        f"Champion baseline forecast (T+1..T+{len(ctx.baseline_forecast)}): {baseline_str}",
+        f"Champion forward forecast (T+1..T+{len(ctx.baseline_forecast)}): {baseline_str}",
     ]
     if ctx.top_customers:
         parts.append(_format_top_customers(ctx.top_customers))
@@ -223,22 +227,21 @@ def recommend(client: LLMClient, ctx: DfuContext, *, max_tokens: int = 1024) -> 
 
 
 # ---------------------------------------------------------------------------
-# Apply guardrails (PRD §4.2 + config apply_guardrails)
+# Apply guardrails
 # ---------------------------------------------------------------------------
 
 def apply_guardrails(rec: Recommendation, guardrails: dict[str, Any], horizon_months: int) -> Recommendation:
     """Clip / downgrade the recommendation per config guardrails.
 
     Returns a (possibly modified) Recommendation. Never raises — out-of-bounds
-    recommendations are downgraded to KEEP rather than rejected, and the
-    runner logs the clip via the audit table.
+    recommendations are downgraded to OVERRIDE_TO_BASELINE rather than rejected.
     """
     max_pct = guardrails.get("max_abs_pct_change", 50)
     min_conf = guardrails.get("min_confidence", 0.60)
     require_evidence = guardrails.get("require_evidence", True)
     reject_on_overflow = guardrails.get("reject_on_horizon_overflow", True)
 
-    # Low confidence → downgrade to KEEP
+    # Low confidence → downgrade to baseline
     if rec.confidence < min_conf:
         return rec.model_copy(update={
             "recommendation_code": "OVERRIDE_TO_BASELINE",
@@ -247,7 +250,7 @@ def apply_guardrails(rec: Recommendation, guardrails: dict[str, Any], horizon_mo
             "rationale": f"[downgraded: confidence {rec.confidence:.2f} < {min_conf}] {rec.rationale}",
         })
 
-    # Missing evidence → downgrade to KEEP
+    # Missing evidence → downgrade to baseline
     if require_evidence and not rec.evidence_keys and rec.recommendation_code != "KEEP":
         return rec.model_copy(update={
             "recommendation_code": "OVERRIDE_TO_BASELINE",
@@ -273,7 +276,7 @@ def apply_guardrails(rec: Recommendation, guardrails: dict[str, Any], horizon_mo
 
 
 # ---------------------------------------------------------------------------
-# Apply the recommendation to compute the AI-adjusted forecast
+# Apply the recommendation to compute the AI-adjusted (ai_champion) forecast
 # ---------------------------------------------------------------------------
 
 def apply_recommendation(
@@ -282,8 +285,9 @@ def apply_recommendation(
 ) -> list[tuple[str, float]]:
     """Deterministically translate a Recommendation into per-month AI-adjusted qty.
 
-    Input baseline_forecast is the per-month champion baseline for T+1..T+H
-    (list of (YYYY-MM, qty)). Returns the same shape with AI-adjusted quantities.
+    Input baseline_forecast is the per-month champion forward forecast for
+    T+1..T+H (list of (YYYY-MM, qty)). Returns the same shape with AI-adjusted
+    quantities (the ai_champion forecast).
     """
     horizon = rec.apply_horizon_months
     code = rec.recommendation_code
@@ -315,7 +319,7 @@ def apply_recommendation(
 
     if code == "SHIFT_TIMING":
         # proposed_qty[i] interpreted as the new per-month total (same as REPLACE for
-        # the affected horizon). Distinct code for FVA bookkeeping & analysis.
+        # the affected horizon). Distinct code for bookkeeping & analysis.
         proposed = rec.proposed_qty or []
         return [
             (m, float(proposed[i])) if i < min(horizon, len(proposed)) else (m, q)

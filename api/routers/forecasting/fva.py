@@ -15,13 +15,14 @@ router = APIRouter(prefix="/fva", tags=["fva"])
 # data yet). ``missing_state`` is the state a normally-measured ("actual") stage
 # degrades to when its source yields no rows:
 #   - external degrades to "missing" (genuinely no forecast → honest blank).
-#   - F2.2: champion degrades to "planned" instead of "missing". The champion
-#     forecast lives in fact_production_forecast and has no measurable overlap
-#     with actuals in the window, so the external-forecast query (only ever
-#     model_id='external') returns no champion row. Rendering "missing" reads as
-#     a broken "No data" next to the AI/Planner "Coming Soon" stages; "planned"
-#     makes the three forward stages present consistently as reserved. If a
-#     measured champion row ever appears it still surfaces as "actual".
+#   - champion is measured from the promoted champion-selection experiment's
+#     backtest accuracy (``champion_experiment_month``, a stored 100 - WAPE over
+#     per-DFU champion-selected forecasts at execution lag, windowed by months) —
+#     NOT from fact_external_forecast_monthly (which only ever holds
+#     model_id='external') nor fact_production_forecast (forward-only, no
+#     measurable actual overlap). It degrades to "planned" (not "missing") when
+#     no promoted experiment exists, so it presents consistently with the
+#     AI/Planner reserved stages on a fresh DB.
 STAGE_DEFS = [
     ("seasonal_naive", "Naive Seasonal", "Same-month-last-year baseline for measuring planning lift.", "actual", "missing"),
     ("external", "External", "Current ERP or external forecast before model selection.", "actual", "missing"),
@@ -59,7 +60,12 @@ def _build_stage(
 async def fva_waterfall(
     months: int = Query(12, ge=1, le=36),
 ):
-    """FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages."""
+    """FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages.
+
+    ``months`` windows every measured stage to the trailing horizon. Accuracy is
+    always measured at each DFU's execution lag (the horizon it is operationally
+    forecast at).
+    """
     # Shared DFU-month filter: execution-lag rows within the requested horizon.
     # See docs/specs/01-foundation/06-execution-lag.md for the canonical pattern.
     # F9.1: anchor the window to the planning date, NOT the DB wall-clock
@@ -124,52 +130,59 @@ async def fva_waterfall(
             "n_rows": naive_row[1],
         }
 
-    # Promote `ai_adjusted` from the latest succeeded AI FVA backtest run, if any.
-    # PRD: docs/specs/PRD/PRD-ai-planner-fva-backtest.md §6 "FVA waterfall integration"
-    # Accuracy = 100 - WAPE  (uniform with the rest of this endpoint).
-    ai_run_id: str | None = None
+    # `ai_adjusted` and `planner_adjusted` remain reserved ("planned") stages in
+    # the ladder — there is no measured AI accuracy to source. The forward-only
+    # AI Champion adjuster (docs/specs/02-forecasting/27-ai-champion-forecast.md)
+    # writes a forward forecast (model_id='ai_champion') with no historical
+    # actual overlap, so it cannot feed this accuracy waterfall.
+
+    # Promote `champion` and `ceiling` from the promoted champion-selection
+    # experiment, windowed by `months` over the per-month rollup
+    # (champion_experiment_month), volume-weighted by n_champions so champion and
+    # ceiling track the selector like external/naive. champion_accuracy /
+    # ceiling_accuracy are stored as 100 - WAPE over the per-DFU champion-selected
+    # (and oracle-best) backtest forecasts at execution lag — uniform with the
+    # rest of this endpoint. See scripts/ml/run_champion_experiment.py and
+    # docs/specs/02-forecasting/07-champion-selection.md. Returns a
+    # (champion_accuracy, ceiling_accuracy, n) triple.
     with get_conn() as conn, conn.cursor() as cur:
         try:
             cur.execute(
-                """SELECT r.run_id::text, m.ai_wape_pct, COALESCE(SUM(o.n_dfus), 0)
-                   FROM ai_fva_backtest_run r
-                   JOIN mv_ai_fva_overall  m ON m.run_id = r.run_id
-                   JOIN mv_ai_fva_overall  o ON o.run_id = r.run_id
-                   WHERE r.status = 'succeeded' AND m.ai_wape_pct IS NOT NULL
-                   GROUP BY r.run_id, m.ai_wape_pct, r.completed_at
-                   ORDER BY r.completed_at DESC NULLS LAST
-                   LIMIT 1"""
+                """SELECT
+                      SUM(m.champion_accuracy * m.n_champions) / NULLIF(SUM(m.n_champions), 0),
+                      SUM(m.ceiling_accuracy  * m.n_champions) / NULLIF(SUM(m.n_champions), 0),
+                      SUM(m.n_champions)
+                   FROM champion_experiment_month m
+                   JOIN champion_experiment e ON e.experiment_id = m.experiment_id
+                   WHERE e.is_promoted = TRUE
+                     AND m.month_start >= %s::date - (%s * interval '1 month')
+                     AND m.month_start <  %s::date""",
+                (planning_dt, months, planning_dt),
             )
-            ai_row = cur.fetchone()
+            champ_row = cur.fetchone()
         except psycopg.Error:
             # Tables may not exist yet on a fresh DB. Silently fall back.
             conn.rollback()
-            ai_row = None
-        if ai_row and len(ai_row) >= 3 and ai_row[1] is not None:
-            ai_run_id = ai_row[0]
-            models["ai_adjusted"] = {
-                "model_id": "ai_adjusted",
-                "accuracy_pct": _round_or_none(100.0 - float(ai_row[1])),
-                "n_rows": int(ai_row[2] or 0),
+            champ_row = None
+    if champ_row is not None and len(champ_row) >= 3:
+        champ_n_rows = int(champ_row[2] or 0)
+        if champ_row[0] is not None:
+            models["champion"] = {
+                "model_id": "champion",
+                "accuracy_pct": _round_or_none(float(champ_row[0])),
+                "n_rows": champ_n_rows,
+            }
+        if champ_row[1] is not None:
+            models["ceiling"] = {
+                "model_id": "ceiling",
+                "accuracy_pct": _round_or_none(float(champ_row[1])),
+                "n_rows": champ_n_rows,
             }
 
     stages = [
         _build_stage(stage_id, label, description, default_state, missing_state, models.get(stage_id))
         for stage_id, label, description, default_state, missing_state in STAGE_DEFS
     ]
-    # Promote AI Adjusted from its "planned" default to actual when a backtest run exists.
-    # _build_stage() short-circuits on default_state == "planned" and returns
-    # accuracy_pct=None / n_rows=0, so we must overwrite those fields here too —
-    # otherwise the downstream delta_vs_prev subtraction crashes on None.
-    ai_model = models.get("ai_adjusted")
-    if ai_model is not None:
-        for s in stages:
-            if s["stage_id"] == "ai_adjusted":
-                s["state"] = "actual"
-                s["accuracy_pct"] = ai_model["accuracy_pct"]
-                s["n_rows"] = ai_model["n_rows"]
-                s["ai_fva_run_id"] = ai_run_id
-                break
     for idx in range(1, len(stages)):
         prev = stages[idx - 1]
         curr = stages[idx]

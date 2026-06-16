@@ -966,25 +966,21 @@ expsys-backtest-dry:     ## ExpSys accuracy only — no DB loading (--skip-load)
 expsys-backtest-replace: ## ExpSys: delete existing rows first, then reload
 	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --replace
 
-# ── AI Planner FVA Backtest (PRD 02-27) — defaults to Ollama (local, free) ────
-# As-of dates default to the latest values supported by this DB's external
-# forecast coverage (2025-03 → 2026-02). Override on the command line, e.g.
-#   make ai-fva-backtest-smoke FVA_AS_OF=2025-10-01
-# When the source-system forecast feed is refreshed, bump these defaults.
-FVA_AS_OF_SMOKE ?= 2025-11-01
-FVA_AS_OF_FULL  ?= 2025-12-01
+# ── AI Champion forward adjuster (spec 02-27) — defaults to Ollama (local, free) ─
+# Repurposed AI planner: adjusts the promoted champion production forecast
+# forward (no backtest) and writes a new forecast with model_id='ai_champion'.
+# Provider switch: ollama (default, $0) or anthropic (Opus 4.7, needs API key).
+ai-champion-smoke:        ## AI Champion: adjust 50 DFUs with Ollama (local, ~3 min)
+	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast --limit-dfus 50
 
-ai-fva-backtest-smoke:    ## AI FVA backtest smoke run: 50 DFUs, 3 months, Ollama (~5 min)
-	$(UV) python -m scripts.forecasting.run_ai_fva_backtest \
-		--as-of-date $(FVA_AS_OF_SMOKE) --window-months 3 --limit-dfus 50 --skip-mvs
+ai-champion:              ## AI Champion: adjust the full champion plan (Ollama default)
+	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast
 
-ai-fva-backtest:          ## AI FVA backtest: full 10-month walk-forward, default sample
-	$(UV) python -m scripts.forecasting.run_ai_fva_backtest \
-		--as-of-date $(FVA_AS_OF_FULL) --window-months 10
+ai-champion-opus:         ## AI Champion: adjust with Anthropic Opus 4.7 (needs ANTHROPIC_API_KEY)
+	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast --provider anthropic
 
-ai-fva-backtest-dry:      ## AI FVA backtest dry-run: prints plan + cost estimate, no LLM/DB calls
-	$(UV) python -m scripts.forecasting.run_ai_fva_backtest \
-		--as-of-date $(FVA_AS_OF_FULL) --window-months 10 --dry-run
+ai-champion-dry:          ## AI Champion dry-run: print plan, no LLM/DB writes
+	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast --dry-run
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
@@ -1579,6 +1575,7 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE backtest_lag_archive CASCADE;' \
 	  'TRUNCATE TABLE fact_external_forecast_monthly CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
+	  'TRUNCATE TABLE ai_champion_run CASCADE;' \
 	  'TRUNCATE TABLE fact_blended_demand_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_plan_weekly CASCADE;' \

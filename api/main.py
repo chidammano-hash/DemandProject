@@ -280,7 +280,7 @@ from api.routers.forecasting import backtest_management  # noqa: E402  # Backtes
 from api.routers.forecasting import champion_experiments  # noqa: E402  # Champion experiments
 from api.routers.forecasting import expsys_accuracy  # noqa: E402  # ExpSys backtest accuracy
 from api.routers.forecasting import sku_features     # noqa: E402  # SKU feature explorer
-from api.routers.forecasting import ai_fva_backtest  # noqa: E402  # AI Planner FVA backtest (PRD 02-27)
+from api.routers.forecasting import ai_champion      # noqa: E402  # AI Champion forward adjuster
 from api.routers.intelligence import customer_analytics  # noqa: E402  # Customer Analytics
 from api.routers.inventory import demand_history  # noqa: E402  # Demand History Workbench
 from api.routers.inventory import inv_planning_algorithm_comparison  # noqa: E402  # Algorithm Inventory Comparison
@@ -365,7 +365,7 @@ app.include_router(backtest_management.router)
 app.include_router(champion_experiments.router)
 app.include_router(expsys_accuracy.router)
 app.include_router(sku_features.router)
-app.include_router(ai_fva_backtest.router)
+app.include_router(ai_champion.router)
 app.include_router(customer_analytics.router)
 app.include_router(demand_history.router)
 app.include_router(inv_planning_algorithm_comparison.router)

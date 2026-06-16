@@ -275,3 +275,76 @@ class TestComputeSkuFeaturesHandler:
             _run_compute_sku_features({})
 
         mock_run.assert_called_once_with(time_window=36)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_refresh_customer_analytics (Recalculate button handler)
+# ---------------------------------------------------------------------------
+
+class TestRefreshCustomerAnalyticsHandler:
+    """Refreshes the 6 CA materialized views CONCURRENTLY off the request thread."""
+
+    def _mock_conn_with_cursor(self):
+        mock_cur = MagicMock()
+        mock_cur.__enter__ = MagicMock(return_value=mock_cur)
+        mock_cur.__exit__ = MagicMock(return_value=False)
+        mock_conn = _make_mock_conn()
+        mock_conn.cursor = MagicMock(return_value=mock_cur)
+        return mock_conn, mock_cur
+
+    def test_refreshes_all_six_mvs_concurrently(self):
+        from common.services.job_state import _run_refresh_customer_analytics
+
+        mock_conn, mock_cur = self._mock_conn_with_cursor()
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
+            result = _run_refresh_customer_analytics({})
+
+        assert result["failed"] == []
+        assert result["refreshed"] == [
+            "mv_customer_activity_monthly",
+            "mv_customer_filter_options",
+            "mv_ca_segment_trends",
+            "mv_ca_demand_at_risk",
+            "mv_ca_order_patterns",
+            "mv_ca_item_state",
+        ]
+        # activity rollup must be refreshed first
+        executed = " ".join(str(c.args[0]) for c in mock_cur.execute.call_args_list)
+        assert "CONCURRENTLY" in executed
+
+    def test_continues_past_a_failing_mv(self):
+        import psycopg
+
+        from common.services.job_state import _run_refresh_customer_analytics
+
+        mock_conn, mock_cur = self._mock_conn_with_cursor()
+
+        # First REFRESH (after the SET) raises; the rest succeed.
+        calls = {"n": 0}
+
+        def _execute(stmt, *a, **k):
+            text = str(stmt)
+            if "REFRESH" in text:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise psycopg.Error("lock timeout")
+            return MagicMock()
+
+        mock_cur.execute.side_effect = _execute
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
+            result = _run_refresh_customer_analytics({})
+
+        assert len(result["failed"]) == 1
+        assert len(result["refreshed"]) == 5
+
+    def test_raises_when_cancelled(self):
+        from threading import Event
+
+        from common.services.job_state import _run_refresh_customer_analytics
+
+        mock_conn, _ = self._mock_conn_with_cursor()
+        cancel = Event()
+        cancel.set()
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
+            with pytest.raises(RuntimeError, match="cancelled"):
+                _run_refresh_customer_analytics({}, cancel_event=cancel)

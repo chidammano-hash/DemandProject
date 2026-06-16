@@ -26,7 +26,7 @@ Two complementary views answer "Is the planning process adding value?"
 
 1. When a planner takes an action, the source module records it in `fact_intervention_metrics` with the current metric snapshot and estimated financial impact
 2. The intervention starts with status `pending` and a measurement window (e.g., 3 months for overrides, 6 months for policy changes)
-3. The FVA ladder endpoint queries `fact_external_forecast_monthly`, grouping accuracy by `model_id` to compare `seasonal_naive`, `external`, and `champion`, then appends planned `AI Adjusted` and `Planner Adjusted` stages for the UI roadmap
+3. The FVA ladder endpoint computes `seasonal_naive` and `external` accuracy from `fact_external_forecast_monthly` (grouped by `model_id` over the windowed DFU-months). **Champion** and the **Ceiling Benchmark** are sourced separately from the promoted champion-selection experiment's measured backtest (already stored as `100 - WAPE`), month-windowed via `champion_experiment_month` — not from the external-forecast table (which only carries `model_id='external'`) nor from `fact_production_forecast` (forward-only, no measurable actual overlap). The `AI Adjusted` and `Planner Adjusted` stages remain reserved (`planned`) — there is no measured AI accuracy to source. The forward-only **AI Champion** adjuster (spec [02-27](../02-forecasting/27-ai-champion-forecast.md)) writes a forward forecast (`model_id='ai_champion'`) with no historical actual overlap, so it cannot feed this accuracy waterfall. When no promoted champion experiment exists (fresh DB), champion degrades to the reserved `planned` state rather than `missing`. See "Windowing" under API below.
 4. When the measurement window expires and actuals are available, a background job computes the actual metric outcome and financial impact
 5. The intervention status flips to `measured`, and the FVA tab shows the realized ROI
 6. The ROI summary aggregates all interventions to show total estimated vs. actual financial impact
@@ -62,6 +62,16 @@ Indexes on `user_id`, `status`, `intervention_type`, and `measurement_window_end
 | GET | `/fva/roi-summary` | Aggregate ROI: total interventions, estimated vs. actual impact |
 
 `/fva/waterfall` and `/fva/roi-summary` accept a `months` query parameter (default 12, range 1-36) for the lookback window. `/fva/interventions` uses pagination and filter parameters. Accuracy uses the standard formula: `100 - (100 * SUM(|F-A|) / |SUM(A)|)`.
+
+### Windowing (`/fva/waterfall`)
+
+Accuracy is always measured at each DFU's execution lag, and every measured stage tracks the `months` window:
+
+- **Naive Seasonal / External** — computed live from `fact_external_forecast_monthly` over the windowed DFU-months.
+- **Champion / Ceiling** — windowed via `champion_experiment_month` (per-month rollup of the promoted experiment), volume-weighted by `n_champions`.
+- **AI Adjusted** — always reserved (`planned`). The forward-only AI Champion forecast (`model_id='ai_champion'`, spec 02-27) has no historical actual overlap and cannot be graded here.
+
+A per-lag selector was considered but dropped: champion's stored backtest is only rolled up per-month *or* per-lag (no month-by-lag detail), so champion/ceiling can honor the window OR a fixed lag but not both. Since champion is inherently an execution-lag concept, the ladder fixes lag to execution and varies only the window.
 
 ## Configuration
 

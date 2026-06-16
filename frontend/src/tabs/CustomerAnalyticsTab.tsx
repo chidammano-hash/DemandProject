@@ -12,6 +12,7 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { useDebounce } from "@/hooks/useDebounce";
 import { DashboardFilterProvider, useDashboardFilter } from "./customer-analytics/DashboardFilterContext";
 // Eager: above-the-fold panels visible on first paint.
+import { RecalculateButton } from "./customer-analytics/RecalculateButton";
 import { KpiSummaryCards } from "./customer-analytics/KpiSummaryCards";
 import { CustomerDemandMap } from "./customer-analytics/CustomerDemandMap";
 import { CustomerTreemap } from "./customer-analytics/CustomerTreemap";
@@ -147,13 +148,17 @@ function CustomerAnalyticsContent() {
   return (
     <div className="space-y-4 p-4">
       {/* 0. Page header — title + one-line description, matching the sidebar
-          label ("Customer Analytics") and every other tab's chrome (U4.4). */}
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">Customer Analytics</h2>
-        <p className="text-sm text-muted-foreground">
-          Geographic demand, fill rate, and concentration across customers,
-          channels, and store types.
-        </p>
+          label ("Customer Analytics") and every other tab's chrome (U4.4).
+          Recalculate button refreshes the backing MVs (mirrors SKU Features). */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Customer Analytics</h2>
+          <p className="text-sm text-muted-foreground">
+            Geographic demand, fill rate, and concentration across customers,
+            channels, and store types.
+          </p>
+        </div>
+        <RecalculateButton />
       </div>
 
       {/* 1. KPI Summary Cards */}

@@ -83,6 +83,7 @@ Predict future demand using ML models, then select the best forecast per item.
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
 | 25 | [Forecast Pipeline Workflow Guide](02-forecasting/25-forecast-pipeline-workflow-guide.md) | Concise 7-stage workflow guide (data → clustering → tuning → backtesting → load → champion → production forecast) with quick-reference commands and config table |
 | 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
+| 27 | [AI Champion Forecast](02-forecasting/27-ai-champion-forecast.md) | Forward-only AI adjuster: an LLM (Ollama/Opus 4.7) nudges the promoted champion forecast forward and writes a new `model_id='ai_champion'` (no backtest, no grading) |
 
 **Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
 
@@ -203,9 +204,7 @@ Specs for features that are designed but not yet fully implemented. Kept separat
 
 | File | Domain | Summary |
 |------|--------|---------|
-| [PRD-bolt-bottom-up-reconciled](PRD/PRD-bolt-bottom-up-reconciled.md) | Forecasting | Hierarchical Bolt — customer-level bottom-up Chronos Bolt with MinTrace reconciliation |
-| [PRD-customer-enriched-forecasting](PRD/PRD-customer-enriched-forecasting.md) | Forecasting | Customer-enriched tree models with 34 customer-derived features added to competition roster |
-| [PRD-customer-analytics-visuals](PRD/PRD-customer-analytics-visuals.md) | Demand Intelligence | Enhanced customer map with demand volume, OOS hotspots, channel mix, and supply chain visuals |
+| [PRD-CSCS-11725-brand-performance-chatbot](PRD/PRD-CSCS-11725-brand-performance-chatbot.md) | Intelligence | Supply Chain chatbot for UC2 brand performance inquiry |
 
 ---
 

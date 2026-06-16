@@ -84,7 +84,7 @@ The AI Planner is a **proactive batch agent**, not a chatbot. It scans the deman
 
 - Module: `common/ai/ai_planner.py` (class `AIPlannerAgent`)
 - Router: `api/routers/intelligence/ai_planner.py`
-- Frontend tab: `frontend/src/tabs/AIPlannerTab.tsx` (sub-panels in `frontend/src/tabs/ai-planner/`)
+- Frontend surface: AI Planner insight sub-panels in `frontend/src/tabs/ai-planner/` (rendered inside the Command Center / Market Intelligence tabs)
 - Config: `config/ai/ai_planner_config.yaml`
 - Provider: configurable — `provider: "openai"` (default, uses `OPENAI_API_KEY`) or `provider: "anthropic"` (uses `ANTHROPIC_API_KEY`)
 
@@ -297,7 +297,7 @@ Otherwise `total_tokens += usage.total_tokens or 0` raises `TypeError` and the l
 
 | Surface | File | Sidebar location |
 |---|---|---|
-| AI Planner tab | `frontend/src/tabs/AIPlannerTab.tsx` (+ sub-panels in `ai-planner/`) | First entry — keyboard shortcut `1` (see `KeyboardShortcutHelp.tsx`) |
+| AI Planner insights | sub-panels in `frontend/src/tabs/ai-planner/` (Command Center / Market Intelligence) | no numeric shortcut (see `KeyboardShortcutHelp.tsx`) |
 | Tuning Chat | `frontend/src/tabs/lgbm-tuning/TuningChatPanel.tsx` | Inside `ModelTuningTab` / LGBM Tuning tab |
 
 ### 9.8.1 Vite proxy entries
@@ -389,20 +389,12 @@ python -m scripts.ai.ingest_docs --root docs/sop --source sop --dry-run
 
 ---
 
-## 9.11 FVA Backtest — Dev/Test Provider Modes (Ollama & Manual Opus)
+## 9.11 AI Champion adjuster — Provider Modes (Ollama & Opus 4.7)
 
-How to run the AI Planner FVA backtest during development and testing **without
-paying for the metered API**. Design reference: spec [02-27 §8.1](../specs/02-forecasting/27-ai-fva-backtest.md). There
-are two zero-cost modes — **A: Ollama** (automated, default) and **B: Manual Opus
-spot-check via Claude Code** (interactive only) — plus the metered `anthropic` path
-for the authoritative run.
-
-> ⚠ **Read this before Mode B.** The Anthropic Consumer Terms (Pro / Max / Claude
-> Code) forbid automated access "except … via an Anthropic API Key." Mode B is a
-> **manual, human-driven** spot-check and nothing more. Do **not** automate it —
-> no `claude -p` from the backtest, no OpenAI-compatible proxy in front of the
-> subscription. The only automated Claude path is `provider: anthropic` (the API).
-> See spec §8.1 "Compliance boundary."
+How to run the forward-only **AI Champion** adjuster (spec
+[02-27](../specs/02-forecasting/27-ai-champion-forecast.md)) with or without API spend. It
+adjusts the promoted champion forecast forward and writes `model_id='ai_champion'`.
+The provider switch lives in `config/ai/ai_champion_config.yaml`.
 
 ### 9.11.1 Mode A — Ollama (default, automated, $0)
 
@@ -410,76 +402,48 @@ for the authoritative run.
 # 1. Start the local Ollama server (OpenAI-compatible at :11434/v1)
 ollama serve            # leave running; or `brew services start ollama`
 
-# 2. Pull the model named in config (config/ai/ai_planner_fva_backtest_config.yaml)
-ollama pull qwen2.5:32b     # primary; llama3.1:8b for faster screening
+# 2. Pull the model named in config (config/ai/ai_champion_config.yaml)
+ollama pull llama3.1:8b     # default; qwen2.5:32b for higher quality, slower
 
-# 3. Confirm the config selects Ollama (this is the default — no edit needed)
-#    provider: ollama
-#    keep_alive: 24h          # keeps the model resident across a long backtest
-
-# 4. Run the backtest (API or CLI per spec §6 / §12). It runs unattended at $0.
+# 3. provider: ollama is the default — no edit needed. Run:
+make ai-champion-smoke      # 50 DFUs, local, $0
+make ai-champion            # full champion plan, local, $0
 ```
 
-Verify the pre-flight cost estimate reads `$0.00` (driven by
-`cost_controls.per_call_estimated_cost_usd.ollama: 0.0`). Use Mode A for **all**
-volume iteration — prompt tuning, schema debugging, methodology sweeps.
+The pre-flight cost estimate reads `$0.00`
+(`cost_controls.per_call_estimated_cost_usd.ollama: 0.0`). Use Ollama for all
+volume runs and prompt iteration.
 
 ### 9.11.2 Mode B — Manual Opus spot-check via Claude Code (interactive, $0)
 
-Use this to decide **"is real Opus materially better than Ollama on these DFUs, i.e.
-worth paying the API for?"** before committing budget to an `anthropic` run. It is a
-hand-driven comparison on a **small sample** (≈5–20 DFUs), not a backtest run.
+To sanity-check whether Opus is materially better than the local model on a few
+DFUs *before* paying for a metered run: open a Claude Code session (Opus, covered
+by your Pro/Max subscription), paste a handful of DFU contexts, and eyeball the
+recommendations against the Ollama output. This is a **manual, human-driven**
+spot-check only.
 
-1. **Pick a representative sample** — a few DFUs per stratum (cluster / demand
-   pattern / volume tier) where Ollama's recommendation looked weak or borderline.
-2. **Get the exact prompt for each DFU.** Reuse the prompt the backtest already
-   sends — the simplest source is the `ai_planner_audit_log` row (or
-   `ai_response_raw` capture) for that DFU from a prior Mode A run, which stores the
-   full rendered context. Copy that prompt verbatim.
-3. **Run it interactively in Claude Code.** Open a Claude Code session (Opus),
-   paste the prompt, and read back the JSON recommendation. One DFU at a time, by
-   hand — this is the compliance boundary.
-4. **Record the result** into `usertestinputs/cycleN/capture-dump.json` (the
-   capture file this workflow already uses), tagged by `item_id` + `loc` so it lines
-   up with the Ollama output for the same DFU.
-5. **Compare** Opus vs Ollama recommendations side by side (KEEP/adjust, confidence,
-   evidence quality). If Opus is clearly better on enough of the sample, proceed to
-   §9.11.3; if not, stay on Ollama and save the spend.
+> ⚠ **Compliance + cost reality.** A Claude Code Pro/Max subscription covers the
+> Claude Code CLI itself — it does **not** cover a script's programmatic Anthropic
+> API calls, and the Consumer Terms forbid automating the subscription (no
+> `claude -p` from the pipeline, no proxy in front of it). The only automated Claude
+> path is `provider: anthropic` (the metered API, Mode C).
 
-### 9.11.3 Full Opus-vs-Ollama comparison run (metered API)
+### 9.11.3 Mode C — Anthropic Opus 4.7 (metered API)
 
-To run the **entire** backtest through Claude and compare its FVA against Ollama,
-use the API. A full automated run **cannot** use Mode B / the subscription (Consumer
-Terms forbid automated access except via an API key), so the Claude side runs on
-`provider: anthropic`. This is also the exact production code path.
+To run the full adjuster through Claude, use the API. This is the production path
+and the only automated Claude path.
 
 ```bash
-# 1. Run the Ollama side first (Mode A, §9.11.1) over the stratified sample — $0.
-#    Note the scan_run_id; this is the baseline to compare against.
-
-# 2. Set the key for the Claude side
 export ANTHROPIC_API_KEY=sk-ant-...
-
-# 3. In config/ai/ai_planner_fva_backtest_config.yaml — Claude side, fair comparison:
-#    provider: anthropic
-#    models.anthropic: claude-opus-4-8     # current Opus (config still names 4-7 — bump it)
-#    hybrid_routing.enabled: false         # no screener — clean head-to-head vs Ollama
-#    sampling: <identical to the Ollama run>   # same DFUs, same prompt_version, same guardrails
-
-# 4. Bound the cost (backtests are non-latency-sensitive — both levers apply):
-#    - Batches API  → 50% discount
-#    - Prompt caching on the shared system/rubric prefix → up to ~90% off input tokens
-#    - per_run_max_cost_usd stays the hard stop; keep max_dfus at its cap
-
-# 5. Run the backtest, then compare the two scan_run_ids' FVA (WAPE uplift vs baseline,
-#    recommendation mix, confidence/evidence quality) on the FVA Backtest tab.
+make ai-champion-opus              # provider anthropic, model claude-opus-4-7
+# or:  python -m scripts.forecasting.generate_ai_champion_forecast --provider anthropic --limit-dfus 100
 ```
 
-**Cost ballpark:** a stratified Opus run (`max_dfus` cap) is ~$1.1K direct, ~$0.5K
-with Batches, less again with caching — and is hard-capped by `per_run_max_cost_usd`.
+A pre-flight estimate (`per_call_estimated_cost_usd.anthropic`) × DFUs is checked
+against `per_run_max_cost_usd` and aborts before spending if it would exceed the
+cap. Start with `--limit-dfus` to bound the first paid run.
 
-Tiering summary: **Ollama** = automated volume dev + the comparison baseline ($0);
-**manual Opus (Claude Code)** = interactive quality spot-checks only (§9.11.2);
-**`anthropic` API** = the full automated Opus-vs-Ollama comparison *and* production.
-Opus 4.8 is the quality benchmark; Sonnet 4.6 is the cheaper option for
-exploratory or screener-stage volume.
+Tiering: **Ollama** = automated, $0, the default; **manual Opus via Claude Code** =
+interactive spot-checks only; **`provider: anthropic`** = the full automated run
+(metered). Opus 4.7 is the config default benchmark; bump `models.anthropic` to
+`claude-opus-4-8` for the current Opus.

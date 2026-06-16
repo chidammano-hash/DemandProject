@@ -886,6 +886,27 @@ def _run_compute_sku_features(
     return result
 
 
+def _run_generate_ai_champion(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Generate the forward-only AI Champion forecast by adjusting the champion plan."""
+    from scripts.forecasting.generate_ai_champion_forecast import run_pipeline
+
+    if progress_cb:
+        progress_cb(pct=10, msg="Adjusting champion forecast")
+    result = run_pipeline(
+        provider=params.get("provider"),
+        plan_version=params.get("plan_version"),
+        limit_dfus=params.get("limit_dfus"),
+    )
+    if progress_cb:
+        progress_cb(pct=100, msg="Complete")
+    return result
+
+
 def _run_compute_demand_signals(
     params: dict[str, Any],
     progress_cb: Callable | None = None,
@@ -968,6 +989,69 @@ def _run_refresh_forecast_views(
 
     if progress_cb:
         progress_cb(pct=5, msg=f"Refreshing {len(mvs)} forecast materialized views")
+
+    # autocommit=True (default for _get_conn) is required: REFRESH MATERIALIZED
+    # VIEW CONCURRENTLY cannot run inside a transaction block.
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SET maintenance_work_mem = '512MB'")
+            except psycopg.Error:
+                logger.exception("Failed to set maintenance_work_mem")
+            for idx, mv in enumerate(mvs, start=1):
+                if cancel_event and cancel_event.is_set():
+                    raise RuntimeError("Job cancelled by user")
+                if progress_cb:
+                    pct = int(5 + (idx - 1) / len(mvs) * 90)
+                    progress_cb(pct=pct, msg=f"Refreshing {mv}")
+                stmt = sql.SQL("REFRESH MATERIALIZED VIEW CONCURRENTLY {}").format(
+                    sql.Identifier(mv)
+                )
+                try:
+                    cur.execute(stmt)
+                    refreshed.append(mv)
+                except psycopg.Error:
+                    logger.exception("Failed to refresh %s", mv)
+                    failed.append(mv)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Refreshed {len(refreshed)}/{len(mvs)} views")
+    return {"refreshed": refreshed, "failed": failed}
+
+
+def _run_refresh_customer_analytics(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Refresh the materialized views backing the Customer Analytics tab.
+
+    Backs the "Recalculate" button on that tab. The CA panels read from these
+    MVs instead of aggregating fact tables per-request (see the Make targets
+    ``refresh-customer-mv`` / ``refresh-customer-filter-options`` /
+    ``refresh-ca-mvs``); this job runs the same refresh off the request thread.
+    ``mv_customer_activity_monthly`` is refreshed first since it is the core
+    activity rollup the rest of the tab builds on.
+
+    Returns a dict with ``refreshed`` and ``failed`` lists of MV names.
+    """
+    import psycopg
+    from psycopg import sql
+
+    mvs = (
+        "mv_customer_activity_monthly",
+        "mv_customer_filter_options",
+        "mv_ca_segment_trends",
+        "mv_ca_demand_at_risk",
+        "mv_ca_order_patterns",
+        "mv_ca_item_state",
+    )
+    refreshed: list[str] = []
+    failed: list[str] = []
+
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Refreshing {len(mvs)} customer-analytics views")
 
     # autocommit=True (default for _get_conn) is required: REFRESH MATERIALIZED
     # VIEW CONCURRENTLY cannot run inside a transaction block.

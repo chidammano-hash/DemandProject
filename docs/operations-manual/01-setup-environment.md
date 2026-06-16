@@ -224,16 +224,18 @@ make fva-schema                # fact_fva_tracking (sql/068)
 
 > **Note (stale RUNBOOK targets):** Older RUNBOOK revisions referenced `make auth-schema` (sql/062), `make cache-perf-schema` (sql/064), `make notification-schema` (sql/065), `make collaboration-schema` (sql/066), `make external-signals-schema` (sql/067), and `make report-schema` (sql/069). These standalone Make targets no longer exist in the current `Makefile`; their DDL (sql/062–070) is applied by `make db-apply-sql` directly.
 
-### 5.4 AI Planner FVA Backtest schema (Spec 02-27)
+### 5.4 AI Champion forward adjuster schema (Spec 02-27)
 
 Apply the DDL manually until a Make target is added:
 
 ```bash
-psql "$DATABASE_URL" -f sql/186_create_ai_fva_backtest.sql
-# Smoke / full / dry run:
-make ai-fva-backtest-smoke     # 50 DFUs x 3 months, Ollama (~5 min)
-make ai-fva-backtest           # full 10-month walk-forward
-make ai-fva-backtest-dry       # plan + cost estimate, no LLM/DB writes
+psql "$DATABASE_URL" -f sql/189_drop_ai_fva_backtest.sql      # removes the old backtest store (idempotent)
+psql "$DATABASE_URL" -f sql/190_create_ai_champion_forecast.sql
+# Smoke / full / Opus / dry run:
+make ai-champion-smoke         # 50 DFUs, Ollama (local, $0)
+make ai-champion               # full champion plan, Ollama
+make ai-champion-opus          # full plan, Anthropic Opus 4.7 (needs ANTHROPIC_API_KEY)
+make ai-champion-dry           # plan + cost estimate, no LLM/DB writes
 ```
 
 ### 5.5 Auth & RBAC setup

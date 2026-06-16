@@ -527,3 +527,21 @@ export function fetchCustomerAnalyticsAlerts(
   const qs = buildQuerySuffix(filterParams(filters));
   return fetchJson(`/customer-analytics/alerts${qs}`);
 }
+
+// ---------------------------------------------------------------------------
+// Recalculate — refresh the customer-analytics materialized views (background)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger a background refresh of the customer-analytics MVs. Returns a job_id
+ * pollable via fetchJobDetail; the tab invalidates its queries on completion.
+ */
+export async function triggerRecalculateCustomerAnalytics(): Promise<{
+  job_id: string;
+  status: string;
+}> {
+  return fetchJson<{ job_id: string; status: string }>(
+    "/customer-analytics/recalculate",
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+}

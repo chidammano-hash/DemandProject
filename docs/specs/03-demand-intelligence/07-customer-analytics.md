@@ -150,6 +150,18 @@ All five MVs are nightly-refreshed; the underlying tables (`dim_customer`,
 `fact_customer_demand_monthly`) change on the same cadence so end-of-day
 freshness is sufficient.
 
+**On-demand recalculation.** The tab header carries a **Recalculate** button
+(`RecalculateButton`, mirroring SKU Features' Compute button). It `POST`s to
+`/customer-analytics/recalculate` (write endpoint, `require_api_key`), which
+submits the `refresh_customer_analytics` background job
+(`_run_refresh_customer_analytics` in `common/services/job_state.py`). The job
+`REFRESH MATERIALIZED VIEW CONCURRENTLY` over all six MVs above —
+`mv_customer_activity_monthly` first as the core rollup. The button polls
+`/jobs/{id}` and, on completion, invalidates every `customer-analytics-*` React
+Query so the panels repaint. Same refresh as the `refresh-customer-mv` /
+`refresh-customer-filter-options` / `refresh-ca-mvs` Make targets, run off the
+request thread.
+
 ### Endpoint Routing Strategy
 
 | Endpoint | Default Source | Falls Back To Fact Table When |

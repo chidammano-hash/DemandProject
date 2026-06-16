@@ -1,6 +1,6 @@
 """Unit tests for common.ai.llm_client — provider routing and chat call paths.
 
-Spec: docs/specs/PRD/PRD-ai-planner-fva-backtest.md (§8)
+Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
 Covers provider construction (env-var validation), OpenAI-shaped chat path
 (ollama / openai_compat / openai), Anthropic chat path, and build_from_config.
 

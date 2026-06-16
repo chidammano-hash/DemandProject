@@ -1,6 +1,6 @@
-"""Unit tests for common.ai.fva_recommender — pure-function logic.
+"""Unit tests for common.ai.champion_adjuster — pure-function logic.
 
-Spec: docs/specs/PRD/PRD-ai-planner-fva-backtest.md (§4.2)
+Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
 
 Covers apply_guardrails and apply_recommendation. The LLM call path
 (common.ai.llm_client) is exercised separately with live integration tests
@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from common.ai.fva_recommender import (
+from common.ai.champion_adjuster import (
     Recommendation,
     apply_guardrails,
     apply_recommendation,

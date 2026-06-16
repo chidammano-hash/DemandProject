@@ -1,6 +1,6 @@
-"""Unit tests for common.ai.fva_recommender — prompt construction only.
+"""Unit tests for common.ai.champion_adjuster — prompt construction only.
 
-Existing tests/unit/test_fva_recommender.py already covers Recommendation
+Existing tests/unit/test_champion_adjuster.py already covers Recommendation
 Pydantic validation, apply_guardrails, and apply_recommendation. This file
 focuses on build_user_prompt: numeric formatting, optional-field handling,
 and the metadata "none" fallback.
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from common.ai.fva_recommender import CustomerHistory, DfuContext, build_user_prompt
+from common.ai.champion_adjuster import CustomerHistory, DfuContext, build_user_prompt
 
 
 def _ctx(**overrides) -> DfuContext:

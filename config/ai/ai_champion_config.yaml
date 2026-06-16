@@ -1,0 +1,70 @@
+# AI Champion forward adjuster configuration
+# Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
+# Loaded via: load_config("ai_champion_config")
+#
+# The AI Champion adjuster reads the promoted champion production forecast,
+# applies a per-DFU LLM adjustment, and writes a NEW forward forecast with
+# model_id='ai_champion'. Forward-only — no backtest, no accuracy grading.
+
+_includes: [shared_constants]
+
+# ═══ Run defaults ════════════════════════════════════════════════════════════
+defaults:
+  source_model_id: champion            # model_id in fact_production_forecast to adjust
+  target_model_id: ai_champion         # model_id written to fact_ai_champion_forecast
+  horizon_months: 3                    # How many forward months an adjustment may touch
+  forecast_window_months: 12           # Forward months materialized as the ai_champion forecast
+  actuals_lookback_months: 24          # Months of own sales history shown to the LLM
+  top_customers: 5                     # Top-K customers (by 12mo sales) shown to the LLM (0 disables)
+
+# ═══ Provider abstraction ════════════════════════════════════════════════════
+# Drives where the LLM call goes. common/ai/llm_client.py routes all providers.
+#
+#   ollama (default):  local, $0, no network. Pull the model first via `ollama pull`.
+#   anthropic:         paid API (Opus 4.7). Requires ANTHROPIC_API_KEY env var.
+#   openai:            paid API. Requires OPENAI_API_KEY env var.
+#   openai_compat:     any OpenAI-compatible endpoint. Requires LLM_BASE_URL + LLM_API_KEY.
+#
+# NOTE: the anthropic path bills the Anthropic API per token — a Claude Code
+# Pro/Max subscription does NOT cover these programmatic calls. Use `ollama` to
+# run with zero API spend; use `anthropic` (Opus 4.7) when you want the quality
+# benchmark and accept the metered cost.
+provider: ollama
+
+# Per-provider model identifiers — only the entry matching `provider` is used.
+models:
+  ollama: llama3.1:8b                  # Local default on an M-series Mac
+  anthropic: claude-opus-4-7           # Quality benchmark (metered API)
+  openai: gpt-4o
+  openai_compat: meta-llama/Llama-3.3-70B-Instruct-Turbo
+
+# Per-provider endpoints. Ollama is loopback by default.
+endpoints:
+  ollama: http://localhost:11434/v1    # OpenAI-compatible Ollama API
+  openai_compat: ${LLM_BASE_URL}       # e.g. https://api.together.xyz/v1
+
+# ═══ Apply guardrails ════════════════════════════════════════════════════════
+# Clip / downgrade AI recommendations before they touch the forecast.
+apply_guardrails:
+  max_abs_pct_change: 50               # Clip SCALE_* outside [-50%, +50%]
+  min_confidence: 0.60                 # Below this → OVERRIDE_TO_BASELINE (keep champion)
+  require_evidence: true               # No evidence_keys → OVERRIDE_TO_BASELINE
+  reject_on_horizon_overflow: true     # Clip apply_horizon to the configured horizon
+
+# ═══ Cost controls ═══════════════════════════════════════════════════════════
+cost_controls:
+  max_concurrent_ai_calls: 4           # Bound LLM concurrency
+  per_call_timeout_seconds: 60         # Per-call wall-clock timeout
+  per_run_max_cost_usd: 200            # Hard stop for paid providers; ignored for ollama
+  per_call_estimated_cost_usd:         # USD per call by provider — for the pre-flight estimate
+    ollama: 0.0                        # Local — no API spend
+    anthropic: 0.11                    # Opus 4.7 with prompt caching
+    openai: 0.05                       # GPT-4o
+    openai_compat: 0.005               # Together / Fireworks Llama 70B
+
+# ═══ Ollama-specific runtime knobs ═══════════════════════════════════════════
+ollama:
+  keep_alive: 24h                      # Keep the model loaded across the run (default 5min)
+  request_timeout_seconds: 120         # Per-request timeout for slow local inference
+  num_ctx: 8192                        # Context window — fits ~5K input + headroom
+  temperature: 0.0                     # Deterministic

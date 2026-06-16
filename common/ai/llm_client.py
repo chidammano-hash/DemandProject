@@ -1,20 +1,21 @@
-"""Provider-agnostic LLM client for the AI Planner FVA backtest.
+"""Provider-agnostic LLM client.
 
-Spec: docs/specs/PRD/PRD-ai-planner-fva-backtest.md (§8)
+Shared by the AI Champion adjuster (common/ai/champion_adjuster.py) and the
+agentic agents (ai_planner, tuning_advisor).
 
 Supports four providers:
   - ollama         (default; local; $0; OpenAI-compatible API at :11434/v1)
   - openai_compat  (Together, Fireworks, DeepInfra, Groq — same API shape as Ollama)
   - openai         (GPT-4o etc.)
-  - anthropic      (Claude family)
+  - anthropic      (Claude family, e.g. claude-opus-4-7)
 
 All providers expose the same interface: chat(messages, json_mode=True) -> ChatResponse.
 The Ollama and openai_compat paths share the OpenAI Python SDK — they only differ
 by base_url and api_key.
 
-Strict JSON-mode is required for the FVA recommendation schema. Each call returns
-a ChatResponse including raw response text, parsed JSON dict, token counts, and
-elapsed milliseconds.
+Strict JSON-mode is required for structured recommendation schemas. Each call
+returns a ChatResponse including raw response text, parsed JSON dict, token
+counts, and elapsed milliseconds.
 """
 from __future__ import annotations
 
@@ -64,8 +65,8 @@ class LLMJSONParseError(LLMClientError):
 class LLMClient:
     """Single-call, single-provider LLM wrapper.
 
-    Construct one per backtest run. Reuses the underlying provider SDK across
-    calls so connection pooling and prompt caching (Anthropic) work.
+    Construct one per run. Reuses the underlying provider SDK across calls so
+    connection pooling and prompt caching (Anthropic) work.
 
     Parameters
     ----------
@@ -246,11 +247,11 @@ class LLMClient:
 
 
 # ---------------------------------------------------------------------------
-# Convenience: build from config dict (the FVA backtest config shape)
+# Convenience: build from config dict (the ai_champion config shape)
 # ---------------------------------------------------------------------------
 
 def build_from_config(config: dict, *, override_provider: str | None = None) -> LLMClient:
-    """Build an LLMClient from the FVA backtest config dict.
+    """Build an LLMClient from a provider config dict (e.g. ai_champion_config).
 
     Looks at config["provider"] (or override_provider), then config["models"][provider]
     and config["endpoints"][provider]. Wires in ollama-specific extras from
