@@ -11,12 +11,12 @@
 ### Pass 1 (morning) — Foundations
 All 10 cross-cutting priorities either done or scaffolded. All Section 1 P0 items (1.1–1.9) complete. Backend P0 complete, P1 largely complete. UI/UX P0 mostly complete. AI Phase 0 foundations complete; Phases 1–2 scaffolded. ~150 new tests.
 
-Key modules: `common/core/service_levels.py` · `common/ai/{decision_ledger,policy_engine,rag,memory,causal,envelope}.py` · `common/feature_store.py` · `common/twin/state.py` · `common/engines/exception_engine.py`. Migrations `sql/137`–`sql/144`. Frontend toaster + dialog + formatApiError + dark-mode FOUC + empty-state triad. Router restructure + FastAPI `lifespan` + pool consolidation. Configs: `agent_autonomy.yaml`, `elasticity_config.yaml`, `safety_stock_config.yaml` (empirical-quantile), `forecast_pipeline_config.yaml` (`fm_spine`, `promote_gate`, `baseline_intermittent`, `embargo_months: 1`).
+Key modules: `common/core/service_levels.py` · `common/ai/{decision_ledger,rag,memory,causal}.py` · `common/feature_store.py` · `common/twin/state.py` · `common/engines/exception_engine.py`. Migrations `sql/137`–`sql/144`. Frontend toaster + dialog + formatApiError + dark-mode FOUC + empty-state triad. Router restructure + FastAPI `lifespan` + pool consolidation. Configs: `agent_autonomy.yaml`, `elasticity_config.yaml`, `safety_stock_config.yaml` (empirical-quantile), `forecast_pipeline_config.yaml` (`fm_spine`, `promote_gate`, `baseline_intermittent`, `embargo_months: 1`).
 
 ### Pass 2 (afternoon) — P1/P2 closures + Phase 1–4 scaffolds
 All Section 1 P1 items delivered or scaffolded. Backend P2 cleanups complete. UI/UX P1 majority complete. AI Phase 1 FM-first scaffolds landed (FM→SS bridge, CRPS/pinball, cold-start k-NN); Phase 2 NL + retrieval (dry-run, SOP ingest); Phase 3 prescriptive (orchestrator, reversible actions, MILP stub, sensing model); Phase 4 governance (drift, explain API, fairness MV, shadow rollout, OpenLineage). ~175 new tests.
 
-Key new modules: `common/ai/{orchestrator,reversible,dry_run,drift,lineage}.py` · `common/ml/{crps,cold_start_neighbors,shadow_rollout,fm_quantile_bridge,milp,sensing}.py` · `common/services/metrics.py` (canonical accuracy helper) · `common/engines/sop_decisions.py` · `api/routers/intelligence/explain.py` · `api/routers/inventory/working_capital.py` · `api/routers/platform/admin.py`. Migrations `sql/145`–`sql/167`. Frontend: Breadcrumbs, useUndoable, nav reorder, Okabe-Ito palette, CI band on forecast chart, optimistic updates on exception queue.
+Key new modules: `common/ai/{orchestrator,reversible,lineage}.py` · `common/ml/{crps,shadow_rollout,fm_quantile_bridge,milp}.py` · `common/services/metrics.py` (canonical accuracy helper) · `common/engines/sop_decisions.py` · `api/routers/intelligence/explain.py` · `api/routers/inventory/working_capital.py` · `api/routers/platform/admin.py`. Migrations `sql/145`–`sql/167`. Frontend: Breadcrumbs, useUndoable, nav reorder, Okabe-Ito palette, CI band on forecast chart, optimistic updates on exception queue.
 
 **Cumulative:** ~325 new tests passing, ~30 SQL migrations (137–167), ~40 new Python modules, ~15 frontend additions. Roadmap items remaining are predominantly heavy integrations (Gymnasium RL env, Claude Vision OSA, supplier document AI, tool-calling chat, AIPlannerAgent split, EconML DML, Feast swap, highspy MILP solve). All have documented scaffolds + TODO markers pointing at the next step.
 
@@ -167,7 +167,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 1. **Unify the service-level target across SS, fill rate, and S&OP.** ✅ **DONE** (2026-04-23). `common.core.service_levels` is the single resolver; DB `fact_service_level_targets` is authoritative, YAML is fallback. See [04-inventory/12-service-level-unification.md](04-inventory/12-service-level-unification.md).
 2. **Stop assuming normality for intermittent/lumpy demand.** ✅ **LANDED** (2026-04-23). `scripts/run_ss_simulation.py` gained `empirical_quantile_ss()` + `--method` flag; `config/inventory/safety_stock_config.yaml` ships `method: normal_approx | empirical_quantile`. FM-quantile → SS path documented in `fm_spine` config block.
 3. **Replace hand-entered `uplift_pct` with learned causal elasticities.** ✅ **SCAFFOLD LANDED** (2026-04-23). `sql/141` partitions `fact_external_signal` + `fact_causal_elasticity`; `scripts/ml/fit_elasticity.py` (sklearn OLS fallback, EconML DML TODO); `v_event_uplift_effective` view prefers learned over manual. Follow-up: production EconML integration, ingest real external signals.
-4. **Immutable AI decision ledger + policy-as-code guardrails.** ✅ **FOUNDATION LANDED** (2026-04-23). DDL `sql/137_create_ai_decision_ledger.sql`, helper `common/ai/decision_ledger.py`, policy engine `common/ai/policy_engine.py`, policies `config/ai/agent_autonomy.yaml`. See [06-ai-platform/05-decision-ledger-and-policy.md](06-ai-platform/05-decision-ledger-and-policy.md). Follow-up: wire existing agents.
+4. **Immutable AI decision ledger + policy-as-code guardrails.** 🟡 **LEDGER FOUNDATION LANDED; POLICY ENGINE NOT YET IMPLEMENTED** (2026-04-23). DDL `sql/137_create_ai_decision_ledger.sql`, helper `common/ai/decision_ledger.py`, policies config `config/ai/agent_autonomy.yaml`. The `common/ai/policy_engine.py` prototype was built and unit-tested but never wired into a runtime path, and was removed as unwired; the guardrail engine remains to be rebuilt against real agent call sites. See [06-ai-platform/05-decision-ledger-and-policy.md](06-ai-platform/05-decision-ledger-and-policy.md). Follow-up: rebuild policy engine, wire existing agents.
 5. **Feature store with point-in-time correctness.** ✅ **SCAFFOLD LANDED** (2026-04-23). `sql/138_create_feature_store.sql` + `common/feature_store.py` (Feast-compatible API over Postgres; HISTORY-table LATERAL join); 6 tests. Feast swap documented as follow-up.
 6. **Promote MLflow to authoritative Model Registry with gated promotion.** ✅ **LANDED** (2026-04-23). `api/routers/forecasting/backtest_management.py` gate: min WAPE improvement + min coverage; every accept/reject writes `DecisionRecord` to the ledger; `config/forecasting/forecast_pipeline_config.yaml` `champion.promote_gate` block.
 7. **Unified Digital Twin + closed-loop exception orchestrator.** ✅ **TWIN SCAFFOLD LANDED** (2026-04-23). `common/twin/state.py` with `TwinState.simulate(scenario, n_iter)`; `scripts/run_ss_simulation.py` wired as first consumer. Closed-loop orchestrator still pending.
@@ -300,7 +300,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 ### Phase 0 — Foundations (weeks 1–8)
 
 - Split `AIPlannerAgent` monolith → 5 specialist agents (Demand, Supply, SOP, Exception, Negotiator) + Orchestrator, behind MCP tool contracts (AI-1) — **deferred**; closed-loop orchestrator (phase 3) now provides the skeleton that the specialist agents will plug into.
-- ✅ Encode autonomy tiers in `config/ai/agent_autonomy.yaml`; wrap all writes in `common/ai/policy_engine.py` (AI-1, AI-10) — (2026-04-23)
+- 🟡 Encode autonomy tiers in `config/ai/agent_autonomy.yaml` (config landed 2026-04-23); wrap all writes in a policy engine — **not yet implemented**. The `common/ai/policy_engine.py` prototype was removed as unwired; engine to be rebuilt against real agent writes. (AI-1, AI-10)
 - ✅ Immutable `ai_decision_ledger` with hash-chained rows + DB-trigger append-only (AI-10) — (2026-04-23)
 - ✅ Three-tier memory (working / episodic / semantic) — `common/ai/memory.py` with `WorkingMemory` (TTL), `EpisodicMemory` (FK to ai_decision_ledger via `fact_decision` in `sql/142`), `SemanticMemory` (pgvector via rag.py); 12 tests. (2026-04-23) (AI-1, AI-5)
 - ✅ `chat_embeddings` retired in favour of `rag_chunk` (HNSW + GIN); `kg_node` / `kg_edge` added. (2026-04-23) (AI-5)
@@ -313,7 +313,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 - ✅ Roster collapse config — `fm_spine` config block in `forecast_pipeline_config.yaml` marks `chronos2_enriched` as production champion default + `collapse_tree_variants` flag (gated off). (2026-04-23) (AI-2)
 - ✅ FM quantile output → SS — `common/ml/fm_quantile_bridge.py` (`FMQuantileForecast`, `load_fm_quantile_forecast`, `fm_demand_pool`); `common/twin/state.py` extended with `use_fm_quantiles`/`fm_n_samples` kwargs. 8 tests. (2026-04-23) (AI-2)
 - Native covariate channels (price / promo / weather); hierarchical MinT reconciliation — **deferred** (AI-2)
-- ✅ k-shot cold-start via metadata + nearest-neighbor — `common/ml/cold_start_neighbors.py` (`DFUMetadata`, `nearest_neighbors`, `build_prompt_prefix`). 6 tests. (2026-04-23) (AI-2)
+- 🟡 k-shot cold-start via metadata + nearest-neighbor — **not yet implemented**. A `common/ml/cold_start_neighbors.py` prototype (`DFUMetadata`, `nearest_neighbors`, `build_prompt_prefix`) was built and unit-tested but never wired into a forecasting path, and was removed as unwired. (Note: production cold-start currently routes 3–11-month DFUs to `rolling_mean` per `forecast_pipeline_config.yaml`.) (AI-2)
 - ✅ CRPS / pinball loss — `common/ml/crps.py` (`compute_crps`, `compute_pinball_loss`); `champion.metric` config key added. `run_champion_selection.py` validates + falls back to WAPE until quantile rows guaranteed. 7 tests. (2026-04-23) (AI-2)
 - Batched GPU inference server — **deferred** (infra change) (AI-2)
 
@@ -321,16 +321,16 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 
 - ✅ `fact_external_signal` partitioned ingest (RANGE by event_ts) — `sql/141`. (2026-04-23) (AI-3)
 - ✅ Causal elasticity scaffold — `scripts/ml/fit_elasticity.py` (OLS fallback) + `fact_causal_elasticity` + `v_event_uplift_effective` view that prefers learned over manual `uplift_pct`. EconML DML remains TODO. (2026-04-23) (AI-3)
-- ✅ Near-term sensing model — `common/ml/sensing.py` with `blend_forecasts()` horizon-weighted blend; `config/forecasting/sensing_config.yaml`. 10 tests. (2026-04-23) (AI-3)
+- 🟡 Near-term sensing model — the standalone `common/ml/sensing.py` (`blend_forecasts()` horizon-weighted blend) was removed as unwired; its blending logic is now superseded by inline blending in `scripts/forecasting/compute_blended_forecast.py`. `config/forecasting/sensing_config.yaml` remains. (AI-3)
 - Tool-calling chat with intent taxonomy + semantic-layer view registry (AI-4) — **deferred**
-- ✅ Multimodal response envelope `{narrative, blocks: [chart|table|action_card|markdown]}` — `common/ai/envelope.py` with strict typed validation; 12 tests. (2026-04-23) (AI-4)
-- ✅ Dry-run preview + explicit confirm — `common/ai/dry_run.py` with `dry_run` + `confirm` helpers, pluggable handler registry, ledger write on confirm. 5 tests. (2026-04-23) (AI-4)
+- 🟡 Multimodal response envelope `{narrative, blocks: [chart|table|action_card|markdown]}` — **not yet implemented**. A `common/ai/envelope.py` prototype with strict typed validation was built and unit-tested but never wired into a response path, and was removed as unwired. (AI-4)
+- 🟡 Dry-run preview + explicit confirm — **not yet implemented**. A `common/ai/dry_run.py` prototype (`dry_run` + `confirm` helpers, pluggable handler registry, ledger write on confirm) was built and unit-tested but never wired into a runtime path, and was removed as unwired. (AI-4)
 - Hybrid retriever (BM25 + vector + KG + SQL) with cross-encoder rerank — RRF fusion (vector + BM25) landed in `common/ai/rag.py`; KG + cross-encoder rerank remain TODO. (AI-5)
 - ✅ Ingest SOPs / runbooks / post-mortems — `scripts/ai/ingest_docs.py` (500/50 overlap chunker, zero-vector embedding TODO, `--dry-run`). 9 tests. (2026-04-23) (AI-5)
 
 ### Phase 3 — Prescriptive + RL + Vision (weeks 16–30)
 
-- ✅ Closed-loop exception orchestrator — `common/ai/orchestrator.py` (`ExceptionOrchestrator.detect/simulate_options/rank/route`), wires policy_engine + TwinState + reversible.apply + decision_ledger. 6 tests. (2026-04-23) (AI-8)
+- ✅ Closed-loop exception orchestrator — `common/ai/orchestrator.py` (`ExceptionOrchestrator.detect/simulate_options/rank/route`), wires TwinState + reversible.apply + decision_ledger (policy-engine integration pending — that engine is not yet implemented). 6 tests. (2026-04-23) (AI-8)
 - ✅ MILP optimizer scaffold — `common/ml/milp.py` + `scripts/ml/milp_rebalancer.py` (greedy fallback; highspy integration as documented TODO). 5 tests. (2026-04-23) (AI-8)
 - ✅ Reversible action ledger + 24h auto-rollback — `sql/165_create_fact_reversible_action.sql` + `common/ai/reversible.py` (`apply`, `rollback_pending` sweeper). KPI-regression detector is TODO. 7 tests. (2026-04-23) (AI-8)
 - Gymnasium RL env + offline RL (CQL/IQL) + OPE-gated rollout (AI-6) — **deferred** (large scope)
@@ -343,7 +343,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 - ✅ Fairness audit MV — `sql/158_create_mv_fairness_audit.sql` slices by abc_vol, region, channel; computes slice_wape + disparity_ratio. (2026-04-23) (AI-10)
 - Prompt-injection + data-poisoning defenses — **deferred** (AI-10)
 - ✅ OpenLineage minimal emission — `common/ai/lineage.py` (`emit_event`) + `sql/157_create_fact_lineage_event.sql`; wired into MLflow promote path. 5 tests. (2026-04-23) (AI-9)
-- ✅ Drift detection (PSI + rolling WAPE) — `common/ai/drift.py` (`compute_psi`, `rolling_wape`, `psi_signal`, `wape_signal`) + `sql/155_create_fact_drift_signal.sql` + `scripts/ml/detect_drift.py`. 10 tests. (2026-04-23) (AI-9)
+- 🟡 Drift detection (PSI + rolling WAPE) — **not yet implemented**. A `common/ai/drift.py` prototype (`compute_psi`, `rolling_wape`, `psi_signal`, `wape_signal`) was built and unit-tested but never wired into a runtime path, and was removed as unwired. The `sql/155_create_fact_drift_signal.sql` table remains as the intended sink. (AI-9)
 - ✅ Shadow rollout scaffold — `common/ml/shadow_rollout.py` (`ShadowRollout`, `should_tee`, `insert`) + `sql/156_create_fact_shadow_rollout.sql`. 8 tests. (2026-04-23) (AI-9)
 - EU AI Act / NIST AI RMF risk register; model-card rendering in UI (AI-10) — **deferred**
 

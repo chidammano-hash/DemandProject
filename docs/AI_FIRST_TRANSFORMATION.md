@@ -8,7 +8,7 @@
 
 **The platform has already paid for the substrate of an AI-first product but ships a classical CRUD experience on top of it.**
 
-The codebase contains: `decision_ledger`, `policy_engine`, `reversible`, `dry_run`, `lineage`, `orchestrator`, `causal`, `tuning_advisor`, `champion_strategies`, `shadow_rollout`, `external_signals`, `annotations`, `audit_log`, `pgvector RAG`, `notification_engine`, `outcome tracking`. None of these primitives are surfaced in the UI. The product is one composition layer away from being unrecognizable — in the best way.
+The codebase contains: `decision_ledger`, `lineage`, `causal`, `tuning_advisor`, `champion_strategies`, `external_signals`, `annotations`, `audit_log`, `pgvector RAG`, `notification_engine`, `outcome tracking`. (Earlier `policy_engine` and `dry_run` prototypes were built but never wired in, and have been removed; rebuilding them as wired primitives is part of the work below.) None of these primitives are surfaced in the UI. The product is one composition layer away from being unrecognizable — in the best way.
 
 The transformation is not "add AI to the app." It is "stop hiding the AI we already built, retire the legacy CRUD shell wrapped around it, and let the agents drive."
 
@@ -81,16 +81,16 @@ The transformation is not "add AI to the app." It is "stop hiding the AI we alre
 
 ### 2.1 — Six Concrete Agents (replacing the "AI Planner" tab)
 
-Each agent uses the existing `policy_engine.evaluate()` + `decision_ledger.append_decision()` + `reversible.apply()` triad. Tier defaults from `config/ai/agent_autonomy.yaml`.
+Each agent uses a `policy_engine.evaluate()` (to be rebuilt — the prototype was removed as unwired) + the existing `decision_ledger.append_decision()` + `reversible.apply()` triad. Tier defaults from `config/ai/agent_autonomy.yaml`.
 
 | Agent | Trigger | Tools | Escalation |
 |---|---|---|---|
 | **ExceptionResolver** | APScheduler 15-min + on `fact_replenishment_exceptions` insert | `simulate_options` (twin), `get_supplier_lead_times`, `get_alternate_locs`, `apply_reversible` | severity=critical OR `pct_change > guardrail` → human inbox; else auto-apply |
 | **ChampionGuardian** | Nightly + on backtest completion | Read `mv_control_tower_kpis`, `fact_candidate_forecast`, run `champion_strategies.simulate`, call promote endpoint | WAPE drift >5pp or new model wins by <2pp → human approval |
 | **TuneOrchestrator** | When `cluster_tuning_profile.stale=true` | `tuning_advisor.suggest_search_space`, kick `make tune-lgbm-clusters`, watch MLflow | Budget overrun >2x baseline → pause |
-| **DataQualitySentinel** | On each `make load-all` completion | `dq_engine` checks, `drift.py`, schema diff | P0 schema break → block; soft drift → quarantine partition |
+| **DataQualitySentinel** | On each `make load-all` completion | `dq_engine` checks, drift detection (to be rebuilt — prototype removed), schema diff | P0 schema break → block; soft drift → quarantine partition |
 | **SOPNarrator** | Monthly + on-demand | Read `mv_network_balance`, `mv_supplier_performance`, generate exec memo | `advisory` permanently — humans always edit |
-| **PolicyDriftAuditor** | Weekly | Read `ai_decision_ledger`, compare actual vs predicted by `dry_run.py`, propose `agent_autonomy.yaml` edits | Every change human-approval (the meta-agent) |
+| **PolicyDriftAuditor** | Weekly | Read `ai_decision_ledger`, compare actual vs predicted by a dry-run preview layer (to be rebuilt — prototype removed), propose `agent_autonomy.yaml` edits | Every change human-approval (the meta-agent) |
 
 Underneath: replace `api/llm.py` with `common/ai/agent_runtime.py` — a single tool-loop runner (turn cap, token ledger, retry, provider failover) that all six agents inherit.
 
@@ -253,11 +253,11 @@ CNBC-style ticker fed by an agent scanning X/Reddit/news/weather/port AIS, surfa
 
 ### 10. **The Auditor**
 Standing AI agent that continuously re-derives every dashboard KPI from raw facts and flags any drift between "what the dashboard says" and "what the data says." Self-policing trust layer.
-*Tech:* Shadow query layer + SQL diff engine + existing `query_tracker.py`.
+*Tech:* Shadow query layer + SQL diff engine + a query-tracking layer (an earlier `query_tracker.py` prototype was removed as unwired; this would be rebuilt).
 *Risk:* Compute overhead — must sample, not exhaust.
 
 ### Bonus: **Conversational Planning Replay**
-Planner asks: "Show me what would have happened in March if ExceptionResolver had been on autonomous tier." System replays the month against `decision_ledger` + `dry_run` twin, scoring counterfactual P&L, fill-rate, stock-outs vs actual. Then offers: "Promote autonomous tier under these guardrails?" with one-click commit. Only possible because every decision is hash-chained, reversible, and twin-simulatable — infrastructure already half-built.
+Planner asks: "Show me what would have happened in March if ExceptionResolver had been on autonomous tier." System replays the month against `decision_ledger` + a dry-run twin (the preview layer to be rebuilt — prototype removed), scoring counterfactual P&L, fill-rate, stock-outs vs actual. Then offers: "Promote autonomous tier under these guardrails?" with one-click commit. Only possible because every decision is hash-chained, reversible, and twin-simulatable — infrastructure already half-built.
 
 ---
 

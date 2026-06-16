@@ -1624,7 +1624,7 @@ frontend/src/
 ├── lib/__tests__/           # formatters, export
 ├── api/__tests__/           # TanStack Query keys
 ├── context/__tests__/       # JobNotificationContext, ScenarioNotificationContext
-├── components/__tests__/    # Skeleton, KeyboardShortcutHelp, EChartContainer, AppSidebar, ...
+├── components/__tests__/    # Skeleton, KeyboardShortcutHelp, AppSidebar, ...
 └── tabs/__tests__/          # All tab components (smoke tests)
 ```
 

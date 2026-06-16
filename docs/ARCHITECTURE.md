@@ -1011,7 +1011,11 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/engines/exception_engine.py` | `ExceptionEngine` class: threshold evaluation, severity scoring, exception type classification for storyboard (Feature 40) |
 | `common/core/sql_helpers.py` | Shared SQL utilities for load scripts: `qident()`, `typed_expr()`, `business_key_expr()`, `_elapsed()`, `NULL_SQL`, `MV_REFRESH_ARCHIVE`, constants (`IQR_OUTLIER_MULTIPLIER`, `LEAD_TIME_MAX_DAYS`, `LEAD_TIME_DEFAULT_DAYS`, `HASH_CHUNK_SIZE`, `EXTERNAL_MODEL_ID`, percentile constants); canonical row→dict helpers `row_to_dict_from_cursor(cur, row)` and `row_to_dict_from_cols(cols, row)` (use these instead of hand-rolled per-router `dict(zip(cols, row))` patterns) |
 | `api/core.py` | API SQL helpers, filtering, pagination; `domain_row_to_dict(spec, row)` (renamed from `row_to_dict` to disambiguate from the generic helpers in `common/core/sql_helpers.py` — it specifically maps a `DomainSpec` row to a dict using domain column metadata) |
-| `common/services/query_tracker.py` | API query tracking + usage metrics for governance and observability |
+| `common/core/sql_helpers.py` (DB-value coercion) | `parse_db_json(val)` (tolerant JSON parse of a DB column value) and `to_float(v, decimals=None)` (safe float coercion with optional rounding) — the single source for JSON/float coercion of DB-returned values; use instead of ad-hoc `json.loads`/`float()` calls in routers |
+| `api/error_handling.py` | `@db_endpoint(detail, status_code=500)` route-handler decorator (sync + async): re-raises any deliberate `HTTPException`, but converts every other exception into a `logger.exception()` log plus a sanitized 5xx whose `detail` is the supplied short verb-phrase — no exception text is leaked to the client. Encapsulates the "5xx responses never interpolate exception text" rule |
+| `common/inventory/` | NEW package of pure, DB-free safety-stock math (IPfeature3/IPfeature11). `safety_stock.py` holds 15 unit-testable functions (`compute_ss_*`, `get_z_score`, `classify_xyz`, `detect_outliers`, seasonal factors, guard rails, position metrics) extracted verbatim from `scripts/inventory/compute_safety_stock.py` so the formulas import and test without pulling in the CLI script |
+| `common/ml/champion/helpers.py` | `make_blend_row()` builds the champion blend output row, keying the forecast under `FORECAST_QTY_COL` (never the literal `"basefcst_pref"`) |
+| `common/ai/llm_client.py` | `tools_to_openai()` converts Anthropic-style tool schemas to the OpenAI tool-schema shape for cross-provider tool calling |
 
 Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting which to pass to `run_tree_backtest()` based on the `cluster_strategy` key in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS` in `constants.py`) to prevent data leakage from full-history cluster assignments. It is merged into the feature grid as a metadata column so that `per_cluster` mode can partition DFUs into separate models per cluster, but models never see it as an input feature. Algorithm behavior (cluster_strategy, recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. Per-cluster SHAP (`compute_timeframe_shap_per_cluster`) returns `dict[str, list[str]]` — the backtest framework handles per-cluster retrain and per-cluster prediction with independent feature sets. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero. Recursive lag smoothing (`recursive_lag_smooth: 0.15`) damps compounding errors from step 3 onward. Intermittent clusters (>70% zeros) are automatically routed to rolling mean baseline instead of tree models. Per-cluster tuning profiles (`cluster_tuning_profiles.yaml`) are resolved via `resolve_cluster_params()` with Phase 1 `cluster_name` exact match before Phase 2 statistical criteria fallback.
 
@@ -1298,11 +1302,11 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 23. Product-grade UI overhaul (feature36):
    - Collapsible sidebar navigation (12 nav items across 5 sections (tower, operations, supply, demand, system), 64px collapsed / 240px expanded, mobile drawer)
    - Global filter bar: brand, category, market, channel multi-select dropdowns with debounced URL sync via React context
-   - Dashboard overview landing page: 6 KPI cards with sparklines/trends, AlertPanel (severity-coded), HeatmapGrid (category x time accuracy), TopMovers (period-over-period), ForecastTrendChart (ECharts)
+   - Dashboard overview landing page: 6 KPI cards with sparklines/trends, HeatmapGrid (category x time accuracy), TopMovers (period-over-period), ForecastTrendChart (recharts) — note: the original `AlertPanel` component has since been removed as dead code
    - Single professional theme: General (Supply Chain Command Center) with light/dark color modes
    - 5 new API endpoints: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
    - `fact_sales_monthly` (inline query) materialized view for period-over-period volume changes
-   - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, AlertPanel, HeatmapGrid, TopMovers, ForecastTrendChart, DashboardTab
+   - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, HeatmapGrid, TopMovers, ForecastTrendChart (`AlertPanel` was later removed as dead code)
    - Enhanced KpiCard with sparkline SVG, trend delta, severity, icon support
    - Keyboard shortcuts: `[` sidebar toggle, `d` dark mode toggle, 1-7 tab switch
 24. Job Scheduler/Monitor — APScheduler (existing, in-process) and pg-queue (new, durable):
@@ -1467,9 +1471,11 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 
 ## 19. Frontend Component Architecture
 
-### Charting Library (standardized on recharts)
+### Charting Library (recharts default; echarts-modular for 8 heavy panels)
 
-`echarts` and `echarts-for-react` have been removed from the bundle (-728 KB raw, -250 KB gzipped). All charts now use `recharts`. 8 customer-analytics ECharts panels were ported: Sankey, Sunburst, Treemap, Scatter, and `ComposedChart` (with an Area-tuple confidence-interval band rendering pattern). `HeatmapGrid` was extended with a compact mode and clickable headers as part of the migration.
+`recharts` is the default and only general-purpose chart engine. The old `EChartContainer.tsx` wrapper has been **removed** — do not reintroduce it. Components that previously used it (e.g. `ForecastTrendChart`) are now implemented directly in `recharts` (the confidence-interval band uses the Area-tuple `[low, high]` rendering pattern). `HeatmapGrid` was extended with a compact mode and clickable headers during the migration.
+
+The single sanctioned exception is `frontend/src/components/echarts-modular.tsx` (`ModularReactECharts`), retained ONLY for the 8 heavy customer-analytics panels recharts can't render well — treemap, sunburst, sankey, heatmap, bubble, affinity, lifecycle, order-patterns. It tree-shakes echarts to just the chart types those panels use, so `echarts ^6` ships for that subset only. Every other chart in the app uses recharts.
 
 ### Below-the-fold Lazy Loading (`LazyPanel`)
 
@@ -1484,13 +1490,18 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | Tab Shell | Subfolder | Extracted Panels |
 |-----------|-----------|-----------------|
 | `tabs/AccuracyTab.tsx` (224L) | `tabs/accuracy/` | KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel |
-| `tabs/ItemAnalysisTab.tsx` | `tabs/sku-analysis/` + `tabs/inventory/` | Merged: SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel (demand) + KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel (supply); checkbox toggle toolbar via `usePanelToggles` |
+| `tabs/ItemAnalysisTab.tsx` | `tabs/item-analysis/` + `tabs/sku-analysis/` + `tabs/inventory/` | Merged demand + supply view. `tabs/item-analysis/` holds the unified chart split (UnifiedChart, UnifiedChartPanel, MeasureDefaultsMenu, TogglePill, `colors.ts`, `measures.ts`, `monthRange.ts`, `breadcrumb.ts`); demand panels from `sku-analysis/` (SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel) + supply panels from `inventory/` (KpiSection, TrendChartPanel); checkbox toggle toolbar via `usePanelToggles` |
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
 | `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
-| `tabs/ModelTuningTab.tsx` (212L, was 975L) | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — Model Readiness table with 4-step action buttons per model: Train → Generate → Load → Promote; "Candidates" column showing loaded DFU count; "Promote Champion" button for DFU-level champion selection; crown badge on currently promoted production model; tree-model-only validation on Train), Cluster EDA, Feature Lab. Sub-folder `tabs/model-tuning/` adds: AIAdvisorFAB, BacktestDetailPanel, BacktestStagePanel, EnhancedPromoteModal, LagFilterBar, LogViewer, ParameterTable, PipelineConfigPanel, RunHistoryTable, TemplateSelector, TuneStagePanel, `_helpers.ts`, `_types.ts` |
+| `tabs/ModelTuningTab.tsx` (212L, was 975L) | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — Model Readiness table with 4-step action buttons per model: Train → Generate → Load → Promote; "Candidates" column showing loaded DFU count; "Promote Champion" button for DFU-level champion selection; crown badge on currently promoted production model; tree-model-only validation on Train), Cluster EDA, Feature Lab. Sub-folder `tabs/model-tuning/` adds: AIAdvisorFAB, BacktestDetailPanel, BacktestStagePanel, EnhancedPromoteModal, LagFilterBar, LogViewer, ParameterTable, RunHistoryTable, TemplateSelector, TuneStagePanel, `_helpers.ts`, `_types.ts` |
 | `tabs/SkuFeaturesTab.tsx` (113L, was 821L) | `tabs/sku-features/` | SummaryCards, FeatureTable, FeatureHistograms, CategoricalDistributions, ComputeButton, `constants.ts`, `utils.ts` |
 | `tabs/ExplorerTab.tsx` (245L, was 810L) | `tabs/explorer/` | 11 co-located files: ExplorerHeader, ExplorerTable, ExplorerPagination, ExplorerErrorBanner, DomainFiltersPanel, FieldVisibilityPanel, useExplorerState, useExplorerQueries, useColumnSuggestions, `_helpers.ts`, `types.ts` |
+| `tabs/CommandCenterTab.tsx` | `tabs/command-center/` | KpiSummaryCard, ExceptionFeedCard, `exceptions.ts` |
+| `tabs/DataQualityTab.tsx` | `tabs/data-quality/` | CheckCatalogPanel, CorrectionsSection, PipelineLineageSection, RecentIssuesPanel, SelfHealPanel, `dqShared.ts` |
+| `tabs/AggregateAnalysisTab.tsx` | `tabs/aggregate-analysis/` | KpiCardsSection, AccuracyHeatmapSection, FilterDropdowns, `aggregateShared.ts` |
+| `tabs/StoryboardTab.tsx` | `tabs/storyboard/` | SbKpiCard, ExceptionCard, InvestigationPanel, `storyboardShared.ts` |
+| `tabs/forecast/` (ForecastPanel, used by ModelTuningTab Forecast sub-tab) | `tabs/forecast/` | ForecastPanel, AlgorithmSelectionCard, ModelReadinessCard, GenerateForecastCard, RecentJobsCard, TrainingStatusIndicator, ConfigRow, `forecastPanelShared.ts` |
 
 ### API Query Sub-modules
 
@@ -1521,7 +1532,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `queries/inv-planning-rebalancing.ts` | Inventory rebalancing query keys + fetch functions |
 | `queries/inv-planning-replenishment.ts` | Replenishment plan query keys + fetch functions |
 | `queries/production-forecast.ts` | Production forecast query keys + fetch functions (F1.1) |
-| `queries/unified-model-tuning.ts` | Unified model tuning query keys + fetch/mutate functions (Feature 46) |
+| `queries/unified-model-tuning.ts` | Unified model tuning query keys + fetch/mutate functions (Feature 46); exports `MODEL_PREFIX` (per-model-type id prefix map) |
 | `queries/cluster-experiments.ts` | Cluster experiment query keys + fetch/mutate functions (Feature 47) |
 | `queries/champion-experiments.ts` | Champion experiment query keys + fetch/mutate/compare/promote functions (Feature 48) |
 
@@ -1771,7 +1782,6 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `queries.test.ts` | TanStack Query keys + stale times | 10 |
 | `Skeleton.test.tsx` | Loading skeleton components | 7 |
 | `KeyboardShortcutHelp.test.tsx` | Keyboard help dialog | 5 |
-| `EChartContainer.test.tsx` | ECharts wrapper | 4 |
 | `ExplorerTab.test.tsx` | Data Explorer tab | 2 |
 | `AccuracyTab.test.tsx` | Accuracy tab | 1 |
 | `ItemAnalysisTab.test.tsx` | Item Analysis tab (merged DFU Analysis + Inventory) | varies |
@@ -1784,7 +1794,6 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `ThemeSelector.test.tsx` | Theme + color mode picker | 9 |
 | `GlobalFilterBar.test.tsx` | Global filter bar | 7 |
 | `WidgetGrid.test.tsx` | Widget grid layout | 11 |
-| `AlertPanel.test.tsx` | Alert severity panel | 6 |
 | `TopMovers.test.tsx` | Top movers list | 5 |
 | `HeatmapGrid.test.tsx` | Heatmap grid | 13 |
 | `DashboardTab.test.tsx` | Dashboard overview tab | 4 |

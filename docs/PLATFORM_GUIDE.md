@@ -10,7 +10,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 |---|---|
 | Backend API | Python + FastAPI + Uvicorn (80 mounted routers; several decomposed into sub-router packages — `forecasting/tuning/`, `intelligence/customer_analytics/`) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
-| Charts | Recharts + ECharts |
+| Charts | Recharts (default) + ECharts (`ModularReactECharts`, 8 heavy customer-analytics panels only) |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
 | ML Pipeline | scikit-learn, LightGBM, CatBoost, XGBoost, pandas, statsforecast (MSTL), neuralforecast + PyTorch (N-HiTS, N-BEATS) |
 | ML Tracking | MLflow |
@@ -280,7 +280,7 @@ Configuration: `config/platform/perf_config.yaml` (thresholds for all 8 suggesti
 - **Streaming ETL helpers** (`common/core/sql_helpers.py`) — `stream_query_in_chunks` and `read_sql_chunked` for bounded-memory loads.
 - **Weekly partition cutover prep** — `sql/184` (inventory) and `sql/185` (customer demand) DDL prepared; `scripts/db/auto_create_partitions.py` extended to support weekly intervals (`make auto-create-partitions-weekly`, `make auto-create-partitions-weekly-dry-run`).
 - **Scale tests** — `tests/scale/` directory with `make scale-test` (synthetic 100K rows by default; `SCALE=10000000` for nightly).
-- **Frontend** — recharts-only chart library (ECharts paths removed where present), `LazyPanel.tsx` IntersectionObserver wrapper for deferred mounting.
+- **Frontend** — Recharts is the default chart engine (the legacy `EChartContainer` wrapper was removed); `ModularReactECharts` (tree-shaken `echarts-modular`) is retained only for the 8 heavy customer-analytics panels (treemap, sunburst, sankey, heatmap, bubble, affinity, lifecycle, order-patterns) that Recharts can't render well. `LazyPanel.tsx` IntersectionObserver wrapper for deferred mounting.
 
 ### 7. Platform Services
 
@@ -360,7 +360,9 @@ Every feature ships with tests; every removed feature removes its tests.
 | API routers (98 files, 80 mounted) | `api/routers/` (organized into core/, forecasting/, intelligence/, inventory/, operations/, platform/; sub-router packages: `forecasting/tuning/`, `intelligence/customer_analytics/`) |
 | Shared Python modules | `common/` (core/, ml/, engines/, services/, ai/) |
 | Champion strategies package | `common/ml/champion/` (9 modules covering 31 strategies — `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment`, plus `helpers` and `registry`) |
-| Shared SQL helpers | `common/core/sql_helpers.py` (includes `row_to_dict_from_cursor`/`row_to_dict_from_cols`, plus streaming ETL helpers `stream_query_in_chunks` / `read_sql_chunked`) |
+| Shared SQL helpers | `common/core/sql_helpers.py` (includes `row_to_dict_from_cursor`/`row_to_dict_from_cols`, value coercion helpers `parse_db_json` / `to_float`, plus streaming ETL helpers `stream_query_in_chunks` / `read_sql_chunked`) |
+| Inventory formula math | `common/inventory/` (`safety_stock.py` — pure, DB-free safety-stock / reorder-point / guard-rail / XYZ / outlier / seasonal-adjustment formulas, extracted from `scripts/inventory/compute_safety_stock.py` for unit-testability) |
+| Sanitized 5xx route decorator | `api/error_handling.py` (`@db_endpoint` — re-raises deliberate `HTTPException`s, converts other errors into a logged, opaque 5xx that never leaks exception text; sync + async) |
 | pg-queue scaffold | `common/services/pg_queue.py` + worker `scripts/ops/pg_queue_worker.py` |
 | Cache (LRU + Redis single-flight) | `common/services/cache.py` (`cached_async`, `reset_cache`) |
 | Async + read-replica pools | `api/pool.py` (sync, async, optional replica), `api/core.py` (`get_conn`, `get_async_conn`, `get_read_only_conn`, `get_async_read_only_conn`) |

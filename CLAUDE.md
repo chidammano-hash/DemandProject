@@ -92,6 +92,7 @@ Place new files in the correct domain subdirectory. Never add to a flat parent w
 | ML algorithm/backtest | `common/ml/` | `ensemble_strategy.py` |
 | Clustering library | `common/ml/clustering/` | `features.py`, `training.py` |
 | SKU feature computation | `common/ml/sku_features/` | `compute.py`, `classifiers.py` |
+| Inventory math (safety stock, ROP, EOQ) | `common/inventory/` | `safety_stock.py` |
 | DQ/exception engine | `common/engines/` | `alert_engine.py` |
 | Scheduler/cache/webhook | `common/services/` | `event_bus.py`, `perf_profiler.py` |
 | AI/LLM utility | `common/ai/` | `prompt_builder.py` |

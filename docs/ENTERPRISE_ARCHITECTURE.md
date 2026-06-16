@@ -1103,8 +1103,9 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │                                                             │  │
 │  │  common/services/: cache, job_scheduler, job_registry,     │  │
 │  │    notification_engine, webhook_dispatcher, rate_limiter,  │  │
-│  │    perf_profiler, query_tracker, metrics                   │  │
+│  │    perf_profiler, pg_queue, metrics                        │  │
 │  │  common/engines/: dq_engine, exception_engine              │  │
+│  │  common/inventory/: safety_stock (formula math)            │  │
 │  │  common/ai/: ai_planner, tuning_advisor                   │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                              │                                    │
@@ -1174,7 +1175,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | API access middleware | Request method, path, status, duration | `api.access` logger |
 | AI call logging | Token usage, model, cost | `ai_call_log` table |
 | Audit logging | User actions with resource + IP | `fact_audit_log` table |
-| Query tracking | SQL execution time, row counts | `common/services/query_tracker.py` |
+| Query tracking | SQL execution time, row counts | `common/services/perf_profiler.py` (`wrap_connection()`) |
 
 #### Monitoring
 
@@ -1435,6 +1436,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | SC-11 | Audit Trail | All mutations logged with user, action, resource, IP | `fact_audit_log` table |
 | SC-12 | Connection Management | Pool timeout=10s, max_lifetime=3600s, reconnect=5s | `api/pool.py` |
 | SC-13 | Read-Replica Read-Only Enforcement | Sessions obtained via `get_async_read_only_conn()` issue `SET TRANSACTION READ ONLY` so any accidental write attempt is rejected at the DB layer (defense in depth on top of the routing rule). When `READ_REPLICA_URL` is unset the helper still applies the read-only flag on the primary connection (ADR-014). | `common/core/db.py` |
+| SC-14 | Sanitized 5xx Boundary | `@db_endpoint("<failure detail>")` re-raises deliberate `HTTPException`s (404/422/409/…) and converts any other error into a logged, opaque 5xx whose `detail` never interpolates exception text — enforcing the project's no-leak 5xx rule at the route handler. Works on sync and async handlers and preserves the wrapped signature so FastAPI DI still sees the real params. | `api/error_handling.py` |
 
 ### 8.5 Threat Model Summary
 

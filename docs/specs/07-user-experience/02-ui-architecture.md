@@ -71,10 +71,10 @@ The landing page renders five zones:
 | Zone | Component | Data Source |
 |---|---|---|
 | KPI cards | `KpiCard` (4 cards with sparklines) | `/dashboard/kpis` |
-| Alert panel | `AlertPanel` (severity-coded list) | `/dashboard/alerts` |
+| Alert panel | Severity-coded alert list | `/dashboard/alerts` |
 | Heatmap | `HeatmapGrid` (CSS Grid with color scale) | `/dashboard/heatmap` |
 | Top movers | `TopMovers` (period-over-period changes) | `/dashboard/top-movers` |
-| Trend chart | `ForecastTrendChart` (ECharts) | `/dashboard/trend` |
+| Trend chart | `ForecastTrendChart` (recharts `ComposedChart`) | `/dashboard/trend` |
 
 ### Code Splitting
 
@@ -113,12 +113,10 @@ Bundle wins from this session:
 | `DataTable` | Virtualized data grid with column resize, sort, select, CSV export |
 | `KpiCard` | Metric card with label, value, delta, optional sparkline |
 | `WidgetGrid` / `WidgetCard` | CSS Grid dashboard layout containers |
-| `AlertPanel` | Severity-coded alert list with expandable detail |
 | `HeatmapGrid` | Color-scaled CSS Grid for cross-dimensional views (extended this session to back panels migrated off ECharts heatmaps) |
 | `LazyPanel` | `IntersectionObserver`-based deferred render — wraps below-the-fold panels so their `useQuery` does not fire on tab mount |
 | `TopMovers` | Period-over-period mover list with up/down indicators |
-| `ForecastTrendChart` | ECharts trend chart with dual Y-axis |
-| `EChartContainer` | Theme-aware ECharts wrapper (auto dark/light) |
+| `ForecastTrendChart` | recharts `ComposedChart` — forecast/actual lines plus an optional shaded 80% CI band |
 | `EmptyState` | Placeholder when no data matches filters |
 | `Skeleton` | Loading shimmer placeholder |
 | `LoadingElement` | Chemistry-themed periodic table loading animation |

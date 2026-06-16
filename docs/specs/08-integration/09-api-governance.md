@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `common/services/rate_limiter.py`, `common/services/query_tracker.py`, `config/api_governance_config.yaml` |
+| **Key Files** | `common/services/rate_limiter.py`, `config/api_governance_config.yaml` |
 
 ---
 

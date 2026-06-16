@@ -48,7 +48,7 @@ The `general.ts` theme config defines:
 
 ### Chart Colors
 
-The `useChartColors()` hook returns `{ theme, chartColors, trendColors }` derived from the active theme context. All chart components (ECharts, Recharts) consume these colors instead of hardcoded values. The `EChartContainer` wrapper automatically applies the correct ECharts theme (light or dark) based on the current mode.
+The `useChartColors()` hook returns `{ theme, chartColors, trendColors }` derived from the active theme context. All chart components consume these colors instead of hardcoded values. recharts is the default chart engine; the `ModularReactECharts` component (`echarts-modular.tsx`) is used only for the 8 heavy customer-analytics panels and reads the same theme-derived colors. The retired `EChartContainer` wrapper has been removed.
 
 ### Design Tokens
 
@@ -72,8 +72,8 @@ Earlier iterations included three themes (General, Scientific, Executive) with m
 | Component | How It Gets Colors |
 |---|---|
 | Sidebar, cards, tables | Tailwind `dark:` variant + CSS custom properties |
-| ECharts instances | `EChartContainer` wrapper applies theme object |
-| Recharts instances | `useChartColors()` hook provides series colors |
+| recharts instances (default) | `useChartColors()` hook provides series colors |
+| `ModularReactECharts` (8 CA panels) | `useChartColors()` colors passed into the echarts option object |
 | KPI cards, alerts | Semantic CSS variables (`--destructive`, `--primary`, etc.) |
 | Skeleton loading | `animate-pulse` with theme-aware background |
 

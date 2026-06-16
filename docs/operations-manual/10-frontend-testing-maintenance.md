@@ -165,7 +165,8 @@ Failure artifacts land in `frontend/e2e/test-results/` (screenshots + video on r
 
 ### 5.1 Backend (pytest)
 
-- **Mock pool factory**: import `from tests.api.conftest import make_pool as _make_pool`. Patch `api.core._get_pool` with a `make_pool(...)` call.
+- **Mock pool factory**: import `from tests.api.conftest import make_pool as _make_pool`. Patch `api.core._get_pool` with a `make_pool(...)` call. The `mock_pool` fixture wraps `make_pool`. `make_pool` accepts an optional `description=` arg to set `cursor.description` (column names) when the route reads it. Async (`get_async_read_only_conn` / `get_async_pool`) routes use `make_async_pool` and must patch `api.core._get_async_pool`.
+- **Rate limiter**: an autouse fixture resets the global rate limiter between tests, so per-test request counts start clean.
 - **Multi-fetchall endpoints**: set `cursor.fetchall.side_effect = [list1, list2, ...]` (one list per `cursor.fetchall()` invocation in the route).
 - **Single-call endpoints**: set `cursor.fetchall.return_value = [...]`.
 - **API client**: inline `httpx.AsyncClient(transport=ASGITransport(app=app))` inside the test — no live server needed.
@@ -176,7 +177,7 @@ Failure artifacts land in `frontend/e2e/test-results/` (screenshots + video on r
 
 - **Wrapper**: `TestQueryWrapper` from `frontend/src/tabs/__tests__/test-utils.tsx` (provides `QueryClientProvider`, `ThemeProvider`, `GlobalFilterProvider`).
 - **API mocks**: `vi.mock("../api/queries")` for the barrel module. Tests must export every key/fetcher the component imports — see CLAUDE.md MEMORY notes for known traps (`InvPlanningTab.test.tsx` needs `insightKeys`, `STALE_INSIGHTS`, evolution keys, sourcing/PO fetchers, etc.).
-- **Charts**: mock `echarts-for-react` (e.g. `vi.mock("echarts-for-react", () => ({ default: () => null }))`) — jsdom cannot render canvas/SVG-heavy charts.
+- **Charts**: Recharts is the default engine and renders in jsdom without mocking. Only the 8 heavy customer-analytics panels use ECharts (via `ModularReactECharts` in `frontend/src/components/echarts-modular.tsx`); for those, mock `echarts-for-react` (e.g. `vi.mock("echarts-for-react", () => ({ default: () => null }))`) since jsdom cannot render canvas/SVG-heavy charts. `EChartContainer` has been removed — do not reference it. `ForecastTrendChart` is now a Recharts component.
 - **Virtualized rows**: mock `@tanstack/react-virtual` so virtualized lists render synchronously.
 - **Theme**: use `useThemeContext()` / `useChartColors()` — never accept a `theme` prop from `App.tsx`.
 
@@ -307,7 +308,8 @@ The `170-185` SQL range and the supporting code paths cover this session's perf 
 | Cache + single-flight | `common/services/cache.py` `cached_async` decorator wraps hot endpoints with single-flight de-dup; `reset_cache` flushes the live backend (in-memory + Redis) | `common/services/cache.py` |
 | Streaming ETL | `stream_query_in_chunks`, `read_sql_chunked` for bounded-memory loads | `common/core/sql_helpers.py` (see Section 02 §2.3) |
 | Weekly partition cutover prep | DDL prepared; `auto_create_partitions.py` extended for weekly intervals | `sql/184`, `sql/185`, `scripts/db/auto_create_partitions.py` |
-| Frontend chart consolidation | Standardised on Recharts (ECharts paths removed where present); `LazyPanel.tsx` IntersectionObserver wrapper added; `HeatmapGrid` extended with compact mode + clickable headers | `frontend/src/components/LazyPanel.tsx`, `frontend/src/components/HeatmapGrid` |
+| Frontend chart consolidation | Recharts is the default engine; `EChartContainer` removed and `ForecastTrendChart` ported to Recharts. ECharts retained only for the 8 heavy customer-analytics panels via `ModularReactECharts` (tree-shaken `echarts-modular`). `LazyPanel.tsx` IntersectionObserver wrapper added; `HeatmapGrid` extended with compact mode + clickable headers | `frontend/src/components/echarts-modular.tsx`, `frontend/src/components/LazyPanel.tsx`, `frontend/src/components/HeatmapGrid` |
+| Tab splits + dead-file cleanup | Large tabs split into subpanel dirs (`command-center/`, `data-quality/`, `aggregate-analysis/`, `storyboard/`, `forecast/`, `item-analysis/`). Removed dead frontend files: `AlertPanel`, `ItemDetailPanel`, `PipelineConfigPanel`, `expsys`, `useTabVisibility` | `frontend/src/tabs/` |
 | Scale tests | New `tests/scale/` directory with `make scale-test` (synthetic 100K rows by default; `SCALE=10000000` for nightly) | `tests/scale/`, `tests/unit/test_pg_queue.py`, `tests/unit/test_auto_create_partitions.py` |
 
 ---

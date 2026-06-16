@@ -90,8 +90,12 @@ Scripts live at `scripts/` root (the `scripts/inventory/` subdirectory does not 
 ### Algorithm comparison + backtest
 
 ```bash
-make ip-backtest        # run_inventory_backtest.py — backtest SS/policy choices
-make ip-compare         # compare_inventory_algorithms.py — A/B between policy variants
+# Inventory backtest — no Make target; runs via the job registry
+# (job type "inventory_backtest" → scripts/inventory/run_inventory_backtest.py).
+# Trigger from the Jobs UI/API, or invoke the script directly:
+uv run python scripts/inventory/run_inventory_backtest.py   # backtest SS/policy choices
+
+make algo-comparison    # scripts/inventory/compare_inventory_algorithms.py — A/B between policy variants
 ```
 
 Surfaces in the **Inventory Algorithm Comparison** API router for the UI A/B view.
@@ -240,7 +244,7 @@ UI sanity: open `InvPlanningTab` → confirm `ActionFeedPanel` loads with non-em
 | Forecast promoted (Section 6) | `make setup-demand-planning` + `make ss-all` + `make exceptions-generate` |
 | Cluster experiment promoted (Section 3) | `make policy-all` (re-assigns policies by new ABC×XYZ class) |
 | Lead-time data refresh (weekly) | `make lead-time-all` + `make ss-all` |
-| Quarterly policy review | `make ip-backtest` + `make ip-compare` → review → update `replenishment_policy_config.yaml` → `make policy-all` |
+| Quarterly policy review | run the `inventory_backtest` job (or `uv run python scripts/inventory/run_inventory_backtest.py`) + `make algo-comparison` → review → update `replenishment_policy_config.yaml` → `make policy-all` |
 
 ---
 

@@ -497,7 +497,7 @@ API endpoints (prefix `/cluster-experiments`):
 - ~~`scripts/ml/generate_clustering_features.py`~~ -- **deleted**; the 6 feature dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle) are now produced by `scripts/ml/compute_sku_features.py` (`make features-compute`) and read from `dim_sku`
 - ~~`scripts/ml/train_clustering_model.py`~~ -- **deleted**; KMeans training is now driven by `scripts/ml/run_cluster_pipeline.py`
 - `scripts/ml/run_cluster_pipeline.py` -- unified pipeline: features -> train -> label -> promote (KMeans with silhouette + Calinski-Harabasz combined scoring)
-- `scripts/ml/label_clusters.py` -- hierarchical labeling taxonomy (e.g., `high_volume_seasonal_growing`)
+- ~~`scripts/ml/label_clusters.py`~~ -- **deleted**; hierarchical labeling taxonomy (e.g., `high_volume_seasonal_growing`) is now inline via `assign_cluster_labels` in `common/ml/clustering/labeling.py`, called by `run_clustering_scenario.py`
 - Cluster assignment updates are handled by `promote_scenario()` in the unified pipeline
 
 **Output artifacts:**
@@ -1113,26 +1113,18 @@ The accuracy monitoring dashboard. Shows:
 - Coverage statistics (DFUs with backtest data vs total)
 - Sliceable by multiple dimensions (item, location, cluster, variability class, etc.)
 
-### 6.3 Pipeline Config Panel (`PipelineConfigPanel.tsx`)
-
-Located in the Model Tuning Tab. Provides a YAML config editor for:
-- Algorithm parameters (hyperparameters per model)
-- Backtest settings (n_timeframes, horizon, sampling)
-- Champion strategy configuration
-- Clustering settings
-
-### 6.4 Jobs Tab (`JobsTab.tsx`)
+### 6.3 Jobs Tab (`JobsTab.tsx`)
 
 - **PipelineBuilderPanel**: Visual pipeline builder that can chain stages (normalize -> load -> backtest -> champion -> forecast generation). Can trigger `generate_production_forecast` as a pipeline step.
 - Job history and status monitoring
 - `ChampionConfigPanel`: Quick config for production competition (model checkboxes, metric, lag)
 
-### 6.5 Settings Tab
+### 6.4 Settings Tab
 
 - Shows all YAML config files organized by category
-- Editable config cards for each domain (forecast, clustering, inventory, etc.)
+- Editable config cards for each domain (forecast, clustering, inventory, etc.) — this is where pipeline/algorithm/backtest/champion/clustering YAML is edited (there is no separate Pipeline Config panel in the Model Tuning tab)
 
-### 6.6 SQL Runner Tab
+### 6.5 SQL Runner Tab
 
 - Ad-hoc SQL query interface for data exploration and export
 - Parameterized queries with CSV download
@@ -1360,7 +1352,7 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 | Model Tuning UI | `frontend/src/tabs/ModelTuningTab.tsx` |
 | Aggregate Analysis UI | `frontend/src/tabs/AggregateAnalysisTab.tsx` |
 | Pipeline Builder UI | `frontend/src/tabs/jobs/PipelineBuilderPanel.tsx` |
-| Pipeline Config UI | `frontend/src/tabs/model-tuning/PipelineConfigPanel.tsx` |
+| Config editing UI | `frontend/src/tabs/SettingsTab.tsx` (YAML config editor; the former `model-tuning/PipelineConfigPanel.tsx` was removed) |
 | Cluster experiments API | `api/routers/forecasting/cluster_experiments.py` |
 | Champion experiments API | `api/routers/forecasting/champion_experiments.py` |
 | Model tuning API | `api/routers/forecasting/tuning/` (15-module package; mounted via `tuning/__init__.py`. See [Unified Model Tuning Studio](./11-unified-model-tuning-v2.md#router-layout) for the full sub-router map) |
