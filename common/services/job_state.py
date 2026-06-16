@@ -727,7 +727,7 @@ def _run_inventory_backtest(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run inventory backtest simulation."""
-    cmd = [_UV, "run", "python", "scripts/run_inventory_backtest.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/run_inventory_backtest.py"]
     if params.get("models"):
         cmd.extend(["--models", params["models"]])
     if params.get("months"):

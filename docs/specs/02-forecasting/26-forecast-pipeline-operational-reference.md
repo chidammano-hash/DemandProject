@@ -469,7 +469,9 @@ make cluster-all       # Full pipeline: features -> train -> label -> update DB
 # clustering pipeline.
 make features-compute  # Step 1: unified SKU feature computation (replaces generate_clustering_features.py)
 make cluster-train     # Step 2: KMeans training (via run_cluster_pipeline.py)
-make cluster-label     # Step 3: label_clusters.py
+# Step 3: cluster labeling is now inline in run_clustering_scenario.py
+#         (assign_cluster_labels from common.ml.clustering.labeling) — the
+#         standalone label_clusters.py script was removed.
 # (cluster-update absorbed into unified pipeline via promote_scenario)
 ```
 
