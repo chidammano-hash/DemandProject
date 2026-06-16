@@ -37,3 +37,26 @@ export const SUPPLY_COLORS: Record<string, string> = {
   safety_stock: "#8b5cf6",
   cycle_stock: "#06b6d4",
 };
+
+/** Red used for DQ original (pre-correction) overlay series. */
+export const DQ_ORIG_COLOR = "#DC2626";
+
+/** dataKey → human label for chart tooltips and DQ-overlay pills. */
+export const TOOLTIP_LABELS: Record<string, string> = {
+  tothist_dmd: "Sale Qty (external)",
+  sales_qty: "Sale Qty",
+  sales_qty_orig: "Sale Qty (original)",
+  qty_shipped: "Qty Shipped",
+  qty_shipped_orig: "Shipped (original)",
+  qty_ordered: "Qty Ordered",
+  production_forecast: "Production Forecast",
+  total_on_hand: "On Hand",
+  total_on_hand_orig: "On Hand (original)",
+  total_on_order: "On Order",
+  total_position: "Total Position",
+  inv_monthly_sales: "Inv Monthly Sales",
+  dos: "Days of Supply",
+  avg_lead_time: "Avg Lead Time",
+  safety_stock: "Safety Stock",
+  cycle_stock: "Cycle Stock",
+};
