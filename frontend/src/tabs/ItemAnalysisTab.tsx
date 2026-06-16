@@ -37,7 +37,8 @@ import { ModelKpiSection } from "./dfu-analysis/ModelKpiSection";
 import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 // Unified chart (demand + supply in one view)
-import { UnifiedChartPanel, loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/UnifiedChartPanel";
+import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
+import { loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/measures";
 import { itemBreadcrumbLabel } from "./item-analysis/breadcrumb";
 
 // UX-1: deep-state breadcrumbs.
