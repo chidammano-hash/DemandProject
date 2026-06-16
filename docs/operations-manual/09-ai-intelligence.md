@@ -144,6 +144,24 @@ When either is hit the agent logs a warning and exits cleanly with whatever insi
 | Portfolio (background) | `POST /ai-planner/portfolio-scan` — runs on the in-process `ThreadPoolExecutor(max_workers=2)` defined in the router |
 | Scheduled scan | Wire to APScheduler via `common/services/job_scheduler.py` (call `AIPlannerAgent.run_portfolio_scan(...)` directly inside a job) |
 
+#### CLI / Make-target batch pipeline (IPAIfeature1)
+
+For headless / cron-driven runs (outside the API + UI), drive the agent through
+`scripts/ai/generate_ai_insights.py` via these Make targets. Run them **after
+Phases 2–7** so the agent has full forecast + inventory context. Requires
+`ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) in `.env`.
+
+```bash
+make ai-insights-schema      # Apply sql/036, sql/039, sql/040 (ai_insights + ai_call_log + outcomes)
+make ai-insights-scan        # Portfolio-wide AI exception scan → ai_insights table
+make ai-insights-scan-dry    # Same scan with --dry-run (no DB writes)
+make ai-insights-dfu ITEM=100320 LOC=1401-BULK  # Single-DFU analysis (--item / --loc)
+make ai-insights-all         # ai-insights-schema + ai-insights-scan (full pipeline)
+```
+
+> The single-DFU target is `make ai-insights-dfu ITEM=<item> LOC=<loc>` —
+> it shells out to `scripts/ai/generate_ai_insights.py --item $(ITEM) --loc $(LOC)`.
+
 ---
 
 ## 9.4 Insights Generation

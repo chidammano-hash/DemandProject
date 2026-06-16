@@ -51,6 +51,40 @@ selection and `get_forecastable_model_ids()` for production inference.
 The `chronos2_enriched` model is also designated as the platform's FM spine
 (`fm_spine.model_id`) and produces the P10 / P50 / P90 quantile bundle.
 
+### 4.1.3 Per-algorithm config block
+
+Before running any backtest, edit the algorithm entry in
+`config/forecasting/forecast_pipeline_config.yaml` under
+`algorithms.<model_id>`:
+
+```yaml
+algorithms:
+  lgbm_cluster:
+    type: tree
+    cluster_strategy: per_cluster  # "per_cluster" or "global" — ml_cluster used for partitioning only, not a model feature
+    recursive: false       # Set true for recursive multi-step inference (Feature 43)
+    shap_select: false     # Set true for per-timeframe SHAP feature selection (Feature 42)
+    shap_threshold: 0.95   # Cumulative SHAP importance threshold
+    shap_top_n: null       # Exact top-N features (overrides threshold)
+    shap_sample_size: 500
+    tune_inline: false     # Set true for per-timeframe causal tuning (PL-002)
+    params_file: null      # Set to data/tuning/best_params_lgbm.json for pre-tuned params
+    params:                # Inline hyperparameters (replaces old algorithm_config.yaml)
+      n_estimators: 500
+      learning_rate: 0.05
+      # ... (see full file for all keys)
+```
+
+Same structure for `catboost_cluster:` and `xgboost_cluster:` entries. Use
+`get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve
+hyperparameters.
+
+> **Warning:** Using a globally tuned `params_file` in backtests introduces
+> temporal leakage — the tuner sees future timeframes. Use
+> `tune_inline: true` for unbiased backtest accuracy. With `tune_inline:
+> true`, each of the timeframes tunes on only data available up to its
+> training cutoff (~20 trials × 3 folds, ~2–3× slower).
+
 ---
 
 ## 4.2 Customer Features Pre-Compute (Required for Enriched Trees)
@@ -81,7 +115,9 @@ indistinguishable from the non-enriched variants. Always re-run
 
 All backtest targets live at the project root. They write per-model CSV
 artefacts into `data/backtest/<model_id>/` (the `output_dir` from the
-algorithm entry) and a per-run summary JSON.
+algorithm entry) and a per-run summary JSON. Each backtest also trains
+models AND persists `.pkl` artifacts to `data/models/<model_id>/` for
+downstream production forecasting.
 
 ### 4.3.1 Per-family commands
 
@@ -134,7 +170,10 @@ make backtest-all-parallel     # Same models in parallel (logs in data/backtest/
 `backtest-all-parallel` launches the six core jobs concurrently and pipes
 each into a per-model log file under `data/backtest/logs/`. Use it only on
 machines with sufficient RAM and CPU; on a constrained host run
-`backtest-all` instead.
+`backtest-all` instead. Tree models use `n_jobs=-1` (all CPU cores) and
+foundation models use the GPU, so running tree + foundation in parallel is
+generally safe (CPU vs GPU); avoid running multiple foundation models
+simultaneously — they compete for GPU memory.
 
 ### 4.3.3 Approximate runtimes
 
@@ -175,6 +214,20 @@ to every backtest:
 | `baseline_intermittent`      | Route intermittent clusters to rolling mean                   |
 | `intermittent_threshold`     | Zero-share that triggers intermittent routing (default 0.7)   |
 | `recursive_noise_enabled`    | Add Gaussian noise to recursive lag features                  |
+
+### 4.3.5 Resuming crashed foundation runs
+
+Foundation backtests checkpoint completed timeframes. To resume a crashed
+run (skipping already-completed timeframes), invoke the script module with
+`--resume` (where the script supports it):
+
+```bash
+uv run python -m scripts.ml.run_backtest_chronos_bolt --resume
+uv run python -m scripts.ml.run_backtest_chronos2_enriched --resume
+```
+
+See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for the
+full architecture comparison across foundation models.
 
 ---
 
@@ -244,6 +297,46 @@ After loading, refresh the accuracy MVs:
 
 ```bash
 make accuracy-slice-refresh
+```
+
+### 4.4.4 Raw loader invocations
+
+The Make targets wrap `scripts/etl/load_backtest_forecasts.py`. For
+ad-hoc multi-model loads you can call the script directly:
+
+```bash
+# Load 4 models with single index cycle (fastest):
+uv run python scripts/etl/load_backtest_forecasts.py \
+  --models lgbm_cluster catboost_cluster xgboost_cluster chronos \
+  --replace --bulk
+
+# Load main table only (skip archive):
+uv run python scripts/etl/load_backtest_forecasts.py \
+  --models lgbm_cluster chronos --replace --bulk --main-only
+
+# Load archive only:
+uv run python scripts/etl/load_backtest_forecasts.py \
+  --models lgbm_cluster chronos --replace --bulk --archive-only
+```
+
+> **Tip:** Use `--bulk` whenever loading 2+ models with `--replace`. It
+> drops indexes before the first model and recreates them after the last,
+> avoiding redundant index rebuilds. For a single model, `--bulk` has no
+> benefit.
+
+Each backtest run writes two CSVs per model so multiple models can run
+back-to-back without overwriting each other:
+
+* `data/backtest/<model_id>/backtest_predictions.csv` — execution-lag
+  predictions (→ `fact_external_forecast_monthly`)
+* `data/backtest/<model_id>/backtest_predictions_all_lags.csv` — lag 0–4
+  archive (→ `backtest_lag_archive`)
+
+### 4.4.5 Verify archive data
+
+```bash
+docker compose exec -T postgres psql -U demand -d demand_mvp \
+  -c "SELECT model_id, lag, COUNT(*) FROM backtest_lag_archive GROUP BY 1,2 ORDER BY 1,2"
 ```
 
 ---

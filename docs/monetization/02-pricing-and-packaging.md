@@ -139,7 +139,7 @@ Every edition gives the customer the same data foundation ([01-foundation/](../s
 - Scenario Planning (disruption simulation) — [05-operations/04-scenario-planning.md](../specs/05-operations/04-scenario-planning.md)
 - Customer Analytics (demand-aware customer map, OOS hotspots, channel mix, concentration) — [03-demand-intelligence/07-customer-analytics.md](../specs/03-demand-intelligence/07-customer-analytics.md), [03-demand-intelligence/06-demand-history-workbench.md](../specs/03-demand-intelligence/06-demand-history-workbench.md)
 - External signals integration (weather, economic indicators, POS) — [08-integration/06-external-signals.md](../specs/08-integration/06-external-signals.md)
-- Read-replica routing for analytics workloads — see [docs/RUNBOOK.md](../RUNBOOK.md) "Read Replica Deployment"
+- Read-replica routing for analytics workloads — see the operations manual (Maintenance & Troubleshooting)
 - Async pool + Redis cache + pg-queue worker for >250K SKU scale
 - API Governance + per-role rate limiting — [08-integration/09-api-governance.md](../specs/08-integration/09-api-governance.md)
 - RBAC with full audit log — [08-integration/02-rbac.md](../specs/08-integration/02-rbac.md)

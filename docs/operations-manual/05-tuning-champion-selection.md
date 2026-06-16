@@ -309,6 +309,236 @@ interactively. This is the primary surface for ad-hoc tuning debugging.
 
 ---
 
+## 5.9b Unified Model Tuning Studio (Feature 46)
+
+Optional — use the UI-driven tuning studio to run experiments interactively instead of CLI-based tuning.
+
+The Unified Model Tuning Studio lets users configure hyperparameters, launch backtest experiments, compare results, and promote winners — all from the browser for LightGBM, CatBoost, and XGBoost.
+
+### Accessing the Studio
+
+Navigate to **Model Tuning** in the sidebar (Demand section). Select a model type tab (LGBM, CatBoost, XGBoost) at the top.
+
+### Workflow
+
+1. **Create Experiment** — Click "New Experiment", select a template (production baseline, expert recommendation, or custom), adjust parameters, and submit
+2. **Monitor** — Watch the experiment in the Jobs tab with live log streaming
+3. **Compare** — Select two completed runs for side-by-side comparison with per-lag, per-cluster, per-month accuracy breakdowns, parameter diffs, and feature diffs
+4. **Promote** — Promote the winning run to production via the confirmation modal (writes to `forecast_pipeline_config.yaml` under `algorithms.<model_id>.params`)
+
+### API Endpoints
+
+All endpoints are under `/model-tuning/{model}/` where `{model}` is `lgbm`, `catboost`, or `xgboost`.
+
+```
+GET  /model-tuning/{model}/experiments           # List experiments (paginated, filterable)
+GET  /model-tuning/{model}/experiments/{id}       # Experiment detail with timeframes
+GET  /model-tuning/{model}/experiments/{id}/lags  # Per-execution-lag accuracy breakdown
+GET  /model-tuning/{model}/experiments/{id}/clusters  # Per-cluster accuracy (filterable by exec_lag)
+GET  /model-tuning/{model}/experiments/{id}/months    # Per-month accuracy
+GET  /model-tuning/{model}/experiments/{id}/logs      # Incremental log streaming (offset-based)
+GET  /model-tuning/{model}/compare                    # Pairwise comparison with deltas
+GET  /model-tuning/{model}/templates                  # Available experiment templates
+GET  /model-tuning/{model}/promoted                   # Currently promoted (champion) run
+GET  /model-tuning/{model}/promotions                 # Promotion audit trail
+POST /model-tuning/{model}/experiments                # Create and launch experiment
+POST /model-tuning/{model}/experiments/{id}/promote   # Promote to production
+POST /model-tuning/{model}/experiments/{id}/cancel    # Cancel running/queued experiment
+DELETE /model-tuning/{model}/experiments/{id}          # Delete completed/failed experiment
+```
+
+### Schema
+
+Reuses existing `lgbm_tuning_run` table with `model_id` column (`lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`) to discriminate model types. DDL: `sql/098_add_promoted_to_tuning.sql` adds `is_promoted` and `promoted_at` columns with a partial unique index per model.
+
+```bash
+# Apply schema (one-time)
+make db-apply-sql    # Includes sql/098_add_promoted_to_tuning.sql
+```
+
+### Configuration
+
+Experiment templates are loaded from `config/forecasting/forecast_pipeline_config.yaml` (each algorithm's `params` section) plus the unified strategy file `config/forecasting/tune_strategies.yaml` (model-keyed sections: `lgbm`, `catboost`, `xgboost`).
+
+---
+
+## 5.9c Champion Model Competition API
+
+The champion competition strategies also expose a REST surface and a named-strategy
+configuration distinct from the `per_cluster` default documented in 5.5.
+
+### Competition strategies
+
+| Strategy | Key Idea |
+|---|---|
+| `expanding` *(default)* | Cumulative WAPE over all prior months, equal weight |
+| `rolling` | Last N months only (`window_months`, default 6) |
+| `decay` | Exponential decay — recent months weighted more (`decay_factor`, default 0.9) |
+| `ensemble` | Blend top-K models by inverse-WAPE weights (`top_k`, default 3) |
+| `meta_learner` | ML classifier trained on DFU features + performance stats |
+
+All strategies enforce **strict exec-lag-aware causality** — selection for month T uses only data from months where `startdate < fcstdate`.
+
+### Override strategy from the CLI
+
+```bash
+# Override strategy:
+.venv/bin/python -m scripts.ml.run_champion_selection --strategy rolling
+```
+
+### Competition config (`forecast_pipeline_config.yaml`, `champion` section)
+
+> **Note:** All champion selection settings live in `config/forecasting/forecast_pipeline_config.yaml` under the `champion` section. The legacy `config/model_competition.yaml` has been deleted.
+>
+> The competing models list is derived from `algorithms[*].compete == true` in the master config rather than an explicit list.
+
+```yaml
+competition:
+  metric: accuracy_pct
+  lag: execution
+  min_dfu_rows: 3
+  models: [catboost_cluster, xgboost_cluster, chronos2, chronos2_enriched, chronos_bolt, seasonal_naive, rolling_mean]
+  strategy: expanding          # expanding | rolling | decay | ensemble | meta_learner
+  strategy_params:
+    window_months: 6
+    decay_factor: 0.90
+    top_k: 3
+    performance_window: 6
+  meta_learner:
+    model_type: random_forest  # random_forest | xgboost
+    n_estimators: 200
+    max_depth: 15
+    test_months: 3
+    performance_window: 6
+```
+
+### Output
+
+- `model_id='champion'` rows in `fact_external_forecast_monthly`
+- `model_id='ceiling'` rows (oracle best-with-hindsight) in `fact_external_forecast_monthly`
+- `data/champion/champion_summary.json` — champion + ceiling metrics
+- `data/champion/simulation_results.json` — strategy comparison
+- All accuracy materialized views refreshed automatically; running again is idempotent
+
+### API
+
+```bash
+curl http://localhost:8000/competition/config
+curl -X PUT http://localhost:8000/competition/config \
+  -H "Content-Type: application/json" \
+  -d '{"metric": "wape", "lag": "execution", "min_dfu_rows": 3,
+       "models": ["lgbm_cluster", "catboost_cluster"],
+       "strategy": "rolling", "strategy_params": {"window_months": 6}}'
+curl -X POST http://localhost:8000/competition/run
+curl http://localhost:8000/competition/summary
+```
+
+---
+
+## 5.7b Expert Panel — Detailed Reference (Feature 49)
+
+The Expert Panel tests whether a mix of statistical + ML + deep learning algorithms
+outperforms the current tree-only approach. Runs 14 algorithms (Holt-Winters, Simple
+ES, Croston SBA, Auto-ARIMA, Theta, MSTL, LGBM, CatBoost, XGBoost, Random Forest-via-Ridge,
+Seasonal Naive, Rolling Mean, N-HiTS, N-BEATS) across demand archetypes classified by the
+Syntetos-Boylan ADI × CV² framework.
+
+### Prerequisites
+
+- Phase 5 completed (backtests loaded) — needed for baseline comparison
+- Phase 6 completed (champion selection) — needed for champion baseline
+- `statsmodels` installed (added to `pyproject.toml` dependencies)
+- Optional: `pmdarima` for Auto-ARIMA (`uv pip install pmdarima`)
+
+### Custom-parameter invocations
+
+The `make` targets in 5.7 cover the common cases. For custom DFU counts, timeframes,
+seeds, or location scoping, invoke the orchestrator directly:
+
+```bash
+# Custom parameters
+uv run python -m algorithm_testing.run_expert_panel \
+    --n-dfus 2000 --n-timeframes 4 --seed 123
+
+# Location + fewer timeframes
+uv run python -m algorithm_testing.run_expert_panel \
+    --loc 1401-BULK --n-timeframes 3
+```
+
+### What It Does
+
+1. **Builds a golden set** — stratified sample from `dim_sku` by cluster, or all DFUs at a specified location (`--loc`)
+2. **Classifies demand** — Syntetos-Boylan: smooth, erratic, intermittent, lumpy × high/low volume (8 archetypes)
+3. **Runs 12 algorithms** per timeframe — statistical models fit per-DFU (parallel or sequential depending on set size), tree models fit per-cluster
+4. **Builds affinity matrix** — segment × algorithm accuracy heatmap
+5. **Optimizes portfolio** — assigns best algorithm per segment (max 6 algorithms)
+6. **Compares vs baselines** — Seasonal Naive, External Forecast, Current Tree Champion
+
+### Output
+
+All results written to `algorithm_testing/results/` (or `adv_algorithm_testing/results/`):
+
+| File | Content |
+|------|---------|
+| `experiment_report.txt` | Human-readable summary with lift numbers |
+| `comparison.json` | Portfolio vs baselines (the key result) |
+| `affinity_matrix.csv` | Segment × algorithm accuracy heatmap |
+| `assignments.csv` | Best algorithm per demand segment |
+| `classification.csv` | Per-DFU archetype classification |
+| `affinity_detail.csv` | Per-segment accuracy detail |
+| `all_predictions.parquet` | All model predictions (large) |
+| `metadata.json` | Runtime, DFU count, loc_filter, algorithm counts |
+
+### Interpreting Results
+
+The key metric is **lift in basis points (bps)** in `comparison.json`:
+
+- `lift.vs_naive_bps` — improvement over seasonal naive (should be large, 500+ bps)
+- `lift.vs_external_bps` — improvement over ERP forecast (target: positive)
+- `lift.vs_champion_bps` — improvement over current tree champion (the money number)
+
+A positive `vs_champion_bps` means the algorithm mix outperforms the tree-only approach. Each 100 bps ≈ 1% accuracy improvement ≈ ~1% safety stock reduction.
+
+### Configuration
+
+All parameters in `algorithm_testing/config.yaml` (or `adv_algorithm_testing/config.yaml`):
+
+- `experiment.n_dfus` — golden set size (default: 5000; ignored when `loc_filter` is set)
+- `experiment.n_timeframes` — backtest depth (default: 5, production uses 10)
+- `experiment.loc_filter` — run on all DFUs at a specific location instead of sampling (e.g. `1401-BULK`); also settable via `--loc` CLI flag
+- `experiment.n_workers` — parallel worker count (default: 8; sets auto auto-switch to sequential when DFU count ≤ 200)
+- `statistical_models.*` — enable/disable each statistical method
+- `portfolio_optimizer.max_algorithms` — complexity budget (default: 6)
+
+### Execution Mode
+
+Statistical models auto-select between two execution paths:
+
+| DFU count | Mode | Reason |
+|-----------|------|--------|
+| ≤ 200 | **Sequential** | Process-pool startup overhead exceeds model runtime for small sets |
+| > 200 | **Parallel** (`ProcessPoolExecutor`) | `enabled_models` and `predict_months` serialized once per worker via initializer; each task carries only compact numpy arrays |
+
+When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used automatically.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `algorithm_testing/run_expert_panel.py` | Main orchestrator |
+| `algorithm_testing/golden_set.py` | Golden set sampling + loc-based selection |
+| `algorithm_testing/config.yaml` | Experiment configuration |
+| `algorithm_testing/demand_classifier.py` | Syntetos-Boylan classification |
+| `algorithm_testing/statistical_models.py` | HW, ES, Croston, ARIMA, Theta (DFU-first, all models per DFU) |
+| `algorithm_testing/tree_models.py` | LGBM/CatBoost/XGBoost wrapper |
+| `algorithm_testing/affinity_matrix.py` | Segment × algorithm matrix |
+| `algorithm_testing/portfolio_optimizer.py` | Greedy + constrained optimizer |
+| `algorithm_testing/comparison.py` | Portfolio vs baselines |
+| `adv_algorithm_testing/run_adv_expert_panel.py` | Advanced panel orchestrator (+ DL, foundation models) |
+| `docs/specs/02-forecasting/15-expert-panel-algorithm-selection.md` | Full design spec |
+
+---
+
 ## 5.10 Verification & Re-run Cadence
 
 ### When to re-tune

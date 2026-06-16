@@ -240,6 +240,8 @@ DDL: `/Users/manoharchidambaram/projects/DemandProject/sql/101_cluster_experimen
 
 Create, evaluate, compare, and promote experiments from the **Cluster** tab in the React UI. Clustering is intentionally **hidden from the Jobs tab** — it is managed exclusively through the Cluster tab and `make cluster-all`.
 
+Cluster assignments are filterable in the Data Explorer via the `cluster_assignment` column and viewable via `/domains/sku/clusters`.
+
 ### 4.3 Promotion semantics
 
 - A new promotion clears `is_promoted` on the previous champion and sets it on the new row in a single transaction.

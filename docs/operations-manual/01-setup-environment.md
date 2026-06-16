@@ -176,6 +176,81 @@ make db-apply-inv-backtest  # 019_inventory_forecast_view.sql
 make db-apply-jobs          # 020 + 021 job_history DDL
 ```
 
+### 5.3 Feature-specific schema targets (Inventory Planning, AI, forecast, platform)
+
+Apply all DDL in order. Safe to re-run (`IF NOT EXISTS` guards on every statement). `make db-apply-sql` covers the majority of tables; the `make *-schema` commands below add feature-specific tables on top.
+
+```bash
+# Inventory Planning (IPfeature3–15)
+make ss-schema                 # fact_safety_stock_targets + indexes
+make eoq-schema                # fact_eoq_targets
+make policy-schema             # dim_replenishment_policy + fact_dfu_policy_assignment
+make health-schema             # mv_inventory_health_score materialized view
+make exceptions-schema         # fact_replenishment_exceptions
+make fill-rate-schema          # mv_fill_rate_monthly
+make demand-signals-schema     # fact_demand_signals
+make sim-schema                # fact_ss_simulation_results
+make abc-xyz-schema            # XYZ classification columns on dim_sku
+make supplier-perf-schema      # mv_supplier_performance
+make investment-schema         # fact_inventory_investment_plan + fact_efficient_frontier
+make intramonth-schema         # mv_intramonth_stockout
+make control-tower-schema      # mv_control_tower_kpis
+
+# Inventory Rebalancing
+make rebalancing-schema        # mv_network_balance + fact_rebalancing_recommendations
+
+# AI Planning Agent
+make ai-insights-schema        # ai_insights + ai_planning_memos + ai_call_log + ai_recommendation_outcomes
+
+# Production Forecast (F1.1)
+make forecast-prod-schema      # fact_production_forecast (source_model_id included in base DDL)
+                               # + fact_candidate_forecast (staging) + model_promotion_log (audit trail)
+                               # DDL: sql/121_candidate_forecast_and_promotion.sql
+
+# Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
+make replplan-schema           # fact_replenishment_plan
+
+# Storyboard
+make storyboard-schema         # fact_storyboard_exceptions
+
+# Data Quality (Spec 08-01)
+make dq-schema                 # dim_dq_check_catalog + fact_dq_check_results + mv_dq_dashboard (sql/063)
+
+# FVA Tracking (Spec 08-07)
+make fva-schema                # fact_fva_tracking (sql/068)
+```
+
+> **Tip:** `make db-apply-sql` covers the majority of tables (including DDL 062-070 for auth, data quality, cache, notifications, webhooks, reports, rate limiting). The remaining `make *-schema` commands add feature-specific tables on top.
+
+> **Note (stale RUNBOOK targets):** Older RUNBOOK revisions referenced `make auth-schema` (sql/062), `make cache-perf-schema` (sql/064), `make notification-schema` (sql/065), `make collaboration-schema` (sql/066), `make external-signals-schema` (sql/067), and `make report-schema` (sql/069). These standalone Make targets no longer exist in the current `Makefile`; their DDL (sql/062–070) is applied by `make db-apply-sql` directly.
+
+### 5.4 AI Planner FVA Backtest schema (Spec 02-27)
+
+Apply the DDL manually until a Make target is added:
+
+```bash
+psql "$DATABASE_URL" -f sql/186_create_ai_fva_backtest.sql
+# Smoke / full / dry run:
+make ai-fva-backtest-smoke     # 50 DFUs x 3 months, Ollama (~5 min)
+make ai-fva-backtest           # full 10-month walk-forward
+make ai-fva-backtest-dry       # plan + cost estimate, no LLM/DB writes
+```
+
+### 5.5 Auth & RBAC setup
+
+Run after schema setup. Seeds default admin user and configures JWT-based authentication.
+
+```bash
+# Auth config lives in config/platform/auth_config.yaml (JWT secret, token TTL, role hierarchy)
+# common/auth.py provides: CurrentUser, get_current_user, require_role dependencies
+# api/routers/platform/auth_router.py provides: POST /auth/login, POST /auth/refresh
+# api/routers/platform/users.py provides: CRUD for dim_user (admin-only)
+
+# No Make target needed — auth is auto-initialized when API starts.
+# All mutation endpoints use require_role() for RBAC enforcement.
+# Audit log entries written to fact_audit_log on every state-changing request.
+```
+
 ---
 
 ## 6. Sanity Verification
@@ -298,7 +373,147 @@ make down            # docker compose down (volumes preserved)
 
 ---
 
-## 9. Next Steps
+## 9. Full First-Time Run (New Environment)
+
+Sections 1–8 bring up an empty stack. To populate data, ML artifacts, inventory planning, demand planning, and ops in dependency order, use either the orchestrated `setup-*` targets (Option A) or the manual sequence (Option B).
+
+### 9.1 Option A: Automated Setup Targets (Recommended)
+
+Use the orchestrated `setup-*` targets that handle dependency ordering automatically:
+
+```bash
+# 0. Environment + schema
+make init && make up && make ui-init
+make db-apply-sql
+make db-apply-inventory db-apply-inv-backtest db-apply-jobs
+
+# 1. Full setup — data + ML + inventory + demand + ops (everything)
+make setup-all
+
+# 2. Start services
+make api   # terminal 1
+make ui    # terminal 2
+```
+
+**Available setup targets:**
+
+| Target | What it does |
+|---|---|
+| `make setup-data` | Normalize + load all 10 domains into Postgres |
+| `make setup-planning` | Data load + inventory planning (no ML — fastest path to a working UI) |
+| `make setup-all` | Full pipeline: data + features + backtests + champion + inv planning + demand planning + ops |
+
+**Intermediate targets** (called by `setup-all` in dependency order):
+
+| Target | Phase |
+|---|---|
+| `make setup-features` | Clustering, seasonality, variability, lead time, ABC-XYZ, demand signals |
+| `make setup-backtest` | All backtests + champion selection (depends on setup-features) |
+| `make setup-inv-planning` | Safety stock, EOQ, policies, exceptions, health, rebalancing, control tower |
+| `make setup-demand-planning` | Production forecasts, projections, orders, replenishment, consensus |
+| `make setup-ops` | S&OP, events, financial plan, storyboard, DQ |
+
+### 9.2 Option B: Manual Step-by-Step
+
+```bash
+# 0. Setup
+make init && make up && make ui-init
+
+# 1. Schema (one-time)
+make db-apply-sql
+make db-apply-inventory db-apply-inv-backtest db-apply-jobs
+make ss-schema eoq-schema policy-schema health-schema exceptions-schema
+make fill-rate-schema demand-signals-schema sim-schema abc-xyz-schema
+make supplier-perf-schema investment-schema intramonth-schema control-tower-schema
+make rebalancing-schema
+make ai-insights-schema storyboard-schema forecast-prod-schema
+make dq-schema fva-schema
+# 2. Ingest (Option A: unified pipeline — recommended)
+make pipeline-full               # Normalize + load + refresh MVs (all 10 domains)
+
+# 2. Ingest (Option B: manual)
+# make normalize-all && make load-all
+# make inventory-pipeline
+
+# 2b. Data Quality
+make dq-run
+
+# 3. Inventory Planning
+make ss-compute eoq-compute policy-assign health-refresh
+make exceptions-generate fill-rate-refresh variability-compute lt-profile-compute
+make demand-signals-compute sim-run abc-xyz-classify
+make supplier-perf-refresh investment-plan intramonth-refresh
+make rebalancing-refresh rebalancing-compute
+make control-tower-refresh
+
+# 4. Clustering + Seasonality
+make cluster-all && make seasonality-all
+
+# 5. Backtesting
+make backtest-all && make backtest-load-all
+
+# 6. Champion selection
+make champion-select
+
+# 7. Production forecasts
+make forecast-generate
+
+# 8. AI insights
+make ai-insights-scan
+
+# 9. Storyboard
+make storyboard-generate
+
+# 9b. Data Quality (also runs automatically every 4h)
+make dq-run
+
+# 10. Start services
+make api   # terminal 1
+make ui    # terminal 2
+```
+
+> **Note:** The manual sequence above is migrated verbatim from the legacy RUNBOOK. A few step targets it references — `variability-compute`, `lt-profile-compute`, and `seasonality-all` — are not present as standalone targets in the current `Makefile` (their work is folded into `make features-compute` / `make setup-features`). If a target is not found, use the orchestrated `make setup-*` path in 9.1.
+
+---
+
+## 10. Incremental Refresh (New Data Arrives)
+
+When new monthly data files are added:
+
+```bash
+# Option A: Unified pipeline orchestrator (recommended)
+make pipeline-refresh            # Detects changed files, reloads only deltas, refreshes affected MVs
+
+# Option B: Manual per-dataset reload
+make load-forecast-replace       # New external forecast (preserves ML rows)
+make inventory-pipeline          # New inventory snapshots
+
+# Validate ingested data
+make dq-run                      # Run data quality checks on refreshed data
+
+# Re-compute dependent views
+make health-refresh fill-rate-refresh intramonth-refresh
+make demand-signals-compute
+make rebalancing-refresh rebalancing-compute
+make control-tower-refresh
+
+# Re-run backtests (if model needs refreshing)
+make backtest-all && make backtest-load-all
+make champion-select
+
+# Regenerate production forecasts
+make forecast-generate
+
+# Refresh AI insights
+make ai-insights-scan
+
+# Notifications & webhooks fire automatically on pipeline events
+# (DQ failures, new AI insights, exception alerts, forecast generation)
+```
+
+---
+
+## 11. Next Steps
 
 - Load data: `make normalize-all && make load-all` (covered in Section 02 — Data Pipeline).
 - Run tests: `make test-all` (backend pytest + frontend vitest).

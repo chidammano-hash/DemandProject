@@ -159,6 +159,21 @@ Playwright tests assume:
 
 Failure artifacts land in `frontend/e2e/test-results/` (screenshots + video on retain-on-failure) and `frontend/e2e/playwright-report/` (HTML).
 
+### 4.4 Validation checks
+
+Beyond the test suite, these targets validate that the running stack is healthy:
+
+```bash
+make check-db    # Table row counts in Postgres
+make check-api   # curl API health + sample endpoints
+make check-all   # DB + API (full)
+make test-all    # Full test suite (backend + frontend)
+
+# E2E smoke tests (requires API + UI running)
+make e2e-install # Install Playwright browsers (one-time)
+make e2e         # Run all E2E smoke tests (headless)
+```
+
 ---
 
 ## 5. Test Patterns
@@ -344,6 +359,138 @@ Follow this checklist whenever you add a new sidebar tab, panel, or shared compo
 - [ ] `make audit-routers` reports zero drift.
 - [ ] `cd frontend && npm run gen:types` if backend response shapes changed.
 - [ ] Manual smoke: open the new tab in `make ui` — no “HTML instead of JSON” errors in the browser console.
+
+---
+
+## 8a. Starting Services & Platform Configuration
+
+### 8a.1 API middleware stack
+
+The FastAPI backend includes platform middleware applied in `api/main.py`:
+
+- **GZip compression** — responses > 1KB are gzip-compressed
+- **CORS** — allows `localhost:5173` (dev) origins
+- **Cache layer** — `common/services/cache.py` provides `@cached` decorator with TTL-based caching.
+  Two backends: Redis (when `REDIS_URL` env var set) or in-memory fallback.
+  Config in `config/platform/cache_config.yaml`. Cache invalidation on write endpoints.
+- **Query performance tracking** — endpoint latency + DB query counts logged to
+  `fact_query_performance` for API governance and observability.
+
+### 8a.2 Start services
+
+```bash
+# Terminal 1 — FastAPI backend
+make api                     # FastAPI on :8000
+
+# Terminal 2 — React frontend
+make ui                      # Vite dev server on :5173
+```
+
+Open in browser:
+- **UI:** `http://localhost:5173`
+- **API:** `http://localhost:8000`
+- **MLflow:** `http://localhost:5003`
+
+> **Vite proxy:** Every new API path prefix must be added to `frontend/vite.config.ts` — otherwise the frontend receives HTML instead of JSON. Restart `make ui` after changes.
+
+### 8a.3 Authentication & authorization (Spec 08-02)
+
+Set `JWT_SECRET` in `.env` to enable JWT-based auth:
+
+```bash
+# .env
+JWT_SECRET=your-secret-key-here    # Required for token signing/verification
+JWT_ALGORITHM=HS256                # Default algorithm (optional, defaults to HS256)
+JWT_EXPIRY_MINUTES=60              # Token lifetime (optional, defaults to 60)
+```
+
+**Default dev mode:** When `JWT_SECRET` is not set, the API runs in anonymous admin mode — all requests are treated as authenticated with admin privileges. Set `JWT_SECRET` in any non-local environment.
+
+Passwords are hashed with bcrypt (12 rounds). Plaintext passwords are never stored.
+
+**New Python dependencies** (added to `pyproject.toml`):
+- `bcrypt` — password hashing for user accounts
+- `PyJWT` — JWT token creation and validation
+
+### 8a.4 Cache management (Spec 08-03)
+
+Default backend is **InMemory** (no external dependencies). For production, configure Redis:
+
+```bash
+# .env (optional — InMemory is the default)
+CACHE_BACKEND=redis               # "memory" (default) or "redis"
+CACHE_REDIS_URL=redis://localhost:6379/0
+CACHE_DEFAULT_TTL=300             # Default TTL in seconds (optional)
+```
+
+InMemory cache is cleared on process restart. Redis cache persists across restarts and is shared across workers.
+
+### 8a.5 Notifications (Spec 08-04)
+
+Configure notification channels in `config/platform/notification_config.yaml`:
+
+```yaml
+channels:
+  email:
+    enabled: false
+    smtp_host: smtp.example.com
+    smtp_port: 587
+    from_address: alerts@example.com
+  slack:
+    enabled: false
+    webhook_url: https://hooks.slack.com/services/...
+  webhook:
+    enabled: false
+    url: https://your-endpoint.com/notify
+```
+
+Channels are disabled by default. Enable and configure as needed. Notification preferences are per-user and managed via the API.
+
+### 8a.6 Webhooks (Spec 08-10)
+
+Webhooks use **HMAC-SHA256 signing** for payload verification. Each webhook subscription has its own signing secret.
+
+```bash
+# Create a webhook subscription via API
+curl -X POST http://localhost:8000/webhooks/subscriptions \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-endpoint.com/hook", "events": ["insight.created", "exception.generated"]}'
+```
+
+Failed deliveries are retried with exponential backoff (3 attempts by default). Delivery history is available via `GET /webhooks/deliveries`.
+
+### 8a.7 Reports (Spec 08-08)
+
+Report templates are managed via API. Schedules use the existing job engine:
+
+```bash
+# List available report templates
+curl http://localhost:8000/reports/templates
+
+# Schedule a recurring report
+curl -X POST http://localhost:8000/reports/schedule \
+  -H "Content-Type: application/json" \
+  -d '{"template_id": "portfolio_summary", "schedule": "0 8 * * 1", "recipients": ["team@example.com"]}'
+```
+
+Templates define the data queries, layout, and output format (PDF/CSV/Excel).
+
+### 8a.8 Rate limiting (Spec 08-09)
+
+Configure rate limits in `config/api_governance_config.yaml`:
+
+```yaml
+rate_limiting:
+  enabled: true
+  default_limit: "100/minute"
+  burst_limit: "20/second"
+  per_endpoint:
+    /ai-planner/portfolio-scan: "5/hour"
+  per_user: true          # Apply limits per authenticated user (vs global)
+  backend: "memory"       # "memory" or "redis" (for multi-worker deployments)
+```
+
+When rate limited, the API returns HTTP 429 with `Retry-After` header. Limits are applied per authenticated user when `per_user: true`; otherwise globally.
 
 ---
 

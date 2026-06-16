@@ -266,6 +266,24 @@ make dq-all        # dq-schema + dq-populate + dq-run
 writes to `fact_dq_check_results`. Re-run it after any `pipeline-refresh` to
 keep the Control Tower DQ tile current.
 
+#### Automated schedule & runtime API
+
+Beyond the Make targets, the DQ engine also runs as a recurring automated
+pipeline: **every 4 hours via APScheduler** (the `dq_check` job type in the job
+registry). The scheduler triggers `common/engines/dq_engine.py`, which evaluates
+the SQL-based rules (freshness, completeness, uniqueness, range, volume delta,
+referential integrity), writes results to `fact_dq_check_results`, and refreshes
+`mv_dq_dashboard` domain health scores.
+
+```bash
+# Run checks via API
+curl http://localhost:8000/data-quality/run       # Execute all configured checks
+curl http://localhost:8000/data-quality/results    # View latest results
+curl http://localhost:8000/data-quality/catalog     # View/manage check catalog
+```
+
+Dashboard: `GET /data-quality/dashboard` shows pass/warn/fail trends per domain.
+
 ### 8.6.3 DQ fix scripts
 
 When a check fails, the operator-facing remediation script is:
@@ -540,7 +558,136 @@ Move duplicate suppression upstream (Slack channel filters) if this matters.
 
 ---
 
-## 8.12 Quick Reference
+## 8.12 FVA Tracking (Forecast Value Add)
+
+FVA (Forecast Value Add) tracks whether human forecast interventions improve or
+degrade accuracy.
+
+```bash
+make fva-schema              # fact_intervention_metrics (sql/068_create_fva_tracking.sql)
+```
+
+> FVA interventions are populated through user actions in the UI (override queue,
+> manual adjustments). No batch seed step needed.
+
+API endpoints (`/fva/*`):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /fva/waterfall` | Staged ladder for `naive seasonal -> external -> champion`, plus planned `AI adjusted` and `planner adjusted` placeholders and a separate ceiling benchmark |
+| `GET /fva/interventions` | Intervention history with before/after metrics |
+| `GET /fva/roi-summary` | ROI dashboard: intervention count and estimated vs. actual financial impact |
+
+Dashboard: the FVA tab shows the Forecast Value Ladder, ceiling benchmark, ROI
+summary, and recent interventions. FVA config was removed (dead, no consumers);
+settings are inline in the router.
+
+---
+
+## 8.13 Report Generation Pipeline
+
+Configure and schedule automated report generation and distribution.
+
+```bash
+# Report templates + schedules configured via reporting tables (reporting_config.yaml was removed as dead config)
+# dim_report_template stores reusable report definitions (SQL query config + layout)
+# fact_report_schedule stores cron-based recurring report jobs
+# fact_report_delivery tracks generation + distribution history
+```
+
+API endpoints (`/reports/*`):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /reports/templates` | List available report templates (system + user-created) |
+| `POST /reports/schedule` | Create a recurring report schedule (cron + recipients) |
+| `GET /reports/schedules` | List active report schedules |
+| `POST /reports/generate` | Trigger ad-hoc report generation |
+| `GET /reports/history` | Past report deliveries with download links |
+
+```bash
+# List available report templates
+curl http://localhost:8000/reports/templates
+
+# Schedule a recurring report
+curl -X POST http://localhost:8000/reports/schedule \
+  -H "Content-Type: application/json" \
+  -d '{"template_id": "portfolio_summary", "schedule": "0 8 * * 1", "recipients": ["team@example.com"]}'
+```
+
+Templates define the data queries, layout, and output format (PDF/CSV/Excel).
+
+---
+
+## 8.14 Unified Pipeline Orchestrator
+
+Single-command data pipeline that handles normalize, load, and MV refresh for all
+10 domains. Data loads directly from CSV into main tables via
+`scripts/etl/load_dataset_postgres.py` (single-pass: COPY to staging, type-cast +
+dedup, INSERT). Batch tracking via `audit_load_batch`. Two modes: **full reload**
+(wipe and reload everything) and **incremental refresh** (detect changes, reload
+only deltas).
+
+```bash
+# Full reload — all domains, parallel normalization
+make pipeline-full
+
+# Incremental refresh — only changed files reloaded
+make pipeline-refresh
+
+# Inventory only
+make pipeline-inventory              # Full reload
+make pipeline-inventory-refresh      # Incremental
+```
+
+**Full reload flow** (`--mode full`):
+1. Runs `data/input/cleanup_input.py` (input cleanup)
+2. Normalizes all requested domains (parallel for non-inventory, sequential for inventory)
+3. Loads each domain directly into target tables (COPY to staging, type-cast + dedup, INSERT)
+4. Refreshes all affected materialized views
+5. Prints summary table (rows loaded, elapsed time per domain)
+
+**Incremental refresh flow** (`--mode refresh`):
+1. Compares SHA256 hashes of clean CSVs against `audit_load_batch.source_hash`
+2. For inventory: per-file hash comparison of each `Inventory_Snapshot_YYYY_MM.csv`
+3. Normalizes only changed domains
+4. Loads changed domains (inventory uses targeted DELETE by month range instead of TRUNCATE)
+5. Refreshes only MVs affected by the changed domains
+6. Unchanged domains are skipped entirely
+
+**CLI flags:**
+
+| Flag | Description |
+|---|---|
+| `--mode full\|refresh` | Full wipe-and-reload vs incremental delta |
+| `--domains item,sales` | Comma-separated subset (default: all 10) |
+| `--parallel` | Normalize non-inventory domains in parallel |
+| `--dry-run` | Preview what would be done without making changes |
+| `--data-dir /path` | Override source directory (default: `data/input`) |
+
+**Config:** `config/etl/etl_config.yaml` — domain load order, parallel workers, MV
+refresh mapping per domain, always-refresh list.
+
+**Error handling:** If normalization fails for a domain, that domain is skipped
+during loading (logged as `(skipped)` in the summary table). Other domains
+continue normally.
+
+**Examples:**
+
+```bash
+# Preview a full reload
+~/.local/bin/uv run python scripts/etl/run_pipeline.py --mode full --parallel --dry-run
+
+# Reload only sales and forecast
+~/.local/bin/uv run python scripts/etl/run_pipeline.py --mode full --domains sales,forecast
+
+# Incremental refresh after adding a new inventory snapshot
+~/.local/bin/uv run python scripts/etl/run_pipeline.py --mode refresh --domains inventory
+```
+
+---
+
+## 8.15 Quick Reference
 
 ```bash
 # One-shot bootstrap of every operational module

@@ -18,6 +18,7 @@ End-to-end runbook for populating, operating, and maintaining every module of th
 | 8 | [Operations: S&OP, Control Tower, DQ, Jobs](08-operations-sop-control-tower.md) | S&OP cycle, control tower KPIs, events, storyboard, DQ, scheduler |
 | 9 | [AI / LLM Intelligence](09-ai-intelligence.md) | AI Planner, Chat, embeddings, tuning chat, admin LLM reset |
 | 10 | [Frontend, Testing & Maintenance](10-frontend-testing-maintenance.md) | Vite/React dev, type gen, test suites, perf profiling, AI UX loop (`/ux-loop`), deploy |
+| 11 | [Maintenance, Cleanup & Troubleshooting](11-maintenance-troubleshooting.md) | pg-queue, DB maintenance/VACUUM, full wipe-and-reload, data cleanup, read-replica deployment, troubleshooting matrix, phase dependencies |
 
 ---
 
@@ -132,8 +133,7 @@ These are honest gaps where docs/CLAUDE.md and code disagree. Each is flagged in
 
 ## Help
 
-- Architecture deep-dive: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)
-- Platform guide: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)
-- Cleanup / fresh recreate: [docs/RUNBOOK.md](../RUNBOOK.md)
+- Architecture deep-dive, platform overview & feature catalog: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)
+- Cleanup / fresh recreate: [Maintenance, Cleanup & Troubleshooting](11-maintenance-troubleshooting.md)
 - Design specs: [docs/specs/README.md](../specs/README.md)
 - Project rules: [CLAUDE.md](../../CLAUDE.md)
