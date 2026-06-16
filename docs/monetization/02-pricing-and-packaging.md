@@ -4,7 +4,7 @@
 > Purpose: agree the commercial model before we open a single sales conversation.
 > Decision asked: approve the recommended hybrid pricing model, the three-edition lineup, and the published list prices below.
 
-This document covers what we sell, how we charge for it, and what a deal looks like at three customer sizes. It is grounded in the modules actually built in this repository — see [docs/specs/README.md](../specs/README.md) for the full feature index and [docs/PLATFORM_GUIDE.md](../PLATFORM_GUIDE.md) for scale numbers.
+This document covers what we sell, how we charge for it, and what a deal looks like at three customer sizes. It is grounded in the modules actually built in this repository — see [docs/specs/README.md](../specs/README.md) for the full feature index and [docs/ARCHITECTURE.md](../ARCHITECTURE.md) for scale numbers.
 
 ---
 

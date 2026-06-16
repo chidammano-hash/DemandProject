@@ -1825,7 +1825,7 @@ vi.mock("@/api/queries", () => ({
 
 ### Phase 3: Cleanup
 1. Deprecate `lgbm_tuning.py` and `model_tuning.py` (keep as aliases)
-2. Update `CLAUDE.md`, `ARCHITECTURE.md`, `PLATFORM_GUIDE.md`
+2. Update `CLAUDE.md`, `ARCHITECTURE.md`
 3. Update this spec with implementation results
 
 ---

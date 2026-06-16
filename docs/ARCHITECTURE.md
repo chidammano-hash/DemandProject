@@ -1,6 +1,6 @@
 # Supply Chain Command Center — Unified Architecture & Data Flow Reference
 
-The single authoritative reference for system architecture, data flow, database schema, pipeline dependencies, API routing, ML pipeline, frontend components, and testing infrastructure.
+The single authoritative reference for system architecture, data flow, database schema, pipeline dependencies, API routing, ML pipeline, frontend components, and testing infrastructure — plus the platform overview, quick start, and feature catalog (folded in from the former PLATFORM_GUIDE). For the operator workflow and troubleshooting see `docs/RUNBOOK.md`; for per-feature design specs see `docs/specs/`.
 
 ---
 
@@ -30,6 +30,9 @@ The single authoritative reference for system architecture, data flow, database 
 22. [Make Target Quick Reference — Full Pipeline](#22-make-target-quick-reference--full-pipeline)
 23. [Testing Infrastructure](#23-testing-infrastructure)
 24. [How to Add Next Dataset](#24-how-to-add-next-dataset)
+25. [Platform Overview & Quick Start](#25-platform-overview--quick-start)
+26. [Feature Catalog](#26-feature-catalog)
+27. [Key Paths](#27-key-paths)
 
 ---
 
@@ -1845,3 +1848,126 @@ End-to-end smoke tests run against the full stack (API + UI must be running).
 6. Run `make generate-embeddings` to update chat context with new schema metadata
 
 **Example: Inventory domain** — uses dedicated normalize script (`normalize_inventory_csv.py`) for multi-file merge, dedicated API endpoints (`/inventory/*`), and dedicated UI tab (`InventoryTab`). Domain spec still lives in `common/core/domain_specs.py` for schema metadata.
+
+---
+
+## 25. Platform Overview & Quick Start
+
+A full-stack supply chain analytics platform for demand planning and inventory optimization. Ingests historical sales and forecast data, stores it in PostgreSQL, runs ML-based forecasting pipelines, and serves an interactive React dashboard for planners and analysts.
+
+Data flow: `data/input/` raw CSVs → normalize scripts → `data/staged/*_clean.csv` → PostgreSQL → FastAPI (:8000) → React UI (:5173). (Tech stack: §6 Component Technologies. Datasets: §7 Dimensions / §8 Facts. Data scale + table catalog: §10.)
+
+```bash
+cd DemandProject
+
+make init              # Create .venv, install uv, sync dependencies
+make up                # Start Docker services (Postgres, MLflow, Redis)
+make db-apply-sql      # Apply DDL schemas
+make normalize-all     # Normalize all source domains -> data/staged/*_clean.csv
+make load-all          # Load data/staged/*_clean.csv into Postgres + refresh materialized views
+
+make api               # Start FastAPI on :8000
+make ui-init           # Install npm deps
+make ui                # Start React dev server on :5173
+```
+
+Open the UI at `http://127.0.0.1:5173`. For the full operator workflow (every phase, troubleshooting, cleanup), see `docs/RUNBOOK.md`. For the complete Make-target reference, see §22.
+
+**One-command setup targets:**
+
+```
+setup-all                     # Everything: data + ML + planning + ops (~4-6 hours)
+├── setup-backtest            # features → backtest-all → champion-all
+│   └── setup-features        # setup-data (normalize-all + load-all) → features-compute → cluster/lt/abc-xyz/demand-signals
+├── setup-inv-planning        # SS, EOQ, policies, exceptions, health, fill rate, supplier, investment, rebalancing
+├── setup-demand-planning     # production forecasts, projections, POs, quantile, consensus, planned orders, bias, blended, service level, echelon
+└── setup-ops                 # S&OP, events, financial plan, storyboard, scenarios, DQ
+
+setup-data        # Data only (~30 min)
+setup-planning    # Data + inventory planning, no ML (~1 hour)
+```
+
+---
+
+## 26. Feature Catalog
+
+A capability-level summary of what the platform does. (Architecture/data-flow details for each are in the sections above and in `docs/specs/`.)
+
+### 1. Demand Forecasting & Accuracy
+
+Three tree-based backtest models (LightGBM, CatBoost, XGBoost) plus three customer-enriched variants (34 customer-derived features from `fact_customer_demand_monthly`), five Amazon Chronos foundation models (T5, Bolt, Chronos 2, Chronos 2 Enriched, Bolt Hierarchical), one statistical model (MSTL via statsforecast), two deep learning models (N-HiTS, N-BEATS via neuralforecast + PyTorch), and two baselines (seasonal_naive, rolling_mean) — all configured via `config/forecasting/forecast_pipeline_config.yaml` (`algorithms.<model_id>.params`). Foundation models are zero-shot pretrained. Bolt Hierarchical runs Chronos Bolt at the customer level, aggregates bottom-up to item×location, and reconciles with a top-down forecast to correct stockout bias. All models share `common/ml/model_registry.py` (canonical↔native params, unified `fit_model()`, `get_best_iteration()`, standardized early stopping). Expanding-window backtesting across 10 timeframes (A–J) stores lag 0–4 predictions in an archive. Champion selection picks the best model per DFU per month using 8 strategies with exec-lag-aware causal safeguards. Production inference generates versioned 24-month forecasts with P10/P90 bands. Cold-start routing sends DFUs with <12 months history to rolling_mean (<3 months skipped). Advanced options: recursive multi-step forecasting, SHAP feature selection, Bayesian tuning (Optuna), per-timeframe inline causal tuning. See `docs/specs/02-forecasting/`.
+
+**Hyperparameter Tuning:** (1) production scoring — tune once on full history (`make tune-lgbm`); (2) honest backtesting — `tune_inline: true` for per-timeframe causal tuning; (3) per-cluster — `make tune-lgbm-clusters` produces overrides in `config/forecasting/cluster_tuning_profiles.yaml` (Phase 1 `cluster_name` match → Phase 2 statistical fallback).
+
+**SHAP Feature Selection:** `shap_select: true`; per-timeframe SHAP covering 90% cumulative importance, with per-cluster support (`compute_timeframe_shap_per_cluster()`), stratified sampling for sparse clusters, and protected features. 4 read-only endpoints under `/forecast/shap/`.
+
+**Unified Model Tuning Studio:** UI-driven hyperparameter tuning for LightGBM/CatBoost/XGBoost — Experiment Builder with templates, resilient backtest jobs (subprocess isolation, PID tracking, log streaming), execution-lag-filtered comparison (per-lag/cluster/month, param + feature diffs), and promotion to the champion pipeline. Unified router `/model-tuning/{model}/` (the `api/routers/forecasting/tuning/` package, 15 modules). See `docs/specs/02-forecasting/11-unified-model-tuning-v2.md`.
+
+**Champion Experimentation Studio:** sub-tab for testing the 8 champion-selection strategies with 9 templates, 2-stage promotion (write config + backup → run selection job). API `/champion-experiments`; tables `champion_experiment`, `champion_experiment_comparison`; frontend `src/tabs/champion/`.
+
+**Production Forecast Panel:** staged candidate→production workflow — predictions land in `fact_candidate_forecast`, only the promoted model is copied to `fact_production_forecast`. Model Readiness table (Train → Generate → Load → Promote per model) + Algorithm Selection. Audit trail in `model_promotion_log`. Frontend `src/tabs/forecast/`.
+
+**Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
+
+### 2. SKU Clustering & Segmentation
+
+KMeans clustering of ~112K SKUs by demand patterns using 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle). Optimal K via Silhouette + Calinski-Harabasz with a 5% min-cluster-size constraint. Priority-ordered taxonomy labeling (e.g. `high_volume_seasonal_growing`). What-If scenario engine for trial clusterings. ABC-XYZ classification cross-segments by revenue volume × demand variability into a 3×3 policy matrix. **Cluster Experimentation Studio** — labeled experiments from templates, run as jobs, compared with SKU migration matrices + quality deltas; completed experiments are selectable as the cluster source for tuning experiments. API `/cluster-experiments`. See `docs/specs/03-demand-intelligence/01-sku-clustering.md`.
+
+### 3. Inventory Planning (15 sub-features, 34 panels)
+
+Two-column layout, 8 color-coded sidebar groups, 5 role-based presets. **Insights group:** Unified Action Feed, Network Heatmap, Segment Dashboard, Planning Scorecard, Cash Flow Timeline, Service Level Waterfall, Budget Optimizer. **Core features:** Safety Stock Engine (Z-score + Monte Carlo), EOQ/Cycle Stock, Replenishment Policies (4 types, ABC-XYZ auto-assign), Exception Queue (6 types, dedup, root cause, AI annotations), Fill Rate Analytics, Demand Signals, Intramonth Stockout Detection, Supplier Performance, Capital Investment Optimization, Portfolio Health Score, Inventory Rebalancing (greedy + LP), Replenishment Plan, Blended Demand, Multi-Echelon Safety Stock, Inventory Projection. Formula math lives in `common/inventory/safety_stock.py`. See `docs/specs/04-inventory/`.
+
+### 4. AI Planning Agent
+
+Proactive exception work-queue (not a chatbot) powered by Claude via the `tool_use` API: 9 read-only SQL lookups + `create_insight`. Generates structured insight cards (severity, summary, recommendation, financial impact, causal chain). Circuit-breaker guarded. Async portfolio scans write to `ai_insights`; observability via `ai_call_log`. See `docs/specs/06-ai-platform/`.
+
+### 5. Operations & Planning
+
+S&OP Cycle (6-stage machine with gap analysis + approval), Control Tower (cross-dimensional KPIs + alerts), Storyboard (exception-driven workflow with causal-chain cards + decision logging), Market Intelligence (Google Search + GPT-4o briefings), Financial Planning, Event Calendar, Scenario Planning. See `docs/specs/05-operations/`.
+
+### 6. Performance Profiling
+
+Centralized profiling for scripts, endpoints, and pipelines: `@profile_function` decorators, `profiled_section()` context managers, auto DB-query tracking via `wrap_connection()`, `tracemalloc` memory monitoring, and a rule-based suggestion engine (8 anti-patterns). All profiled connections are read-only + always rollback. Config `config/platform/perf_config.yaml`. See `docs/specs/01-foundation/05-performance-profiling.md`.
+
+### 7. Platform Services
+
+Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBAC (JWT, 4 roles, sessions), Notifications (Slack/Teams/Email/PagerDuty), Collaboration (threaded annotations), External Signals, FVA & ROI ladder, SQL Runner (read-only ad-hoc SQL + schema browser + history + CSV export), Reporting (scheduled PDF/Excel), API Governance (per-role rate limiting, versioning, usage analytics), Webhooks (HMAC-SHA256 signed delivery with retry + DLQ), Caching (in-memory LRU + optional Redis). See `docs/specs/08-integration/`.
+
+### 8. Job Automation
+
+APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Jobs tab with live progress, kill button, cross-tab completion alerts.
+
+### 9. UI Platform
+
+12-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System). Light/dark themes. Global filter bar synced across tabs via URL state. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the 8 heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
+
+---
+
+## 27. Key Paths
+
+| Purpose | Path |
+|---|---|
+| Project spec / conventions | `CLAUDE.md` |
+| Operations runbook | `docs/RUNBOOK.md` |
+| API entry point | `api/main.py` |
+| API routers | `api/routers/` (core/, forecasting/, intelligence/, inventory/, operations/, platform/; sub-router packages `forecasting/tuning/`, `intelligence/customer_analytics/`) |
+| Shared Python modules | `common/` (core/, ml/, engines/, services/, ai/, inventory/) |
+| Champion strategies package | `common/ml/champion/` |
+| Shared SQL helpers | `common/core/sql_helpers.py` (`row_to_dict_from_cursor`/`row_to_dict_from_cols`, coercion `parse_db_json`/`to_float`, streaming `stream_query_in_chunks`/`read_sql_chunked`) |
+| Inventory formula math | `common/inventory/safety_stock.py` (pure, DB-free SS / ROP / guard-rail / XYZ / outlier / seasonal-adjustment formulas) |
+| Sanitized 5xx route decorator | `api/error_handling.py` (`@db_endpoint`) |
+| pg-queue scaffold | `common/services/pg_queue.py` + worker `scripts/ops/pg_queue_worker.py` |
+| Cache (LRU + Redis single-flight) | `common/services/cache.py` (`cached_async`, `reset_cache`) |
+| Async + read-replica pools | `api/pool.py`, `api/core.py` (`get_conn`, `get_async_conn`, `get_read_only_conn`, `get_async_read_only_conn`) |
+| Shared constants | `common/core/constants.py` (`FORECAST_QTY_COL`) |
+| AI guardrails / unenforced-rule checks | `scripts/ai_checks/check_unenforced_rules.sh` + `scripts/ai_checks/allowlists/` |
+| Domain config | `common/core/domain_specs.py` |
+| Normalized clean CSVs | `data/staged/` |
+| YAML configs | `config/` |
+| Pipeline scripts | `scripts/` |
+| DDL migrations | `sql/` |
+| Frontend app / tabs / queries | `frontend/src/App.tsx`, `frontend/src/tabs/`, `frontend/src/api/queries/` |
+| Lazy panel wrapper | `frontend/src/components/LazyPanel.tsx` |
+| Tests (backend / frontend / e2e / scale) | `tests/`, `frontend/src/**/__tests__/`, `frontend/e2e/tests/`, `tests/scale/` |
+| Design specs | `docs/specs/` |
+| Makefile | `Makefile` |

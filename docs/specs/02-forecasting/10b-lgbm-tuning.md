@@ -571,7 +571,7 @@ for production backtests, champion selection, and long-range forecasts.
 
 1. Run `make lgbm-tuning-seed` to create baseline run #1
 2. Update `docs/specs/README.md` to add this spec to the index
-3. Update `docs/ARCHITECTURE.md` and `docs/PLATFORM_GUIDE.md`
+3. Update `docs/ARCHITECTURE.md`
 4. Update `CLAUDE.md` with new Make targets and Vite proxy prefix
 
 ---

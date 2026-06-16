@@ -590,7 +590,7 @@ When this PRD's implementation lands, the following docs update in the same comm
 - `docs/specs/02-forecasting/` — promote this PRD to a numbered spec (e.g. `27-ai-fva-backtest.md`)
 - `docs/operations-manual/09-ai-intelligence.md` — §9.11 dev/test provider modes (Ollama, manual Opus spot-check, full Opus-vs-Ollama API comparison run); keep in sync with §8.1 of this spec
 - `docs/ARCHITECTURE.md` — add the 4 new tables and 5 new MVs to the catalog
-- `docs/PLATFORM_GUIDE.md` — add the AI FVA Backtest tab to the feature list
+- `docs/ARCHITECTURE.md` — add the AI FVA Backtest tab to the feature list
 - `docs/RUNBOOK.md` — add the new Make target (e.g. `make ai-fva-backtest`) and DB cleanup entries
 - `docs/specs/06-ai-platform/01-ai-planning-agent.md` — add the new `recommend_forecast_adjustment` method
 - `frontend/vite.config.ts` — proxy entry for `/ai-planner/fva-backtest`

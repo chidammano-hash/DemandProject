@@ -33,7 +33,7 @@ Hard constraints. Violations cause bugs, test failures, or silent data corruptio
 
 ### Workflow (applies to every change)
 - **Review + refactor at each step.** Before reporting any change as complete: re-read your own diff, fix anything you'd flag in code review, refactor for clarity if the diff is messy. In multi-step plans (parallel agents, multi-file refactors), each step ends with this self-pass — don't defer it to the end. **[FREQUENTLY VIOLATED]**
-- **Docs updated in the same commit as the code.** When a change affects architecture, APIs, schemas, conventions, infra, or operational procedures, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`, `docs/PLATFORM_GUIDE.md`, `docs/RUNBOOK.md`, `docs/specs/<domain>/`, this file if rules changed) in the same commit. Don't ship code today and document tomorrow — they drift permanently. The "Documentation Update Rules" mapping in the Workflow & Hooks section tells you which doc maps to which kind of change. **[FREQUENTLY VIOLATED]**
+- **Docs updated in the same commit as the code.** When a change affects architecture, APIs, schemas, conventions, infra, or operational procedures, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`, `docs/RUNBOOK.md`, `docs/specs/<domain>/`, this file if rules changed) in the same commit. Don't ship code today and document tomorrow — they drift permanently. The "Documentation Update Rules" mapping in the Workflow & Hooks section tells you which doc maps to which kind of change. **[FREQUENTLY VIOLATED]**
 
 ### Backend / Python
 - **`date.today()` forbidden outside `common/core/planning_date.py`.** Use `get_planning_date()`. Env overrides: `PLANNING_DATE`, `USE_SYSTEM_DATE`. **[FREQUENTLY VIOLATED]**
@@ -222,7 +222,7 @@ frontend/             # React + Vite — src/tabs/, src/api/queries/, src/compon
 config/               # ~42 YAML files; master forecast config: forecasting/forecast_pipeline_config.yaml
 sql/                  # 130+ DDL migrations (numeric prefix)
 tests/                # api/, unit/  (3900+ backend tests)
-docs/                 # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, ENTERPRISE_ARCHITECTURE, specs/
+docs/                 # ARCHITECTURE (incl. platform overview + feature catalog), RUNBOOK, ENTERPRISE_ARCHITECTURE, specs/
 data/                 # Generated artifacts (gitignored) — input/, staged/, backtest/, champion/, clustering/, models/, tuning/
 ```
 
@@ -270,7 +270,7 @@ Multi-step plans: this pass happens at **each** step, not only the end. Multi-ag
 2. **Backend**: router in correct `api/routers/<domain>/`, `get_conn()`, `%s`, `app.include_router()` BEFORE `domains.py`, `Depends(require_api_key)` on writes, config in YAML.
 3. **Frontend**: query module in `src/api/queries/`, Vite proxy entry, queries barrel entry, theme via context.
 4. **Tests**: backend + frontend per the table above, then `make test-all`.
-5. **Docs**: update `docs/ARCHITECTURE.md`, `docs/PLATFORM_GUIDE.md`, the relevant `docs/specs/<domain>/<spec>.md`, and `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features". `docs/ENTERPRISE_ARCHITECTURE.md` and `docs/RUNBOOK.md` carry inline self-update rules — follow them. Update this `CLAUDE.md` only if a new critical rule applies.
+5. **Docs**: update `docs/ARCHITECTURE.md` (incl. its Feature Catalog §26), the relevant `docs/specs/<domain>/<spec>.md`, and `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features". `docs/ENTERPRISE_ARCHITECTURE.md` and `docs/RUNBOOK.md` carry inline self-update rules — follow them. Update this `CLAUDE.md` only if a new critical rule applies.
 6. **Verify**: `make audit-routers`, then `make test-all`.
 
 What does **not** require doc updates: bug fixes without interface changes, internal refactors, typo fixes.
@@ -304,7 +304,7 @@ What does **not** require doc updates: bug fixes without interface changes, inte
 
 - **Architecture, data flow, dimension/fact tables, MV catalog** → `docs/ARCHITECTURE.md`
 - **Full Make command list (~130 targets), DB cleanup/fresh-recreate, runbooks** → `docs/RUNBOOK.md`
-- **Platform guide (stack details, datasets, quick start)** → `docs/PLATFORM_GUIDE.md`
+- **Platform overview, quick start, feature catalog** → `docs/ARCHITECTURE.md` §25–27
 - **Design specs (8 domains, 80+ files)** → `docs/specs/README.md`
 - **Enterprise architecture (TOGAF-style, ADRs, transition roadmap)** → `docs/ENTERPRISE_ARCHITECTURE.md`
 - **Vite proxy authoritative list** → `frontend/vite.config.ts` (run `make audit-routers` for parity)

@@ -1649,7 +1649,7 @@ Every new feature must complete this checklist before merge:
 
 #### Documentation
 - [ ] Update `docs/ARCHITECTURE.md`
-- [ ] Update `docs/PLATFORM_GUIDE.md`
+- [ ] Update `docs/ARCHITECTURE.md`
 - [ ] Create/update spec in `docs/specs/<domain>/`
 
 #### Verification

@@ -133,7 +133,7 @@ These are honest gaps where docs/CLAUDE.md and code disagree. Each is flagged in
 ## Help
 
 - Architecture deep-dive: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)
-- Platform guide: [docs/PLATFORM_GUIDE.md](../PLATFORM_GUIDE.md)
+- Platform guide: [docs/ARCHITECTURE.md](../ARCHITECTURE.md)
 - Cleanup / fresh recreate: [docs/RUNBOOK.md](../RUNBOOK.md)
 - Design specs: [docs/specs/README.md](../specs/README.md)
 - Project rules: [CLAUDE.md](../../CLAUDE.md)
