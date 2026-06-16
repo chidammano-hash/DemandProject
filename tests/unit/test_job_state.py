@@ -247,3 +247,31 @@ class TestRunSubprocess:
 
         cb.assert_any_call(msg="Starting")
         cb.assert_any_call(msg="hello")
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_compute_sku_features param mapping
+# ---------------------------------------------------------------------------
+
+class TestComputeSkuFeaturesHandler:
+    """The job/params schema exposes ``time_window_months`` but run_pipeline's
+    kwarg is ``time_window`` — the handler must map between them (regression)."""
+
+    def test_maps_time_window_months_param_to_run_pipeline_time_window(self):
+        from common.services.job_state import _run_compute_sku_features
+
+        with patch("scripts.ml.compute_sku_features.run_pipeline") as mock_run:
+            mock_run.return_value = {"skus_processed": 5}
+            result = _run_compute_sku_features({"time_window_months": 24})
+
+        mock_run.assert_called_once_with(time_window=24)
+        assert result == {"skus_processed": 5}
+
+    def test_defaults_time_window_to_36_when_param_absent(self):
+        from common.services.job_state import _run_compute_sku_features
+
+        with patch("scripts.ml.compute_sku_features.run_pipeline") as mock_run:
+            mock_run.return_value = {}
+            _run_compute_sku_features({})
+
+        mock_run.assert_called_once_with(time_window=36)

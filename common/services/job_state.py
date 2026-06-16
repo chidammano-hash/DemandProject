@@ -879,7 +879,8 @@ def _run_compute_sku_features(
 
     if progress_cb:
         progress_cb(pct=10, msg="Computing SKU features")
-    result = run_pipeline(time_window_months=params.get("time_window_months", 36))
+    # The job/params schema uses "time_window_months"; run_pipeline's kwarg is "time_window".
+    result = run_pipeline(time_window=params.get("time_window_months", 36))
     if progress_cb:
         progress_cb(pct=100, msg="Complete")
     return result
