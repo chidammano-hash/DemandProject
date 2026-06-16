@@ -101,7 +101,7 @@ payload.
 |---|---|---|
 | `mv_inventory_health_score` | `make health-all` | `scripts/refresh_health_scores.py` |
 | `mv_fill_rate_monthly` | `make fill-rate-all` | dedicated refresh target |
-| `mv_supplier_performance` | `make supplier-perf-all` | dedicated refresh target |
+| `mv_supplier_po_performance` | `make supplier-perf-all` | dedicated refresh target |
 | `mv_intramonth_stockout` | `make intramonth-all` | `scripts/refresh_intramonth_stockout.py` |
 | `mv_control_tower_kpis` | `make control-tower-all` | direct REFRESH |
 

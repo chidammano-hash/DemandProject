@@ -56,7 +56,7 @@ A second-wave review structured to produce raw enhancement volume, then sift it 
 |---|---|---|---|---|
 | 11 | **Service-level back-test / drift report** | 17 | S | Fill-rate MV + tier MVs already in place. |
 | 12 | **Decision Ledger Merkle anchoring + four-eyes** | 15 | M | Gates AI agents, autonomy tiers, EU AI Act, SOX 404. North-star primitive in dependency DAG. |
-| 13 | **Lead-time CV exposure + change-point auto-recompute** | 14 | S | `mv_supplier_performance.lt_cv` already computed; expose via API. |
+| 13 | **Lead-time CV exposure + change-point auto-recompute** | 14 | S | `mv_supplier_po_performance.lt_cv` already computed; expose via API. |
 | 14 | **Probabilistic chain — conformal forecast → conformal SS → conformal replenishment** | 14 | M–L | Differentiator vs ToolsGroup (only conformal chain end-to-end is novel; quantile alone is parity). |
 | 15 | **Tier-N supplier visibility + SPOF/HHI + Risk Module** | 13 | M–L | Standalone $200-500K module (Resilinc/Everstream comp). |
 | 16 | **Bitemporal facts + AS-OF queries + SCD-2 dimensions** | 14 | XL | **TENSION**: leverage judge calls it #1 primitive (~25 downstream); business-impact judge demoted as "plumbing nobody pays for." Ship as enabler, not as feature. |

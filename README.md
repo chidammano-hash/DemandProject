@@ -13,7 +13,6 @@ sql/              # PostgreSQL DDL migrations (86 files)
 tests/            # Backend tests (2200+ pytest)
 frontend/         # React + Vite + TypeScript UI (730+ vitest)
 docs/             # Architecture docs + 52 design specs
-archive/          # Archived reference materials
 data/             # Generated ML artifacts (gitignored)
 data/input/       # Source CSV data (gitignored)
 ```

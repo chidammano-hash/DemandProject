@@ -311,7 +311,7 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 
 1. **Tier 1**: `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`
 2. **Tier 2**: `mv_inventory_forecast_monthly`, `mv_fill_rate_monthly`, `mv_intramonth_stockout`
-3. **Tier 3**: `mv_supplier_performance`, `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_dfu_coverage`
+3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_dfu_coverage`
 4. **Tier 4**: `mv_inventory_health_score`, `mv_control_tower_kpis`
 
 ### Data Retention Policies
@@ -726,7 +726,6 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
   REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly;
   REFRESH MATERIALIZED VIEW mv_fill_rate_monthly;
   REFRESH MATERIALIZED VIEW mv_intramonth_stockout;
-  REFRESH MATERIALIZED VIEW mv_supplier_performance;
   REFRESH MATERIALIZED VIEW mv_supplier_po_performance;
   REFRESH MATERIALIZED VIEW mv_po_lead_time_analysis;
   REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;

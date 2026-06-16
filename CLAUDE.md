@@ -33,7 +33,7 @@ Hard constraints. Violations cause bugs, test failures, or silent data corruptio
 
 ### Workflow (applies to every change)
 - **Review + refactor at each step.** Before reporting any change as complete: re-read your own diff, fix anything you'd flag in code review, refactor for clarity if the diff is messy. In multi-step plans (parallel agents, multi-file refactors), each step ends with this self-pass — don't defer it to the end. **[FREQUENTLY VIOLATED]**
-- **Docs updated in the same commit as the code.** When a change affects architecture, APIs, schemas, conventions, infra, or operational procedures, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`, `docs/RUNBOOK.md`, `docs/specs/<domain>/`, this file if rules changed) in the same commit. Don't ship code today and document tomorrow — they drift permanently. The "Documentation Update Rules" mapping in the Workflow & Hooks section tells you which doc maps to which kind of change. **[FREQUENTLY VIOLATED]**
+- **Docs updated in the same commit as the code.** When a change affects architecture, APIs, schemas, conventions, infra, or operational procedures, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`, `docs/operations-manual/`, `docs/specs/<domain>/`, this file if rules changed) in the same commit. Don't ship code today and document tomorrow — they drift permanently. The "Documentation Update Rules" mapping in the Workflow & Hooks section tells you which doc maps to which kind of change. **[FREQUENTLY VIOLATED]**
 
 ### Backend / Python
 - **`date.today()` forbidden outside `common/core/planning_date.py`.** Use `get_planning_date()`. Env overrides: `PLANNING_DATE`, `USE_SYSTEM_DATE`. **[FREQUENTLY VIOLATED]**
@@ -50,7 +50,7 @@ Hard constraints. Violations cause bugs, test failures, or silent data corruptio
 - **No backward-compat shims.** When moving a module, rewrite all importers in the same change. Canonical: `from common.core.db import get_db_params`.
 - **Routers/modules > 800 LoC must split** by sub-feature into a domain folder.
 - **No `_row_to_dict` outside `common/core/sql_helpers.py`.** Import `row_to_dict_from_cursor` / `row_to_dict_from_cols`.
-- **Read-only analytics endpoints opt into `get_async_read_only_conn()`** (or sync sibling `get_read_only_conn()`). Routes to a Postgres read replica when `READ_REPLICA_URL` is set; otherwise falls back to the primary pool with no behaviour change. Use ONLY for queries that tolerate replica lag — never for read-after-write flows. Currently used by 7 customer-analytics endpoints. See `docs/RUNBOOK.md` "Read Replica Deployment".
+- **Read-only analytics endpoints opt into `get_async_read_only_conn()`** (or sync sibling `get_read_only_conn()`). Routes to a Postgres read replica when `READ_REPLICA_URL` is set; otherwise falls back to the primary pool with no behaviour change. Use ONLY for queries that tolerate replica lag — never for read-after-write flows. Currently used by 7 customer-analytics endpoints. See `docs/operations-manual/11-maintenance-troubleshooting.md` "Read Replica Deployment".
 
 ### ML / Forecasting
 - **All tree-model `.fit()` and instantiation goes through `common/ml/model_registry.py`** (`fit_model()`, `build_model()`). Direct `LGBMRegressor()` / `CatBoostRegressor()` / `XGBRegressor()` outside `model_registry.py` is a defect — applies to tuning, training, backtest, production, meta-learner.
@@ -174,7 +174,7 @@ Each entry: **symptom → cause → fix**. File paths are anchors.
 
 ## Commands Cheatsheet
 
-The targets Claude actually invokes. For the full operator command list (~130 targets — pipelines, ML, fresh-load, perf, setup-*), see `docs/RUNBOOK.md` and `Makefile`.
+The targets Claude actually invokes. For the full operator command list (~130 targets — pipelines, ML, fresh-load, perf, setup-*), see `docs/operations-manual/` and `Makefile`.
 
 ```bash
 # Run services
@@ -222,7 +222,7 @@ frontend/             # React + Vite — src/tabs/, src/api/queries/, src/compon
 config/               # ~42 YAML files; master forecast config: forecasting/forecast_pipeline_config.yaml
 sql/                  # 130+ DDL migrations (numeric prefix)
 tests/                # api/, unit/  (3900+ backend tests)
-docs/                 # ARCHITECTURE (incl. platform overview + feature catalog), RUNBOOK, ENTERPRISE_ARCHITECTURE, specs/
+docs/                 # ARCHITECTURE (incl. platform overview + feature catalog), ENTERPRISE_ARCHITECTURE, operations-manual/ (operator runbook), specs/
 data/                 # Generated artifacts (gitignored) — input/, staged/, backtest/, champion/, clustering/, models/, tuning/
 ```
 
@@ -266,11 +266,11 @@ Multi-step plans: this pass happens at **each** step, not only the end. Multi-ag
 - Run `make test-all` after every change
 
 ### Feature integration checklist
-1. **DB**: DDL in `sql/` (next sequence); add to `db-truncate-data` + `refresh-mvs-tiered` Make targets and to `docs/RUNBOOK.md` cleanup section. New input source → register `DomainSpec`, add to `etl_config.yaml` `domain_order`, add to `normalize-all` + `load-all`. New forecast → use candidate→production promotion.
+1. **DB**: DDL in `sql/` (next sequence); add to `db-truncate-data` + `refresh-mvs-tiered` Make targets and to `docs/operations-manual/11-maintenance-troubleshooting.md` cleanup section. New input source → register `DomainSpec`, add to `etl_config.yaml` `domain_order`, add to `normalize-all` + `load-all`. New forecast → use candidate→production promotion.
 2. **Backend**: router in correct `api/routers/<domain>/`, `get_conn()`, `%s`, `app.include_router()` BEFORE `domains.py`, `Depends(require_api_key)` on writes, config in YAML.
 3. **Frontend**: query module in `src/api/queries/`, Vite proxy entry, queries barrel entry, theme via context.
 4. **Tests**: backend + frontend per the table above, then `make test-all`.
-5. **Docs**: update `docs/ARCHITECTURE.md` (incl. its Feature Catalog §26), the relevant `docs/specs/<domain>/<spec>.md`, and `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features". `docs/ENTERPRISE_ARCHITECTURE.md` and `docs/RUNBOOK.md` carry inline self-update rules — follow them. Update this `CLAUDE.md` only if a new critical rule applies.
+5. **Docs**: update `docs/ARCHITECTURE.md` (incl. its Feature Catalog §26), the relevant `docs/specs/<domain>/<spec>.md`, `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features", and `docs/operations-manual/` when operational procedures change. `docs/ENTERPRISE_ARCHITECTURE.md` carries inline self-update rules — follow them. Update this `CLAUDE.md` only if a new critical rule applies.
 6. **Verify**: `make audit-routers`, then `make test-all`.
 
 What does **not** require doc updates: bug fixes without interface changes, internal refactors, typo fixes.
@@ -282,7 +282,6 @@ What does **not** require doc updates: bug fixes without interface changes, inte
 ### Files & directories
 - Do not commit `__pycache__/`, `.pyc`, `.venv/`, `.env`, `credentials.*`, `*secret*`, `*.key`.
 - Do not modify `data/*.csv` manually — they are generated by normalize scripts.
-- Do not touch `archive/reference/` — archived code.
 
 ### Code drift
 - Do not add backward-compat shims when moving modules — rewrite all importers in the same change.
@@ -303,7 +302,7 @@ What does **not** require doc updates: bug fixes without interface changes, inte
 ## Detailed Reference (moved out)
 
 - **Architecture, data flow, dimension/fact tables, MV catalog** → `docs/ARCHITECTURE.md`
-- **Full Make command list (~130 targets), DB cleanup/fresh-recreate, runbooks** → `docs/RUNBOOK.md`
+- **Operator runbook (setup → ops → maintenance), Make command list, DB cleanup/fresh-recreate** → `docs/operations-manual/`
 - **Platform overview, quick start, feature catalog** → `docs/ARCHITECTURE.md` §25–27
 - **Design specs (8 domains, 80+ files)** → `docs/specs/README.md`
 - **Enterprise architecture (TOGAF-style, ADRs, transition roadmap)** → `docs/ENTERPRISE_ARCHITECTURE.md`
