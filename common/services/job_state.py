@@ -1165,7 +1165,7 @@ def _run_tuning_backtest(
 
     # 2. Run backtest via _run_subprocess (gets PID tracking + cancel + log streaming)
     cmd = [
-        _UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
+        _UV, "run", "python", str(ROOT / "scripts" / "ml" / "run_backtest.py"),
         "--model", "lgbm",
         "--config", str(tmp_path),
     ]
@@ -1237,7 +1237,7 @@ def _run_model_tuning_experiment(
 
     # 2. Build backtest command — optionally include cluster override
     cmd = [
-        _UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
+        _UV, "run", "python", str(ROOT / "scripts" / "ml" / "run_backtest.py"),
         "--model", model,
         "--config", config_path,
     ]
@@ -1384,7 +1384,7 @@ def _run_load_backtest_results(
 
     cmd = [
         _UV, "run", "python",
-        str(ROOT / "scripts" / "load_backtest_forecasts.py"),
+        str(ROOT / "scripts" / "etl" / "load_backtest_forecasts.py"),
         "--model", model_id, "--replace",
     ]
     start = time.time()
@@ -1453,7 +1453,7 @@ def _run_load_backtest_model(
 
     cmd = [
         _UV, "run", "python",
-        str(ROOT / "scripts" / "load_backtest_forecasts.py"),
+        str(ROOT / "scripts" / "etl" / "load_backtest_forecasts.py"),
         "--model", model_id, "--replace",
     ]
     start = time.time()
