@@ -119,6 +119,20 @@ algorithm entry) and a per-run summary JSON. Each backtest also trains
 models AND persists `.pkl` artifacts to `data/models/<model_id>/` for
 downstream production forecasting.
 
+### UI run concurrency (Model Tuning → Backtest stage)
+
+`POST /backtest-management/{model_id}/run` (the **Run** button) is concurrency-controlled:
+
+- **Sequential by default** — backtests share the scheduler's `backtest` group, so
+  one runs at a time and additional submissions queue (FIFO) and run in order.
+- **"Run in parallel" toggle** (`?parallel=true`) — submits under a per-job-type
+  group (`backtest_<family>`), so *different* model families run concurrently, bounded
+  by the scheduler's 4-worker pool. Each family still writes its own `data/backtest/<model_id>/`,
+  so there is no output collision.
+- **Duplicate guard** — submitting a family whose backtest is already running or queued
+  returns **409**; the same job type writes the same output dir, so two concurrent runs
+  of one family would clobber each other.
+
 ### 4.3.1 Per-family commands
 
 ```bash

@@ -395,11 +395,20 @@ def get_current_metadata(model_id: str):
 
 
 @router.post("/{model_id}/run", status_code=201, dependencies=[Depends(require_api_key)])
-def submit_backtest_run(model_id: str):
+def submit_backtest_run(model_id: str, parallel: bool = False):
     """Submit a backtest job for the given model.
 
     Validates model_id exists in pipeline config, maps to the correct job type,
     inserts a tracking row into backtest_run, and submits the job.
+
+    Concurrency:
+      - A duplicate run for the same backtest job type that is already running or
+        queued is rejected with 409 (same job type writes the same output dir, so
+        two concurrent runs would clobber each other).
+      - ``parallel=False`` (default): the job uses the shared ``backtest`` group, so
+        backtests run one at a time (extra submissions queue and run sequentially).
+      - ``parallel=True``: the job uses a per-job-type group, so DIFFERENT model
+        families run concurrently (bounded by the scheduler's worker pool).
     """
     # Validate model_id is in pipeline config
     roster = get_algorithm_roster()
@@ -415,6 +424,28 @@ def submit_backtest_run(model_id: str):
         raise HTTPException(
             status_code=400,
             detail=f"No backtest job type configured for model '{model_id}'",
+        )
+
+    # Reject duplicate: the same job type already running/queued would clobber its
+    # output dir. job_type (not model_id) is the unit of work / collision.
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT job_id FROM job_history "
+                "WHERE job_type = %s AND status IN ('queued', 'running') "
+                "ORDER BY submitted_at DESC LIMIT 1",
+                (job_type,),
+            )
+            existing = cur.fetchone()
+    except psycopg.Error:
+        logger.exception("Duplicate-run check failed for %s", model_id)
+        raise HTTPException(status_code=500, detail="Failed to check running jobs") from None
+    if existing:
+        family = job_type.removeprefix("backtest_")
+        raise HTTPException(
+            status_code=409,
+            detail=f"A {family} backtest is already running or queued (job {existing[0]}). "
+                   "Wait for it to finish or cancel it before starting another.",
         )
 
     # Insert tracking row
@@ -442,6 +473,9 @@ def submit_backtest_run(model_id: str):
             job_type=job_type,
             params={"backtest_run_id": run_id},
             label=f"Backtest: {model_id}",
+            # Per-job-type group → different families run in parallel; the shared
+            # default "backtest" group → strictly sequential.
+            group_override=(job_type if parallel else None),
         )
     except ValueError as exc:
         logger.exception("Failed to submit backtest job for %s", model_id)

@@ -35,6 +35,8 @@ export function BacktestStagePanel({
   const queryClient = useQueryClient();
   const [runningModels, setRunningModels] = useState<Set<string>>(new Set());
   const [loadingModels, setLoadingModels] = useState<Set<string>>(new Set());
+  const [parallel, setParallel] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const { data: backtestSummary } = useQuery({
     queryKey: backtestMgmtKeys.summary,
@@ -44,12 +46,14 @@ export function BacktestStagePanel({
   });
 
   const handleRunBacktest = async (modelId: string) => {
+    setRunError(null);
     setRunningModels((prev) => new Set(prev).add(modelId));
     try {
-      await submitBacktestRun(modelId);
+      await submitBacktestRun(modelId, parallel);
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.summary });
     } catch (err) {
-      console.error("Failed to submit backtest:", err);
+      // Surface 409 "already running/queued" and other errors to the user.
+      setRunError(err instanceof Error ? err.message : "Failed to submit backtest");
     } finally {
       // Keep the running indicator for a bit so the user sees feedback
       setTimeout(() => {
@@ -104,7 +108,26 @@ export function BacktestStagePanel({
       {/* ---- Model Grid (all models) ---- */}
       <div className="space-y-3">
         <div>
-          <h3 className="text-sm font-medium text-muted-foreground mb-2">All Models</h3>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-medium text-muted-foreground">All Models</h3>
+            <label
+              className="flex items-center gap-1.5 text-xs text-muted-foreground select-none cursor-pointer"
+              title="When on, different model families run at the same time. When off, backtests run one at a time (extra runs queue). The same family never runs twice at once."
+            >
+              <input
+                type="checkbox"
+                checked={parallel}
+                onChange={(e) => setParallel(e.target.checked)}
+                className="h-3.5 w-3.5"
+              />
+              Run in parallel
+            </label>
+          </div>
+          {runError && (
+            <p className="mb-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
+              {runError}
+            </p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
             {models.map((m) => {
               const btSummary = backtestSummary?.[m.id];

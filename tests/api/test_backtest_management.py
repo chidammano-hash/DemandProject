@@ -206,8 +206,8 @@ async def test_get_current_metadata_not_found():
 @pytest.mark.asyncio
 async def test_submit_run_success():
     pool, conn, cursor = _make_pool()
-    # First call: INSERT RETURNING id; Second call: UPDATE SET job_id
-    cursor.fetchone.return_value = (42,)
+    # fetchone order: (1) duplicate-check -> None (no dup), (2) INSERT RETURNING id -> 42
+    cursor.fetchone.side_effect = [None, (42,)]
 
     mock_jm = MagicMock()
     mock_jm.return_value.submit_job.return_value = "job-bt-999"
@@ -229,6 +229,52 @@ async def test_submit_run_success():
     assert data["job_id"] == "job-bt-999"
     assert data["model_id"] == "lgbm_cluster"
     assert data["status"] == "queued"
+    # Sequential (default): no per-family group override.
+    assert mock_jm.return_value.submit_job.call_args.kwargs["group_override"] is None
+
+
+@pytest.mark.asyncio
+async def test_submit_run_rejects_duplicate():
+    """A second run of the same family while one is running/queued -> 409."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [("job-bt-existing",)]  # duplicate-check finds one
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/run")
+
+    assert resp.status_code == 409
+    assert "already running or queued" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_submit_run_parallel_uses_per_family_group():
+    """parallel=true -> submit_job gets the per-job-type group so families run concurrently."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [None, (43,)]
+
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-bt-1000"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/run?parallel=true")
+
+    assert resp.status_code == 201
+    assert mock_jm.return_value.submit_job.call_args.kwargs["group_override"] == "backtest_lgbm"
 
 
 @pytest.mark.asyncio

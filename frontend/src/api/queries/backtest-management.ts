@@ -170,12 +170,19 @@ export async function fetchStagingSummary(): Promise<StagingSummaryMap> {
 // Fetchers — WRITE
 // ---------------------------------------------------------------------------
 
-/** Submit a new backtest run for a model. */
+/** Submit a new backtest run for a model.
+ *
+ * `parallel=false` (default) runs backtests sequentially (extra submissions queue);
+ * `parallel=true` lets different model families run concurrently. A duplicate run
+ * of the same family that's already running/queued is rejected by the API (409).
+ */
 export async function submitBacktestRun(
   modelId: string,
+  parallel = false,
 ): Promise<{ run_id: number; job_id: string }> {
+  const qs = parallel ? "?parallel=true" : "";
   return fetchJson<{ run_id: number; job_id: string }>(
-    `/backtest-management/${modelId}/run`,
+    `/backtest-management/${modelId}/run${qs}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
