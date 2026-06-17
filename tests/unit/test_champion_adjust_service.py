@@ -6,6 +6,7 @@ import pytest
 from common.ai.champion_adjust_service import (
     UnknownProvider,
     _months_from_rec,
+    _resolve_horizon,
     _resolve_provider_model,
 )
 from common.ai.champion_adjuster import DfuContext, Recommendation, build_user_prompt
@@ -37,6 +38,18 @@ def test_months_from_rec_keep_is_identity():
     rec = Recommendation(recommendation_code="KEEP", confidence=0.5, rationale="baseline is fine")
     months = _months_from_rec(rec, _forward())
     assert [m.ai_qty for m in months] == [100.0, 200.0, 300.0, 400.0]
+
+
+def test_resolve_horizon_defends_against_bad_values():
+    # Valid positive int is honored.
+    assert _resolve_horizon({"defaults": {"horizon_months": 6}}) == 6
+    # Missing → default.
+    assert _resolve_horizon({}) == 3
+    # YAML footguns coerce to default, NOT to int(False)==0 / int(0)==0.
+    assert _resolve_horizon({"defaults": {"horizon_months": False}}) == 3
+    assert _resolve_horizon({"defaults": {"horizon_months": 0}}) == 3
+    assert _resolve_horizon({"defaults": {"horizon_months": -2}}) == 3
+    assert _resolve_horizon({"defaults": {"horizon_months": "x"}}) == 3
 
 
 def test_resolve_provider_model():

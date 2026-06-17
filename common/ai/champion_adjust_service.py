@@ -268,6 +268,24 @@ def _months_from_rec(rec: Recommendation, forward: list[tuple[str, float, date, 
     return months
 
 
+def _resolve_horizon(cfg: dict, *, default: int = 3) -> int:
+    """Resolve the guardrail horizon cap, defensively.
+
+    ``horizon_months`` is the per-adjustment ceiling (how many forward months an
+    adjustment may touch). A non-positive or non-numeric value (e.g. a YAML typo
+    like ``false`` → ``int(False) == 0``) would silently clip every adjustment to
+    zero months — making the AI forecast always equal the champion. Guard against
+    that: coerce to a positive int, else fall back to ``default`` with a warning.
+    To *disable* the cap (let the LLM's 1..6 stand), set
+    ``apply_guardrails.reject_on_horizon_overflow: false`` instead.
+    """
+    raw = cfg.get("defaults", {}).get("horizon_months", default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or int(raw) < 1:
+        logger.warning("%s ai_champion horizon_months=%r is invalid; using %d", _ts(), raw, default)
+        return default
+    return int(raw)
+
+
 def _resolve_provider_model(cfg: dict, provider: str | None) -> tuple[str, str]:
     effective = provider or cfg.get("provider", "ollama")
     models = cfg.get("models", {})
@@ -292,7 +310,7 @@ def adjust_dfu(item_id: str, loc: str, *, provider: str | None = None,
     """
     cfg = load_config(CONFIG_NAME)
     guardrails = cfg.get("apply_guardrails", {})
-    horizon = int(cfg.get("defaults", {}).get("horizon_months", 3))
+    horizon = _resolve_horizon(cfg)
     effective_provider, model = _resolve_provider_model(cfg, provider)
 
     with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
@@ -368,7 +386,7 @@ def save_adjustment(item_id: str, loc: str, *, provider: str | None,
     """
     cfg = load_config(CONFIG_NAME)
     guardrails = cfg.get("apply_guardrails", {})
-    horizon = int(cfg.get("defaults", {}).get("horizon_months", 3))
+    horizon = _resolve_horizon(cfg)
     effective_provider, model = _resolve_provider_model(cfg, provider)
 
     rec = apply_guardrails(Recommendation.model_validate(recommendation), guardrails, horizon)
