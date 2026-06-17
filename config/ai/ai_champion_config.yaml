@@ -13,8 +13,8 @@ _includes: [shared_constants]
 defaults:
   source_model_id: champion            # model_id in fact_production_forecast to adjust
   target_model_id: ai_champion         # model_id written to fact_ai_champion_forecast
-  horizon_months: 3                    # How many forward months an adjustment may touch
-  forecast_window_months: 12           # Forward months materialized as the ai_champion forecast
+  horizon_months: 12                   # Max forward months an adjustment may touch (1..12; capped by forecast_window_months and the apply_horizon_months schema bound)
+  forecast_window_months: 12           # Forward months materialized as the ai_champion forecast (upper bound on horizon_months)
   actuals_lookback_months: 24          # Months of own sales history shown to the LLM
   top_customers: 5                     # Top-K customers (by 12mo sales) shown to the LLM (0 disables)
 

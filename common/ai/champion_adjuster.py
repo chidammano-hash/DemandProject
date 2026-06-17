@@ -45,7 +45,7 @@ class Recommendation(BaseModel):
     recommendation_code: RecommendationCode
     pct_change: float | None = Field(default=None, ge=-100, le=500)  # for SCALE_*
     proposed_qty: list[float] | None = None                          # for REPLACE / SHIFT_TIMING
-    apply_horizon_months: int = Field(default=3, ge=1, le=6)
+    apply_horizon_months: int = Field(default=3, ge=1, le=12)
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str = Field(min_length=10, max_length=1000)
     evidence_keys: list[str] = Field(default_factory=list)
@@ -142,7 +142,7 @@ JSON object matching this schema:
   "recommendation_code": "KEEP" | "SCALE_UP" | "SCALE_DOWN" | "REPLACE" | "SHIFT_TIMING" | "OVERRIDE_TO_BASELINE",
   "pct_change":           number | null,            // required for SCALE_UP / SCALE_DOWN; range -50..+50 typical
   "proposed_qty":         [number, ...] | null,     // required for REPLACE / SHIFT_TIMING; one entry per future month
-  "apply_horizon_months": integer 1..6,             // how many months ahead the recommendation applies
+  "apply_horizon_months": integer 1..12,            // how many months ahead the recommendation applies
   "confidence":           number 0..1,              // your calibrated confidence
   "rationale":            string,                   // 1-3 sentences citing specific evidence
   "evidence_keys":        [string, ...]             // short tags like "trend_break", "promo_pull_forward",

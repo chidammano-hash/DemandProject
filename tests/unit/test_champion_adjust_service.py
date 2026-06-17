@@ -40,6 +40,18 @@ def test_months_from_rec_keep_is_identity():
     assert [m.ai_qty for m in months] == [100.0, 200.0, 300.0, 400.0]
 
 
+def test_apply_horizon_months_accepts_up_to_12():
+    import pydantic
+    # 12 is now valid (raised from 6).
+    rec = Recommendation(recommendation_code="SCALE_UP", pct_change=10.0,
+                         apply_horizon_months=12, confidence=0.9, rationale="long ramp ahead")
+    assert rec.apply_horizon_months == 12
+    # 13 is out of range.
+    with pytest.raises(pydantic.ValidationError):
+        Recommendation(recommendation_code="SCALE_UP", pct_change=10.0,
+                       apply_horizon_months=13, confidence=0.9, rationale="too far out")
+
+
 def test_resolve_horizon_defends_against_bad_values():
     # Valid positive int is honored.
     assert _resolve_horizon({"defaults": {"horizon_months": 6}}) == 6
