@@ -42,6 +42,9 @@ expert-panel = ["pmdarima>=2.0.0"]
 foundation = [
     "chronos-forecasting>=2.2.2",
 ]
+dl = [
+    "neuralforecast>=3.1.9",
+]
 
 [dependency-groups]
 dev = [

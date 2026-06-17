@@ -22,10 +22,15 @@ uv sync --extra foundation
 ```
 
 The Jobs tab launches these backtests with `uv run --extra foundation …`
-(`common/services/job_state.py`, `_FOUNDATION_EXTRA_MODELS`), so the extra is
-ensured at run time even if a plain `uv sync` would otherwise strip it. Without the
-package the backtest logs `chronos-forecasting not installed; skipping` and produces
-no predictions — a graceful no-op, not a crash.
+(`common/services/job_state.py`, `_MODEL_EXTRAS`), so the extra is ensured at run
+time even if a plain `uv sync` would otherwise strip it. Without the package the
+backtest logs `chronos-forecasting not installed; skipping` and produces no
+predictions — a graceful no-op, not a crash.
+
+> The deep-learning baselines **nbeats / nhits** use a separate heavy dependency,
+> `neuralforecast`, shipped as the **`dl`** extra (`uv sync --extra dl`); `_MODEL_EXTRAS`
+> maps them to it the same way. Without it they log `neuralforecast not installed`
+> and return no predictions.
 
 ## 1. Overview
 

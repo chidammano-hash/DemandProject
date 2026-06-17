@@ -411,11 +411,18 @@ def _run_backtest(
         "chronos2": "scripts.ml.run_backtest_chronos2",
         "chronos2_enriched": "scripts.ml.run_backtest_chronos2_enriched",
     }
-    # Models whose backtest scripts import chronos-forecasting (torch) — these run
-    # with the optional `foundation` extra. (nbeats/nhits use neuralforecast, a
-    # separate optional dep, and are intentionally not included here.)
-    _FOUNDATION_EXTRA_MODELS = {
-        "chronos", "chronos_bolt", "chronos2", "chronos2_enriched", "bolt_hierarchical",
+    # Models whose backtest scripts need a heavy optional dependency, mapped to the
+    # extra that provides it. Chronos variants (+ bolt_hierarchical) import
+    # chronos-forecasting (the `foundation` extra); nbeats/nhits import
+    # neuralforecast (the `dl` extra). Both pull torch.
+    _MODEL_EXTRAS = {
+        "chronos": "foundation",
+        "chronos_bolt": "foundation",
+        "chronos2": "foundation",
+        "chronos2_enriched": "foundation",
+        "bolt_hierarchical": "foundation",
+        "nhits": "dl",
+        "nbeats": "dl",
     }
     # Special scripts: direct file path
     special_scripts = {
@@ -442,12 +449,13 @@ def _run_backtest(
         except Exception:
             logger.warning("Failed to mark backtest_run %d as running", backtest_run_id)
 
-    # Models that import chronos-forecasting (torch) need the optional `foundation`
-    # extra. Pass --extra so `uv run` ensures it's present even after a plain
-    # `uv sync` would otherwise strip it (the recurring "was working, then not").
+    # Pass --extra for models that need a heavy optional dep, so `uv run` ensures
+    # it's present even after a plain `uv sync` would otherwise strip it (the
+    # recurring "was working, then not" failure).
     run_prefix = [_UV, "run"]
-    if model in _FOUNDATION_EXTRA_MODELS:
-        run_prefix += ["--extra", "foundation"]
+    extra = _MODEL_EXTRAS.get(model)
+    if extra:
+        run_prefix += ["--extra", extra]
 
     if model in tree_scripts:
         cmd = [*run_prefix, "python", tree_scripts[model]]
