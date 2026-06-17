@@ -12,6 +12,7 @@ import type { DQCorrection } from "@/api/queries/platform";
 import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
 import {
   PROD_FORECAST_COLOR,
+  AI_CHAMPION_COLOR,
   STAGING_COLORS,
   STAGING_FALLBACK_COLOR,
   DQ_ORIG_COLOR,
@@ -59,6 +60,10 @@ export interface UnifiedChartPanelProps {
   // DQ corrections overlay (optional)
   corrections?: DQCorrection[];
   showCorrections?: boolean;
+  // Saved AI Champion forward forecast overlay (optional)
+  hasAiChampion?: boolean;
+  aiChampionRecCode?: string | null;
+  aiChampionRationale?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +88,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   trendParams,
   corrections = [],
   showCorrections = false,
+  hasAiChampion = false,
+  aiChampionRecCode = null,
+  aiChampionRationale = null,
 }: UnifiedChartPanelProps) {
   const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(() => loadDefaultHiddenSupply());
   // Tracks demand series whose pill is shown but chart line is hidden (dimmed pill)
@@ -237,8 +245,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     const keys = salesMeasures.map((s) => s.key);
     keys.push(...skuData.models.map((m) => `forecast_${m}`));
     if (hasProdForecast) keys.push("production_forecast");
+    if (hasAiChampion) keys.push("ai_champion");
     return keys;
-  }, [skuData.models, hasProdForecast]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [skuData.models, hasProdForecast, hasAiChampion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "All on" means all enabled pills have their lines visible (not hidden)
   const enabledDemandKeys = allDemandKeys.filter((k) => skuVisibleSeries.has(k));
@@ -335,6 +344,15 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
               color={PROD_FORECAST_COLOR}
               active={!hiddenDemand.has("production_forecast")}
               onClick={() => toggleDemandLineVisibility("production_forecast")}
+              dashed
+            />
+          )}
+          {hasAiChampion && skuVisibleSeries.has("ai_champion") && (
+            <TogglePill
+              label="AI Champion"
+              color={AI_CHAMPION_COLOR}
+              active={!hiddenDemand.has("ai_champion")}
+              onClick={() => toggleDemandLineVisibility("ai_champion")}
               dashed
             />
           )}
@@ -496,6 +514,16 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
         )}
       </div>
 
+      {/* ---- AI Champion rationale (the reasons behind the amber line) ---- */}
+      {hasAiChampion && aiChampionRationale && !hiddenDemand.has("ai_champion") && (
+        <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <span className="font-semibold" style={{ color: AI_CHAMPION_COLOR }}>
+            AI Champion{aiChampionRecCode ? ` (${aiChampionRecCode})` : ""}:
+          </span>{" "}
+          {aiChampionRationale}
+        </p>
+      )}
+
       {/* ---- Chart ---- */}
       <UnifiedChart
         mergedData={mergedData}
@@ -505,6 +533,8 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
         hiddenDemand={hiddenDemand}
         selectedModel={selectedModel}
         hasProdForecast={hasProdForecast}
+        hasAiChampion={hasAiChampion}
+        aiChampionLineHidden={hiddenDemand.has("ai_champion")}
         stagingModelIds={stagingModelIds}
         hiddenStaging={hiddenStaging}
         hiddenStagingPills={hiddenStagingPills}

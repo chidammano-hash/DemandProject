@@ -24,6 +24,7 @@ import {
 } from "@/api/queries";
 import { fetchProductionForecast, fetchStagingForecasts } from "@/api/queries/production-forecast";
 import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
+import { aiChampionKeys, fetchAiChampionSaved } from "@/api/queries/ai-champion";
 import type {
   SkuAnalysisKpis,
   SkuAnalysisPayload,
@@ -216,6 +217,17 @@ export function ItemAnalysisTab() {
     return () => { cancelled = true; };
   }, [debouncedSkuItem, debouncedSkuLocation]);
 
+  // Saved AI Champion forecast — shares its query key with AiChampionItemPanel,
+  // so a Save in the panel auto-refreshes this overlay on the chart.
+  const aiItem = debouncedSkuItem.trim();
+  const aiLoc = debouncedSkuLocation.trim();
+  const { data: aiChampionSaved } = useQuery({
+    queryKey: aiChampionKeys.saved(aiItem, aiLoc),
+    queryFn: () => fetchAiChampionSaved(aiItem, aiLoc),
+    enabled: panels.aiChampion && aiItem.length > 0 && aiLoc.length > 0,
+    staleTime: 60_000,
+  });
+
   // Item typeahead
   useEffect(() => {
     if (!skuItem.trim()) { setSkuItemSuggestions([]); return; }
@@ -287,6 +299,14 @@ export function ItemAnalysisTab() {
       }
     }
 
+    // Build saved AI Champion month map (ai_qty per forecast_month)
+    const aiMap = new Map<string, number | null>();
+    if (aiChampionSaved?.rows.length) {
+      for (const r of aiChampionSaved.rows) {
+        if (r.forecast_month) aiMap.set(r.forecast_month, r.ai_qty);
+      }
+    }
+
     // Build staging forecast month maps: staging_{model_id} → month → qty
     const stagingMaps = new Map<string, Map<string, number | null>>();
     if (stagingForecastData?.models) {
@@ -305,6 +325,7 @@ export function ItemAnalysisTab() {
       const m = String(pt.month);
       const extras: Record<string, unknown> = {};
       if (prodMap.has(m)) extras.production_forecast = prodMap.get(m);
+      if (aiMap.has(m)) extras.ai_champion = aiMap.get(m);
       for (const [key, monthMap] of stagingMaps) {
         if (monthMap.has(m)) extras[key] = monthMap.get(m);
       }
@@ -314,6 +335,9 @@ export function ItemAnalysisTab() {
     // Collect all future months from production + staging that are beyond the last historical month
     const futureMonthSet = new Set<string>();
     for (const month of prodMap.keys()) {
+      if (month > lastHistMonth) futureMonthSet.add(month);
+    }
+    for (const month of aiMap.keys()) {
       if (month > lastHistMonth) futureMonthSet.add(month);
     }
     for (const monthMap of stagingMaps.values()) {
@@ -327,6 +351,7 @@ export function ItemAnalysisTab() {
     const futurePts = futureMonths.map((month) => {
       const pt: Record<string, unknown> = { month };
       if (prodMap.has(month)) pt.production_forecast = prodMap.get(month);
+      if (aiMap.has(month)) pt.ai_champion = aiMap.get(month);
       for (const [key, monthMap] of stagingMaps) {
         if (monthMap.has(month)) pt[key] = monthMap.get(month);
       }
@@ -334,7 +359,12 @@ export function ItemAnalysisTab() {
     });
 
     return [...result, ...futurePts] as Record<string, unknown>[];
-  }, [skuFilteredSeries, skuMonths, prodForecastData, stagingForecastData]);
+  }, [skuFilteredSeries, skuMonths, prodForecastData, stagingForecastData, aiChampionSaved]);
+
+  // AI Champion overlay: present only once a saved adjustment exists for this DFU.
+  const aiChampionRows = aiChampionSaved?.rows ?? [];
+  const hasAiChampion = aiChampionRows.some((r) => r.ai_qty != null);
+  const aiChampionLead = aiChampionRows[0] ?? null;
 
   // Available models for the SHAP dropdown
   const shapModelOptions = useMemo(() => {
@@ -527,6 +557,9 @@ export function ItemAnalysisTab() {
                     trendParams={trendParams2}
                     corrections={corrections}
                     showCorrections={panels.dqCorrections}
+                    hasAiChampion={hasAiChampion}
+                    aiChampionRecCode={aiChampionLead?.recommendation_code ?? null}
+                    aiChampionRationale={aiChampionLead?.rationale ?? null}
                   />
                 )}
                 {panels.shap && selectedModel && (

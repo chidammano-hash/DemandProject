@@ -59,6 +59,8 @@ A dedicated table (not `fact_production_forecast`) because that table's unique i
 
 **Item Analysis tab** — `frontend/src/tabs/item-analysis/AiChampionItemPanel.tsx` (query module `frontend/src/api/queries/ai-champion.ts`). Shown by default (toggle it off via the **"AI Champion"** checkbox in the panel toolbar). Shows any previously-saved adjustment for the selected DFU; a **provider dropdown** + **AI Adjust** button run a fresh adjustment; the result renders as a "Preview — not saved" card (recommendation, rationale, champion-vs-AI table) with a **Save** button. There is no FVA-tab panel.
 
+**Chart overlay** — once an adjustment is **saved**, the `ai_champion` forward forecast is merged into the main Item Analysis forecast chart (`UnifiedChart`) as an amber dashed line alongside the champion/production/staging lines, and the recommendation rationale renders as a caption above the chart. The overlay shares the saved query key (`aiChampionKeys.saved`) with `AiChampionItemPanel`, so saving in the panel auto-refreshes the chart. The line has a toggle pill (`AI Champion`) and is hidden when no saved row exists for the DFU.
+
 ## 7. Configuration (`config/ai/ai_champion_config.yaml`)
 
 `provider` (default `ollama`, overridable per call), per-provider `models`/`endpoints` (incl. `google: gemini-2.0-flash`), `defaults` (source/target model_id, horizon, window, lookback, top_customers), `apply_guardrails`, and `cost_controls.per_call_timeout_seconds`. Loaded via `load_config("ai_champion_config")`; the `LLMClient` is built with `build_from_config()`.

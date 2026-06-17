@@ -87,5 +87,8 @@ export function buildInitialVisibleSeries(
   }
   for (const m of models) keys.add(`forecast_${m}`);
   if (defaults.has("production_forecast")) keys.add("production_forecast");
+  // The saved AI Champion line is shown by default when present (gated at render
+  // by hasAiChampion); it has no separate user-default preference.
+  keys.add("ai_champion");
   return keys;
 }

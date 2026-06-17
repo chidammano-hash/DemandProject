@@ -16,6 +16,7 @@ import type { SkuAnalysisPayload } from "@/types";
 import { modelLabel } from "@/lib/model-labels";
 import {
   PROD_FORECAST_COLOR,
+  AI_CHAMPION_COLOR,
   CHART_MARGIN,
   DESELECT_OPACITY,
   STAGING_COLORS,
@@ -33,6 +34,8 @@ export interface UnifiedChartProps {
   hiddenDemand: Set<string>;
   selectedModel: string | null;
   hasProdForecast: boolean;
+  hasAiChampion: boolean;
+  aiChampionLineHidden: boolean;
   stagingModelIds: string[];
   hiddenStaging: Set<string>;
   hiddenStagingPills: Set<string>;
@@ -59,6 +62,8 @@ export function UnifiedChart({
   hiddenDemand,
   selectedModel,
   hasProdForecast,
+  hasAiChampion,
+  aiChampionLineHidden,
   stagingModelIds,
   hiddenStaging,
   hiddenStagingPills,
@@ -200,6 +205,20 @@ export function UnifiedChart({
                 strokeWidth={2.5}
                 strokeDasharray="6 3"
                 dot={false}
+                activeDot={{ r: 5 }}
+              />
+            )}
+            {hasAiChampion && skuVisibleSeries.has("ai_champion") && !aiChampionLineHidden && (
+              <Line
+                type="monotone"
+                dataKey="ai_champion"
+                yAxisId="left"
+                name="ai_champion"
+                stroke={AI_CHAMPION_COLOR}
+                strokeWidth={2.5}
+                strokeDasharray="2 2"
+                dot={false}
+                connectNulls
                 activeDot={{ r: 5 }}
               />
             )}

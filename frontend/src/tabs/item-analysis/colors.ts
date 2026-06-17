@@ -3,6 +3,8 @@
 // Hex values relocated verbatim from UnifiedChartPanel.tsx (no theme change).
 // ---------------------------------------------------------------------------
 export const PROD_FORECAST_COLOR = "#7c3aed";
+/** Amber line for the saved AI Champion forward forecast (matches the panel's Sparkles accent). */
+export const AI_CHAMPION_COLOR = "#f59e0b";
 export const CHART_MARGIN = { top: 8, right: 40, left: 18, bottom: 8 };
 export const DESELECT_OPACITY = 0.25;
 
@@ -50,6 +52,7 @@ export const TOOLTIP_LABELS: Record<string, string> = {
   qty_shipped_orig: "Shipped (original)",
   qty_ordered: "Qty Ordered",
   production_forecast: "Production Forecast",
+  ai_champion: "AI Champion",
   total_on_hand: "On Hand",
   total_on_hand_orig: "On Hand (original)",
   total_on_order: "On Order",
