@@ -1638,8 +1638,8 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 
 clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
 	rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
-	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/ data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
-	rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
+	rm -rf data/backtest/*  # all backtest output dirs are generated (per-model predictions, logs, tuning_archive); glob avoids the stale enumerated-list drift
+	rm -rf data/tuning/ data/perf_reports/
 	rm -rf data/clustering/ data/champion/ data/models/
 	rm -f data/staged/seasonality_results.csv data/staged/clustering_features.csv
 	@echo "✓ Intermediate artifacts cleaned."
