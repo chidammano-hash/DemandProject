@@ -398,11 +398,11 @@ def _run_backtest(
     Supports tree models (direct script), foundation models (module invocation),
     deep learning (--model flag), and statistical baselines.
     """
-    # Tree models: direct script invocation
+    # Tree models: direct script invocation (all backtest scripts live in scripts/ml/)
     tree_scripts = {
-        "lgbm": "scripts/run_backtest.py",
-        "catboost": "scripts/run_backtest_catboost.py",
-        "xgboost": "scripts/run_backtest_xgboost.py",
+        "lgbm": "scripts/ml/run_backtest.py",
+        "catboost": "scripts/ml/run_backtest_catboost.py",
+        "xgboost": "scripts/ml/run_backtest_xgboost.py",
     }
     # Foundation models: python -m invocation
     foundation_modules = {
@@ -413,12 +413,12 @@ def _run_backtest(
     }
     # Special scripts: direct file path
     special_scripts = {
-        "bolt_hierarchical": "scripts/run_backtest_bolt_hierarchical.py",
-        "mstl": "scripts/run_backtest_mstl.py",
-        "seasonal_naive": ("scripts/run_backtest.py", ["--model", "seasonal_naive"]),
-        "rolling_mean": ("scripts/run_backtest.py", ["--model", "rolling_mean"]),
-        "nhits": ("scripts/run_backtest_dl.py", ["--model", "nhits"]),
-        "nbeats": ("scripts/run_backtest_dl.py", ["--model", "nbeats"]),
+        "bolt_hierarchical": "scripts/ml/run_backtest_bolt_hierarchical.py",
+        "mstl": "scripts/ml/run_backtest_mstl.py",
+        "seasonal_naive": ("scripts/ml/run_backtest.py", ["--model", "seasonal_naive"]),
+        "rolling_mean": ("scripts/ml/run_backtest.py", ["--model", "rolling_mean"]),
+        "nhits": ("scripts/ml/run_backtest_dl.py", ["--model", "nhits"]),
+        "nbeats": ("scripts/ml/run_backtest_dl.py", ["--model", "nbeats"]),
     }
 
     backtest_run_id = params.get("backtest_run_id")
@@ -517,7 +517,7 @@ def _run_champion_select(
     """Run champion model selection."""
     if progress_cb:
         progress_cb(pct=10, msg="Running champion selection")
-    cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_selection.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Champion selection completed"}
 
@@ -543,7 +543,7 @@ def _run_champion_experiment(
     except Exception:
         logger.warning("Failed to store job_id on champion experiment %d", experiment_id)
 
-    cmd = [_UV, "run", "python", "scripts/run_champion_experiment.py",
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_experiment.py",
            "--experiment-id", str(experiment_id)]
     output = _run_subprocess(cmd, progress_cb, "Running champion experiment",
                              cancel_event=cancel_event, job_id=job_id)
@@ -571,7 +571,7 @@ def _run_champion_results_load(
 
     # Check for cached winners CSV from experiment run
     winners_csv = _SCRIPTS_DIR.parent / "data" / "champion" / f"experiment_{experiment_id}_winners.csv"
-    cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_selection.py"]
     if winners_csv.exists():
         cmd.extend(["--load-winners-from", str(winners_csv)])
         logger.info("Using cached winners from experiment %d: %s", experiment_id, winners_csv)
@@ -662,7 +662,7 @@ def _run_generate_production_forecast(
     model_id = params.get("model_id")
     if progress_cb:
         progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon})")
-    cmd = [_UV, "run", "python", "scripts/generate_production_forecasts.py", "--horizon", str(horizon)]
+    cmd = [_UV, "run", "python", "scripts/forecasting/generate_production_forecasts.py", "--horizon", str(horizon)]
     if model_id:
         cmd.extend(["--model-id", str(model_id)])
     output = _run_subprocess(cmd, progress_cb, "Generating production forecasts",
@@ -681,7 +681,7 @@ def _run_compute_replenishment_plan(
     """Run the forward-looking replenishment plan computation (CI Bands + Repl. Plan)."""
     if progress_cb:
         progress_cb(pct=10, msg="Starting replenishment plan computation")
-    cmd = [_UV, "run", "python", "scripts/compute_replenishment_plan.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_replenishment_plan.py"]
     output = _run_subprocess(cmd, progress_cb, "Computing replenishment plan from production forecast",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
@@ -698,7 +698,7 @@ def _run_generate_ai_insights(
     """Run AI Planning Agent portfolio scan to generate insights."""
     if progress_cb:
         progress_cb(pct=5, msg="Starting AI insights generation")
-    cmd = [_UV, "run", "python", "scripts/generate_ai_insights.py", "--portfolio"]
+    cmd = [_UV, "run", "python", "scripts/ai/generate_ai_insights.py", "--portfolio"]
     output = _run_subprocess(cmd, progress_cb, "Scanning portfolio for exceptions",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
@@ -715,7 +715,7 @@ def _run_generate_storyboard(
     """Generate storyboard exceptions for all DFUs."""
     if progress_cb:
         progress_cb(pct=10, msg="Generating storyboard exceptions")
-    cmd = [_UV, "run", "python", "scripts/generate_storyboard_exceptions.py"]
+    cmd = [_UV, "run", "python", "scripts/ops/generate_storyboard_exceptions.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Storyboard exceptions generated"}
 
@@ -747,7 +747,7 @@ def _run_inventory_planning_pipeline(
 ) -> dict[str, Any]:
     """Run the end-to-end inventory planning pipeline."""
     steps = params.get("steps")
-    cmd = [_UV, "run", "python", "scripts/run_inventory_planning_pipeline.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/run_inventory_planning_pipeline.py"]
     if steps:
         cmd.extend(["--steps", steps])
     if progress_cb:
@@ -770,7 +770,7 @@ def _run_compute_safety_stock(
     """Compute safety stock targets for all DFUs."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing safety stock targets")
-    cmd = [_UV, "run", "python", "scripts/compute_safety_stock.py", "--config", "config/inventory/safety_stock_config.yaml"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_safety_stock.py", "--config", "config/inventory/safety_stock_config.yaml"]
     if params.get("forecast_source"):
         cmd.extend(["--forecast-source", params["forecast_source"]])
     if params.get("model_id"):
@@ -788,7 +788,7 @@ def _run_compute_eoq(
     """Compute EOQ cycle stock targets."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing EOQ targets")
-    cmd = [_UV, "run", "python", "scripts/compute_eoq.py", "--config", "config/inventory/eoq_config.yaml"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_eoq.py", "--config", "config/inventory/eoq_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "EOQ computation completed"}
 
@@ -802,7 +802,7 @@ def _run_compare_inventory_algorithms(
     """Compare SS/EOQ/ROP across forecast algorithms."""
     if progress_cb:
         progress_cb(pct=10, msg="Comparing inventory algorithms")
-    cmd = [_UV, "run", "python", "scripts/compare_inventory_algorithms.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compare_inventory_algorithms.py"]
     models = params.get("models")
     if models:
         cmd.extend(["--models", models])
@@ -819,7 +819,7 @@ def _run_assign_policies(
     """Upsert replenishment policies and auto-assign DFUs by segment."""
     if progress_cb:
         progress_cb(pct=10, msg="Assigning replenishment policies")
-    cmd = [_UV, "run", "python", "scripts/assign_replenishment_policies.py",
+    cmd = [_UV, "run", "python", "scripts/inventory/assign_replenishment_policies.py",
            "--config", "config/inventory/replenishment_policy_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Policy assignment completed"}
@@ -834,7 +834,7 @@ def _run_generate_exceptions(
     """Detect replenishment exceptions and write to queue."""
     if progress_cb:
         progress_cb(pct=10, msg="Detecting replenishment exceptions")
-    cmd = [_UV, "run", "python", "scripts/generate_replenishment_exceptions.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/generate_replenishment_exceptions.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Exception detection completed"}
 
@@ -848,7 +848,7 @@ def _run_classify_abc_xyz(
     """Run ABC-XYZ classification and write to dim_sku."""
     if progress_cb:
         progress_cb(pct=10, msg="Running ABC-XYZ classification")
-    cmd = [_UV, "run", "python", "scripts/classify_abc_xyz.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/classify_abc_xyz.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "ABC-XYZ classification completed"}
 
@@ -895,7 +895,7 @@ def _run_compute_demand_signals(
     """Compute short-horizon demand signals from sales velocity."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing demand signals")
-    cmd = [_UV, "run", "python", "scripts/compute_demand_signals.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_demand_signals.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Demand signals computation completed"}
 
@@ -909,7 +909,7 @@ def _run_compute_investment(
     """Compute efficient frontier and capital investment allocation."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing investment plan")
-    cmd = [_UV, "run", "python", "scripts/compute_investment_plan.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_investment_plan.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Investment plan computation completed"}
 
@@ -923,7 +923,7 @@ def _run_refresh_health_scores(
     """Refresh the inventory health score materialized view."""
     if progress_cb:
         progress_cb(pct=10, msg="Refreshing inventory health scores")
-    cmd = [_UV, "run", "python", "scripts/refresh_health_scores.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/refresh_health_scores.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Health scores refreshed"}
 
@@ -937,7 +937,7 @@ def _run_refresh_intramonth(
     """Refresh the intramonth stockout materialized view."""
     if progress_cb:
         progress_cb(pct=10, msg="Refreshing intramonth stockout view")
-    cmd = [_UV, "run", "python", "scripts/refresh_intramonth_stockout.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/refresh_intramonth_stockout.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Intramonth stockout view refreshed"}
 
@@ -1070,7 +1070,7 @@ def _run_ss_simulation(
     """Run Monte Carlo safety stock simulation."""
     if progress_cb:
         progress_cb(pct=10, msg="Running Monte Carlo SS simulation")
-    cmd = [_UV, "run", "python", "scripts/run_ss_simulation.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/run_ss_simulation.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "SS simulation completed"}
 

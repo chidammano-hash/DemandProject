@@ -348,3 +348,40 @@ class TestRefreshCustomerAnalyticsHandler:
         with patch("common.services.job_state._get_conn", return_value=mock_conn):
             with pytest.raises(RuntimeError, match="cancelled"):
                 _run_refresh_customer_analytics({}, cancel_event=cancel)
+
+
+class TestJobScriptPathsExist:
+    """Guard against script-path rot: every script a job launches must exist.
+
+    The backtest/pipeline scripts were reorganized into domain subdirs
+    (scripts/ml, scripts/inventory, ...). job_state.py held flat scripts/<name>.py
+    paths that no longer resolved, so UI-launched jobs failed with
+    'No such file or directory'. These tests parse the real path literals from
+    the module source so a future move can't silently break the Jobs tab again.
+    """
+
+    def _module_src(self) -> str:
+        from pathlib import Path
+
+        import common.services.job_state as job_state
+
+        return Path(job_state.__file__).read_text()
+
+    def test_all_referenced_script_files_exist(self):
+        import re
+
+        from common.core.paths import PROJECT_ROOT
+
+        refs = sorted(set(re.findall(r'"(scripts/[A-Za-z0-9_./-]+\.py)"', self._module_src())))
+        assert refs, "expected job_state to reference at least one script path"
+        missing = [r for r in refs if not (PROJECT_ROOT / r).is_file()]
+        assert not missing, f"job_state references missing script files: {missing}"
+
+    def test_foundation_module_paths_resolve(self):
+        import re
+
+        from common.core.paths import PROJECT_ROOT
+
+        mods = sorted(set(re.findall(r'"(scripts\.ml\.[A-Za-z0-9_.]+)"', self._module_src())))
+        missing = [m for m in mods if not (PROJECT_ROOT / (m.replace(".", "/") + ".py")).is_file()]
+        assert not missing, f"job_state references missing foundation modules: {missing}"
