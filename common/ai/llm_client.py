@@ -235,17 +235,31 @@ class LLMClient:
                 msgs.append(m)
 
         # Force JSON via prompt — Anthropic doesn't have a strict response_format,
-        # but the model honors a clear "respond ONLY with JSON" instruction at temp=0.
+        # but the model honors a clear "respond ONLY with JSON" instruction.
         if json_mode and "JSON" not in system.upper():
             system = (system + "\n\nRespond ONLY with valid JSON, no prose.").strip()
 
-        resp = self._client.messages.create(
-            model=self.model,
-            messages=msgs,
-            system=system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        import anthropic  # local import; the client is only built when anthropic is installed
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": msgs,
+            "system": system,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        try:
+            resp = self._client.messages.create(**kwargs)
+        except anthropic.BadRequestError as exc:
+            # Newer Claude models (4.6+) deprecate `temperature`; retry without it
+            # rather than 500. Other bad requests surface as LLMClientError.
+            if "temperature" in str(exc).lower() and "temperature" in kwargs:
+                kwargs.pop("temperature")
+                resp = self._client.messages.create(**kwargs)
+            else:
+                raise LLMClientError(f"anthropic request rejected: {exc}") from exc
+        except anthropic.APIError as exc:
+            raise LLMClientError(f"anthropic API error: {exc}") from exc
         text = "".join(block.text for block in resp.content if hasattr(block, "text"))
         return ChatResponse(
             text=text,

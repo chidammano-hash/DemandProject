@@ -324,6 +324,41 @@ class TestAnthropicChat:
         assert "Respond ONLY with valid JSON" in system_arg
         assert system_arg.startswith("You are a planner.")
 
+    def test_temperature_deprecated_retries_without_temperature(self, monkeypatch):
+        """Newer Claude models reject `temperature`; the client retries without it."""
+        import httpx
+        import anthropic
+
+        client, mock_sdk = self._build_with_mock(monkeypatch)
+        req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        err = anthropic.BadRequestError(
+            message="`temperature` is deprecated for this model.",
+            response=httpx.Response(400, request=req),
+            body=None,
+        )
+        mock_sdk.messages.create.side_effect = [err, _mk_anthropic_resp('{"x": 1}')]
+
+        resp = client.chat([{"role": "user", "content": "decide"}], json_mode=True)
+
+        assert resp.parsed == {"x": 1}
+        assert mock_sdk.messages.create.call_count == 2
+        # First attempt included temperature; the retry dropped it.
+        assert "temperature" in mock_sdk.messages.create.call_args_list[0].kwargs
+        assert "temperature" not in mock_sdk.messages.create.call_args_list[1].kwargs
+
+    def test_other_bad_request_becomes_llm_client_error(self, monkeypatch):
+        """A non-temperature 400 surfaces as LLMClientError (degrades gracefully upstream)."""
+        import httpx
+        import anthropic
+
+        client, mock_sdk = self._build_with_mock(monkeypatch)
+        req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        mock_sdk.messages.create.side_effect = anthropic.BadRequestError(
+            message="max_tokens too large", response=httpx.Response(400, request=req), body=None,
+        )
+        with pytest.raises(LLMClientError):
+            client.chat([{"role": "user", "content": "decide"}], json_mode=True)
+
     def test_json_instruction_not_duplicated_when_system_mentions_json(self, monkeypatch):
         client, mock_sdk = self._build_with_mock(monkeypatch)
         mock_sdk.messages.create.return_value = _mk_anthropic_resp('{"x": 1}')
