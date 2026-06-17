@@ -3,15 +3,16 @@
 Shared by the AI Champion adjuster (common/ai/champion_adjuster.py) and the
 agentic agents (ai_planner, tuning_advisor).
 
-Supports four providers:
+Supports five providers:
   - ollama         (default; local; $0; OpenAI-compatible API at :11434/v1)
   - openai_compat  (Together, Fireworks, DeepInfra, Groq — same API shape as Ollama)
   - openai         (GPT-4o etc.)
   - anthropic      (Claude family, e.g. claude-opus-4-7)
+  - google         (Gemini via its OpenAI-compatible endpoint; GOOGLE_API_KEY)
 
 All providers expose the same interface: chat(messages, json_mode=True) -> ChatResponse.
-The Ollama and openai_compat paths share the OpenAI Python SDK — they only differ
-by base_url and api_key.
+The ollama, openai_compat, openai, and google paths share the OpenAI Python SDK —
+they only differ by base_url and api_key. Only anthropic uses its own SDK.
 
 Strict JSON-mode is required for structured recommendation schemas. Each call
 returns a ChatResponse including raw response text, parsed JSON dict, token
@@ -120,6 +121,18 @@ class LLMClient:
             if not api_key:
                 raise LLMClientError("openai provider requires OPENAI_API_KEY env var")
             return OpenAI(api_key=api_key, timeout=self.timeout)
+        if self.provider == "google":
+            # Gemini exposes an OpenAI-compatible endpoint, so we reuse the OpenAI SDK
+            # (no extra dependency) — only base_url + key differ.
+            from openai import OpenAI
+            api_key = os.environ.get("GOOGLE_API_KEY")
+            if not api_key:
+                raise LLMClientError("google provider requires GOOGLE_API_KEY env var")
+            return OpenAI(
+                base_url=base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
+                api_key=api_key,
+                timeout=self.timeout,
+            )
         if self.provider == "anthropic":
             from anthropic import Anthropic
             api_key = os.environ.get("ANTHROPIC_API_KEY")

@@ -38,6 +38,7 @@ import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 // Unified chart (demand + supply in one view)
 import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
+import { AiChampionItemPanel } from "./item-analysis/AiChampionItemPanel";
 import { loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/measures";
 import { itemBreadcrumbLabel } from "./item-analysis/breadcrumb";
 
@@ -52,6 +53,7 @@ const PANEL_DEFAULTS: Record<string, boolean> = {
   shap: true,
   forecastKpis: true,
   dqCorrections: false,
+  aiChampion: false,
 };
 
 const DEMAND_PANELS = [
@@ -59,6 +61,7 @@ const DEMAND_PANELS = [
   { key: "shap", label: "SHAP" },
   { key: "forecastKpis", label: "Forecast KPIs" },
   { key: "dqCorrections", label: "DQ Corrections" },
+  { key: "aiChampion", label: "AI Champion" },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -561,6 +564,11 @@ export function ItemAnalysisTab() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* ---- AI Champion (forward adjustment for this DFU) ---- */}
+      {panels.aiChampion && hasDfu && (
+        <AiChampionItemPanel itemId={debouncedSkuItem} loc={debouncedSkuLocation} />
       )}
     </section>
   );

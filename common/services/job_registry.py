@@ -67,7 +67,6 @@ from common.services.job_state import (
     _run_inventory_backtest,
     _run_inventory_planning_pipeline,
     _run_compute_sku_features,
-    _run_generate_ai_champion,
     _run_compute_variability,
     _run_data_quality,
     _run_etl_pipeline,
@@ -128,14 +127,6 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="features",
         callable=_run_compute_sku_features,
         params_schema={"time_window_months": 36},
-    ),
-    "generate_ai_champion": JobTypeDef(
-        type_id="generate_ai_champion",
-        label="Generate AI Champion Forecast",
-        description="Adjust the promoted champion forecast forward with an LLM (Ollama/Opus 4.7) and write model_id='ai_champion'",
-        group="forecast",
-        callable=_run_generate_ai_champion,
-        params_schema={"provider": None, "plan_version": None, "limit_dfus": None},
     ),
     "seasonality_pipeline": JobTypeDef(
         type_id="seasonality_pipeline",

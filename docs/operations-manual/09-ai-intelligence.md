@@ -389,61 +389,44 @@ python -m scripts.ai.ingest_docs --root docs/sop --source sop --dry-run
 
 ---
 
-## 9.11 AI Champion adjuster — Provider Modes (Ollama & Opus 4.7)
+## 9.11 AI Champion adjuster — Interactive (Item Analysis tab)
 
-How to run the forward-only **AI Champion** adjuster (spec
-[02-27](../specs/02-forecasting/27-ai-champion-forecast.md)) with or without API spend. It
-adjusts the promoted champion forecast forward and writes `model_id='ai_champion'`.
-The provider switch lives in `config/ai/ai_champion_config.yaml`.
+The forward-only **AI Champion** adjuster (spec
+[02-27](../specs/02-forecasting/27-ai-champion-forecast.md)) is **interactive and
+single-DFU** — there is no batch job, script, or Make target. A planner adjusts
+the promoted champion forecast for one item at a time from the **Item Analysis**
+tab and writes `model_id='ai_champion'`. Provider defaults live in
+`config/ai/ai_champion_config.yaml`; the UI overrides the provider per call.
 
-### 9.11.1 Mode A — Ollama (default, automated, $0)
+**How to use it.**
+1. Open the **Item Analysis** tab, select an item + location, and enable the
+   **"AI Champion"** panel toggle.
+2. Pick a provider in the panel dropdown and click **AI Adjust**. One LLM call
+   runs for that DFU (item + location attributes, actuals, champion forecast,
+   top customers go into the prompt).
+3. Review the **"Preview — not saved"** card (recommendation, rationale,
+   champion-vs-AI table). Click **Save** to persist it as `ai_champion`.
 
-```bash
-# 1. Start the local Ollama server (OpenAI-compatible at :11434/v1)
-ollama serve            # leave running; or `brew services start ollama`
+Endpoints: `POST /ai-champion/adjust` (preview, no write) and
+`POST /ai-champion/save` (persist); `GET /ai-champion/forecast?item_id&loc`
+returns the saved adjustment. Saves land under an `interactive` run in
+`ai_champion_run`.
 
-# 2. Pull the model named in config (config/ai/ai_champion_config.yaml)
-ollama pull llama3.1:8b     # default; qwen2.5:32b for higher quality, slower
+### 9.11.1 Providers (keys read server-side from `.env`)
 
-# 3. provider: ollama is the default — no edit needed. Run:
-make ai-champion-smoke      # 50 DFUs, local, $0
-make ai-champion            # full champion plan, local, $0
-```
+The UI sends only the provider *name*; the API key never leaves the server.
 
-The pre-flight cost estimate reads `$0.00`
-(`cost_controls.per_call_estimated_cost_usd.ollama: 0.0`). Use Ollama for all
-volume runs and prompt iteration.
+| Provider | Key | Cost |
+|---|---|---|
+| **Ollama** (default) | none (local) | $0 — `ollama serve` + `ollama pull llama3.1:8b` |
+| **Google Gemini** | `GOOGLE_API_KEY` | metered (Gemini OpenAI-compatible endpoint) |
+| **Anthropic (Opus)** | `ANTHROPIC_API_KEY` | metered |
+| **OpenAI (GPT-4o)** | `OPENAI_API_KEY` | metered |
 
-### 9.11.2 Mode B — Manual Opus spot-check via Claude Code (interactive, $0)
+> ⚠ **Cost reality.** The anthropic/google/openai paths bill their respective
+> APIs per token. A Claude Code Pro/Max subscription covers only the Claude Code
+> CLI — **not** programmatic API calls. Use **Ollama** for $0 runs; the metered
+> providers are one click and one DFU at a time, so spend is naturally bounded.
 
-To sanity-check whether Opus is materially better than the local model on a few
-DFUs *before* paying for a metered run: open a Claude Code session (Opus, covered
-by your Pro/Max subscription), paste a handful of DFU contexts, and eyeball the
-recommendations against the Ollama output. This is a **manual, human-driven**
-spot-check only.
-
-> ⚠ **Compliance + cost reality.** A Claude Code Pro/Max subscription covers the
-> Claude Code CLI itself — it does **not** cover a script's programmatic Anthropic
-> API calls, and the Consumer Terms forbid automating the subscription (no
-> `claude -p` from the pipeline, no proxy in front of it). The only automated Claude
-> path is `provider: anthropic` (the metered API, Mode C).
-
-### 9.11.3 Mode C — Anthropic Opus 4.7 (metered API)
-
-To run the full adjuster through Claude, use the API. This is the production path
-and the only automated Claude path.
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-make ai-champion-opus              # provider anthropic, model claude-opus-4-7
-# or:  python -m scripts.forecasting.generate_ai_champion_forecast --provider anthropic --limit-dfus 100
-```
-
-A pre-flight estimate (`per_call_estimated_cost_usd.anthropic`) × DFUs is checked
-against `per_run_max_cost_usd` and aborts before spending if it would exceed the
-cap. Start with `--limit-dfus` to bound the first paid run.
-
-Tiering: **Ollama** = automated, $0, the default; **manual Opus via Claude Code** =
-interactive spot-checks only; **`provider: anthropic`** = the full automated run
-(metered). Opus 4.7 is the config default benchmark; bump `models.anthropic` to
-`claude-opus-4-8` for the current Opus.
+To switch the local Ollama model to `qwen2.5:32b` (higher quality, slower), edit
+`models.ollama` in `config/ai/ai_champion_config.yaml`.

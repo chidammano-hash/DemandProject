@@ -10,9 +10,9 @@ champion adjuster. Three responsibilities:
   3. Apply the recommendation deterministically to produce the AI-adjusted
      ("ai_champion") forward forecast.
 
-This module is *pure* — no DB calls. The generator script
-(scripts/forecasting/generate_ai_champion_forecast.py) fetches context and
-persists the adjusted forecast.
+This module is *pure* — no DB calls. The service
+(common/ai/champion_adjust_service.py) fetches context and persists the
+adjusted forecast.
 """
 from __future__ import annotations
 
@@ -85,6 +85,8 @@ class DfuContext:
     abc_vol: str | None = None
     notes: str | None = None             # any anomaly / customer-event signals
     top_customers: list[CustomerHistory] | None = None  # top-K customers buying this item@loc
+    item_attrs: dict[str, str] | None = None      # dim_sku attributes (brand, category, size, …)
+    location_attrs: dict[str, str] | None = None  # dim_location attributes (site, state, …)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -96,6 +98,8 @@ class DfuContext:
             "cluster": self.cluster,
             "demand_pattern": self.demand_pattern,
             "abc_vol": self.abc_vol,
+            "item_attrs": self.item_attrs,
+            "location_attrs": self.location_attrs,
             "notes": self.notes,
             "top_customers": [
                 {
@@ -118,6 +122,8 @@ For each DFU (item x location), you are given:
   * the recent actuals history (up to 24 months ending at the planning month T)
   * the champion model's forward forecast for the next H months (T+1 through T+H)
   * DFU metadata (cluster, demand pattern, ABC class)
+  * item attributes (brand, category, size, supplier, …) and location attributes
+    (site, state, region) — use these to reason about product/market context
   * top customers buying this item at this location, with their recent per-month sales
     (use this to spot customer concentration, single-customer ramps/drops,
     and churn driving the DFU-level pattern)
@@ -172,6 +178,12 @@ def build_user_prompt(ctx: DfuContext) -> str:
         f"DFU: item_id={ctx.item_id}, location={ctx.loc}",
         f"Planning month T = {ctx.forecast_run_month.isoformat()}",
         f"Metadata: {meta_str}",
+    ]
+    if ctx.item_attrs:
+        parts.append(f"Item attributes: {_format_attrs(ctx.item_attrs)}")
+    if ctx.location_attrs:
+        parts.append(f"Location attributes: {_format_attrs(ctx.location_attrs)}")
+    parts += [
         f"Actuals (last {len(ctx.actuals_last_24m)} months ending at T): {actuals_str}",
         f"Champion forward forecast (T+1..T+{len(ctx.baseline_forecast)}): {baseline_str}",
     ]
@@ -181,6 +193,11 @@ def build_user_prompt(ctx: DfuContext) -> str:
         parts.append(f"Anomaly/event notes: {ctx.notes}")
     parts.append("\nReturn the JSON recommendation now.")
     return "\n".join(parts)
+
+
+def _format_attrs(attrs: dict[str, str]) -> str:
+    """Render a compact ``key=value`` list, skipping empty values."""
+    return ", ".join(f"{k}={v}" for k, v in attrs.items() if v not in (None, "", "None"))
 
 
 def _format_top_customers(customers: list[CustomerHistory], *, recent_months: int = 6) -> str:

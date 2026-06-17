@@ -1,22 +1,29 @@
-"""AI Champion forward adjuster endpoints.
+"""AI Champion forward adjuster endpoints (/ai-champion/*).
 
 Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
 
-Read the forward-only AI Champion forecast (model_id='ai_champion') and trigger
-a background generation job. The job reads the promoted champion production
-forecast, applies a per-DFU LLM adjustment (Ollama default, Opus 4.7 opt-in),
-and writes the result to fact_ai_champion_forecast.
+Interactive, single-DFU adjuster — there is no batch pipeline. The Item Analysis
+tab previews an LLM adjustment of the promoted champion forecast for one DFU
+(POST /adjust), then optionally persists it (POST /save). GET /forecast reads any
+previously-saved adjustment for a DFU.
 """
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Query
+import psycopg
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from api.auth import require_api_key
 from api.core import get_conn
+from common.ai.champion_adjust_service import (
+    NoChampionForecast,
+    UnknownProvider,
+    adjust_dfu,
+    save_adjustment,
+)
 from common.core.sql_helpers import to_float
 
 log = logging.getLogger(__name__)
@@ -27,90 +34,37 @@ _CACHE_SHORT = "public, max-age=60"
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1. GET /ai-champion/latest — latest run + adjustment summary
-# ────────────────────────────────────────────────────────────────────────────
-@router.get("/latest")
-def ai_champion_latest():
-    """Latest AI Champion run metadata plus a recommendation-code rollup."""
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """SELECT run_id::text, plan_version, provider, ai_model, status,
-                      n_dfus, n_adjusted, est_cost_usd, started_at, completed_at
-               FROM ai_champion_run
-               ORDER BY started_at DESC
-               LIMIT 1"""
-        )
-        run = cur.fetchone()
-        if run is None:
-            return JSONResponse(content={"run": None, "by_recommendation": []},
-                                headers={"Cache-Control": _CACHE_SHORT})
-
-        run_id = run[0]
-        cur.execute(
-            """SELECT recommendation_code, COUNT(DISTINCT (item_id, loc))::bigint
-               FROM fact_ai_champion_forecast
-               WHERE run_id = %s::uuid
-               GROUP BY recommendation_code
-               ORDER BY 2 DESC""",
-            (run_id,),
-        )
-        by_rec = [{"recommendation_code": r[0], "dfus": int(r[1])} for r in cur.fetchall()]
-
-    run_obj = {
-        "run_id": run[0], "plan_version": run[1], "provider": run[2], "ai_model": run[3],
-        "status": run[4], "n_dfus": run[5], "n_adjusted": run[6],
-        "est_cost_usd": to_float(run[7], decimals=4),
-        "started_at": run[8].isoformat() if run[8] else None,
-        "completed_at": run[9].isoformat() if run[9] else None,
-    }
-    return JSONResponse(content={"run": run_obj, "by_recommendation": by_rec},
-                        headers={"Cache-Control": _CACHE_SHORT})
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 2. GET /ai-champion/forecast — paginated ai_champion vs champion rows
+# 1. GET /ai-champion/forecast — saved adjustment for one DFU
 # ────────────────────────────────────────────────────────────────────────────
 @router.get("/forecast")
 def ai_champion_forecast(
-    item_id: str = Query(default="", description="Filter by item_id"),
-    adjusted_only: bool = Query(default=False, description="Only DFUs the AI changed"),
-    limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
+    item_id: str = Query(description="Item id (required)"),
+    loc: str = Query(default="", description="Location id; empty = all locations for the item"),
 ):
-    """Per-DFU-month AI Champion forecast vs the champion baseline (latest run).
+    """Latest saved ai_champion adjustment for a DFU (champion vs AI, per month).
 
-    Fully parameterized: optional filters are folded into the WHERE with %s
-    placeholders (no SQL-string interpolation) — psycopg3 + CLAUDE.md rule.
+    Scoped to the most recently saved plan_version for the DFU. Fully
+    parameterized (no SQL-string interpolation) — psycopg3 + CLAUDE.md rule.
     """
-    # (item_id filter: empty string = no filter; adjusted_only flag).
-    filter_params = (item_id, item_id, adjusted_only)
+    params = (item_id, loc, loc, item_id, loc, loc)
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT COUNT(*)
+            """SELECT item_id, loc, forecast_month, horizon_months, champion_qty,
+                      ai_qty, recommendation_code, pct_change, confidence, rationale
                FROM fact_ai_champion_forecast f
-               WHERE f.run_id = (SELECT run_id FROM ai_champion_run ORDER BY started_at DESC LIMIT 1)
-                 AND (%s = '' OR f.item_id = %s)
-                 AND (NOT %s OR f.recommendation_code NOT IN ('KEEP', 'OVERRIDE_TO_BASELINE'))""",
-            filter_params,
-        )
-        total = cur.fetchone()[0]
-        cur.execute(
-            """SELECT f.item_id, f.loc, f.forecast_month, f.horizon_months,
-                      f.champion_qty, f.ai_qty, f.recommendation_code, f.pct_change,
-                      f.confidence, f.rationale
-               FROM fact_ai_champion_forecast f
-               WHERE f.run_id = (SELECT run_id FROM ai_champion_run ORDER BY started_at DESC LIMIT 1)
-                 AND (%s = '' OR f.item_id = %s)
-                 AND (NOT %s OR f.recommendation_code NOT IN ('KEEP', 'OVERRIDE_TO_BASELINE'))
-               ORDER BY f.item_id, f.loc, f.forecast_month
-               LIMIT %s OFFSET %s""",
-            (*filter_params, limit, offset),
+               WHERE f.item_id = %s AND (%s = '' OR f.loc = %s)
+                 AND f.plan_version = (
+                       SELECT plan_version FROM fact_ai_champion_forecast
+                       WHERE item_id = %s AND (%s = '' OR loc = %s)
+                       ORDER BY generated_at DESC LIMIT 1)
+               ORDER BY f.loc, f.forecast_month""",
+            params,
         )
         rows = cur.fetchall()
 
     return JSONResponse(
         content={
-            "total": int(total),
+            "total": len(rows),
             "rows": [
                 {
                     "item_id": r[0], "loc": r[1],
@@ -131,29 +85,64 @@ def ai_champion_forecast(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 3. POST /ai-champion/generate — trigger a forward generation job
+# 2. POST /ai-champion/adjust — preview an LLM adjustment for one DFU (no write)
 # ────────────────────────────────────────────────────────────────────────────
-class GenerateRequest(BaseModel):
-    provider: str | None = Field(default=None, description="Override provider (ollama|anthropic|...)")
-    limit_dfus: int | None = Field(default=None, ge=1, description="Adjust only the first N DFUs")
+class AdjustRequest(BaseModel):
+    item_id: str
+    loc: str
+    provider: str | None = Field(default=None, description="ollama|google|anthropic|openai (default: config)")
 
 
-@router.post("/generate", dependencies=[Depends(require_api_key)])
-def ai_champion_generate(req: GenerateRequest | None = None):
-    """Submit a background job to generate the AI Champion forecast.
+@router.post("/adjust", dependencies=[Depends(require_api_key)])
+def ai_champion_adjust(req: AdjustRequest):
+    """Call the configured LLM once for one DFU and return a preview (no DB write)."""
+    try:
+        preview = adjust_dfu(req.item_id, req.loc, provider=req.provider)
+    except NoChampionForecast:
+        raise HTTPException(status_code=404, detail="No champion forecast for this DFU") from None
+    except UnknownProvider:
+        raise HTTPException(status_code=400, detail="Unknown provider") from None
+    except psycopg.Error:
+        log.exception("AI Champion adjust DB error")
+        raise HTTPException(status_code=500, detail="Adjust failed") from None
+    return JSONResponse(content=preview.to_dict())
 
-    Returns 202 with a job_id pollable via GET /jobs/{job_id}.
-    """
-    from common.services.job_registry import JobManager
 
-    params = {
-        "provider": req.provider if req else None,
-        "limit_dfus": req.limit_dfus if req else None,
-    }
-    job_id = JobManager().submit_job(
-        "generate_ai_champion",
-        params,
-        label="Generate AI Champion Forecast",
-        triggered_by="api",
-    )
-    return JSONResponse(status_code=202, content={"job_id": job_id, "status": "queued"})
+# ────────────────────────────────────────────────────────────────────────────
+# 3. POST /ai-champion/save — persist a previewed adjustment for one DFU
+# ────────────────────────────────────────────────────────────────────────────
+class RecommendationPayload(BaseModel):
+    recommendation_code: str
+    pct_change: float | None = None
+    proposed_qty: list[float] | None = None
+    apply_horizon_months: int = 3
+    confidence: float = 0.0
+    rationale: str
+    evidence_keys: list[str] = Field(default_factory=list)
+
+
+class SaveRequest(BaseModel):
+    item_id: str
+    loc: str
+    provider: str | None = None
+    recommendation: RecommendationPayload
+
+
+@router.post("/save", dependencies=[Depends(require_api_key)])
+def ai_champion_save(req: SaveRequest):
+    """Persist a previewed adjustment. Quantities are re-derived server-side."""
+    try:
+        result = save_adjustment(
+            req.item_id, req.loc, provider=req.provider,
+            recommendation=req.recommendation.model_dump(),
+        )
+    except NoChampionForecast:
+        raise HTTPException(status_code=404, detail="No champion forecast for this DFU") from None
+    except UnknownProvider:
+        raise HTTPException(status_code=400, detail="Unknown provider") from None
+    except ValidationError:
+        raise HTTPException(status_code=400, detail="Invalid recommendation payload") from None
+    except psycopg.Error:
+        log.exception("AI Champion save DB error")
+        raise HTTPException(status_code=500, detail="Save failed") from None
+    return JSONResponse(content=result)

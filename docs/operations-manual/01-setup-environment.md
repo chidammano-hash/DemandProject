@@ -226,17 +226,17 @@ make fva-schema                # fact_fva_tracking (sql/068)
 
 ### 5.4 AI Champion forward adjuster schema (Spec 02-27)
 
-Apply the DDL manually until a Make target is added:
+Apply the DDL manually:
 
 ```bash
 psql "$DATABASE_URL" -f sql/189_drop_ai_fva_backtest.sql      # removes the old backtest store (idempotent)
 psql "$DATABASE_URL" -f sql/190_create_ai_champion_forecast.sql
-# Smoke / full / Opus / dry run:
-make ai-champion-smoke         # 50 DFUs, Ollama (local, $0)
-make ai-champion               # full champion plan, Ollama
-make ai-champion-opus          # full plan, Anthropic Opus 4.7 (needs ANTHROPIC_API_KEY)
-make ai-champion-dry           # plan + cost estimate, no LLM/DB writes
 ```
+
+The AI Champion adjuster is **interactive** — run it from the **Item Analysis**
+tab ("AI Champion" panel → pick a provider → **AI Adjust** → **Save**). There is
+no batch Make target. See [09-ai-intelligence §9.11](09-ai-intelligence.md) for
+the provider/key matrix.
 
 ### 5.5 Auth & RBAC setup
 

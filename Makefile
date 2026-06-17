@@ -966,21 +966,8 @@ expsys-backtest-dry:     ## ExpSys accuracy only — no DB loading (--skip-load)
 expsys-backtest-replace: ## ExpSys: delete existing rows first, then reload
 	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --replace
 
-# ── AI Champion forward adjuster (spec 02-27) — defaults to Ollama (local, free) ─
-# Repurposed AI planner: adjusts the promoted champion production forecast
-# forward (no backtest) and writes a new forecast with model_id='ai_champion'.
-# Provider switch: ollama (default, $0) or anthropic (Opus 4.7, needs API key).
-ai-champion-smoke:        ## AI Champion: adjust 50 DFUs with Ollama (local, ~3 min)
-	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast --limit-dfus 50
-
-ai-champion:              ## AI Champion: adjust the full champion plan (Ollama default)
-	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast
-
-ai-champion-opus:         ## AI Champion: adjust with Anthropic Opus 4.7 (needs ANTHROPIC_API_KEY)
-	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast --provider anthropic
-
-ai-champion-dry:          ## AI Champion dry-run: print plan, no LLM/DB writes
-	$(UV) python -m scripts.forecasting.generate_ai_champion_forecast --dry-run
+# AI Champion is interactive-only (per-DFU "AI Adjust" button on the Item Analysis
+# tab → POST /ai-champion/adjust + /save). No batch Make target by design.
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi

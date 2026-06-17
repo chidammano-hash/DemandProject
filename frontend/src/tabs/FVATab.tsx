@@ -7,7 +7,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchFVAWaterfall, fetchFVAROI, fetchFVAInterventions, fvaKeys, STALE_PLATFORM } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
-import { AiChampionPanel } from "./fva/AiChampionPanel";
 
 type FVAStage = {
   stage_id: string;
@@ -126,8 +125,6 @@ export default function FVATab() {
         <KpiCard label="Estimated Impact" value={formatCurrencyCompact(roi?.total_estimated_impact ?? 0)} />
         <KpiCard label="Actual Impact" value={formatCurrencyCompact(roi?.total_actual_impact ?? 0)} />
       </div>
-
-      <AiChampionPanel />
 
       {/* FVA Ladder */}
       <div className="rounded-lg border border-border bg-card p-4">

@@ -1,30 +1,46 @@
-/** AI Champion forward adjuster — spec 02-forecasting/27-ai-champion-forecast.md */
+/** AI Champion forward adjuster — interactive, single-DFU.
+ * Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
+ */
 import { fetchJson } from "./core";
 
-export interface AiChampionRun {
-  run_id: string;
+export const AI_CHAMPION_PROVIDERS = [
+  { value: "ollama", label: "Ollama (local, $0)" },
+  { value: "google", label: "Google Gemini" },
+  { value: "anthropic", label: "Anthropic (Opus)" },
+  { value: "openai", label: "OpenAI (GPT-4o)" },
+] as const;
+
+export type AiChampionProvider = (typeof AI_CHAMPION_PROVIDERS)[number]["value"];
+
+/** One forecast month: champion baseline vs the AI-adjusted quantity. */
+export interface AiChampionMonth {
+  forecast_month: string;
+  horizon_months: number | null;
+  champion_qty: number | null;
+  ai_qty: number | null;
+  pct_change: number | null;
+}
+
+/** Preview returned by POST /ai-champion/adjust (not yet persisted). */
+export interface AiChampionPreview {
+  item_id: string;
+  loc: string;
   plan_version: string;
   provider: string;
-  ai_model: string;
-  status: string;
-  n_dfus: number;
-  n_adjusted: number;
-  est_cost_usd: number | null;
-  started_at: string | null;
-  completed_at: string | null;
-}
-
-export interface AiChampionRecommendationRollup {
+  model: string;
+  prompt_version: string;
   recommendation_code: string;
-  dfus: number;
+  rec_pct_change: number | null;
+  proposed_qty: number[] | null;
+  apply_horizon_months: number;
+  confidence: number | null;
+  rationale: string;
+  evidence_keys: string[];
+  months: AiChampionMonth[];
 }
 
-export interface AiChampionLatestResponse {
-  run: AiChampionRun | null;
-  by_recommendation: AiChampionRecommendationRollup[];
-}
-
-export interface AiChampionForecastRow {
+/** A previously-saved adjustment row (GET /ai-champion/forecast). */
+export interface AiChampionSavedRow {
   item_id: string;
   loc: string;
   forecast_month: string | null;
@@ -37,52 +53,71 @@ export interface AiChampionForecastRow {
   rationale: string | null;
 }
 
-export interface AiChampionForecastResponse {
+export interface AiChampionSavedResponse {
   total: number;
-  rows: AiChampionForecastRow[];
+  rows: AiChampionSavedRow[];
 }
 
-export interface AiChampionGenerateResponse {
-  job_id: string;
-  status: string;
-}
-
-export interface AiChampionGenerateParams {
-  provider?: string;
-  limit_dfus?: number;
+export interface AiChampionSaveResponse {
+  item_id: string;
+  loc: string;
+  plan_version: string;
+  run_id: string;
+  recommendation_code: string;
+  saved_months: number;
 }
 
 export const aiChampionKeys = {
-  latest: () => ["ai-champion", "latest"] as const,
-  forecast: (params: { item_id?: string; adjusted_only?: boolean; limit?: number }) =>
-    ["ai-champion", "forecast", params] as const,
+  saved: (item_id: string, loc: string) => ["ai-champion", "saved", item_id, loc] as const,
 };
 
-export async function fetchAiChampionLatest(): Promise<AiChampionLatestResponse> {
-  return fetchJson("/ai-champion/latest");
+/** Latest saved adjustment for a DFU (empty rows if none saved yet). */
+export async function fetchAiChampionSaved(
+  item_id: string,
+  loc: string,
+): Promise<AiChampionSavedResponse> {
+  const sp = new URLSearchParams({ item_id });
+  if (loc) sp.set("loc", loc);
+  return fetchJson(`/ai-champion/forecast?${sp.toString()}`);
 }
 
-export async function fetchAiChampionForecast(params?: {
-  item_id?: string;
-  adjusted_only?: boolean;
-  limit?: number;
-  offset?: number;
-}): Promise<AiChampionForecastResponse> {
-  const sp = new URLSearchParams();
-  if (params?.item_id) sp.set("item_id", params.item_id);
-  if (params?.adjusted_only) sp.set("adjusted_only", "true");
-  if (params?.limit != null) sp.set("limit", String(params.limit));
-  if (params?.offset != null) sp.set("offset", String(params.offset));
-  const qs = sp.toString();
-  return fetchJson(`/ai-champion/forecast${qs ? `?${qs}` : ""}`);
-}
-
-export async function triggerAiChampionGenerate(
-  params?: AiChampionGenerateParams,
-): Promise<AiChampionGenerateResponse> {
-  return fetchJson("/ai-champion/generate", {
+/** Call the LLM once for a DFU and return a preview (no DB write). */
+export async function adjustAiChampion(params: {
+  item_id: string;
+  loc: string;
+  provider?: AiChampionProvider;
+}): Promise<AiChampionPreview> {
+  return fetchJson("/ai-champion/adjust", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params ?? {}),
+    body: JSON.stringify(params),
+  });
+}
+
+/** Persist a previewed adjustment. Quantities are re-derived server-side. */
+export async function saveAiChampion(params: {
+  item_id: string;
+  loc: string;
+  provider: string;
+  preview: AiChampionPreview;
+}): Promise<AiChampionSaveResponse> {
+  const { preview } = params;
+  return fetchJson("/ai-champion/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      item_id: params.item_id,
+      loc: params.loc,
+      provider: params.provider,
+      recommendation: {
+        recommendation_code: preview.recommendation_code,
+        pct_change: preview.rec_pct_change,
+        proposed_qty: preview.proposed_qty,
+        apply_horizon_months: preview.apply_horizon_months,
+        confidence: preview.confidence ?? 0,
+        rationale: preview.rationale,
+        evidence_keys: preview.evidence_keys,
+      },
+    }),
   });
 }
