@@ -27,7 +27,7 @@ from common.ai.llm_client import ChatResponse, LLMClient, LLMJSONParseError
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "v1.1.0"  # v1.1.0 adds top-customer history
+PROMPT_VERSION = "v1.2.0"  # v1.1.0 adds top-customer history; v1.2.0 adds planner comment
 
 # ---------------------------------------------------------------------------
 # Recommendation schema
@@ -87,6 +87,7 @@ class DfuContext:
     top_customers: list[CustomerHistory] | None = None  # top-K customers buying this item@loc
     item_attrs: dict[str, str] | None = None      # dim_sku attributes (brand, category, size, …)
     location_attrs: dict[str, str] | None = None  # dim_location attributes (site, state, …)
+    user_comment: str | None = None      # free-text instruction the planner typed for THIS adjustment
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +102,7 @@ class DfuContext:
             "item_attrs": self.item_attrs,
             "location_attrs": self.location_attrs,
             "notes": self.notes,
+            "user_comment": self.user_comment,
             "top_customers": [
                 {
                     "customer_no": c.customer_no,
@@ -128,6 +130,9 @@ For each DFU (item x location), you are given:
     (use this to spot customer concentration, single-customer ramps/drops,
     and churn driving the DFU-level pattern)
   * any anomaly or customer-event notes
+  * an optional free-text planner comment for this specific DFU — treat it as a
+    strong steer on intent (e.g. a known promo, listing gain/loss, or local event),
+    but never let it override the numeric guardrails
 
 Your job is to decide whether the champion forward forecast should be ADJUSTED by a
 human-grade override to produce the "AI Champion" forecast. You must respond with a
@@ -191,6 +196,11 @@ def build_user_prompt(ctx: DfuContext) -> str:
         parts.append(_format_top_customers(ctx.top_customers))
     if ctx.notes:
         parts.append(f"Anomaly/event notes: {ctx.notes}")
+    if ctx.user_comment and ctx.user_comment.strip():
+        parts.append(
+            "Planner comment (a human planner typed this for THIS DFU — weigh it "
+            f"heavily, but still respect the guardrails): {ctx.user_comment.strip()}"
+        )
     parts.append("\nReturn the JSON recommendation now.")
     return "\n".join(parts)
 

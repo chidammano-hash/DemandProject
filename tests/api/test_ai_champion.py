@@ -53,7 +53,27 @@ async def test_adjust_returns_preview():
             resp = await c.post("/ai-champion/adjust", json={"item_id": "100", "loc": "L1", "provider": "ollama"})
     assert resp.status_code == 200
     assert resp.json()["recommendation_code"] == "SCALE_UP"
-    m.assert_called_once_with("100", "L1", provider="ollama")
+    m.assert_called_once_with("100", "L1", provider="ollama", user_comment=None)
+
+
+@pytest.mark.asyncio
+async def test_adjust_passes_user_comment():
+    """POST /ai-champion/adjust threads the planner comment into adjust_dfu."""
+    class _Preview:
+        def to_dict(self):
+            return {"recommendation_code": "KEEP"}
+
+    with patch("api.routers.forecasting.ai_champion.adjust_dfu", return_value=_Preview()) as m:
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                "/ai-champion/adjust",
+                json={"item_id": "100", "loc": "L1", "provider": "ollama",
+                      "user_comment": "promo in May"},
+            )
+    assert resp.status_code == 200
+    m.assert_called_once_with("100", "L1", provider="ollama", user_comment="promo in May")
 
 
 @pytest.mark.asyncio

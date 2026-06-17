@@ -31,7 +31,7 @@ This is **forward-only** (it adjusts the future, never replays history) and **on
 **Preview** — `adjust_dfu(item_id, loc, provider)`:
 1. Resolve the latest champion `plan_version`.
 2. Load this DFU's **forward** champion forecast (`fact_production_forecast`, `model_id='champion'`, `forecast_month >= plan_month`, capped to `forecast_window_months`).
-3. Build a `DfuContext`: trailing actuals (`fact_sales_monthly`), the champion forward forecast, **item attributes** (`dim_sku`: brand, category, size, premise, region, supplier, ABC, cluster), **location attributes** (`dim_location`: site, state, primary demand location), and top-K customers.
+3. Build a `DfuContext`: trailing actuals (`fact_sales_monthly`), the champion forward forecast, **item attributes** (`dim_sku`: brand, category, size, premise, region, supplier, ABC, cluster), **location attributes** (`dim_location`: site, state, primary demand location), top-K customers, and an optional **planner comment** (free text the planner typed for this DFU — a strong steer on intent, but it never overrides the numeric guardrails; fed to the prompt, never persisted on its own).
 4. Call the LLM once (`recommend()`), apply guardrails (`apply_guardrails()`), apply the recommendation deterministically (`apply_recommendation()`).
 5. Return a **preview** (champion vs AI per month, recommendation code, %Δ, confidence, rationale, evidence) — **no DB write**.
 
@@ -57,7 +57,7 @@ A dedicated table (not `fact_production_forecast`) because that table's unique i
 
 ## 6. UI
 
-**Item Analysis tab** — `frontend/src/tabs/item-analysis/AiChampionItemPanel.tsx` (query module `frontend/src/api/queries/ai-champion.ts`). Shown by default (toggle it off via the **"AI Champion"** checkbox in the panel toolbar). Shows any previously-saved adjustment for the selected DFU; a **provider dropdown** + **AI Adjust** button run a fresh adjustment; the result renders as a "Preview — not saved" card (recommendation, rationale, champion-vs-AI table) with a **Save** button. There is no FVA-tab panel.
+**Item Analysis tab** — `frontend/src/tabs/item-analysis/AiChampionItemPanel.tsx` (query module `frontend/src/api/queries/ai-champion.ts`). Shown by default (toggle it off via the **"AI Champion"** checkbox in the panel toolbar). Shows any previously-saved adjustment for the selected DFU; a **provider dropdown**, an optional **planner-comment textarea** (free-text steer sent as `user_comment` on `/adjust`), + an **AI Adjust** button run a fresh adjustment; the result renders as a "Preview — not saved" card (recommendation, rationale, champion-vs-AI table) with a **Save** button. There is no FVA-tab panel.
 
 **Chart overlay** — once an adjustment is **saved**, the `ai_champion` forward forecast is merged into the main Item Analysis forecast chart (`UnifiedChart`) as an amber dashed line alongside the champion/production/staging lines, and the recommendation rationale renders as a caption above the chart. The overlay shares the saved query key (`aiChampionKeys.saved`) with `AiChampionItemPanel`, so saving in the panel auto-refreshes the chart. The line has a toggle pill (`AI Champion`) and is hidden when no saved row exists for the DFU.
 

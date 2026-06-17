@@ -219,7 +219,7 @@ class _ContextBundle:
     plan_month: date
 
 
-def _build_context(cur: Any, cfg: dict, item_id: str, loc: str) -> _ContextBundle:
+def _build_context(cur: Any, cfg: dict, item_id: str, loc: str, user_comment: str | None = None) -> _ContextBundle:
     """Load all per-DFU context. Raises NoChampionForecast if there is no baseline."""
     defaults = cfg.get("defaults", {})
     source_model_id = defaults.get("source_model_id", "champion")
@@ -248,6 +248,7 @@ def _build_context(cur: Any, cfg: dict, item_id: str, loc: str) -> _ContextBundl
         cluster=cluster, abc_vol=abc,
         item_attrs=item_attrs or None, location_attrs=location_attrs or None,
         top_customers=customers or None,
+        user_comment=user_comment or None,
     )
     return _ContextBundle(ctx=ctx, forward=forward, plan_version=plan_version, plan_month=plan_month)
 
@@ -279,8 +280,12 @@ def _resolve_provider_model(cfg: dict, provider: str | None) -> tuple[str, str]:
 # Public operations
 # ---------------------------------------------------------------------------
 
-def adjust_dfu(item_id: str, loc: str, *, provider: str | None = None) -> AdjustPreview:
+def adjust_dfu(item_id: str, loc: str, *, provider: str | None = None,
+               user_comment: str | None = None) -> AdjustPreview:
     """Call the LLM once for one DFU and return a preview (no DB write).
+
+    ``user_comment`` is an optional free-text steer the planner typed for this DFU;
+    it is fed into the prompt (and never persisted on its own).
 
     Raises NoChampionForecast / UnknownProvider. LLM/parse failures degrade to a
     KEEP recommendation so the caller always gets a complete preview.
@@ -291,7 +296,7 @@ def adjust_dfu(item_id: str, loc: str, *, provider: str | None = None) -> Adjust
     effective_provider, model = _resolve_provider_model(cfg, provider)
 
     with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
-        bundle = _build_context(cur, cfg, item_id, loc)
+        bundle = _build_context(cur, cfg, item_id, loc, user_comment=user_comment)
 
     client = build_from_config(cfg, override_provider=effective_provider)
     try:

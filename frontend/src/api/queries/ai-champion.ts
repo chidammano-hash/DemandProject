@@ -86,6 +86,8 @@ export async function adjustAiChampion(params: {
   item_id: string;
   loc: string;
   provider?: AiChampionProvider;
+  /** Optional free-text steer the planner typed for this DFU. */
+  user_comment?: string;
 }): Promise<AiChampionPreview> {
   return fetchJson("/ai-champion/adjust", {
     method: "POST",

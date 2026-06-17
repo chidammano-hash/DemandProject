@@ -57,3 +57,23 @@ def test_prompt_includes_item_and_location_attributes():
     prompt = build_user_prompt(ctx)
     assert "Item attributes: brand=Acme, category=Spirits" in prompt
     assert "Location attributes: site=Dallas DC, state=TX" in prompt
+
+
+def test_prompt_includes_planner_comment_when_present():
+    ctx = DfuContext(
+        item_id="100", loc="L1", forecast_run_month=date(2026, 4, 1),
+        actuals_last_24m=[("2026-03", 90.0)], baseline_forecast=[("2026-05", 100.0)],
+        user_comment="New listing ramps from May; expect +20%.",
+    )
+    prompt = build_user_prompt(ctx)
+    assert "Planner comment" in prompt
+    assert "New listing ramps from May; expect +20%." in prompt
+
+
+def test_prompt_omits_planner_comment_when_blank():
+    ctx = DfuContext(
+        item_id="100", loc="L1", forecast_run_month=date(2026, 4, 1),
+        actuals_last_24m=[("2026-03", 90.0)], baseline_forecast=[("2026-05", 100.0)],
+        user_comment="   ",
+    )
+    assert "Planner comment" not in build_user_prompt(ctx)

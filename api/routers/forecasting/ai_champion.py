@@ -91,13 +91,18 @@ class AdjustRequest(BaseModel):
     item_id: str
     loc: str
     provider: str | None = Field(default=None, description="ollama|google|anthropic|openai (default: config)")
+    user_comment: str | None = Field(
+        default=None, max_length=2000,
+        description="Optional free-text steer the planner typed for this DFU",
+    )
 
 
 @router.post("/adjust", dependencies=[Depends(require_api_key)])
 def ai_champion_adjust(req: AdjustRequest):
     """Call the configured LLM once for one DFU and return a preview (no DB write)."""
     try:
-        preview = adjust_dfu(req.item_id, req.loc, provider=req.provider)
+        preview = adjust_dfu(req.item_id, req.loc, provider=req.provider,
+                             user_comment=req.user_comment)
     except NoChampionForecast:
         raise HTTPException(status_code=404, detail="No champion forecast for this DFU") from None
     except UnknownProvider:
