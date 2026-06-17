@@ -100,13 +100,19 @@ def run_unified_pipeline(
     label_params: dict[str, Any] | None = None,
     label: str = "Pipeline Run",
     auto_promote: bool = True,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the full clustering pipeline through the experiment system.
 
     1. Resolve effective params (promoted experiment or defaults)
-    2. Create a cluster_experiment row
-    3. Run via run_scenario()
-    4. Auto-promote if requested
+    2. Create a cluster_experiment row (linked to job_id, started_at stamped)
+    3. Run via run_scenario() — which writes all metrics to the row
+    4. Auto-promote if requested, then finalize the row to 'completed'
+
+    The experiment row stays ``running`` until the whole pipeline (clustering +
+    promote) is done, so it never reads ``completed`` while the job is still
+    working. run_scenario is the single writer of metrics — this function does
+    NOT re-write them (a past bug clobbered the scalar metrics with NULLs).
     """
     import psycopg
 
@@ -126,11 +132,12 @@ def run_unified_pipeline(
             cur.execute(
                 """
                 INSERT INTO cluster_experiment
-                    (scenario_id, label, status, feature_params, model_params, label_params)
-                VALUES (%s, %s, 'running', %s, %s, %s)
+                    (scenario_id, label, status, job_id, started_at,
+                     feature_params, model_params, label_params)
+                VALUES (%s, %s, 'running', %s, NOW(), %s, %s, %s)
                 RETURNING experiment_id
                 """,
-                [scenario_id, label, json.dumps(fp), json.dumps(mp), json.dumps(lp)],
+                [scenario_id, label, job_id, json.dumps(fp), json.dumps(mp), json.dumps(lp)],
             )
             experiment_id = cur.fetchone()[0]
             conn.commit()
@@ -138,7 +145,9 @@ def run_unified_pipeline(
     except Exception:
         logger.exception("Failed to create experiment row — running without tracking")
 
-    # Run scenario
+    # Run scenario. run_scenario writes ALL metrics to the experiment row itself
+    # (via _update_experiment_completed). We pass final_status='running' when we
+    # will auto-promote, so the row only flips to 'completed' after promote.
     t0 = time.time()
     try:
         result = run_scenario(
@@ -147,6 +156,7 @@ def run_unified_pipeline(
             feature_params=fp,
             model_params=mp,
             label_params=lp,
+            final_status=("running" if auto_promote else "completed"),
         )
         runtime = time.time() - t0
         logger.info("Scenario completed in %.1fs", runtime)
@@ -162,76 +172,56 @@ def run_unified_pipeline(
                         [runtime, experiment_id],
                     )
                     conn.commit()
-            except Exception:
+            except psycopg.Error:
                 logger.exception("Failed to update experiment to 'failed' status")
         raise
 
-    # Update experiment row with results
-    if experiment_id and result.get("status") == "completed":
-        try:
-            with psycopg.connect(**db) as conn, conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE cluster_experiment
-                    SET status = 'completed',
-                        completed_at = NOW(),
-                        runtime_seconds = %s,
-                        optimal_k = %s,
-                        silhouette_score = %s,
-                        inertia = %s,
-                        total_dfus = %s,
-                        n_clusters = %s,
-                        cluster_sizes = %s,
-                        profiles = %s,
-                        k_selection_results = %s,
-                        artifacts_path = %s
-                    WHERE experiment_id = %s
-                    """,
-                    [
-                        runtime,
-                        result.get("optimal_k"),
-                        result.get("silhouette_score"),
-                        result.get("inertia"),
-                        result.get("total_dfus"),
-                        result.get("n_clusters"),
-                        json.dumps(result.get("cluster_sizes")),
-                        json.dumps(result.get("profiles")),
-                        json.dumps(result.get("k_selection_results")),
-                        result.get("artifacts_path"),
-                        experiment_id,
-                    ],
-                )
-                conn.commit()
-        except Exception:
-            logger.exception("Failed to update experiment results")
-
-    # Auto-promote
+    # Auto-promote, then finalize the row to 'completed'. A promote failure must
+    # not crash the job or leave the row stuck 'running' — clustering succeeded,
+    # so we still mark it completed (just not promoted).
     if auto_promote and result.get("status") == "completed":
         logger.info("Auto-promoting scenario %s ...", scenario_id)
-        promote_result = promote_scenario(scenario_id)
-        logger.info(
-            "Promoted: %d DFUs updated", promote_result.get("dfus_updated", 0),
-        )
-
-        # Set promotion flag on experiment row
+        promoted = False
+        try:
+            promote_result = promote_scenario(scenario_id)
+            logger.info("Promoted: %d DFUs updated", promote_result.get("dfus_updated", 0))
+            promoted = True
+        except (FileNotFoundError, OSError, ValueError, KeyError, psycopg.Error):
+            logger.exception("Auto-promote failed for scenario %s", scenario_id)
         if experiment_id:
-            try:
-                with psycopg.connect(**db) as conn, conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE cluster_experiment SET is_promoted = FALSE, promoted_at = NULL "
-                        "WHERE is_promoted = TRUE AND experiment_id != %s",
-                        [experiment_id],
-                    )
-                    cur.execute(
-                        "UPDATE cluster_experiment SET is_promoted = TRUE, promoted_at = NOW() "
-                        "WHERE experiment_id = %s",
-                        [experiment_id],
-                    )
-                    conn.commit()
-            except Exception:
-                logger.exception("Failed to set promotion flag")
+            _finalize_pipeline_experiment(db, experiment_id, promoted=promoted)
 
     return result
+
+
+def _finalize_pipeline_experiment(db: dict, experiment_id: int, promoted: bool) -> None:
+    """Mark a pipeline experiment 'completed' once clustering + promote are done.
+
+    On a successful promote, demote any previously-promoted row and flag this one.
+    """
+    import psycopg
+
+    try:
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE cluster_experiment SET status = 'completed', completed_at = NOW() "
+                "WHERE experiment_id = %s",
+                [experiment_id],
+            )
+            if promoted:
+                cur.execute(
+                    "UPDATE cluster_experiment SET is_promoted = FALSE, promoted_at = NULL "
+                    "WHERE is_promoted = TRUE AND experiment_id != %s",
+                    [experiment_id],
+                )
+                cur.execute(
+                    "UPDATE cluster_experiment SET is_promoted = TRUE, promoted_at = NOW() "
+                    "WHERE experiment_id = %s",
+                    [experiment_id],
+                )
+            conn.commit()
+    except psycopg.Error:
+        logger.exception("Failed to finalize pipeline experiment %d", experiment_id)
 
 
 if __name__ == "__main__":

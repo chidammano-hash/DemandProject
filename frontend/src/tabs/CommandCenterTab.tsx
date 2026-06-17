@@ -39,6 +39,7 @@ import {
 } from "@/api/queries";
 import type { AiInsight, InsightStatus } from "@/types/ai-planner";
 import { Skeleton } from "@/components/Skeleton";
+import { PipelineReadinessBanner } from "@/components/PipelineReadinessBanner";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatInt } from "@/lib/formatters";
@@ -214,6 +215,9 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
           </Badge>
         )}
       </div>
+
+      {/* Pipeline readiness — e.g. clustering stale after a dim_sku reload */}
+      <PipelineReadinessBanner />
 
       {/* F2.1: degraded-data banner — the KPI MVs are unrefreshed, so the
           zeroed tiles are "data unavailable", not a healthy portfolio. */}

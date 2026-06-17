@@ -121,17 +121,22 @@ downstream production forecasting.
 
 ### UI run concurrency (Model Tuning → Backtest stage)
 
-`POST /backtest-management/{model_id}/run` (the **Run** button) is concurrency-controlled:
+`POST /backtest-management/{model_id}/run` (the **Run** button) is concurrency-controlled
+and **never blocks the user** — a submission is always accepted or reported as already
+in progress, never rejected with an error:
 
 - **Sequential by default** — backtests share the scheduler's `backtest` group, so
-  one runs at a time and additional submissions queue (FIFO) and run in order.
+  one runs at a time and additional submissions queue (FIFO) and run in order. The
+  response is `status: "queued"`.
 - **"Run in parallel" toggle** (`?parallel=true`) — submits under a per-job-type
   group (`backtest_<family>`), so *different* model families run concurrently, bounded
-  by the scheduler's 4-worker pool. Each family still writes its own `data/backtest/<model_id>/`,
+  by the scheduler's 4-worker pool. Each model writes its own `data/backtest/<model_id>/`,
   so there is no output collision.
-- **Duplicate guard** — submitting a family whose backtest is already running or queued
-  returns **409**; the same job type writes the same output dir, so two concurrent runs
-  of one family would clobber each other.
+- **No-duplicate guard (informational, not blocking)** — if the *same model* already has
+  a run queued or running, the endpoint does **not** start a second one. It returns
+  HTTP 200 with `status: "already_running"` and the existing `job_id`; the UI shows a
+  calm "already in progress" toast rather than an error. (Earlier versions returned a
+  409 here — that hard block was removed.)
 
 ### 4.3.1 Per-family commands
 

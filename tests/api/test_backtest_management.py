@@ -234,14 +234,21 @@ async def test_submit_run_success():
 
 
 @pytest.mark.asyncio
-async def test_submit_run_rejects_duplicate():
-    """A second run of the same family while one is running/queued -> 409."""
+async def test_submit_run_already_running_is_informational():
+    """Re-running a model with a run already in flight is a no-op, not an error.
+
+    The endpoint returns 200 with status="already_running" and the existing job,
+    and does NOT submit a duplicate job — concurrency never blocks the user.
+    """
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.side_effect = [("job-bt-existing",)]  # duplicate-check finds one
+    cursor.fetchone.side_effect = [("job-bt-existing",)]  # in-flight check finds a run
+
+    mock_jm = MagicMock()
 
     with (
         patch("api.core._get_pool", return_value=pool),
         patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
     ):
         from api.main import app
 
@@ -249,8 +256,41 @@ async def test_submit_run_rejects_duplicate():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             resp = await ac.post("/backtest-management/lgbm_cluster/run")
 
-    assert resp.status_code == 409
-    assert "already running or queued" in resp.json()["detail"]
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "already_running"
+    assert data["job_id"] == "job-bt-existing"
+    assert data["run_id"] is None
+    # No duplicate job submitted.
+    mock_jm.return_value.submit_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_run_releases_row_when_submit_fails():
+    """If submit_job fails, the queued tracking row is marked failed so the model
+    is not permanently locked out of future runs (the in-flight check keys on
+    status IN ('queued','running'))."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [None, (44,)]  # in-flight None, INSERT RETURNING 44
+
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.side_effect = ValueError("unknown job type")
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/run")
+
+    assert resp.status_code == 400
+    # The orphaned 'queued' row was released (marked failed) in the finally block.
+    executed = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list if c.args)
+    assert "status = 'failed'" in executed
 
 
 @pytest.mark.asyncio

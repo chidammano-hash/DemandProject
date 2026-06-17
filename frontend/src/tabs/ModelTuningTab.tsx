@@ -14,6 +14,7 @@ import { Layers } from "lucide-react";
 
 import { type ModelType } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
+import { PipelineReadinessBanner } from "@/components/PipelineReadinessBanner";
 import { cn } from "@/lib/utils";
 
 import {
@@ -123,6 +124,9 @@ export default function ModelTuningTab() {
           </p>
         </div>
       </div>
+
+      {/* ---- Dependency readiness (e.g. clustering stale after a dim_sku reload) ---- */}
+      <PipelineReadinessBanner />
 
       {/* ---- Pipeline Stage Tabs ---- */}
       <div className="flex gap-1 border-b border-border pb-1">

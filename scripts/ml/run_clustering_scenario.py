@@ -48,6 +48,7 @@ from common.ml.clustering.scenario import (  # noqa: F401
     _load_config_defaults,
     get_scenario_result,
     promote_scenario,
+    store_durable_labels,
 )
 
 
@@ -56,8 +57,15 @@ def _update_experiment_completed(
     result: dict[str, Any],
     runtime_seconds: float,
     artifacts_path: str,
+    final_status: str = "completed",
 ) -> None:
-    """Write completed results to the cluster_experiment table."""
+    """Write clustering results (metrics + artifacts) to the cluster_experiment row.
+
+    ``final_status`` is normally ``"completed"``. The unified pipeline passes
+    ``"running"`` so the experiment stays in progress while a follow-up promote
+    step finishes — the metrics are written either way, but ``completed_at`` is
+    only stamped when the row is actually marked completed.
+    """
     import psycopg
 
     db = get_db_params()
@@ -66,8 +74,8 @@ def _update_experiment_completed(
             conn.execute(
                 """
                 UPDATE cluster_experiment
-                SET status = 'completed',
-                    completed_at = NOW(),
+                SET status = %s,
+                    completed_at = CASE WHEN %s = 'completed' THEN NOW() ELSE NULL END,
                     runtime_seconds = %s,
                     optimal_k = %s,
                     silhouette_score = %s,
@@ -81,6 +89,8 @@ def _update_experiment_completed(
                 WHERE experiment_id = %s
                 """,
                 (
+                    final_status,
+                    final_status,
                     runtime_seconds,
                     result.get("optimal_k"),
                     result.get("silhouette_score"),
@@ -100,7 +110,7 @@ def _update_experiment_completed(
     except psycopg.Error:
         import logging
         logging.getLogger(__name__).exception(
-            "Failed to update cluster_experiment %d to completed", experiment_id
+            "Failed to update cluster_experiment %d metrics", experiment_id
         )
 
 
@@ -131,6 +141,7 @@ def run_scenario(
     relabel_only: bool = False,
     previous_scenario_id: str | None = None,
     experiment_id: int | None = None,
+    final_status: str = "completed",
 ) -> dict[str, Any]:
     """Run a complete clustering scenario.
 
@@ -221,14 +232,20 @@ def run_scenario(
         with open(scenario_dir / "scenario_result.json", "w") as f:
             json.dump(output, f, indent=2, default=str)
 
-        # Write results to cluster_experiment table when experiment_id is provided
+        # Write results to cluster_experiment table when experiment_id is provided.
+        # final_status lets a caller (the unified pipeline) keep the row "running"
+        # while it promotes, so metrics land but the row isn't marked completed yet.
         if experiment_id is not None:
             _update_experiment_completed(
                 experiment_id=experiment_id,
                 result=result,
                 runtime_seconds=round(runtime, 1),
                 artifacts_path=str(scenario_dir),
+                final_status=final_status,
             )
+            # Persist the per-SKU labels durably so the experiment stays
+            # re-promotable after the working /tmp artifacts are cleared.
+            store_durable_labels(experiment_id, scenario_dir / "cluster_labels.csv")
 
         return output
 

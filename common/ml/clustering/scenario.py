@@ -6,6 +6,8 @@ defaults.  Orchestration (``run_scenario``, ``_run_full_pipeline``) stays in
 ``scripts/run_clustering_scenario.py``.
 """
 
+import gzip
+import io
 import json
 import logging
 import re
@@ -143,25 +145,81 @@ def get_scenario_result(scenario_id: str) -> dict[str, Any] | None:
         return json.load(f)
 
 
+def store_durable_labels(experiment_id: int, labels_path: Path) -> None:
+    """Persist a scenario's per-SKU labels onto its experiment row (gzip-compressed).
+
+    Makes the experiment re-promotable from the database alone, even after the
+    working ``/tmp`` artifacts are cleared. Best-effort: a missing file or a DB
+    error is logged, never raised — the run itself already succeeded.
+    """
+    import psycopg
+
+    if not labels_path.exists():
+        return
+    try:
+        gz = gzip.compress(labels_path.read_bytes())
+        with psycopg.connect(**get_db_params()) as conn:
+            conn.execute(
+                "UPDATE cluster_experiment SET cluster_labels_gz = %s WHERE experiment_id = %s",
+                (gz, experiment_id),
+            )
+    except (OSError, psycopg.Error):
+        logger.warning("Failed to store durable labels for experiment %d", experiment_id)
+
+
+def _load_label_bytes(scenario_id: str, labels_path: Path) -> bytes | None:
+    """Return the cluster_labels.csv content for a scenario.
+
+    Prefers the working file; falls back to the durable copy stored on the
+    experiment row (``cluster_labels_gz``). Returns None when neither exists.
+    """
+    import psycopg
+
+    if labels_path.exists():
+        return labels_path.read_bytes()
+    try:
+        with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT cluster_labels_gz FROM cluster_experiment WHERE scenario_id = %s",
+                (scenario_id,),
+            )
+            row = cur.fetchone()
+    except psycopg.Error:
+        logger.exception("Failed to read durable labels for scenario %s", scenario_id)
+        return None
+    if row and row[0]:
+        return gzip.decompress(bytes(row[0]))
+    return None
+
+
 def promote_scenario(scenario_id: str) -> dict[str, Any]:
     """Promote a scenario to production by updating dim_sku.ml_cluster.
 
     After updating the SKU dimension table, this also refreshes accuracy
     materialized views so that Accuracy Comparison reflects the new clusters.
+
+    Labels are loaded from the working scenario dir when present, else from the
+    durable copy on the experiment row — so any completed experiment stays
+    promotable even after its /tmp artifacts are gone.
     """
     import psycopg
 
     scenario_dir = _safe_scenario_dir(scenario_id)
     labels_path = scenario_dir / "cluster_labels.csv"
 
-    if not labels_path.exists():
-        raise FileNotFoundError(f"Scenario labels not found: {labels_path}")
+    labels_bytes = _load_label_bytes(scenario_id, labels_path)
+    if labels_bytes is None:
+        raise FileNotFoundError(
+            f"Cluster labels unavailable for scenario {scenario_id} "
+            "(no working file and no durable copy). Re-run the experiment."
+        )
 
-    # Copy labels to production location
+    # Copy labels to production location (reconstructs the file from the durable
+    # copy if the working file was gone).
     with profiled_section("copy_artifacts_to_production"):
         prod_dir = ROOT / "data" / "clustering"
         prod_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(labels_path, prod_dir / "cluster_labels.csv")
+        (prod_dir / "cluster_labels.csv").write_bytes(labels_bytes)
 
         # Also copy centroids and profiles
         for fname in ["cluster_centroids.csv", "scenario_result.json"]:
@@ -187,7 +245,7 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
 
     # Update database
     with profiled_section("update_database"):
-        df = pd.read_csv(labels_path)
+        df = pd.read_csv(io.BytesIO(labels_bytes))
         db = get_db_params()
 
         with psycopg.connect(**db) as conn:

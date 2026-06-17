@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from api.auth import require_api_key
 from api.core import get_conn
@@ -394,21 +394,45 @@ def get_current_metadata(model_id: str):
     return meta
 
 
+def _release_queued_run(run_id: int) -> None:
+    """Mark a never-dispatched backtest_run failed so it can't block future runs.
+
+    Best-effort: called when ``submit_job`` fails after the tracking row was
+    already committed. Only flips rows still at 'queued' (never clobbers a row a
+    racing job may have moved to 'running').
+    """
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE backtest_run SET status = 'failed', completed_at = NOW() "
+                "WHERE id = %s AND status = 'queued'",
+                (run_id,),
+            )
+            conn.commit()
+    except psycopg.Error:
+        logger.warning("Failed to release queued backtest_run %d after submit failure", run_id)
+
+
 @router.post("/{model_id}/run", status_code=201, dependencies=[Depends(require_api_key)])
-def submit_backtest_run(model_id: str, parallel: bool = False):
+def submit_backtest_run(model_id: str, response: Response, parallel: bool = False):
     """Submit a backtest job for the given model.
 
     Validates model_id exists in pipeline config, maps to the correct job type,
     inserts a tracking row into backtest_run, and submits the job.
 
-    Concurrency:
-      - A duplicate run for the same backtest job type that is already running or
-        queued is rejected with 409 (same job type writes the same output dir, so
-        two concurrent runs would clobber each other).
+    Concurrency is non-blocking by design — a submission is never rejected:
+      - If THIS model already has a run queued or running, no duplicate is
+        started; the response is ``status="already_running"`` (HTTP 200) so the
+        UI can show a calm "already in progress" note instead of an error.
+      - Otherwise the job is submitted. When another backtest is active it simply
+        queues — the JobManager serialises per group — and the response is
+        ``status="queued"`` (HTTP 201).
       - ``parallel=False`` (default): the job uses the shared ``backtest`` group, so
         backtests run one at a time (extra submissions queue and run sequentially).
       - ``parallel=True``: the job uses a per-job-type group, so DIFFERENT model
-        families run concurrently (bounded by the scheduler's worker pool).
+        families run concurrently (bounded by the scheduler's worker pool). Each
+        model writes its own output dir, so sequential same-family runs never
+        clobber each other.
     """
     # Validate model_id is in pipeline config
     roster = get_algorithm_roster()
@@ -426,27 +450,30 @@ def submit_backtest_run(model_id: str, parallel: bool = False):
             detail=f"No backtest job type configured for model '{model_id}'",
         )
 
-    # Reject duplicate: the same job type already running/queued would clobber its
-    # output dir. job_type (not model_id) is the unit of work / collision.
+    # Don't pile up duplicates: if THIS model already has a run in flight, return
+    # the existing job instead of starting another. This is informational, not an
+    # error — the caller gets status="already_running" and a friendly message.
     try:
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT job_id FROM job_history "
-                "WHERE job_type = %s AND status IN ('queued', 'running') "
-                "ORDER BY submitted_at DESC LIMIT 1",
-                (job_type,),
+                "SELECT job_id FROM backtest_run "
+                "WHERE model_id = %s AND status IN ('queued', 'running') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (model_id,),
             )
             existing = cur.fetchone()
     except psycopg.Error:
-        logger.exception("Duplicate-run check failed for %s", model_id)
+        logger.exception("In-flight check failed for %s", model_id)
         raise HTTPException(status_code=500, detail="Failed to check running jobs") from None
     if existing:
-        family = job_type.removeprefix("backtest_")
-        raise HTTPException(
-            status_code=409,
-            detail=f"A {family} backtest is already running or queued (job {existing[0]}). "
-                   "Wait for it to finish or cancel it before starting another.",
-        )
+        response.status_code = 200
+        return {
+            "run_id": None,
+            "job_id": existing[0],
+            "model_id": model_id,
+            "status": "already_running",
+            "message": f"A backtest for {model_id} is already in progress.",
+        }
 
     # Insert tracking row
     try:
@@ -461,14 +488,20 @@ def submit_backtest_run(model_id: str, parallel: bool = False):
             )
             run_id = cur.fetchone()[0]
             conn.commit()
-    except Exception:
+    except psycopg.Error:
         logger.exception("Failed to insert backtest_run for %s", model_id)
         raise HTTPException(status_code=500, detail="Failed to create backtest run") from None
 
-    # Submit job via JobManager
+    # Submit job via JobManager. If another backtest is active, submit_job queues
+    # this one (FIFO per group) rather than failing — so concurrency just delays,
+    # never blocks. If the submit fails for ANY reason, the `finally` releases the
+    # queued tracking row: the in-flight check above keys on status IN
+    # ('queued','running'), so a stranded 'queued' row would otherwise lock this
+    # model's run endpoint out permanently.
+    from common.services.job_registry import JobManager
+    jm = JobManager()
+    job_id: str | None = None
     try:
-        from common.services.job_registry import JobManager
-        jm = JobManager()
         job_id = jm.submit_job(
             job_type=job_type,
             params={"backtest_run_id": run_id},
@@ -477,9 +510,15 @@ def submit_backtest_run(model_id: str, parallel: bool = False):
             # default "backtest" group → strictly sequential.
             group_override=(job_type if parallel else None),
         )
-    except ValueError as exc:
+    except ValueError:
         logger.exception("Failed to submit backtest job for %s", model_id)
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        raise HTTPException(status_code=400, detail="Invalid backtest job configuration") from None
+    except psycopg.Error:
+        logger.exception("Failed to submit backtest job for %s", model_id)
+        raise HTTPException(status_code=500, detail="Failed to submit backtest run") from None
+    finally:
+        if job_id is None:
+            _release_queued_run(run_id)
 
     # Store job_id on the tracking row
     try:
@@ -489,7 +528,7 @@ def submit_backtest_run(model_id: str, parallel: bool = False):
                 (job_id, run_id),
             )
             conn.commit()
-    except Exception:
+    except psycopg.Error:
         logger.warning("Failed to store job_id %s on backtest_run %d", job_id, run_id)
 
     return {

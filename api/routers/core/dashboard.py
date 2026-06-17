@@ -7,7 +7,7 @@ import logging
 import math
 import threading
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from datetime import date
@@ -56,6 +56,81 @@ async def get_planning_date_info():
         "is_frozen": planning != system,
         "days_behind": (system - planning).days,
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/pipeline-readiness
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard/pipeline-readiness")
+def get_pipeline_readiness(response: FastAPIResponse):
+    """Report whether downstream ML stages are in sync with the SKU dimension.
+
+    Staleness is *derived live* — there are no stored flags to get stuck.
+
+    Only a **total loss** of cluster assignments is treated as a problem. Most
+    SKUs are inactive and legitimately have ``ml_cluster IS NULL`` (clustering
+    only assigns the ~13k SKUs with enough history), so the NULL *fraction* is
+    meaningless as a signal. We flag staleness only when **nothing** is clustered
+    — e.g. after ``dim_sku`` was reloaded without re-running clustering, which is
+    exactly when per-cluster models silently collapse to ~0% accuracy. The check
+    auto-clears the moment clustering is re-run and promoted.
+
+    Response shape::
+
+        {
+          "ready": bool,                 # true when nothing is stale
+          "checks": [
+            {
+              "stage": "clustering",
+              "status": "stale" | "ok",
+              "severity": "high" | "medium" | "low",
+              "title": str,
+              "detail": str,
+              "action": {"kind": "navigate", "target": str, "label": str} | null
+            }
+          ]
+        }
+    """
+    checks: list[dict[str, Any]] = []
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS total, "
+                "COUNT(*) FILTER (WHERE ml_cluster IS NOT NULL) AS clustered "
+                "FROM dim_sku"
+            )
+            total, clustered = cur.fetchone()
+    except psycopg.Error:
+        logger.exception("pipeline-readiness check failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to read pipeline readiness"
+        ) from None
+
+    if total and not clustered:
+        checks.append(
+            {
+                "stage": "clustering",
+                "status": "stale",
+                "severity": "high",
+                "title": "Clustering needs to be re-run",
+                "detail": (
+                    "No SKUs have a cluster assignment, so per-cluster models can't "
+                    "train and will score poorly. This usually means the SKU data was "
+                    "reloaded since clustering last ran. Open Clustering to run and "
+                    "promote a scenario."
+                ),
+                "action": {
+                    "kind": "navigate",
+                    "target": "clusters",
+                    "label": "Open Clustering",
+                },
+            }
+        )
+
+    set_cache(response, max_age=60)
+    return {"ready": len(checks) == 0, "checks": checks}
 
 
 # ---------------------------------------------------------------------------

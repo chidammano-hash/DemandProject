@@ -425,6 +425,54 @@ fresh-all
 
 > **Note:** `fresh-all` covers data loading, ML pipeline, and baseline inventory planning only. To fully populate the application (production forecasts, demand planning, operations), run `setup-all` or the remaining phases below.
 
+### SKU-dimension reload & downstream staleness
+
+A **full reload of the `sku` dataset truncates `dim_sku`**, which blanks the
+`ml_cluster` column. This happens on `make db-truncate-data` (part of `fresh-all`)
+**and** on a standalone `make load-all` / `make load-dfu` — not only on the explicit
+wipe. (Incremental `make pipeline-refresh` upserts by key and preserves `ml_cluster`.)
+
+- **Full pipelines self-heal.** `fresh-all` / `fresh-features` re-run `cluster-all`
+  + `features-compute` right after the load, so `ml_cluster` is repopulated before
+  anything reads it.
+- **Partial loads do not.** Running `load-all` / `load-dfu` on its own (or
+  `db-truncate-data` then loading) without re-running clustering leaves `ml_cluster`
+  NULL. Per-cluster tree models then train on zero clusters and score ~0% accuracy.
+
+This is surfaced **non-blockingly**: `GET /dashboard/pipeline-readiness` derives the
+condition live and flags it **only on a total loss of clustering** — i.e. when *no*
+SKUs at all have `ml_cluster` (most SKUs are inactive and legitimately NULL, so the
+NULL *fraction* is meaningless and is **not** used). The **Dashboard** and **Model
+Tuning** pages then show a calm *"Clustering needs to be re-run"* banner with an
+**Open Clustering** button that deep-links to the Cluster Experimentation Studio
+(where you run and promote a scenario) — it does **not** kick off a job itself. The
+banner clears itself once clustering is re-run and promoted (there is no stored flag
+to reset). To fix from the CLI instead, run `make cluster-all`.
+
+**Two ways to run clustering — keep them straight:**
+
+- **Cluster Experimentation Studio** (Cluster tab → `cluster_scenario` job) is the
+  canonical flow: create an experiment → it records full metrics (K, silhouette,
+  cluster sizes, profiles) → click the **crown** to *promote* it, which writes
+  `ml_cluster` into `dim_sku` from the experiment's stored per-SKU labels
+  **without re-running** clustering.
+- **Full Clustering Pipeline** (`cluster_pipeline` job, also `make cluster-all`)
+  runs a scenario *and* auto-promotes it in one shot. The experiment row now stays
+  `running` until both clustering **and** promotion finish (so it never reads
+  `completed` mid-job), records its `job_id`/`started_at`, and writes its metrics
+  exactly once (a past bug double-wrote and clobbered the scalar metrics with NULLs —
+  that produced the empty "completed" experiments and is fixed). An experiment with
+  no cluster results can no longer be promoted (the promote endpoint returns 409).
+
+**Re-promotion is durable.** On completion, each experiment's per-SKU assignments
+are stored gzip-compressed on its row (`cluster_experiment.cluster_labels_gz`,
+sql/191). `promote_scenario` reads the working `cluster_labels.csv` when present and
+falls back to this durable copy otherwise — so a completed experiment can be
+re-promoted at any time even after the working `/tmp/clustering_scenarios/<id>/`
+artifacts are cleared (reboot, OS cleanup, `make clean-artifacts`). Experiments that
+completed **before** sql/191 landed have no durable copy; if their `/tmp` artifacts
+are gone they can't be re-promoted and must be re-run.
+
 ### Full Application Setup (`setup-all`)
 
 `setup-all` runs all 6 phases end-to-end. Use this for a complete environment build from scratch.
@@ -557,8 +605,11 @@ TRUNCATE TABLE fact_rebalancing_plan CASCADE;
 TRUNCATE TABLE backtest_lag_archive CASCADE;
 TRUNCATE TABLE fact_external_forecast_monthly CASCADE;
 TRUNCATE TABLE fact_candidate_forecast CASCADE;
+TRUNCATE TABLE backtest_run CASCADE;
 TRUNCATE TABLE model_promotion_log CASCADE;
 TRUNCATE TABLE fact_production_forecast CASCADE;
+TRUNCATE TABLE fact_ai_champion_forecast CASCADE;
+TRUNCATE TABLE ai_champion_run CASCADE;
 TRUNCATE TABLE fact_blended_demand_plan CASCADE;
 TRUNCATE TABLE fact_demand_plan CASCADE;
 TRUNCATE TABLE fact_demand_plan_weekly CASCADE;
@@ -644,6 +695,7 @@ TRUNCATE TABLE lgbm_tuning_run CASCADE;
 -- Group 19: Cluster / Champion Experiment History
 TRUNCATE TABLE cluster_experiment_comparison CASCADE;
 TRUNCATE TABLE cluster_experiment CASCADE;
+TRUNCATE TABLE cluster_tuning_profile_state CASCADE;
 TRUNCATE TABLE champion_experiment CASCADE;
 
 -- Group 20: Dimensions (facts already cleared)

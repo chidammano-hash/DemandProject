@@ -323,6 +323,7 @@ def _run_cluster_pipeline(
         label_params=params.get("label_params"),
         label=params.get("label", "Job Pipeline Run"),
         auto_promote=params.get("auto_promote", True),
+        job_id=job_id,
     )
 
     if progress_cb:

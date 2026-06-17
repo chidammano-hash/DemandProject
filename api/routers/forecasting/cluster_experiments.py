@@ -120,7 +120,7 @@ class UpdateExperimentBody(BaseModel):
 
 
 def _experiment_row_to_dict(row: tuple) -> dict[str, Any]:
-    """Convert a cluster_experiment row (25 columns) to a response dict.
+    """Convert a cluster_experiment row (26 columns) to a response dict.
 
     Column order matches the SELECT used in list and detail queries.
     """
@@ -150,6 +150,9 @@ def _experiment_row_to_dict(row: tuple) -> dict[str, Any]:
         "is_promoted": bool(row[22]),
         "promoted_at": str(row[23]) if row[23] else None,
         "artifacts_path": row[24],
+        # True when the per-SKU labels are durably stored on the row, i.e. this
+        # experiment can be re-promoted even after its /tmp artifacts are gone.
+        "has_durable_labels": bool(row[25]),
     }
 
 
@@ -159,7 +162,8 @@ _SELECT_COLS = """
     job_id, feature_params, model_params, label_params,
     optimal_k, silhouette_score, inertia, total_dfus, n_clusters,
     cluster_sizes, profiles, k_selection_results,
-    is_promoted, promoted_at, artifacts_path
+    is_promoted, promoted_at, artifacts_path,
+    (cluster_labels_gz IS NOT NULL) AS has_durable_labels
 """
 
 
@@ -829,6 +833,15 @@ def promote_experiment(experiment_id: int):
         raise HTTPException(
             status_code=409,
             detail=f"Cannot promote experiment with status '{exp['status']}'. Must be 'completed'.",
+        )
+
+    # Refuse to promote an experiment that has no clustering results (a malformed
+    # record, e.g. from an interrupted run). Promoting it would assign no clusters
+    # and silently collapse per-cluster model accuracy.
+    if not exp.get("n_clusters") or not exp.get("total_dfus"):
+        raise HTTPException(
+            status_code=409,
+            detail="This experiment has no cluster results to promote. Re-run it first.",
         )
 
     scenario_id = exp["scenario_id"]

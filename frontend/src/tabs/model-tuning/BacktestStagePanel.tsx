@@ -8,6 +8,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { toast } from "@/components/Toaster";
+import { formatApiError } from "@/lib/formatApiError";
 import {
   backtestMgmtKeys,
   fetchBacktestSummary,
@@ -36,24 +38,52 @@ export function BacktestStagePanel({
   const [runningModels, setRunningModels] = useState<Set<string>>(new Set());
   const [loadingModels, setLoadingModels] = useState<Set<string>>(new Set());
   const [parallel, setParallel] = useState(false);
-  const [runError, setRunError] = useState<string | null>(null);
 
   const { data: backtestSummary } = useQuery({
     queryKey: backtestMgmtKeys.summary,
     queryFn: fetchBacktestSummary,
     staleTime: 30_000,
-    refetchInterval: loadingModels.size > 0 ? 5_000 : false,
+    // Poll while anything is in flight (a load, an optimistic click, or a run the
+    // server reports as queued/running) so the grid reflects real status.
+    refetchInterval: (query) => {
+      const summary = query.state.data;
+      const anyRunInFlight = summary
+        ? Object.values(summary).some(
+            (s) => s.latest_run?.status === "queued" || s.latest_run?.status === "running",
+          )
+        : false;
+      return loadingModels.size > 0 || runningModels.size > 0 || anyRunInFlight ? 5_000 : false;
+    },
   });
 
+  // A model is "active" if the user just clicked it (optimistic) or the server
+  // reports its latest run as queued/running. Driving the button off real status
+  // — not just a timer — keeps the label honest for the whole run.
+  const runLabel = (id: string): string => {
+    const status = backtestSummary?.[id]?.latest_run?.status;
+    if (status === "queued") return "Queued...";
+    if (status === "running" || runningModels.has(id)) return "Running...";
+    return "Run";
+  };
+  const isModelActive = (id: string): boolean => {
+    const status = backtestSummary?.[id]?.latest_run?.status;
+    return runningModels.has(id) || status === "queued" || status === "running";
+  };
+
   const handleRunBacktest = async (modelId: string) => {
-    setRunError(null);
+    const label = models.find((m) => m.id === modelId)?.label ?? modelId;
     setRunningModels((prev) => new Set(prev).add(modelId));
     try {
-      await submitBacktestRun(modelId, parallel);
+      const res = await submitBacktestRun(modelId, parallel);
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.summary });
+      // Calm, informative feedback — never a blocking error for concurrency.
+      if (res.status === "already_running") {
+        toast.info(res.message ?? `A ${label} backtest is already in progress.`);
+      } else {
+        toast.success(`${label} backtest queued — follow progress below.`);
+      }
     } catch (err) {
-      // Surface 409 "already running/queued" and other errors to the user.
-      setRunError(err instanceof Error ? err.message : "Failed to submit backtest");
+      toast.error(formatApiError(err));
     } finally {
       // Keep the running indicator for a bit so the user sees feedback
       setTimeout(() => {
@@ -112,7 +142,7 @@ export function BacktestStagePanel({
             <h3 className="text-sm font-medium text-muted-foreground">All Models</h3>
             <label
               className="flex items-center gap-1.5 text-xs text-muted-foreground select-none cursor-pointer"
-              title="When on, different model families run at the same time. When off, backtests run one at a time (extra runs queue). The same family never runs twice at once."
+              title="When on, different model types run at the same time. When off, backtests run one at a time — extra runs queue automatically. Re-running a model that's already in progress is skipped."
             >
               <input
                 type="checkbox"
@@ -123,11 +153,6 @@ export function BacktestStagePanel({
               Run in parallel
             </label>
           </div>
-          {runError && (
-            <p className="mb-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
-              {runError}
-            </p>
-          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
             {models.map((m) => {
               const btSummary = backtestSummary?.[m.id];
@@ -179,9 +204,9 @@ export function BacktestStagePanel({
                         handleRunBacktest(m.id);
                       }}
                       className="flex-1 rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary hover:bg-primary/20 disabled:opacity-40"
-                      disabled={runningModels.has(m.id)}
+                      disabled={isModelActive(m.id)}
                     >
-                      {runningModels.has(m.id) ? "Running..." : "Run"}
+                      {runLabel(m.id)}
                     </button>
                     <button
                       onClick={(e) => {

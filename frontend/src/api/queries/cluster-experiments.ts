@@ -85,6 +85,8 @@ export interface ClusterExperiment {
   is_promoted: boolean;
   promoted_at: string | null;
   artifacts_path: string | null;
+  /** True when per-SKU labels are durably stored — re-promotable without re-running. */
+  has_durable_labels: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -42,15 +42,16 @@ def _experiment_row(
     is_promoted: bool = False,
     promoted_at: str | None = None,
     artifacts_path: str | None = "/tmp/clustering_scenarios/sc_test",
+    has_durable_labels: bool = True,
 ) -> tuple:
-    """Build a mock cluster_experiment row (25 columns)."""
+    """Build a mock cluster_experiment row (26 columns)."""
     return (
         experiment_id, scenario_id, label, notes, template_id,
         status, created_at, started_at, completed_at, runtime_seconds,
         job_id, feature_params, model_params, label_params,
         optimal_k, silhouette_score, inertia, total_dfus, n_clusters,
         cluster_sizes, profiles, k_selection_results,
-        is_promoted, promoted_at, artifacts_path,
+        is_promoted, promoted_at, artifacts_path, has_durable_labels,
     )
 
 
@@ -404,6 +405,30 @@ async def test_promote_experiment_not_completed():
             resp = await client.post("/cluster-experiments/1/promote")
 
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_promote_experiment_with_no_results_rejected():
+    """A 'completed' experiment with no cluster results can't be promoted (409)."""
+    pool, conn, cursor = _make_pool()
+    # Malformed record: completed, but metrics never populated (e.g. #28's old state).
+    cursor.fetchone.return_value = _experiment_row(
+        experiment_id=1, status="completed", n_clusters=None, total_dfus=None,
+    )
+
+    mock_promote = MagicMock()
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("scripts.ml.run_clustering_scenario.promote_scenario", mock_promote),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/cluster-experiments/1/promote")
+
+    assert resp.status_code == 409
+    assert "no cluster results" in resp.json()["detail"]
+    mock_promote.assert_not_called()
 
 
 @pytest.mark.asyncio

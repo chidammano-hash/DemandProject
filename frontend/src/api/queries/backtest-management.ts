@@ -170,18 +170,31 @@ export async function fetchStagingSummary(): Promise<StagingSummaryMap> {
 // Fetchers — WRITE
 // ---------------------------------------------------------------------------
 
-/** Submit a new backtest run for a model.
+/** Result of submitting a backtest run. `status` is "queued" when a new run was
+ *  created (it runs now or queues behind active backtests) or "already_running"
+ *  when this model already has a run in flight (no duplicate is started). */
+export interface SubmitBacktestRunResult {
+  run_id: number | null;   // null when status === "already_running"
+  job_id: string;
+  model_id: string;
+  status: "queued" | "already_running";
+  message?: string;
+}
+
+/** Submit a new backtest run for a model. Submission never fails on concurrency:
  *
- * `parallel=false` (default) runs backtests sequentially (extra submissions queue);
- * `parallel=true` lets different model families run concurrently. A duplicate run
- * of the same family that's already running/queued is rejected by the API (409).
+ * - `parallel=false` (default) runs backtests one at a time — extra submissions
+ *   queue automatically and run sequentially.
+ * - `parallel=true` lets different model families run concurrently.
+ * - Re-running a model that already has a run in flight is a no-op; the result
+ *   comes back with `status: "already_running"` instead of an error.
  */
 export async function submitBacktestRun(
   modelId: string,
   parallel = false,
-): Promise<{ run_id: number; job_id: string }> {
+): Promise<SubmitBacktestRunResult> {
   const qs = parallel ? "?parallel=true" : "";
-  return fetchJson<{ run_id: number; job_id: string }>(
+  return fetchJson<SubmitBacktestRunResult>(
     `/backtest-management/${modelId}/run${qs}`,
     {
       method: "POST",

@@ -82,6 +82,42 @@ export async function fetchPlanningDate(): Promise<PlanningDateInfo> {
   return fetchJson("/dashboard/planning-date");
 }
 
+// ---------------------------------------------------------------------------
+// Pipeline readiness — derivable staleness of downstream ML stages
+// ---------------------------------------------------------------------------
+
+/** A one-click remediation the UI can offer for a stale stage — currently a
+ *  deep-link to the tab where the user fixes it (e.g. Clustering). */
+export interface PipelineReadinessAction {
+  kind: "navigate";
+  target: string;   // tab id, e.g. "clusters"
+  label: string;
+}
+
+export interface PipelineReadinessCheck {
+  stage: string;                       // e.g. "clustering"
+  status: "stale" | "ok";
+  severity: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  action: PipelineReadinessAction | null;
+}
+
+export interface PipelineReadiness {
+  ready: boolean;                      // true when nothing is stale
+  checks: PipelineReadinessCheck[];
+}
+
+/** Report whether downstream ML stages (clustering, …) are in sync with dim_sku.
+ *  Staleness is derived live — it auto-clears once the dependent stage re-runs. */
+export async function fetchPipelineReadiness(): Promise<PipelineReadiness> {
+  return fetchJson("/dashboard/pipeline-readiness");
+}
+
+export const pipelineReadinessKeys = {
+  readiness: ["dashboard", "pipeline-readiness"] as const,
+};
+
 export async function fetchDashboardKpis(
   window = 3,
   filters?: DashboardFilterParams,

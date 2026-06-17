@@ -1561,7 +1561,9 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE fact_rebalancing_plan CASCADE;' \
 	  'TRUNCATE TABLE backtest_lag_archive CASCADE;' \
 	  'TRUNCATE TABLE fact_external_forecast_monthly CASCADE;' \
+	  'TRUNCATE TABLE fact_candidate_forecast CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
+	  'TRUNCATE TABLE fact_ai_champion_forecast CASCADE;' \
 	  'TRUNCATE TABLE ai_champion_run CASCADE;' \
 	  'TRUNCATE TABLE fact_blended_demand_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_plan CASCADE;' \
@@ -1616,6 +1618,8 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE lgbm_tuning_cluster CASCADE;' \
 	  'TRUNCATE TABLE lgbm_tuning_timeframe CASCADE;' \
 	  'TRUNCATE TABLE lgbm_tuning_run CASCADE;' \
+	  'TRUNCATE TABLE backtest_run CASCADE;' \
+	  'TRUNCATE TABLE cluster_tuning_profile_state CASCADE;' \
 	  'TRUNCATE TABLE cluster_experiment_comparison CASCADE;' \
 	  'TRUNCATE TABLE cluster_experiment CASCADE;' \
 	  'TRUNCATE TABLE champion_experiment CASCADE;' \

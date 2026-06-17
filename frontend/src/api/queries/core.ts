@@ -164,10 +164,12 @@ export {
   fetchDistinctValues, fetchPlanningDate, fetchDashboardKpis,
   fetchDashboardAlerts, fetchDashboardTopMovers, fetchDashboardHeatmap,
   fetchDashboardTrend, fetchCustomerMap,
+  fetchPipelineReadiness, pipelineReadinessKeys,
 } from "./dashboard";
 export type {
   CascadeFilterParams, DashboardFilterParams,
   PlanningDateInfo, TrendPoint, HeatmapGrain, CustomerMapLocation,
+  PipelineReadiness, PipelineReadinessCheck, PipelineReadinessAction,
 } from "./dashboard";
 
 export {

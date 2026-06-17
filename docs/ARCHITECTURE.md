@@ -946,7 +946,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 
 | Frontend Tab | API Endpoints | Primary DB Tables/Views |
 |-------------|---------------|------------------------|
-| **Dashboard** | `/dashboard/kpis`, `/trend`, `/heatmap`, `/alerts`, `/top-movers` | `fact_external_forecast_monthly`, `agg_sales_monthly`, `fact_sales_monthly` (inline query) |
+| **Dashboard** | `/dashboard/kpis`, `/trend`, `/heatmap`, `/alerts`, `/top-movers`, `/pipeline-readiness` | `fact_external_forecast_monthly`, `agg_sales_monthly`, `fact_sales_monthly` (inline query), `dim_sku` |
 | **Data Explorer** | `/domains/{domain}/rows`, `/search`, `/filter`, `/meta` | All dimension + fact tables |
 | **Portfolio Analysis** | `/forecast/accuracy/slice`, `/lag-curve`, `/champions/*`, `/shap/*` | `agg_accuracy_by_dim`, `backtest_lag_archive`, `fact_external_forecast_monthly` |
 | **Item Analysis** | `/sku/*`, `/forecast/shap/{model}/sku`, `/inventory/*` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, SHAP CSVs |
