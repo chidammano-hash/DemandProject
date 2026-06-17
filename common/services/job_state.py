@@ -411,6 +411,12 @@ def _run_backtest(
         "chronos2": "scripts.ml.run_backtest_chronos2",
         "chronos2_enriched": "scripts.ml.run_backtest_chronos2_enriched",
     }
+    # Models whose backtest scripts import chronos-forecasting (torch) — these run
+    # with the optional `foundation` extra. (nbeats/nhits use neuralforecast, a
+    # separate optional dep, and are intentionally not included here.)
+    _FOUNDATION_EXTRA_MODELS = {
+        "chronos", "chronos_bolt", "chronos2", "chronos2_enriched", "bolt_hierarchical",
+    }
     # Special scripts: direct file path
     special_scripts = {
         "bolt_hierarchical": "scripts/ml/run_backtest_bolt_hierarchical.py",
@@ -436,17 +442,24 @@ def _run_backtest(
         except Exception:
             logger.warning("Failed to mark backtest_run %d as running", backtest_run_id)
 
+    # Models that import chronos-forecasting (torch) need the optional `foundation`
+    # extra. Pass --extra so `uv run` ensures it's present even after a plain
+    # `uv sync` would otherwise strip it (the recurring "was working, then not").
+    run_prefix = [_UV, "run"]
+    if model in _FOUNDATION_EXTRA_MODELS:
+        run_prefix += ["--extra", "foundation"]
+
     if model in tree_scripts:
-        cmd = [_UV, "run", "python", tree_scripts[model]]
+        cmd = [*run_prefix, "python", tree_scripts[model]]
     elif model in foundation_modules:
-        cmd = [_UV, "run", "python", "-m", foundation_modules[model]]
+        cmd = [*run_prefix, "python", "-m", foundation_modules[model]]
     elif model in special_scripts:
         entry = special_scripts[model]
         if isinstance(entry, tuple):
             script, extra_args = entry
-            cmd = [_UV, "run", "python", script] + extra_args
+            cmd = [*run_prefix, "python", script, *extra_args]
         else:
-            cmd = [_UV, "run", "python", entry]
+            cmd = [*run_prefix, "python", entry]
     else:
         raise ValueError(f"Unknown backtest model: {model}")
 
