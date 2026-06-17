@@ -188,26 +188,6 @@ Connect Supply Chain Command Center to the rest of the enterprise.
 
 ---
 
-## Cross-Domain — Roadmap & Backlog
-
-Top-level specs that span multiple domains.
-
-| File | Summary |
-|------|---------|
-| [10-gen4-roadmap](10-gen4-roadmap.md) | Gen-4 multi-agent design review synthesis — 31-agent review, cross-cutting priorities, P0/P1 implementation plan |
-
----
-
-## PRD — Product Requirements (Draft / Planned Work)
-
-Specs for features that are designed but not yet fully implemented. Kept separate from numbered implemented specs.
-
-| File | Domain | Summary |
-|------|--------|---------|
-| [PRD-CSCS-11725-brand-performance-chatbot](PRD/PRD-CSCS-11725-brand-performance-chatbot.md) | Intelligence | Supply Chain chatbot for UC2 brand performance inquiry |
-
----
-
 ## Glossary
 
 | Term | Definition |

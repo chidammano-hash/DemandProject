@@ -1,8 +1,7 @@
 # 12 — Service-Level Target Unification
 
-**Gen-4 Roadmap Priority #1.** Single source of truth for service-level
-(SL) targets consumed by safety stock, fill rate, S&OP gap analysis, and
-replenishment planning.
+Single source of truth for service-level (SL) targets consumed by safety
+stock, fill rate, S&OP gap analysis, and replenishment planning.
 
 **Status:** Implemented (2026-04-23). **Supersedes:** scattered `_SL_TARGETS`
 dicts and YAML-only targets.

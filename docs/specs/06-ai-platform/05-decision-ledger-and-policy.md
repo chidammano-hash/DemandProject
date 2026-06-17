@@ -1,7 +1,7 @@
 # 05 — AI Decision Ledger + Policy Engine
 
-**Gen-4 Roadmap AI-10 P0 + AI-1 P0.** Append-only audit trail and
-declarative autonomy guardrails for every AI write action.
+Append-only audit trail and declarative autonomy guardrails for every AI
+write action.
 
 **Status:** Ledger foundation landed (2026-04-23) and is callable from any
 agent. The policy engine prototype (`common/ai/policy_engine.py`) was built
@@ -132,6 +132,15 @@ with conn, conn.cursor() as cur:
 ```
 
 ---
+
+## Related implemented AI foundations
+
+The decision ledger anchors a set of AI-platform primitives that have shipped:
+
+- **Three-tier memory** — `common/ai/memory.py` (working / episodic / semantic; episodic FKs the ledger via `fact_decision`).
+- **RAG + knowledge graph** — `common/ai/rag.py` over `rag_chunk` (HNSW + BM25 RRF fusion) and `kg_node` / `kg_edge` (`sql/139`–`140`); `rag_chunk` is the single embedding store.
+- **Explainability API** — `GET /forecast/explain/{item_id}/{loc}` (`api/routers/intelligence/explain.py`) reads SHAP when available and writes to the ledger.
+- **OpenLineage emission** — `common/ai/lineage.py` + `fact_lineage_event` (`sql/157`), wired into the MLflow promote path.
 
 ## Follow-ups (subsequent roadmap work)
 
