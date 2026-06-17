@@ -238,3 +238,25 @@ def test_add_item_location_filters_none():
                                item=None, location=None)
     assert len(where) == 0
     assert params == []
+
+
+@pytest.mark.asyncio
+async def test_lag_leaderboard_returns_ranked_models():
+    pool, conn, cursor = _make_pool(fetchall_return=[
+        (0, "lgbm_cluster", 100, 1000.0, 900.0, 100.0),
+        (0, "external", 80, 1000.0, 900.0, 200.0),
+        (1, "lgbm_cluster", 90, 800.0, 700.0, 120.0),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/forecast/accuracy/lag-leaderboard", params={"limit": 5})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "agg_accuracy_lag_archive"
+    lag0 = next(lg for lg in data["lags"] if lg["lag"] == 0)
+    assert lag0["rankings"][0]["model_id"] == "lgbm_cluster"
+    assert lag0["rankings"][0]["rank"] == 1
+    assert lag0["rankings"][0]["accuracy_pct"] is not None

@@ -53,6 +53,7 @@ import type { AccuracySliceRow, LagPoint } from "@/types";
 // Accuracy sub-panels
 import { SliceTablePanel } from "./accuracy/SliceTablePanel";
 import { TrendChartPanel } from "./accuracy/TrendChartPanel";
+import { LagLeaderboardPanel } from "./aggregate-analysis/LagLeaderboardPanel";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
@@ -474,11 +475,14 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
               />
             )}
             {visible.lagCurve && (
-              <TrendChartPanel
-                lagCurveData={lagCurveData} lagModels={lagModels}
-                sliceKpis={sliceKpis} activeLagMetric={activeLagMetric}
-                onLagCurveMetricChange={handleLagCurveMetricChange}
-              />
+              <>
+                <TrendChartPanel
+                  lagCurveData={lagCurveData} lagModels={lagModels}
+                  sliceKpis={sliceKpis} activeLagMetric={activeLagMetric}
+                  onLagCurveMetricChange={handleLagCurveMetricChange}
+                />
+                <LagLeaderboardPanel />
+              </>
             )}
           </div>
         </CollapsibleSection>

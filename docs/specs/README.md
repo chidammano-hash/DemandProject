@@ -87,6 +87,8 @@ Predict future demand using ML models, then select the best forecast per item.
 | 25 | [Forecast Pipeline Workflow Guide](02-forecasting/25-forecast-pipeline-workflow-guide.md) | Concise 7-stage workflow guide (data → clustering → tuning → backtesting → load → champion → production forecast) with quick-reference commands and config table |
 | 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
 | 27 | [AI Champion Forecast](02-forecasting/27-ai-champion-forecast.md) | Forward-only AI adjuster: an LLM (Ollama/Opus 4.7) nudges the promoted champion forecast forward and writes a new `model_id='ai_champion'` (no backtest, no grading) |
+| 28 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/28-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
+| 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
 | 28 | [Feature Selection Pipeline](02-forecasting/28-feature-selection-pipeline.md) | Multi-stage per-timeframe feature selection (duplicate / near-zero-variance / correlation / cumulative SHAP) |
 
 **Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
@@ -125,9 +127,11 @@ Convert demand forecasts into inventory decisions.
 | 09 | [Multi-Echelon](04-inventory/09-multi-echelon.md) | 2-echelon safety stock with risk pooling |
 | 10 | [Replenishment Plan](04-inventory/10-replenishment-plan.md) | Forward order schedule from CI bands + policies |
 | 11 | [Rebalancing](04-inventory/11-rebalancing.md) | Cross-location transfer optimization |
-| 12 | [Service-Level Target Unification](04-inventory/12-service-level-unification.md) | Single SL-target resolver (`common/core/service_levels.py`, `fact_service_level_targets`) consumed by SS, fill rate, and S&OP |
+| 12 | [Service-Level Unification](04-inventory/12-service-level-unification.md) | Single source of truth for SL targets across SS, fill rate, S&OP |
+| 13 | [Integrated Targets](04-inventory/13-integrated-targets.md) | Unified SS / ROP / EOQ targets per DFU for insights feed |
+| 14 | [Algorithm Comparison](04-inventory/14-algorithm-comparison.md) | Side-by-side inventory algorithm backtest comparison |
 
-**Reading order:** 01 (data) → 02 (analysis) → 03-04 (targets) → 05-06 (monitoring) → 07 (segmentation) → 08-09 (optimization) → 10-11 (execution) → 12 (SL unification)
+**Reading order:** 01 (data) → 02 (analysis) → 03-04 (targets) → 05-06 (monitoring) → 07 (segmentation) → 08-09 (optimization) → 10-11 (execution) → 12-14 (SL unification + targets)
 
 ---
 
@@ -141,6 +145,7 @@ Cross-functional planning processes that align demand, supply, and finance.
 | 02 | [Financial Planning](05-operations/02-financial-planning.md) | Inventory value, carrying cost, budget utilization |
 | 03 | [Event Calendar](05-operations/03-event-calendar.md) | Promotions and events that adjust demand forecasts |
 | 04 | [Scenario Planning](05-operations/04-scenario-planning.md) | What-if disruption simulation with financial impact |
+| 05 | [Working Capital Analytics](05-operations/05-working-capital-analytics.md) | DIO, DSO, DPO, cash-to-cash cycle, inventory turns |
 
 ---
 
@@ -154,6 +159,8 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | 02 | [Market Intel](06-ai-platform/02-market-intel.md) | Google search + GPT-4o market briefings for item-location pairs |
 | 03 | [Control Tower](06-ai-platform/03-control-tower.md) | Single pane of glass for supply chain health KPIs |
 | 04 | [Storyboard](06-ai-platform/04-storyboard.md) | Exception cards with causal chains and decision logging |
+| 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Append-only audit trail; policy engine planned |
+| 06 | [Forecast Explain API](06-ai-platform/06-explain-api.md) | SHAP-based forecast explanation per DFU |
 | 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Hash-chained append-only AI decision ledger (**Partial** — ledger shipped; policy engine not yet wired) |
 
 ---

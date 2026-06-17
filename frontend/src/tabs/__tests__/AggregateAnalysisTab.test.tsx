@@ -59,6 +59,7 @@ vi.mock("@/api/queries", () => ({
   }),
   fetchAccuracySlice: vi.fn().mockResolvedValue({ rows: [], common_sku_count: null, sku_counts: null }),
   fetchLagCurve: vi.fn().mockResolvedValue({ by_lag: [] }),
+  fetchLagLeaderboard: vi.fn().mockResolvedValue({ lags: [], limit: 5, source: "agg_accuracy_lag_archive" }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue({ config: null, available_models: [] }),
   fetchCompetitionSummary: vi.fn().mockResolvedValue({ summary: null }),
   fetchShapModels: vi.fn().mockResolvedValue({ models: [] }),

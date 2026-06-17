@@ -77,3 +77,44 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
   });
   return fetchJson(`/forecast/accuracy/lag-curve?${qs}`);
 }
+
+export interface LagLeaderboardEntry {
+  rank: number;
+  model_id: string;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  n_rows: number;
+}
+
+export interface LagLeaderboardLag {
+  lag: number;
+  rankings: LagLeaderboardEntry[];
+}
+
+export interface LagLeaderboardPayload {
+  lags: LagLeaderboardLag[];
+  limit: number;
+  source: string;
+}
+
+export interface LagLeaderboardParams {
+  month_from?: string;
+  month_to?: string;
+  limit?: number;
+}
+
+export const lagLeaderboardKeys = {
+  list: (params?: LagLeaderboardParams) => ["lag-leaderboard", params ?? {}] as const,
+};
+
+export async function fetchLagLeaderboard(
+  params?: LagLeaderboardParams,
+): Promise<LagLeaderboardPayload> {
+  const qs = buildSearchParams({
+    month_from: params?.month_from,
+    month_to: params?.month_to,
+    limit: params?.limit,
+  });
+  return fetchJson(`/forecast/accuracy/lag-leaderboard?${qs}`);
+}

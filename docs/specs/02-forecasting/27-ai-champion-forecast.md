@@ -1,6 +1,6 @@
 # 27 — AI Champion Forecast (forward-only AI adjuster)
 
-**Status:** Implemented (backend / API / job / SQL); **no frontend tab yet** — 2026-06-16
+**Status:** Implemented (API, job, SQL, FVA tab UI) — 2026-06-16
 **Supersedes:** the removed *AI Planner — FVA Backtest* (walk-forward backtest + accuracy grading). This feature keeps the LLM recommendation brain but drops all backtesting.
 
 ---
@@ -50,6 +50,10 @@ A dedicated table (not `fact_production_forecast`) because that table's unique i
 | GET | `/ai-champion/latest` | Latest run metadata + recommendation-code rollup |
 | GET | `/ai-champion/forecast` | Per-DFU-month champion-vs-ai rows (filter `item_id`, `adjusted_only`) |
 | POST | `/ai-champion/generate` | Submit a `generate_ai_champion` background job (`require_api_key`) → 202 + job_id |
+
+## UI
+
+`frontend/src/tabs/fva/AiChampionPanel.tsx` on the FVA tab: latest run summary, recommendation rollup, champion-vs-AI table, and Generate button. Query module: `frontend/src/api/queries/ai-champion.ts`.
 
 ## 6. Jobs & Make
 

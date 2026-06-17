@@ -699,3 +699,77 @@ def forecast_accuracy_lag_curve(
         "by_lag": [by_lag[k] for k in sorted(by_lag.keys())],
         "source": "agg_accuracy_lag_archive",
     }
+
+
+@router.get("/forecast/accuracy/lag-leaderboard")
+def forecast_accuracy_lag_leaderboard(
+    response: FastAPIResponse,
+    month_from: str = Query(default="", max_length=20),
+    month_to: str = Query(default="", max_length=20),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """Per-lag model leaderboard ranked by accuracy (data: agg_accuracy_lag_archive).
+
+    Returns WAPE and bias for each model at execution lags 0-4. Pinball loss
+    requires quantile forecast rows and is not computed here.
+    """
+    set_cache(response, max_age=120, stale_while_revalidate=300)
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+    if month_from.strip():
+        where_parts.append("month_start >= %s::date")
+        params.append(month_from.strip())
+    if month_to.strip():
+        where_parts.append("month_start <= %s::date")
+        params.append(month_to.strip())
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    sql = f"""
+        SELECT
+            lag,
+            model_id,
+            SUM(row_count)::bigint   AS n_rows,
+            SUM(sum_forecast)        AS sum_forecast,
+            SUM(sum_actual)          AS sum_actual,
+            SUM(sum_abs_error)       AS sum_abs_error
+        FROM agg_accuracy_lag_archive
+        {where_sql}
+        GROUP BY 1, 2
+        ORDER BY 1 ASC, 3 DESC
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        db_rows = cur.fetchall()
+
+    by_lag: dict[int, list[dict[str, Any]]] = {lag: [] for lag in range(5)}
+    for lag_val, model_id, n_rows, sf, sa, sae in db_rows:
+        lag_key = int(lag_val)
+        if lag_key not in by_lag:
+            continue
+        kpis = compute_kpis(float(sf or 0), float(sa or 0), float(sae or 0), int(n_rows or 0))
+        by_lag[lag_key].append({
+            "model_id": model_id,
+            "accuracy_pct": kpis["accuracy_pct"],
+            "wape": kpis["wape"],
+            "bias": kpis["bias"],
+            "n_rows": int(n_rows or 0),
+        })
+
+    lags_out: list[dict[str, Any]] = []
+    for lag_key in sorted(by_lag.keys()):
+        ranked = sorted(
+            by_lag[lag_key],
+            key=lambda r: (r["accuracy_pct"] is not None, r["accuracy_pct"] or -1.0),
+            reverse=True,
+        )[:limit]
+        for rank, entry in enumerate(ranked, start=1):
+            entry["rank"] = rank
+        lags_out.append({"lag": lag_key, "rankings": ranked})
+
+    return {
+        "lags": lags_out,
+        "limit": limit,
+        "source": "agg_accuracy_lag_archive",
+    }
