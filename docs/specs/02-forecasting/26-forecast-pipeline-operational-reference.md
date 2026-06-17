@@ -889,7 +889,7 @@ make forecast-prod-all         # Schema + generate
 - Settings tab shows production forecast parameters (horizon, min history, cold-start model)
 
 **Scripts:**
-- `scripts/generate_production_forecasts.py` -- loads champion assignments, loads model artifacts, builds inference grid, generates predictions recursively, computes confidence intervals, writes to `fact_production_forecast`
+- `scripts/forecasting/generate_production_forecasts.py` -- loads champion assignments, loads model artifacts, builds inference grid, generates predictions recursively, computes confidence intervals, writes to `fact_production_forecast`
 
 **Error Recovery:**
 - If forecast generation fails for some DFUs: check logs for specific model loading errors. Individual DFU failures are logged but do not block other DFUs.
@@ -1030,7 +1030,7 @@ make fresh-champion # Full ML pipeline
 
 1. Register the algorithm in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms`
 2. Set lifecycle flags: `enabled`, `tune`, `backtest`, `compete`, `forecast`, `expert`
-3. If tree model: add `params` section and entry in `config/algorithm_config.yaml`
+3. If tree model: add `params` section and entry in `config/forecasting/forecast_pipeline_config.yaml`
 4. Create backtest script or add model to existing registry (`common/ml/model_registry.py`)
 5. Add Makefile targets: `backtest-<name>`, `backtest-load-<name>`
 6. Run backtest and load: `make backtest-<name> && make backtest-load-<name>`
@@ -1147,7 +1147,7 @@ The accuracy monitoring dashboard. Shows:
 | `cluster_experiment_templates.yaml` | Cluster experiment templates | 7 templates: baseline, high-K, low-K, seasonal, intermittent, PCA, recent | Stage 5 UI |
 | `cluster_tuning_profiles.yaml` | Per-cluster tuning profiles | Cluster-specific hyperparameter overrides | Stage 8 |
 | `forecast_domain_config.yaml` | Seasonality + variability + quantile + bias | seasonality thresholds, variability CV classes, quantile model | Stage 2 |
-| `algorithm_config.yaml` | Model hyperparameters (legacy) | LGBM, CatBoost, XGBoost, Chronos params | Stage 6 (fallback) |
+| `forecast_pipeline_config.yaml` (`algorithms.<id>.params`) | Model hyperparameters (replaces the deleted `algorithm_config.yaml`) | LGBM, CatBoost, XGBoost, Chronos params | Stage 6 |
 | `expert_system_backtest.yaml` | Expert system backtest config | Segment-algorithm routing, DFU classification rules | Expert Panel |
 | `ext_ml_forecasts.yaml` | External ML forecast config | External model registration, source mapping | Stage 1 |
 | `data_quality_config.yaml` | Data quality rules | Validation rules, outlier thresholds, completeness checks | Stage 1 |
@@ -1344,7 +1344,7 @@ The accuracy monitoring dashboard. Shows:
 | Category | Path |
 |---|---|
 | Master pipeline config | `config/forecasting/forecast_pipeline_config.yaml` |
-| Production forecast script | `scripts/generate_production_forecasts.py` |
+| Production forecast script | `scripts/forecasting/generate_production_forecasts.py` |
 | Champion selection script | `scripts/run_champion_selection.py` |
 | Tree model backtest | `scripts/run_backtest.py` |
 | Foundation model backtest | `scripts/run_backtest_chronos_bolt.py` |

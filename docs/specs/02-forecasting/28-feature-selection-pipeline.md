@@ -1,4 +1,4 @@
-# 23 — Multi-Stage Feature Selection Pipeline
+# 28 — Multi-Stage Feature Selection Pipeline
 
 **Status**: Implemented
 **Module**: `common/ml/shap_selector.py`

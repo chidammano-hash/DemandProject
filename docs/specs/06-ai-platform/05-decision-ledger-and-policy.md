@@ -3,7 +3,7 @@
 Append-only audit trail and declarative autonomy guardrails for every AI
 write action.
 
-**Status:** Ledger foundation landed (2026-04-23) and is callable from any
+**Status: Partial.** Ledger foundation landed (2026-04-23) and is callable from any
 agent. The policy engine prototype (`common/ai/policy_engine.py`) was built
 and unit-tested but never wired into a runtime path, and has since been
 removed as unwired code. The guardrail design below is therefore **not yet

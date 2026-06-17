@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Demand Forecast panel) |
-| **Key Files** | `common/ml/forecast_ci.py`, `config/forecasting/forecast_pipeline_config.yaml` (production_forecast.confidence_interval section), `scripts/generate_production_forecasts.py`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
+| **Key Files** | `common/ml/forecast_ci.py`, `config/forecasting/forecast_pipeline_config.yaml` (production_forecast.confidence_interval section), `scripts/forecasting/generate_production_forecasts.py`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
 
 ---
 

@@ -190,7 +190,7 @@ All strategies use `shift(exec_lag+1)` to prevent data leakage.
 
 | Template | Strategy | Key Params |
 |----------|----------|-----------|
-| production_baseline | (from live config) | source: model_competition_config |
+| production_baseline | (from live config) | source: forecast_pipeline_config |
 | expanding_conservative | expanding | min_prior_months=5 |
 | rolling_6m | rolling | window_months=6 |
 | rolling_3m | rolling | window_months=3 |

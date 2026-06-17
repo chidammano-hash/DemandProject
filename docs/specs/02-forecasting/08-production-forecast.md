@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Demand Forecast panel), Model Experimentation Studio |
-| **Key Files** | `scripts/ml/train_production_models.py`, `scripts/generate_production_forecasts.py`, `api/routers/forecasting/production_forecast.py`, `config/production_forecast_config.yaml`, `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
+| **Key Files** | `scripts/ml/train_production_models.py`, `scripts/forecasting/generate_production_forecasts.py`, `api/routers/forecasting/production_forecast.py`, `config/forecasting/forecast_pipeline_config.yaml`, `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
 
 ---
 
@@ -54,7 +54,7 @@ make train-production-all
 
 ### Step 2: Generate Point Forecasts
 
-Script: `scripts/generate_production_forecasts.py`
+Script: `scripts/forecasting/generate_production_forecasts.py`
 
 For each DFU:
 
@@ -227,7 +227,7 @@ Configured in `config/forecasting/forecast_pipeline_config.yaml` under `producti
 
 ## Configuration
 
-All production forecast settings live in `config/production_forecast_config.yaml`.
+All production forecast settings live in `config/forecasting/forecast_pipeline_config.yaml`.
 
 ### Production Training
 

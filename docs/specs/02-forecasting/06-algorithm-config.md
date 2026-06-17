@@ -75,7 +75,7 @@ xgboost:
 |-----|------|---------|-------------|
 | `cluster_strategy` | string | `"per_cluster"` | `"per_cluster"` trains one model per `ml_cluster` partition; `"global"` trains one model on all data. `ml_cluster` is used for partitioning only, not as a model feature (removed to prevent leakage). |
 | `recursive` | bool | false | Enable recursive multi-step inference. Each predict month is scored individually; model's prediction for month T becomes `qty_lag_1` for month T+1. |
-| `shap_select` | bool | false | Enable multi-stage per-timeframe feature selection (see [spec 23](23-feature-selection-pipeline.md)). |
+| `shap_select` | bool | false | Enable multi-stage per-timeframe feature selection (see [spec 28](28-feature-selection-pipeline.md)). |
 | `shap_threshold` | float | 0.95 | SHAP cumulative importance threshold (Stage 3). Ignored if `shap_top_n` is set. |
 | `shap_top_n` | int/null | null | Select exactly this many top features. Overrides `shap_threshold`. |
 | `shap_sample_size` | int | 500 | Rows sampled for SHAP computation per timeframe. |

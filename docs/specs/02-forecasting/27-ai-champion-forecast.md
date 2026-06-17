@@ -1,6 +1,6 @@
 # 27 — AI Champion Forecast (forward-only AI adjuster)
 
-**Status:** Implemented — 2026-06-16
+**Status:** Implemented (backend / API / job / SQL); **no frontend tab yet** — 2026-06-16
 **Supersedes:** the removed *AI Planner — FVA Backtest* (walk-forward backtest + accuracy grading). This feature keeps the LLM recommendation brain but drops all backtesting.
 
 ---

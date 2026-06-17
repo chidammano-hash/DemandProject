@@ -149,7 +149,7 @@ def seed_tuning_baseline(model_id: str) -> None:
 ```python
 def seed_champion_baseline() -> None:
     summary = json.loads(Path("data/champion/champion_summary.json").read_text())
-    config = load_config("model_competition")
+    config = load_config("forecast_pipeline_config")
 
     # 1. Upsert champion_experiment row with is_promoted=TRUE
     # 2. Insert per-lag rows into champion_experiment_lag

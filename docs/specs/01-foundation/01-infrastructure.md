@@ -79,7 +79,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Production Forecast Pipeline | [../02-forecasting/08-production-forecast.md](../02-forecasting/08-production-forecast.md) | Forecasting |
 | Bias Correction Engine | [../02-forecasting/09-bias-correction.md](../02-forecasting/09-bias-correction.md) | Forecasting |
 | SKU Clustering + What-If Scenarios | [../03-demand-intelligence/01-sku-clustering.md](../03-demand-intelligence/01-sku-clustering.md) | Demand Intelligence |
-| SKU Feature Engineering (Seasonality + Variability) | [../01-foundation/02-sku-feature-engineering.md](../01-foundation/02-sku-feature-engineering.md) | Demand Intelligence |
+| SKU Feature Engineering (Seasonality + Variability) | [../03-demand-intelligence/02-sku-feature-engineering.md](../03-demand-intelligence/02-sku-feature-engineering.md) | Demand Intelligence |
 | Blended Demand Forecast | [../03-demand-intelligence/03-blended-demand.md](../03-demand-intelligence/03-blended-demand.md) | Forecasting |
 | Inventory Snapshots + Backtest | [../04-inventory/01-inventory-snapshot.md](../04-inventory/01-inventory-snapshot.md) | Inventory |
 | Lead Time Variability | [../04-inventory/02-demand-variability.md](../04-inventory/02-demand-variability.md) | Inventory |

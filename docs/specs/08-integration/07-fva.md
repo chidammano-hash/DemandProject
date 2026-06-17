@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented |
+| **Status** | Implemented (core ladder: Naive → External → Champion + Ceiling); AI Adjusted / Planner Adjusted stages reserved (planned) |
 | **UI Tab** | FVA |
 | **Key Files** | `api/routers/forecasting/fva.py`, `frontend/src/tabs/FVATab.tsx`, `sql/068_create_fva_tracking.sql`, `frontend/src/api/queries/platform.ts` |
 

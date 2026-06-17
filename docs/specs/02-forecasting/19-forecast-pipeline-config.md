@@ -301,7 +301,7 @@ pipeline:
 | `stages` | Ordered list of main pipeline stages. Each stage depends on the previous one completing. |
 | `auxiliary` | Stages that run independently and feed into backtest feature engineering. |
 
-Execution flow: `clustering` -> `backtest` -> `load` -> `champion` -> `forecast`. The `seasonality` and `variability` auxiliary stages (see [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md)) can run in parallel with clustering and are consumed during the backtest stage.
+Execution flow: `clustering` -> `backtest` -> `load` -> `champion` -> `forecast`. The `seasonality` and `variability` auxiliary stages (see [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md)) can run in parallel with clustering and are consumed during the backtest stage.
 
 ---
 
@@ -360,7 +360,7 @@ New code should use the master config:
 ```python
 # OLD (still works but deprecated):
 from common.core.utils import load_config
-cfg = load_config("model_competition")
+cfg = load_forecast_pipeline_config()
 models = cfg["competition"]["models"]
 
 # NEW (preferred):

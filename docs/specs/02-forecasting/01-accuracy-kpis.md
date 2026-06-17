@@ -81,7 +81,7 @@ No dedicated config file. Accuracy formulas are defined in `common/services/metr
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column enables per-model accuracy
 - [Backtest Framework](./03-backtest-framework.md) -- populates `backtest_lag_archive` for lag curves
 - Clustering (in `03-demand-intelligence/`) -- provides `cluster_assignment` for slicing
-- [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md) -- provides `seasonality_profile` and `variability_class` for filtering
+- [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) -- provides `seasonality_profile` and `variability_class` for filtering
 
 ## Probabilistic & weekly metrics
 
