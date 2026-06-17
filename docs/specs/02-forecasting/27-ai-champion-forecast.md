@@ -57,7 +57,7 @@ A dedicated table (not `fact_production_forecast`) because that table's unique i
 
 ## 6. UI
 
-**Item Analysis tab** — `frontend/src/tabs/item-analysis/AiChampionItemPanel.tsx` (query module `frontend/src/api/queries/ai-champion.ts`). Enable the **"AI Champion"** panel toggle. Shows any previously-saved adjustment for the selected DFU; a **provider dropdown** + **AI Adjust** button run a fresh adjustment; the result renders as a "Preview — not saved" card (recommendation, rationale, champion-vs-AI table) with a **Save** button. There is no FVA-tab panel.
+**Item Analysis tab** — `frontend/src/tabs/item-analysis/AiChampionItemPanel.tsx` (query module `frontend/src/api/queries/ai-champion.ts`). Shown by default (toggle it off via the **"AI Champion"** checkbox in the panel toolbar). Shows any previously-saved adjustment for the selected DFU; a **provider dropdown** + **AI Adjust** button run a fresh adjustment; the result renders as a "Preview — not saved" card (recommendation, rationale, champion-vs-AI table) with a **Save** button. There is no FVA-tab panel.
 
 ## 7. Configuration (`config/ai/ai_champion_config.yaml`)
 

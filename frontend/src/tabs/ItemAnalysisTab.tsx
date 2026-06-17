@@ -53,7 +53,7 @@ const PANEL_DEFAULTS: Record<string, boolean> = {
   shap: true,
   forecastKpis: true,
   dqCorrections: false,
-  aiChampion: false,
+  aiChampion: true,
 };
 
 const DEMAND_PANELS = [

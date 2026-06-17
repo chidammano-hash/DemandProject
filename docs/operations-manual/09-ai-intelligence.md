@@ -399,8 +399,8 @@ tab and writes `model_id='ai_champion'`. Provider defaults live in
 `config/ai/ai_champion_config.yaml`; the UI overrides the provider per call.
 
 **How to use it.**
-1. Open the **Item Analysis** tab, select an item + location, and enable the
-   **"AI Champion"** panel toggle.
+1. Open the **Item Analysis** tab and select an item + location. The
+   **"AI Champion"** panel is shown by default (toggle it via the panel toolbar).
 2. Pick a provider in the panel dropdown and click **AI Adjust**. One LLM call
    runs for that DFU (item + location attributes, actuals, champion forecast,
    top customers go into the prompt).
