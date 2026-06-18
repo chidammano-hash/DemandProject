@@ -66,6 +66,11 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
     }
   }, [confirmKill, onCancel, job.job_id]);
 
+  // Many long jobs (e.g. backtests) stream log messages but never report a
+  // numeric percentage, so progress_pct stays 0 the whole run. Show an
+  // animated "working" bar in that case instead of a frozen 0% bar.
+  const indeterminate = job.status === "running" && (job.progress_pct ?? 0) <= 0;
+
   return (
     <div className={cn("rounded-xl border-2 p-4 transition-all", cfg.borderColor, cfg.bgColor)}>
       <div className="flex items-center justify-between mb-3">
@@ -84,22 +89,28 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
         <StatusBadge status={job.status} />
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar — determinate when the job reports a %, else an animated
+          "working" indicator so a 0%-reporting job doesn't look frozen. */}
       <div className="w-full bg-background/50 rounded-full h-2 mb-2 overflow-hidden">
         <div
           className={cn(
-            "h-2 rounded-full transition-all duration-700 ease-out",
-            job.status === "running"
-              ? "bg-gradient-to-r from-blue-500 to-blue-400"
-              : "bg-yellow-500",
+            "h-2 rounded-full",
+            indeterminate
+              ? "w-2/5 bg-gradient-to-r from-blue-500 to-blue-400 animate-pulse"
+              : cn(
+                  "transition-all duration-700 ease-out",
+                  job.status === "running"
+                    ? "bg-gradient-to-r from-blue-500 to-blue-400"
+                    : "bg-yellow-500",
+                ),
           )}
-          style={{ width: `${Math.max(job.progress_pct, 3)}%` }}
+          style={indeterminate ? undefined : { width: `${Math.max(job.progress_pct, 3)}%` }}
         />
       </div>
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="font-medium">{job.progress_pct}%</span>
+          <span className="font-medium">{indeterminate ? "running…" : `${job.progress_pct}%`}</span>
           <span>{job.progress_msg || "Waiting..."}</span>
         </div>
         <div className="flex items-center gap-2">
