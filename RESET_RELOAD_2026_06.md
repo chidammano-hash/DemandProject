@@ -50,6 +50,23 @@ command directly.
 - `df_ml_{lgbm,cat,xg,best}_l2_extract.csv` → external ML competition models (`make load-ext-all`)
 - `aws_ml_fcst_*.csv`, `combined_model_map.csv` → **unused by any loader — can be deleted**
 
+### Optional pre-filter of raw inputs (`data/input/cleanup_input.py`)
+
+Trims the **raw** files **in place** before normalize/load, so unwanted rows never enter the pipeline. Optional — skip for a full-scope load. **Destructive, no built-in backup** — back up first (`cp data/input/<file> data/input/<file>.bak`).
+
+- No flags → runs all four filters: `dfu.txt` (drop `L3_*` clusters), `dfu_lvl2_hist.txt` (`U_LVL==121`), `dfu_stat_fcst.txt` (DFUs in `dfu.txt` + last 12 months), `Inventory_Snapshot_*.csv` (`(item,loc)` in `dfu.txt`).
+- `--files {dfu,hist,fcst,inventory} ...` → run only the listed filters.
+- `--loc <LOC>` → on hist + fcst, additionally keep **only** that location (removes all others), on top of the default filters.
+
+Example used for this reset — restrict history + forecast to one location:
+```bash
+cp data/input/dfu_lvl2_hist.txt data/input/dfu_lvl2_hist.txt.bak
+cp data/input/dfu_stat_fcst.txt data/input/dfu_stat_fcst.txt.bak
+~/.local/bin/uv run python data/input/cleanup_input.py --files hist fcst --loc 1401-BULK
+```
+
+Idempotent (re-running removes 0 rows). It only rewrites raw files — the DB reflects the trim only after re-`normalize` + `load` of those datasets (Phase 3 covers this; a `--files hist fcst` trim needs only `make load-sales` + `make load-forecast`, then re-run Phase 4 since `fact_sales_monthly` changed). See `docs/operations-manual/02-data-ingestion.md` §2.1 "Optional pre-filter".
+
 ---
 
 ## PHASE 0 — Prerequisites

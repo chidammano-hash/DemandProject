@@ -46,6 +46,42 @@ The following sentinel values are normalized to SQL `NULL` during the normalize 
 
 Matching is case-insensitive and trimmed.
 
+### Optional pre-filter (`data/input/cleanup_input.py`)
+
+`data/input/cleanup_input.py` trims the **raw** input files **in place** *before* normalize/load, so unwanted rows never enter the pipeline. It is optional — skip it entirely for a full-scope load.
+
+> **Destructive & in-place — no built-in backup.** It overwrites the raw files in `data/input/`. Back up first if you need the originals: `cp data/input/<file> data/input/<file>.bak`.
+
+Default filters (run all when invoked with no flags):
+
+| File | Filter |
+|---|---|
+| `dfu.txt` | drop rows where `U_CLUSTER_ASSIGNMENT` starts with `L3_` |
+| `dfu_lvl2_hist.txt` | keep only `U_LVL == 121` |
+| `dfu_stat_fcst.txt` | keep DFUs present in `dfu.txt` **and** `startdate` within the last 12 months (cutoff derived from the system date) |
+| `Inventory_Snapshot_*.csv` | keep only `(item, loc)` present in `dfu.txt` |
+
+Two flags scope the run:
+
+- `--files {dfu,hist,fcst,inventory} ...` — run only the listed filters (default: all four).
+- `--loc <LOC>` — on `dfu_lvl2_hist.txt` and `dfu_stat_fcst.txt`, additionally keep **only** rows whose `LOC`/`loc` equals `<LOC>` (i.e. remove every other location). Applied **on top of** the default filters above.
+
+Example — restrict history and forecast to a single location:
+
+```bash
+~/.local/bin/uv run python data/input/cleanup_input.py --files hist fcst --loc 1401-BULK
+```
+
+The script is **idempotent** — re-running on an already-trimmed file removes 0 rows. It only rewrites the raw files; the corresponding tables are not updated until you re-`normalize` + `load` them (which `TRUNCATE`+reload, so trimmed-out rows are removed). After a LOC-scoped trim of `hist`/`fcst`:
+
+```bash
+make normalize-sales && make load-sales            # fact_sales_monthly
+make normalize-forecast && make load-forecast      # fact_external_forecast_monthly
+make refresh-mvs-tiered
+```
+
+`dim_sku` and inventory are untouched by a `--files hist fcst` run, so they do **not** need reloading; but features/clustering (`make features-compute && make cluster-all && ...`) should be re-run since `fact_sales_monthly` changed.
+
 ---
 
 ## 2.2 Normalize Stage
