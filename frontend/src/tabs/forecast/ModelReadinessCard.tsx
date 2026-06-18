@@ -63,6 +63,8 @@ interface ModelReadinessCardProps {
   onTrain: (modelId: string) => void;
   onTrainAll: () => void;
   onGenerate: (modelId: string) => void;
+  onGenerateAll: () => void;
+  generatableCount: number;
   onPromote: (modelId: string) => void;
   onGenerateChampion: () => void;
 }
@@ -90,9 +92,12 @@ export function ModelReadinessCard({
   onTrain,
   onTrainAll,
   onGenerate,
+  onGenerateAll,
+  generatableCount,
   onPromote,
   onGenerateChampion,
 }: ModelReadinessCardProps) {
+  const isGeneratingAll = generatingModelId === "__all__";
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -130,6 +135,30 @@ export function ModelReadinessCard({
                 All Ready
               </Badge>
             )}
+            {/* Generate staging forecasts for every ready model in one click. */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onGenerateAll}
+              disabled={isGenerating || generatableCount === 0}
+              title={
+                generatableCount === 0
+                  ? "Train tree models first — no models are ready to generate."
+                  : `Generate staging forecasts for ${generatableCount} ready model(s)`
+              }
+            >
+              {isGeneratingAll ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  Generating All...
+                </>
+              ) : (
+                <>
+                  <BarChart3 className="mr-1.5 h-3 w-3" />
+                  Generate All ({generatableCount})
+                </>
+              )}
+            </Button>
           </div>
         </div>
       </CardHeader>

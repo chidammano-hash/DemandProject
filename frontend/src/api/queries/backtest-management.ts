@@ -226,12 +226,25 @@ export async function submitTraining(
   });
 }
 
-/** Submit a generate-forecast job for a model (produces staging forecast). */
+/** Submit a generate-forecast job for a model (produces staging forecast).
+ *
+ * `horizon` and `confidenceIntervals` are threaded to the backend as query
+ * params so the Forecast panel's controls actually take effect — previously
+ * they were dropped for single-model generation. Omit either to fall back to
+ * the pipeline config default.
+ */
 export async function submitGenerateForecast(
   modelId: string,
+  opts?: { horizon?: number; confidenceIntervals?: boolean },
 ): Promise<{ job_id: string; model_id: string }> {
+  const qs = new URLSearchParams();
+  if (opts?.horizon != null) qs.set("horizon", String(opts.horizon));
+  if (opts?.confidenceIntervals != null) {
+    qs.set("confidence_intervals", String(opts.confidenceIntervals));
+  }
+  const suffix = qs.toString() ? `?${qs}` : "";
   return fetchJson<{ job_id: string; model_id: string }>(
-    `/backtest-management/${modelId}/generate`,
+    `/backtest-management/${modelId}/generate${suffix}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

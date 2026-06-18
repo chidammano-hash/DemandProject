@@ -205,9 +205,26 @@ Configured in `config/forecasting/forecast_pipeline_config.yaml` under `producti
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/forecast/production` | Forecast rows for a specific DFU + plan version |
+| GET | `/forecast/production` | Promoted forecast rows for a specific DFU + plan version (future) |
 | GET | `/forecast/production/summary` | Aggregate forecast by ABC class for a plan version |
 | GET | `/forecast/production/versions` | List available plan versions with metadata |
+| GET | `/forecast/production/staging` | All **staged** (pre-promotion, future) forecasts for a DFU, grouped by `model_id` |
+| GET | `/forecast/candidate` | All **backtest** (past, out-of-sample) predictions for a DFU, grouped by `model_id` — see [24-candidate-forecast-promotion.md](24-candidate-forecast-promotion.md) §5.4 |
+| POST | `/backtest-management/{model_id}/generate` | Submit a generate job for one model → staging. Accepts `horizon` + `confidence_intervals` query params (both optional → pipeline-config defaults) |
+
+### Generate controls (Model Tuning → Forecast)
+
+The `ForecastPanel` threads its **Horizon** input and **Include Confidence Intervals**
+toggle through to the job for every generate path (single model, champion, and
+**Generate All**). The single-model `POST /{model_id}/generate` carries them as
+`?horizon=&confidence_intervals=` query params; the job handler maps them to the
+script's `--horizon` and `--confidence-intervals` / `--no-confidence-intervals`
+flags. The CLI flag overrides `confidence_interval.enabled` in the pipeline config,
+so the UI toggle actually takes effect (previously it was silently dropped for
+single-model generation). A **Generate All** button submits a generate job for
+every ready model (non-tree models plus production-trained tree models) in one
+click. Promote/generate failures (the WAPE/coverage gate's 409, or 400 for no
+staged rows) surface as toasts rather than failing silently.
 
 ## Pipeline Targets
 

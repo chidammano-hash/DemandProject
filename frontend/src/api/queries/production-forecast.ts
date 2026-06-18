@@ -71,7 +71,12 @@ export async function fetchProductionForecast(params: {
 }): Promise<ProductionForecastPayload> {
   const qs = new URLSearchParams({
     item_id: params.item_id,
-    horizon: String(params.horizon ?? 18),
+    // Default to the full 24-month production horizon (matches
+    // production_forecast.horizon_months and the endpoint's cap). The old
+    // default of 18 truncated the production/champion line in Item Analysis
+    // while the staging lines (no horizon filter) ran the full 24 months,
+    // making the promoted forecast look like it "stopped" 6 months early.
+    horizon: String(params.horizon ?? 24),
   });
   if (params.loc) qs.set("loc", params.loc);
   if (params.plan_version) qs.set("plan_version", params.plan_version);
@@ -127,6 +132,44 @@ export async function fetchStagingForecasts(params: {
     loc: params.loc,
   });
   return fetchJson(`/forecast/production/staging?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// F1.1c — Candidate Forecasts (per-model backtest / out-of-sample predictions)
+// ---------------------------------------------------------------------------
+
+export interface CandidateForecastPoint {
+  forecast_month: string;
+  forecast_qty: number | null;
+  forecast_qty_lower: number | null;
+  forecast_qty_upper: number | null;
+  actual_qty: number | null;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  horizon_months: number | null;
+  cluster_id: string | null;
+}
+
+export interface CandidateForecastsPayload {
+  item_id: string;
+  loc: string;
+  models: Record<string, CandidateForecastPoint[]>;
+}
+
+/** Fetch per-model backtest (past, out-of-sample) predictions for a DFU.
+ *  Counterpart to {@link fetchStagingForecasts} (future forecasts). */
+export async function fetchCandidateForecasts(params: {
+  item_id: string;
+  loc: string;
+  model_id?: string;
+}): Promise<CandidateForecastsPayload> {
+  const qs = new URLSearchParams({
+    item_id: params.item_id,
+    loc: params.loc,
+  });
+  if (params.model_id) qs.set("model_id", params.model_id);
+  return fetchJson(`/forecast/candidate?${qs}`);
 }
 
 // ---------------------------------------------------------------------------

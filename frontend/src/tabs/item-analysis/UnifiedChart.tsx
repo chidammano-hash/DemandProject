@@ -39,6 +39,8 @@ export interface UnifiedChartProps {
   stagingModelIds: string[];
   hiddenStaging: Set<string>;
   hiddenStagingPills: Set<string>;
+  backtestModelIds: string[];
+  hiddenBacktest: Set<string>;
   hasSupplyData: boolean;
   availableSupply: SupplySeriesDef[];
   hiddenSupply: Set<string>;
@@ -67,6 +69,8 @@ export function UnifiedChart({
   stagingModelIds,
   hiddenStaging,
   hiddenStagingPills,
+  backtestModelIds,
+  hiddenBacktest,
   hasSupplyData,
   availableSupply,
   hiddenSupply,
@@ -111,10 +115,13 @@ export function UnifiedChart({
               }}
               formatter={(value: number, name: string) => {
                 let label = TOOLTIP_LABELS[name] ?? name;
-                // Resolve staging model names to readable labels
+                // Resolve staging/backtest model names to readable labels
                 if (name.startsWith("staging_")) {
                   const mid = name.slice("staging_".length);
-                  label = `${modelLabel(mid)} (staging)`;
+                  label = `${modelLabel(mid)} (forecast)`;
+                } else if (name.startsWith("backtest_")) {
+                  const mid = name.slice("backtest_".length);
+                  label = `${modelLabel(mid)} (backtest)`;
                 }
                 if (name === "dos" || name === "avg_lead_time")
                   return [`${Number(value).toFixed(1)} days`, label];
@@ -223,7 +230,7 @@ export function UnifiedChart({
               />
             )}
 
-            {/* ---- Staging forecast lines ---- */}
+            {/* ---- Staging forecast lines (future) ---- */}
             {stagingModelIds
               .filter((mid) => !hiddenStaging.has(mid) && !hiddenStagingPills.has(mid))
               .map((mid) => {
@@ -239,6 +246,31 @@ export function UnifiedChart({
                     stroke={color}
                     strokeWidth={1.5}
                     strokeDasharray="4 3"
+                    dot={false}
+                    connectNulls
+                    activeDot={{ r: 3 }}
+                  />
+                );
+              })}
+
+            {/* ---- Backtest lines (past, out-of-sample) — dotted, same color
+                   as the model's forecast line so a model's past fit and forward
+                   forecast read as one series across the timeline. ---- */}
+            {backtestModelIds
+              .filter((mid) => !hiddenBacktest.has(mid))
+              .map((mid) => {
+                const key = `backtest_${mid}`;
+                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                return (
+                  <Line
+                    key={key}
+                    type="monotone"
+                    dataKey={key}
+                    yAxisId="left"
+                    name={key}
+                    stroke={color}
+                    strokeWidth={1.5}
+                    strokeDasharray="1 3"
                     dot={false}
                     connectNulls
                     activeDot={{ r: 3 }}

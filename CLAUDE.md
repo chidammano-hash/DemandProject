@@ -71,7 +71,7 @@ Hard constraints. Violations cause bugs, test failures, or silent data corruptio
 
 ### Data Pipeline
 - **New data sources MUST extend the standard pipeline.** Add to `normalize-all` + `load-all` Make targets, register `DomainSpec` in `common/core/domain_specs.py`, add to `etl_config.yaml` `domain_order`. Never standalone.
-- **Forecast promotion**: predictions land in `fact_candidate_forecast`, are promoted to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion uses `data/champion/dfu_assignments.csv`.
+- **Forecast promotion**: predictions land in `fact_candidate_forecast`, are promoted to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion uses `data/champion/dfu_assignments.csv`. **Generate threads UI controls**: `POST /backtest-management/{model_id}/generate` accepts `horizon` + `confidence_intervals` query params (optional → pipeline-config defaults); the job handler maps them to the script's `--horizon` / `--confidence-intervals`|`--no-confidence-intervals` flags. Per-DFU time-series reads live in `api/routers/forecasting/production_forecast.py`: `/forecast/production/staging` (future, grouped by model) and `/forecast/candidate` (past out-of-sample backtest, grouped by model) — the Item Analysis chart overlays `staging_<model>` + `backtest_<model>` lines from these.
 
 ---
 

@@ -503,3 +503,84 @@ async def test_promote_gate_disabled_skips_checks():
             resp = await ac.post("/backtest-management/lgbm_cluster/promote")
 
     assert resp.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# 7. POST /backtest-management/{model_id}/generate — horizon + CI threading
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_generate_threads_horizon_and_confidence_intervals():
+    """horizon + confidence_intervals query params reach the job params.
+
+    Regression: these were previously dropped for single-model generation, so
+    the Forecast panel's horizon input and CI toggle silently had no effect.
+    """
+    pool, conn, cursor = _make_pool()
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-gen-1"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/backtest-management/lgbm_cluster/generate"
+                "?horizon=9&confidence_intervals=true"
+            )
+
+    assert resp.status_code == 201
+    assert resp.json()["job_id"] == "job-gen-1"
+    _, kwargs = mock_jm.return_value.submit_job.call_args
+    assert kwargs["params"] == {
+        "model_id": "lgbm_cluster",
+        "horizon": 9,
+        "confidence_intervals": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_omits_unset_params_for_config_default():
+    """Without query params, only model_id is passed (script/config defaults apply)."""
+    pool, conn, cursor = _make_pool()
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-gen-2"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/catboost_cluster/generate")
+
+    assert resp.status_code == 201
+    _, kwargs = mock_jm.return_value.submit_job.call_args
+    assert kwargs["params"] == {"model_id": "catboost_cluster"}
+
+
+@pytest.mark.asyncio
+async def test_generate_threads_confidence_intervals_false():
+    """confidence_intervals=false threads an explicit False (force CI off)."""
+    pool, conn, cursor = _make_pool()
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-gen-3"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/backtest-management/lgbm_cluster/generate?confidence_intervals=false"
+            )
+
+    assert resp.status_code == 201
+    _, kwargs = mock_jm.return_value.submit_job.call_args
+    assert kwargs["params"] == {"model_id": "lgbm_cluster", "confidence_intervals": False}

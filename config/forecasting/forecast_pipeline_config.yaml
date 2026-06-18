@@ -408,9 +408,9 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: per_cluster
+  strategy: rolling
   strategy_params:
-    min_prior_months: 5
+    window_months: 6
   fallback_model_id: seasonal_naive
   metric: wape
   lag: execution
@@ -429,21 +429,8 @@ champion:
     test_months: 3
     performance_window: 6
   models:
-  - bolt_hierarchical
-  - catboost_cluster
-  - catboost_cust_enriched
-  - chronos2
-  - chronos2_enriched
-  - chronos_bolt
   - lgbm_cluster
-  - lgbm_cust_enriched
-  - mstl
-  - nbeats
-  - nhits
-  - rolling_mean
-  - seasonal_naive
-  - xgboost_cluster
-  - xgboost_cust_enriched
+  - chronos
 production_forecast:
   horizon_months: 24
   lookback_months: 36

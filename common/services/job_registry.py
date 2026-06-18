@@ -290,7 +290,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         description="Generate future-period production forecasts using champion ML models",
         group="forecast",
         callable=_run_generate_production_forecast,
-        params_schema={"horizon": 12, "model_id": None},
+        params_schema={"horizon": 12, "model_id": None, "confidence_intervals": None},
     ),
     "compute_replenishment_plan": JobTypeDef(
         type_id="compute_replenishment_plan",

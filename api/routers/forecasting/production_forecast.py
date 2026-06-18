@@ -7,7 +7,8 @@ Endpoints (F1.1):
     GET /forecast/production           — DFU-level forecast series
     GET /forecast/production/summary   — Portfolio-level aggregate
     GET /forecast/production/versions  — Available plan versions
-    GET /forecast/production/staging   — All staged forecasts for a DFU, grouped by model
+    GET /forecast/production/staging   — All staged (future) forecasts for a DFU, grouped by model
+    GET /forecast/candidate            — All backtest (past, out-of-sample) predictions for a DFU, grouped by model
 
 Endpoints (F2.2):
     GET /forecast/demand-plan          — Quantile forecast (P10/P50/P90) per DFU
@@ -17,10 +18,15 @@ Endpoints (F2.2):
 """
 from __future__ import annotations
 
+import logging
+
+import psycopg
 from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
 from common.core.planning_date import get_planning_date
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["production-forecast"])
 
@@ -397,6 +403,83 @@ async def get_staging_forecasts(
             "cluster_id": r[6],
             "lag_source": r[7],
             "generated_at": r[8].isoformat() if r[8] else None,
+        })
+
+    return {
+        "item_id": item_id,
+        "loc": loc,
+        "models": models,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /forecast/candidate
+# ---------------------------------------------------------------------------
+
+@router.get("/forecast/candidate")
+async def get_candidate_forecasts(
+    item_id: str = Query(...),
+    loc: str = Query(...),
+    model_id: str | None = Query(default=None),
+):
+    """Return per-model backtest (past, out-of-sample) predictions for a DFU.
+
+    Reads ``fact_candidate_forecast`` — the historical predictions each model
+    produced during backtest evaluation, alongside the realized ``actual_qty``
+    and per-row accuracy. This is the past-period counterpart to the
+    future-period staging forecasts served by ``/forecast/production/staging``.
+
+    Together they let the Item Analysis chart overlay, for a chosen model, its
+    backtest fit over history (``backtest_<model>``) and its forward forecast
+    (``staging_<model>``) on one timeline.
+
+    Args:
+        item_id: Item number (exact match).
+        loc: Location code (exact match).
+        model_id: Optional — restrict to a single model's predictions.
+
+    Returns:
+        ``{item_id, loc, models}`` where ``models`` maps model_id → time-ordered
+        backtest rows (forecast vs actual + accuracy metrics). Empty ``models``
+        when the table is absent (clean install) or no backtests have loaded.
+    """
+    params: list = [item_id, loc]
+    model_filter = ""
+    if model_id:
+        model_filter = " AND model_id = %s"
+        params.append(model_id)
+
+    with get_conn() as conn, conn.cursor() as cur:
+        try:
+            cur.execute(f"""
+                SELECT model_id, forecast_month, forecast_qty,
+                       forecast_qty_lower, forecast_qty_upper,
+                       actual_qty, accuracy_pct, wape, bias,
+                       horizon_months, cluster_id
+                FROM fact_candidate_forecast
+                WHERE item_id = %s AND loc = %s{model_filter}
+                ORDER BY model_id, forecast_month
+            """, params)
+            rows = cur.fetchall()
+        except psycopg.Error:
+            # Clean install: the table may not exist yet — degrade to empty.
+            logger.debug("fact_candidate_forecast table may not exist yet")
+            return {"item_id": item_id, "loc": loc, "models": {}}
+
+    models: dict[str, list] = {}
+    for r in rows:
+        mid = r[0]
+        models.setdefault(mid, []).append({
+            "forecast_month": r[1].isoformat() if r[1] else None,
+            "forecast_qty": float(r[2]) if r[2] is not None else None,
+            "forecast_qty_lower": float(r[3]) if r[3] is not None else None,
+            "forecast_qty_upper": float(r[4]) if r[4] is not None else None,
+            "actual_qty": float(r[5]) if r[5] is not None else None,
+            "accuracy_pct": float(r[6]) if r[6] is not None else None,
+            "wape": float(r[7]) if r[7] is not None else None,
+            "bias": float(r[8]) if r[8] is not None else None,
+            "horizon_months": r[9],
+            "cluster_id": r[10],
         })
 
     return {

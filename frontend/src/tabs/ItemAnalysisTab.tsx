@@ -22,8 +22,8 @@ import {
   fetchDomainSuggest,
   fetchSkuAnalysis,
 } from "@/api/queries";
-import { fetchProductionForecast, fetchStagingForecasts } from "@/api/queries/production-forecast";
-import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
+import { fetchProductionForecast, fetchStagingForecasts, fetchCandidateForecasts } from "@/api/queries/production-forecast";
+import type { ProductionForecastPayload, StagingForecastsPayload, CandidateForecastsPayload } from "@/api/queries/production-forecast";
 import { aiChampionKeys, fetchAiChampionSaved } from "@/api/queries/ai-champion";
 import type {
   SkuAnalysisKpis,
@@ -217,6 +217,19 @@ export function ItemAnalysisTab() {
     return () => { cancelled = true; };
   }, [debouncedSkuItem, debouncedSkuLocation]);
 
+  // Fetch candidate forecasts (per-model backtest / out-of-sample predictions over history).
+  // These render as backtest_<model> lines over the past window — the counterpart to
+  // the future staging_<model> lines — so a chosen model shows past fit + forward forecast.
+  const [candidateForecastData, setCandidateForecastData] = useState<CandidateForecastsPayload | null>(null);
+  useEffect(() => {
+    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) { setCandidateForecastData(null); return; }
+    let cancelled = false;
+    fetchCandidateForecasts({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
+      .then((payload) => { if (!cancelled) setCandidateForecastData(payload); })
+      .catch(() => { if (!cancelled) setCandidateForecastData(null); });
+    return () => { cancelled = true; };
+  }, [debouncedSkuItem, debouncedSkuLocation]);
+
   // Saved AI Champion forecast — shares its query key with AiChampionItemPanel,
   // so a Save in the panel auto-refreshes this overlay on the chart.
   const aiItem = debouncedSkuItem.trim();
@@ -320,13 +333,31 @@ export function ItemAnalysisTab() {
       }
     }
 
-    // Merge production + staging into existing chart points
+    // Build candidate (backtest) month maps: backtest_{model_id} → month → qty.
+    // These predictions are out-of-sample and historical, so they only land on
+    // existing past points (never the future months below).
+    const backtestMaps = new Map<string, Map<string, number | null>>();
+    if (candidateForecastData?.models) {
+      for (const [modelId, points] of Object.entries(candidateForecastData.models)) {
+        const key = `backtest_${modelId}`;
+        const monthMap = new Map<string, number | null>();
+        for (const pt of points) {
+          monthMap.set(pt.forecast_month, pt.forecast_qty);
+        }
+        backtestMaps.set(key, monthMap);
+      }
+    }
+
+    // Merge production + staging + backtest into existing chart points
     result = result.map((pt) => {
       const m = String(pt.month);
       const extras: Record<string, unknown> = {};
       if (prodMap.has(m)) extras.production_forecast = prodMap.get(m);
       if (aiMap.has(m)) extras.ai_champion = aiMap.get(m);
       for (const [key, monthMap] of stagingMaps) {
+        if (monthMap.has(m)) extras[key] = monthMap.get(m);
+      }
+      for (const [key, monthMap] of backtestMaps) {
         if (monthMap.has(m)) extras[key] = monthMap.get(m);
       }
       return Object.keys(extras).length > 0 ? { ...pt, ...extras } : pt;
@@ -359,7 +390,7 @@ export function ItemAnalysisTab() {
     });
 
     return [...result, ...futurePts] as Record<string, unknown>[];
-  }, [skuFilteredSeries, skuMonths, prodForecastData, stagingForecastData, aiChampionSaved]);
+  }, [skuFilteredSeries, skuMonths, prodForecastData, stagingForecastData, candidateForecastData, aiChampionSaved]);
 
   // AI Champion overlay: present only once a saved adjustment exists for this DFU.
   const aiChampionRows = aiChampionSaved?.rows ?? [];
@@ -551,6 +582,7 @@ export function ItemAnalysisTab() {
                     setSkuVisibleSeries={setSkuVisibleSeries}
                     prodForecastData={prodForecastData}
                     stagingForecastData={stagingForecastData}
+                    candidateForecastData={candidateForecastData}
                     selectedModel={selectedModel}
                     onModelSelect={setSelectedModel}
                     trendData={trendData}

@@ -1290,6 +1290,10 @@ def main() -> None:
                         help="Override plan version label (e.g. '2026-02'). Defaults to current month.")
     parser.add_argument("--max-dfus", type=int, default=None,
                         help="Limit to first N DFUs (for testing/sampling). Default: all DFUs.")
+    parser.add_argument("--confidence-intervals", dest="confidence_intervals",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="Force CI (P10/P90) bands on/off. Default: use config "
+                             "confidence_interval.enabled. Use --no-confidence-intervals to force off.")
     args = parser.parse_args()
 
     config = load_config()
@@ -1385,10 +1389,15 @@ def main() -> None:
                     f"{len(sales_index):,}", f"{len(attrs_index):,}",
                     f"{len(item_index):,}", len(cat_encoders))
 
-        # Build forecast CI sigma lookup (per-DFU uncertainty from backtest residuals)
+        # Build forecast CI sigma lookup (per-DFU uncertainty from backtest residuals).
+        # CLI --confidence-intervals/--no-confidence-intervals overrides the config
+        # default so the UI's "Include Confidence Intervals" toggle takes effect.
         ci_cfg = config.get("confidence_interval", {})
+        ci_enabled = ci_cfg.get("enabled", False)
+        if args.confidence_intervals is not None:
+            ci_enabled = args.confidence_intervals
         sigma_lookup: dict = {}
-        if ci_cfg.get("enabled", False):
+        if ci_enabled:
             logger.info("Step 2c: Building forecast uncertainty (CI bands)...")
             with profiled_section("build_ci_sigma"):
                 cluster_map: dict[tuple, str] = {

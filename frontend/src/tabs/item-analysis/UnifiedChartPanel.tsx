@@ -6,7 +6,7 @@ import type {
   InventoryTrendPoint,
   InventoryTrendParams,
 } from "@/types";
-import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
+import type { ProductionForecastPayload, StagingForecastsPayload, CandidateForecastsPayload } from "@/api/queries/production-forecast";
 import { modelLabel } from "@/lib/model-labels";
 import type { DQCorrection } from "@/api/queries/platform";
 import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
@@ -52,6 +52,7 @@ export interface UnifiedChartPanelProps {
   setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
   prodForecastData?: ProductionForecastPayload | null;
   stagingForecastData?: StagingForecastsPayload | null;
+  candidateForecastData?: CandidateForecastsPayload | null;
   selectedModel?: string | null;
   onModelSelect?: (model: string | null) => void;
   // Supply data (optional)
@@ -82,6 +83,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   setSkuVisibleSeries,
   prodForecastData,
   stagingForecastData,
+  candidateForecastData,
   selectedModel = null,
   onModelSelect,
   trendData = [],
@@ -102,6 +104,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   // Pill click only dims via hiddenStaging; Defaults menu removes the pill.
   const [hiddenStagingPills, setHiddenStagingPills] = useState<Set<string>>(new Set());
 
+  // Backtest (candidate) model visibility — same pattern as staging, hidden by default.
+  const [hiddenBacktest, setHiddenBacktest] = useState<Set<string>>(new Set());
+
   const hasProdForecast = (prodForecastData?.forecasts.length ?? 0) > 0;
   const prodForecastLabel = hasProdForecast
     ? `Prod (${prodForecastData!.model_id})`
@@ -119,6 +124,14 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   }, [stagingForecastData, promotedModelId]);
 
   const hasStagingModels = stagingModelIds.length > 0;
+
+  // Derive backtest model IDs from candidate data (backtest_* lines over history).
+  const backtestModelIds = useMemo(() => {
+    if (!candidateForecastData?.models) return [];
+    return Object.keys(candidateForecastData.models);
+  }, [candidateForecastData]);
+  const hasBacktestModels = backtestModelIds.length > 0;
+
   const ss = trendParams?.safety_stock ?? null;
   const ropUnits = trendParams?.reorder_point_units ?? null;
   const hasSs = ss != null;
@@ -211,6 +224,20 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
       return new Set();
     });
   }, [allStagingOn, stagingModelIds]);
+
+  // Backtest model toggle (single + all), mirroring the staging controls.
+  const toggleBacktestModel = useCallback((modelId: string) => {
+    setHiddenBacktest((prev) => toggleInSet(prev, modelId));
+  }, []);
+  const allBacktestOn = hasBacktestModels && backtestModelIds.every((m) => !hiddenBacktest.has(m));
+  const toggleAllBacktest = useCallback(() => {
+    setHiddenBacktest((prev) => {
+      if (allBacktestOn) {
+        return new Set(backtestModelIds);
+      }
+      return new Set();
+    });
+  }, [allBacktestOn, backtestModelIds]);
 
   // Supply toggle
   const toggleSupply = useCallback((key: string) => {
@@ -386,6 +413,32 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
           </div>
         )}
 
+        {/* Backtest (past, out-of-sample) model pills — counterpart to Staging */}
+        {hasBacktestModels && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={toggleAllBacktest}
+              className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors text-left"
+              title={allBacktestOn ? "Hide all backtest models" : "Show all backtest models"}
+            >
+              {allBacktestOn ? "Backtest −" : "Backtest +"}
+            </button>
+            {backtestModelIds.map((mid) => {
+              const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+              return (
+                <TogglePill
+                  key={`backtest_${mid}`}
+                  label={modelLabel(mid)}
+                  color={color}
+                  active={!hiddenBacktest.has(mid)}
+                  onClick={() => toggleBacktestModel(mid)}
+                  dashed
+                />
+              );
+            })}
+          </div>
+        )}
+
         {/* DQ corrections indicator */}
         {showCorrections && activeCorrectionSeries.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -538,6 +591,8 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
         stagingModelIds={stagingModelIds}
         hiddenStaging={hiddenStaging}
         hiddenStagingPills={hiddenStagingPills}
+        backtestModelIds={backtestModelIds}
+        hiddenBacktest={hiddenBacktest}
         hasSupplyData={hasSupplyData}
         availableSupply={availableSupply}
         hiddenSupply={hiddenSupply}

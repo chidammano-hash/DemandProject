@@ -41,6 +41,8 @@ import {
 import { fetchJobs, submitJob } from "@/api/queries/jobs";
 import type { Job } from "@/types/jobs";
 import { modelLabel } from "@/lib/model-labels";
+import { toast } from "@/components/Toaster";
+import { formatApiError } from "@/lib/formatApiError";
 
 import { KpiCard } from "@/components/KpiCard";
 import { LoadingElement } from "@/components/LoadingElement";
@@ -162,6 +164,18 @@ export function ForecastPanel() {
   // Tree models that are forecastable
   const treeAlgos = forecastAlgos.filter((a) => requiresTraining(a.type));
 
+  // Models ready to generate right now: non-tree models (zero-shot) plus tree
+  // models that are production-trained. Drives the "Generate All" button.
+  const generatableAlgos = useMemo(
+    () =>
+      forecastAlgos.filter((a) => {
+        if (!requiresTraining(a.type)) return true;
+        const st = trainingStatus?.[a.id];
+        return Boolean(st?.trained && st?.training_mode === "production");
+      }),
+    [forecastAlgos, trainingStatus],
+  );
+
   // Count of tree models that are production-trained
   const trainedTreeCount = treeAlgos.filter((a) => {
     const status = trainingStatus?.[a.id];
@@ -245,9 +259,44 @@ export function ForecastPanel() {
   async function handleGenerate(modelId: string) {
     setGeneratingModelId(modelId);
     try {
-      await submitGenerateForecast(modelId);
+      await submitGenerateForecast(modelId, {
+        horizon: effectiveHorizon,
+        confidenceIntervals: includeCI,
+      });
+      toast.success(`Generating forecast for ${modelLabel(modelId)}…`);
     } catch (err) {
-      console.error("Generate failed:", err);
+      toast.error(formatApiError(err));
+      setGeneratingModelId(null);
+    }
+  }
+
+  // Generate staging forecasts for every ready model in one click. Submissions
+  // run sequentially; the staging-poll effect clears the "__all__" spinner once
+  // all models have staged rows.
+  async function handleGenerateAll() {
+    if (generatableAlgos.length === 0) {
+      toast.info("No models are ready to generate — train the tree models first.");
+      return;
+    }
+    setGeneratingModelId("__all__");
+    toast.info(
+      `Generating forecasts for ${generatableAlgos.length} model${generatableAlgos.length === 1 ? "" : "s"}…`,
+    );
+    let failures = 0;
+    for (const algo of generatableAlgos) {
+      try {
+        await submitGenerateForecast(algo.id, {
+          horizon: effectiveHorizon,
+          confidenceIntervals: includeCI,
+        });
+      } catch (err) {
+        failures += 1;
+        toast.error(`${modelLabel(algo.id)}: ${formatApiError(err)}`);
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
+    if (failures === generatableAlgos.length) {
+      // Nothing was queued — clear the spinner now (poll effect won't fire).
       setGeneratingModelId(null);
     }
   }
@@ -256,11 +305,18 @@ export function ForecastPanel() {
     setPromotingModelId(modelId);
     try {
       await submitPromote(modelId);
+      toast.success(
+        modelId === "champion"
+          ? "Champion promoted to production."
+          : `${modelLabel(modelId)} promoted to production.`,
+      );
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.promotionStatus });
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
       queryClient.invalidateQueries({ queryKey: forecastPanelKeys.versions });
     } catch (err) {
-      console.error("Promote failed:", err);
+      // Surfaces the promotion gate's 409 (WAPE/coverage) or 400 (no staged
+      // rows / missing champion winners) detail instead of failing silently.
+      toast.error(formatApiError(err));
     } finally {
       setPromotingModelId(null);
     }
@@ -271,11 +327,12 @@ export function ForecastPanel() {
   async function handleGenerateChampion() {
     setIsSubmitting(true);
     try {
-      const params: Record<string, unknown> = { horizon: effectiveHorizon };
-      if (includeCI) params.confidence_intervals = true;
-      await submitJob("generate_production_forecast", params, "Production Forecast");
+      await submitChampionJob();
+      toast.success("Champion forecast generation queued.");
       queryClient.invalidateQueries({ queryKey: forecastPanelKeys.jobs(0) });
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
+    } catch (err) {
+      toast.error(formatApiError(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -307,19 +364,28 @@ export function ForecastPanel() {
 
   // Effect: stop polling once generate completes (staging row appears)
   useMemo(() => {
-    if (generatingModelId && stagingData) {
-      const s = stagingData[generatingModelId];
-      if (s && s.row_count > 0) {
-        setGeneratingModelId(null);
-      }
+    if (!generatingModelId || !stagingData) return;
+    if (generatingModelId === "__all__") {
+      // Clear once every ready model has staged rows.
+      const allGenerated =
+        generatableAlgos.length > 0 &&
+        generatableAlgos.every((a) => (stagingData[a.id]?.row_count ?? 0) > 0);
+      if (allGenerated) setGeneratingModelId(null);
+      return;
     }
-  }, [stagingData, generatingModelId]);
+    const s = stagingData[generatingModelId];
+    if (s && s.row_count > 0) {
+      setGeneratingModelId(null);
+    }
+  }, [stagingData, generatingModelId, generatableAlgos]);
 
   /** Submit the legacy champion job (per-DFU routing via assignments). */
   async function submitChampionJob() {
-    const params: Record<string, unknown> = { horizon: effectiveHorizon };
-    if (includeCI) params.confidence_intervals = true;
-    await submitJob("generate_production_forecast", params, "Production Forecast");
+    await submitJob(
+      "generate_production_forecast",
+      { horizon: effectiveHorizon, confidence_intervals: includeCI },
+      "Production Forecast",
+    );
   }
 
   async function handleGenerateForecast() {
@@ -328,12 +394,23 @@ export function ForecastPanel() {
       if (selectedModel === "champion") {
         await submitChampionJob();
       } else {
-        // For a specific model: use the new generate endpoint
-        await submitGenerateForecast(selectedModel);
+        // For a specific model: use the new generate endpoint, threading the
+        // panel's horizon + CI toggle (previously dropped here).
+        await submitGenerateForecast(selectedModel, {
+          horizon: effectiveHorizon,
+          confidenceIntervals: includeCI,
+        });
       }
+      toast.success(
+        selectedModel === "champion"
+          ? "Champion forecast generation queued."
+          : `Forecast generation queued for ${modelLabel(selectedModel)}.`,
+      );
       queryClient.invalidateQueries({ queryKey: forecastPanelKeys.jobs(0) });
       queryClient.invalidateQueries({ queryKey: forecastPanelKeys.versions });
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
+    } catch (err) {
+      toast.error(formatApiError(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -400,6 +477,8 @@ export function ForecastPanel() {
         onTrain={handleTrain}
         onTrainAll={handleTrainAll}
         onGenerate={handleGenerate}
+        onGenerateAll={handleGenerateAll}
+        generatableCount={generatableAlgos.length}
         onPromote={handlePromote}
         onGenerateChampion={handleGenerateChampion}
       />

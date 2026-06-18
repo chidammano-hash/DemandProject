@@ -736,13 +736,33 @@ def get_staging_summary():
 
 
 @router.post("/{model_id}/generate", status_code=201, dependencies=[Depends(require_api_key)])
-def submit_generate_forecast(model_id: str):
-    """Submit production forecast generation for a model, writing to staging."""
+def submit_generate_forecast(
+    model_id: str,
+    horizon: int | None = None,
+    confidence_intervals: bool | None = None,
+):
+    """Submit production forecast generation for a model, writing to staging.
+
+    Args:
+        model_id: Algorithm to generate forecasts for.
+        horizon: Months ahead to forecast. Omitted → pipeline config default.
+        confidence_intervals: Force CI (P10/P90) bands on/off. Omitted → config
+            default (``confidence_interval.enabled`` in the pipeline config).
+
+    The horizon and CI flags are threaded into the job params so they reach
+    ``generate_production_forecasts.py`` — previously they were dropped for
+    single-model generation, silently ignoring the panel's controls.
+    """
     from common.services.job_registry import JobManager
     jm = JobManager()
+    params: dict[str, Any] = {"model_id": model_id}
+    if horizon is not None:
+        params["horizon"] = horizon
+    if confidence_intervals is not None:
+        params["confidence_intervals"] = confidence_intervals
     job_id = jm.submit_job(
         job_type="generate_production_forecast",
-        params={"model_id": model_id},
+        params=params,
         label=f"Generate Forecast: {model_id}",
     )
     return {"job_id": job_id, "model_id": model_id}

@@ -94,7 +94,26 @@ All under `/backtest-management/` prefix.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/promotion-status` | Returns currently active promoted model |
-| GET | `/candidate-summary` | Per-model candidate forecast statistics |
+| GET | `/candidate-summary` | Per-model candidate forecast **counts/accuracy** (no time-series) |
+
+**Per-DFU backtest time-series** (NOT under the `/backtest-management/` prefix —
+it lives in the production-forecast router so it sits next to the staging
+endpoint):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/forecast/candidate?item_id=&loc=&model_id=` | Per-model backtest (past, out-of-sample) predictions for one DFU, grouped by `model_id` — forecast vs `actual_qty` + per-row accuracy. `model_id` optional. Degrades to empty `models` when the table is absent (clean install). |
+
+This is the past-period counterpart to `/forecast/production/staging` (future
+forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
+
+> ⚠️ **Currently inert.** `fact_candidate_forecast` is **not populated by any code** (the
+> backtest load writes `fact_external_forecast_monthly`, not this table), so
+> `/forecast/candidate` always returns empty `models` and the `backtest_<model>` chart
+> overlay never renders. The working past-backtest line is `forecast_<model>` (from
+> `agg_forecast_monthly`), which auto-load now populates. The dead `/forecast/candidate`
+> endpoint + `backtest_<model>` overlay are slated for removal — track this before relying
+> on them.
 
 ### 4.2 Write Endpoints
 
@@ -120,20 +139,34 @@ All under `/backtest-management/` prefix.
 
 ## 5. Frontend UI
 
-### 5.1 Model Readiness Table (ForecastPanel Step 1)
+### 5.1 Backtest stage table (Model Tuning → Backtest)
 
-Each model row displays a 4-step action pipeline:
+Models are grouped by family (Tree / Foundation / Statistical / Deep Learning) in compact
+tables, each with a **Run all** action. The flow is:
 
 ```
-[Train] → [Generate] → [Load] → [Promote]
+[Run backtest] → (auto-load) → [Promote]
 ```
 
 | Step | Action | API Call | Condition |
 |------|--------|----------|-----------|
-| Train | Train on full history | `POST /{id}/train` | Tree models only |
-| Generate | Run backtest | `POST /{id}/run` | Trained (tree) or always (foundation) |
-| Load | Load to candidates | `POST /{id}/load` | Predictions exist on disk |
-| Promote | Copy to production | `POST /{id}/promote` | Candidates loaded in DB |
+| Run | Run backtest (per model or per group) | `POST /{id}/run` | Trained (tree) or always (foundation/statistical/DL) |
+| Auto-load | **Automatic** on run completion — server-side, same job | (none — chained inside the backtest job) | Backtest produced predictions |
+| Promote | Copy staged forecast → production | `POST /{id}/promote` | A staged forecast exists (see §08 / Forecast stage) |
+
+> **Auto-load.** When a backtest run completes, `_run_backtest`
+> (`common/services/job_state.py`) chains the load (`_auto_load_backtest` →
+> `load_backtest_forecasts.py`) **before** marking the run `completed`, so the UI's
+> "Loaded" status and `is_loaded_to_db` flag are consistent. The load is best-effort: a
+> failure leaves the run `completed` and logs for manual retry. There is **no Load button**
+> in the grid; a recovery **Load to DB** appears on the detail panel only for a
+> completed-but-unloaded run. `POST /{id}/load` remains for that recovery path.
+
+> **Important — actual load target.** Despite this spec's original framing, the load writes
+> to **`fact_external_forecast_monthly`** (+ `backtest_lag_archive`) and refreshes the
+> `agg_forecast_monthly` MV — **not** `fact_candidate_forecast`. Nothing in the codebase
+> populates `fact_candidate_forecast`; the per-model historical backtest surfaces in Item
+> Analysis as the `forecast_<model>` line (from `agg_forecast_monthly`). See §4.1 note.
 
 **State indicators:**
 - Gray badge: Not available (prerequisite incomplete)
@@ -150,6 +183,22 @@ assignments to select the best model per DFU.
 ### 5.3 Candidates Column
 
 New table column showing loaded candidate DFU count per model.
+
+### 5.4 Item Analysis backtest overlay
+
+The **Item Analysis** chart (`UnifiedChartPanel` / `UnifiedChart`) consumes
+`/forecast/candidate` and renders a `backtest_<model>` line per model over the
+**historical** window, alongside the existing `staging_<model>` (future) lines.
+A **"Backtest"** pill row (mirroring the "Staging" row) toggles the lines per
+model and all-at-once. Backtest lines are dotted (`strokeDasharray="1 3"`) and
+share each model's color, so a model's past fit and forward forecast read as one
+series across the timeline. The merge happens in `ItemAnalysisTab.tsx`
+(`mergedFilteredSeries`): candidate months are out-of-sample/historical, so they
+land only on existing past points (never the synthesized future points).
+
+This closes the gap where Item Analysis could show a model's **future** staging
+forecast but not its **past** backtest predictions — `/candidate-summary` only
+exposed counts, with no per-DFU time-series to chart.
 
 ## 6. Data Flow
 

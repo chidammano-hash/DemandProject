@@ -127,6 +127,13 @@ def _apply_tweedie_objective(
         overrides["loss_function"] = "MAE"
         merged = {**params, **overrides}
         merged.pop("boost_from_average", None)
+        # CatBoost forbids the Newton leaf-estimation method under MAE (no
+        # Hessian). Drop the RMSE/Newton-oriented leaf-estimation settings so
+        # CatBoost falls back to its valid MAE default (Exact); otherwise
+        # intermittent clusters crash with "Newton leaves estimation method is
+        # not supported for MAE loss function".
+        merged.pop("leaf_estimation_method", None)
+        merged.pop("leaf_estimation_iterations", None)
     elif model_name == "xgboost":
         overrides["objective"] = "reg:absoluteerror"
         merged = {**params, **overrides}

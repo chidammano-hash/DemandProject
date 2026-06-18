@@ -385,3 +385,118 @@ class TestJobScriptPathsExist:
         mods = sorted(set(re.findall(r'"(scripts\.ml\.[A-Za-z0-9_.]+)"', self._module_src())))
         missing = [m for m in mods if not (PROJECT_ROOT / (m.replace(".", "/") + ".py")).is_file()]
         assert not missing, f"job_state references missing foundation modules: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_generate_production_forecast — horizon + CI flag threading
+# ---------------------------------------------------------------------------
+
+class TestGenerateProductionForecastCmd:
+    """The generate handler must thread horizon + CI into the subprocess cmd."""
+
+    def _run(self, params):
+        from common.services.job_state import _run_generate_production_forecast
+        with patch(
+            "common.services.job_state._run_subprocess", return_value="ok"
+        ) as m_sub:
+            _run_generate_production_forecast(params)
+        return m_sub.call_args[0][0]  # first positional arg = cmd list
+
+    def test_threads_horizon_and_model_id(self):
+        cmd = self._run({"model_id": "lgbm_cluster", "horizon": 9})
+        assert "--horizon" in cmd
+        assert cmd[cmd.index("--horizon") + 1] == "9"
+        assert "--model-id" in cmd
+        assert cmd[cmd.index("--model-id") + 1] == "lgbm_cluster"
+
+    def test_confidence_intervals_true_adds_flag(self):
+        cmd = self._run({"model_id": "lgbm_cluster", "confidence_intervals": True})
+        assert "--confidence-intervals" in cmd
+        assert "--no-confidence-intervals" not in cmd
+
+    def test_confidence_intervals_false_adds_negated_flag(self):
+        cmd = self._run({"model_id": "lgbm_cluster", "confidence_intervals": False})
+        assert "--no-confidence-intervals" in cmd
+        assert "--confidence-intervals" not in cmd
+
+    def test_unset_params_omit_optional_flags(self):
+        cmd = self._run({"model_id": "lgbm_cluster"})
+        assert "--horizon" not in cmd
+        assert "--confidence-intervals" not in cmd
+        assert "--no-confidence-intervals" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# Tests: auto-load after a successful backtest (no manual Load needed)
+# ---------------------------------------------------------------------------
+
+_MOD = "common.services.job_state"
+
+
+class TestAutoLoadBacktest:
+    """_auto_load_backtest loads predictions on completion, best-effort."""
+
+    def test_calls_loader_when_predictions_exist(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("lgbm", 7)
+        m_load.assert_called_once()
+        args, _ = m_load.call_args
+        # First positional arg is the params dict: full dir model_id + run_id.
+        assert args[0] == {"model_id": "lgbm_cluster", "run_id": 7}
+
+    def test_skips_when_no_predictions(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=False),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("catboost", 3)
+        m_load.assert_not_called()
+
+    def test_swallows_loader_errors(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model", side_effect=RuntimeError("boom")),
+        ):
+            # Must not raise — a load failure cannot fail a completed backtest.
+            _auto_load_backtest("xgboost", 9)
+
+    def test_non_tree_model_uses_identity_dir(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("chronos_bolt", 1)
+        assert m_load.call_args[0][0] == {"model_id": "chronos_bolt", "run_id": 1}
+
+
+class TestRunBacktestAutoLoadsBeforeCompletion:
+    """_run_backtest auto-loads BEFORE marking the run completed, so the UI sees
+    is_loaded_to_db set by the time status flips to 'completed'."""
+
+    def test_auto_load_runs_before_completion_update(self):
+        from common.services.job_state import _run_backtest
+        manager = MagicMock()
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok"),
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}._auto_load_backtest") as m_auto,
+            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
+        ):
+            manager.attach_mock(m_auto, "auto")
+            manager.attach_mock(m_update, "update")
+            _run_backtest("lgbm", {"backtest_run_id": 5})
+
+        m_auto.assert_called_once()
+        # auto-load got (model, run_id)
+        assert m_auto.call_args[0][0] == "lgbm"
+        assert m_auto.call_args[0][1] == 5
+        # ordering: auto-load before completion update
+        names = [c[0] for c in manager.mock_calls]
+        assert names.index("auto") < names.index("update")

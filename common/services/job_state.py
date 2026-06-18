@@ -71,11 +71,36 @@ _SUBPROCESS_TIMEOUT = 7200  # 2 hours — prevents hung jobs from blocking the e
 _LOG_FLUSH_INTERVAL = 5  # seconds between DB log flushes
 _LOG_FLUSH_LINES = 20  # flush after this many buffered lines
 
-# Model name → backtest output directory mapping (shared across job callables)
+# Tree-model membership gate + output-dir lookup for the *tunable tree* job
+# callables (used as `model in MODEL_OUTPUT_DIRS` in a few places — do NOT add
+# non-tree models here, it would widen those gates).
 MODEL_OUTPUT_DIRS: dict[str, str] = {
     "lgbm": "lgbm_cluster",
     "catboost": "catboost_cluster",
     "xgboost": "xgboost_cluster",
+}
+
+# Backtest model key → output directory under data/backtest/, for the FULL
+# roster. Single source of truth shared by _update_backtest_run_on_completion
+# and _auto_load_backtest so the metadata read and the auto-load read the same
+# directory. Tree aliases map to the _cluster dir; everything else is identity.
+_BACKTEST_OUTPUT_DIRS: dict[str, str] = {
+    "lgbm": "lgbm_cluster",
+    "catboost": "catboost_cluster",
+    "xgboost": "xgboost_cluster",
+    "lgbm_cust_enriched": "lgbm_cust_enriched",
+    "catboost_cust_enriched": "catboost_cust_enriched",
+    "xgboost_cust_enriched": "xgboost_cust_enriched",
+    "chronos": "chronos",
+    "chronos_bolt": "chronos_bolt",
+    "chronos2": "chronos2",
+    "chronos2_enriched": "chronos2_enriched",
+    "bolt_hierarchical": "bolt_hierarchical",
+    "mstl": "mstl",
+    "nbeats": "nbeats",
+    "nhits": "nhits",
+    "seasonal_naive": "seasonal_naive",
+    "rolling_mean": "rolling_mean",
 }
 
 
@@ -347,17 +372,8 @@ def _update_backtest_run_on_completion(run_id: int, model: str) -> None:
     import json
     from pathlib import Path
 
-    # Model ID mapping (backtest key → output directory model_id)
-    _MODEL_TO_DIR = {
-        "lgbm": "lgbm_cluster", "catboost": "catboost_cluster", "xgboost": "xgboost_cluster",
-        "chronos": "chronos", "chronos_bolt": "chronos_bolt", "chronos2": "chronos2",
-        "chronos2_enriched": "chronos2_enriched", "bolt_hierarchical": "bolt_hierarchical",
-        "mstl": "mstl", "nbeats": "nbeats", "nhits": "nhits",
-        "seasonal_naive": "seasonal_naive", "rolling_mean": "rolling_mean",
-        "lgbm_cust_enriched": "lgbm_cust_enriched", "catboost_cust_enriched": "catboost_cust_enriched",
-        "xgboost_cust_enriched": "xgboost_cust_enriched",
-    }
-    model_dir = _MODEL_TO_DIR.get(model, model)
+    # Backtest key → output directory (shared with _auto_load_backtest).
+    model_dir = _BACKTEST_OUTPUT_DIRS.get(model, model)
     meta_path = Path("data/backtest") / model_dir / "backtest_metadata.json"
 
     try:
@@ -385,6 +401,53 @@ def _update_backtest_run_on_completion(run_id: int, model: str) -> None:
                 )
     except Exception:
         logger.warning("Failed to update backtest_run %d after completion", run_id)
+
+
+def _auto_load_backtest(
+    model: str,
+    run_id: int,
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> None:
+    """Best-effort: load a completed backtest's predictions into the DB.
+
+    Runs immediately after a successful backtest so results show up in accuracy
+    views and the Item Analysis ``forecast_<model>`` line without a separate
+    "Load" click. Resolves the output directory via ``_BACKTEST_OUTPUT_DIRS``
+    (the same map :func:`_update_backtest_run_on_completion` uses to read
+    metadata) and reuses :func:`_run_load_backtest_model`, which writes
+    ``fact_external_forecast_monthly`` + refreshes ``agg_forecast_monthly``.
+
+    Never raises: any load failure is swallowed and logged for manual retry —
+    the run itself already succeeded, so it must not be reported as failed.
+
+    Note: the load refreshes the ``agg_forecast_monthly`` MV. Under a parallel
+    "Run all", concurrent refreshes serialize on the MV lock (slower, not a
+    deadlock); sequential runs (the default) avoid this.
+    """
+    import psycopg  # lazy — module keeps psycopg off the top-level import path
+
+    from common.core.paths import PROJECT_ROOT as ROOT
+
+    model_dir = _BACKTEST_OUTPUT_DIRS.get(model, model)
+    pred_path = ROOT / "data" / "backtest" / model_dir / "backtest_predictions.csv"
+    if not pred_path.exists():
+        logger.warning("Auto-load skipped for %s: no predictions at %s", model, pred_path)
+        return
+    try:
+        _run_load_backtest_model(
+            {"model_id": model_dir, "run_id": run_id},
+            progress_cb, cancel_event, job_id,
+        )
+    except (RuntimeError, OSError, subprocess.SubprocessError, psycopg.Error):
+        # Best-effort: a load failure must not fail an already-completed backtest.
+        # _run_subprocess raises RuntimeError on non-zero exit / timeout / cancel;
+        # psycopg.Error guards a transient DB blip during the load's status write.
+        logger.warning(
+            "Auto-load failed for %s (run %s); load manually if needed",
+            model, run_id, exc_info=True,
+        )
 
 
 def _run_backtest(
@@ -492,12 +555,21 @@ def _run_backtest(
                 pass
         raise
 
-    if progress_cb:
-        progress_cb(pct=100, msg=f"{model} backtest completed")
-
-    # Update backtest_run tracking row with results
+    # Auto-load predictions into the DB so backtest results appear without a
+    # separate "Load" click. Run it BEFORE the completion update so, in the happy
+    # path, is_loaded_to_db is set before the UI sees status='completed' (avoids a
+    # poll landing in the gap and showing completed-but-unloaded). The completion
+    # update runs in `finally` so an unexpected auto-load error can never strand a
+    # successful backtest as 'running' — at worst it stays completed-but-unloaded,
+    # which the panel's recovery "Load to DB" button handles.
     if backtest_run_id:
-        _update_backtest_run_on_completion(backtest_run_id, model)
+        try:
+            _auto_load_backtest(model, backtest_run_id, progress_cb, cancel_event, job_id)
+        finally:
+            _update_backtest_run_on_completion(backtest_run_id, model)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"{model} backtest complete (results loaded)")
 
     return {"model": model, "output_log": output if output else "Completed"}
 
@@ -680,18 +752,31 @@ def _run_generate_production_forecast(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the production forecast generation pipeline (F1.1)."""
-    horizon = params.get("horizon", 24)
+    horizon = params.get("horizon")
     model_id = params.get("model_id")
+    # Tri-state: None → use the script/config default; True/False → force on/off.
+    confidence_intervals = params.get("confidence_intervals")
     if progress_cb:
-        progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon})")
-    cmd = [_UV, "run", "python", "scripts/forecasting/generate_production_forecasts.py", "--horizon", str(horizon)]
+        horizon_label = horizon if horizon is not None else "config default"
+        progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon_label})")
+    cmd = [_UV, "run", "python", "scripts/forecasting/generate_production_forecasts.py"]
+    if horizon is not None:
+        cmd.extend(["--horizon", str(horizon)])
     if model_id:
         cmd.extend(["--model-id", str(model_id)])
+    if confidence_intervals is True:
+        cmd.append("--confidence-intervals")
+    elif confidence_intervals is False:
+        cmd.append("--no-confidence-intervals")
     output = _run_subprocess(cmd, progress_cb, "Generating production forecasts",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
         progress_cb(pct=100, msg="Production forecast generation complete")
-    return {"horizon": horizon, "output_log": output if output else "Production forecast generation completed"}
+    return {
+        "horizon": horizon,
+        "confidence_intervals": confidence_intervals,
+        "output_log": output if output else "Production forecast generation completed",
+    }
 
 
 def _run_compute_replenishment_plan(
