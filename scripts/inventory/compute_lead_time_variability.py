@@ -5,22 +5,25 @@ LT distribution stats (mean, std, CV, percentiles) per item-location,
 and upserts results into dim_item_lead_time_profile.
 
 Usage:
-    uv run python scripts/compute_lead_time_variability.py
-    uv run python scripts/compute_lead_time_variability.py --config config/inventory/inventory_planning_config.yaml
-    uv run python scripts/compute_lead_time_variability.py --dry-run
+    uv run python scripts/inventory/compute_lead_time_variability.py
+    uv run python scripts/inventory/compute_lead_time_variability.py --config config/inventory/inventory_planning_config.yaml
+    uv run python scripts/inventory/compute_lead_time_variability.py --dry-run
 """
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import yaml
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 

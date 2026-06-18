@@ -1,6 +1,10 @@
 SHELL := /bin/zsh
 
 DC := docker compose
+# Put the project root on PYTHONPATH so any `python scripts/<domain>/<x>.py` can
+# `import common` regardless of the script's own sys.path bootstrap (scripts moved
+# into domain subdirs during the restructure left some bootstraps one level short).
+export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 UV := uv run
 POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
