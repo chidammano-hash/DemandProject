@@ -92,6 +92,22 @@ make clean-artifacts        # deletes data/{staged,backtest,tuning,clustering,ch
                             # LEAVES data/input/ untouched
 ```
 
+**Verify the wipe is clean (no stale forecasts survived).** The forecast tables MUST all be
+empty after the wipe — if any has rows, stale predictions from a prior run will show up in the
+UI (e.g. the Model Tuning → Forecast comparison reads `fact_production_forecast_staging` directly):
+
+```bash
+docker compose exec -T postgres psql -U demand -d demand_mvp -At -c "
+SELECT 'candidate', count(*) FROM fact_candidate_forecast
+UNION ALL SELECT 'staging',  count(*) FROM fact_production_forecast_staging
+UNION ALL SELECT 'production', count(*) FROM fact_production_forecast;"   # expect 0 for all three
+```
+
+> `db-truncate-data` now truncates `fact_production_forecast_staging` (fixed 2026-06-17 — it was
+> previously omitted, so generated forecasts survived the wipe and rendered as stale model lines
+> in the UI before any backtest/forecast was run). If you're on an older checkout, clear it
+> manually: `... -c "TRUNCATE TABLE fact_production_forecast_staging CASCADE;"`.
+
 ## PHASE 2 — Confirm inputs present
 
 ```bash
@@ -192,3 +208,8 @@ make ui                     # Vite on :5173 — open http://localhost:5173
   `seasonal_naive`), so it cleaned nothing under `data/backtest/`. Left stale, Phase 6's
   `backtest-load-all-bulk` (loads every `data/backtest/*/`) would re-ingest last run's
   predictions and corrupt champion selection. Now globs `rm -rf data/backtest/*`.
+- **`db-truncate-data` staging gap (fixed 2026-06-17):** the truncate block cleared
+  `fact_candidate_forecast` and `fact_production_forecast` but omitted
+  `fact_production_forecast_staging`, so a prior run's generated forecasts survived the wipe and
+  appeared in the UI as stale model lines before any backtest/forecast ran. Now truncated too;
+  the Phase 1 verification query above catches it if you're on an older checkout.
