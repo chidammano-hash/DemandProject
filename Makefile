@@ -1637,11 +1637,9 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	@echo "✓ Reset complete. Configuration masters preserved."
 
 clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
-	rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
-	rm -rf data/backtest/*  # all backtest output dirs are generated (per-model predictions, logs, tuning_archive); glob avoids the stale enumerated-list drift
-	rm -rf data/tuning/ data/perf_reports/
-	rm -rf data/clustering/ data/champion/ data/models/
+	find data/staged -maxdepth 1 -name '*_clean.csv' -delete 2>/dev/null || true  # find: zsh (SHELL := /bin/zsh) aborts a recipe on a no-match glob; find no-ops cleanly
 	rm -f data/staged/seasonality_results.csv data/staged/clustering_features.csv
+	rm -rf data/backtest data/tuning data/perf_reports data/clustering data/champion data/models  # whole generated dirs (no glob); recreated by the pipeline
 	@echo "✓ Intermediate artifacts cleaned."
 
 refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers, auto-detects first run)
