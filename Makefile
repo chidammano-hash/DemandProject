@@ -1566,6 +1566,7 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE backtest_lag_archive CASCADE;' \
 	  'TRUNCATE TABLE fact_external_forecast_monthly CASCADE;' \
 	  'TRUNCATE TABLE fact_candidate_forecast CASCADE;' \
+	  'TRUNCATE TABLE fact_production_forecast_staging CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
 	  'TRUNCATE TABLE fact_ai_champion_forecast CASCADE;' \
 	  'TRUNCATE TABLE ai_champion_run CASCADE;' \
