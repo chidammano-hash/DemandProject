@@ -463,6 +463,7 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset purchase_order
 	$(UV) python scripts/etl/load_customer_demand_postgres.py --replace
 	$(MAKE) refresh-agg
+	$(MAKE) db-analyze  # refresh planner statistics after bulk load — without this the planner seq-scans (slow even at small scale)
 
 refresh-agg-sales:
 	# CONCURRENTLY when populated (unique idx uq_agg_sales_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
