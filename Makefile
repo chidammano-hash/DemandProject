@@ -1628,6 +1628,14 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE cluster_experiment_comparison CASCADE;' \
 	  'TRUNCATE TABLE cluster_experiment CASCADE;' \
 	  'TRUNCATE TABLE champion_experiment CASCADE;' \
+	  'TRUNCATE TABLE champion_experiment_lag CASCADE;' \
+	  'TRUNCATE TABLE champion_experiment_month CASCADE;' \
+	  'TRUNCATE TABLE champion_promotion_log CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_backtest CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_algorithm_comparison CASCADE;' \
+	  'TRUNCATE TABLE fact_dfu_policy_assignment CASCADE;' \
+	  'TRUNCATE TABLE fact_exception_lifecycle CASCADE;' \
+	  'TRUNCATE TABLE fact_lineage_event CASCADE;' \
 	  'TRUNCATE TABLE dim_sku CASCADE;' \
 	  'TRUNCATE TABLE dim_item CASCADE;' \
 	  'TRUNCATE TABLE dim_location CASCADE;' \

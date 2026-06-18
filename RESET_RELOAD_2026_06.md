@@ -92,21 +92,29 @@ make clean-artifacts        # deletes data/{staged,backtest,tuning,clustering,ch
                             # LEAVES data/input/ untouched
 ```
 
-**Verify the wipe is clean (no stale forecasts survived).** The forecast tables MUST all be
-empty after the wipe — if any has rows, stale predictions from a prior run will show up in the
-UI (e.g. the Model Tuning → Forecast comparison reads `fact_production_forecast_staging` directly):
+**Verify the wipe is clean (no stale results survived).** These derived/result tables MUST all
+be empty after the wipe — if any has rows, stale data from a prior run shows up in the UI (e.g.
+the Model Tuning → Forecast comparison reads `fact_production_forecast_staging`; the Inventory
+Planning Backtest reads `fact_inventory_backtest`):
 
 ```bash
 docker compose exec -T postgres psql -U demand -d demand_mvp -At -c "
-SELECT 'candidate', count(*) FROM fact_candidate_forecast
-UNION ALL SELECT 'staging',  count(*) FROM fact_production_forecast_staging
-UNION ALL SELECT 'production', count(*) FROM fact_production_forecast;"   # expect 0 for all three
+SELECT 'candidate',        count(*) FROM fact_candidate_forecast
+UNION ALL SELECT 'staging', count(*) FROM fact_production_forecast_staging
+UNION ALL SELECT 'production', count(*) FROM fact_production_forecast
+UNION ALL SELECT 'inv_backtest', count(*) FROM fact_inventory_backtest
+UNION ALL SELECT 'inv_algo_cmp', count(*) FROM fact_inventory_algorithm_comparison
+UNION ALL SELECT 'policy_assign', count(*) FROM fact_dfu_policy_assignment
+UNION ALL SELECT 'champ_promo_log', count(*) FROM champion_promotion_log;"   # expect 0 for all
 ```
 
-> `db-truncate-data` now truncates `fact_production_forecast_staging` (fixed 2026-06-17 — it was
-> previously omitted, so generated forecasts survived the wipe and rendered as stale model lines
-> in the UI before any backtest/forecast was run). If you're on an older checkout, clear it
-> manually: `... -c "TRUNCATE TABLE fact_production_forecast_staging CASCADE;"`.
+> Several derived/history tables were previously **omitted** from `db-truncate-data`, so a prior
+> run's data survived the wipe and rendered as stale UI state before any backtest/forecast ran.
+> Fixed 2026-06-17/18 — the truncate block now also clears: `fact_production_forecast_staging`,
+> `fact_inventory_backtest`, `fact_inventory_algorithm_comparison`, `fact_dfu_policy_assignment`,
+> `fact_exception_lifecycle`, `fact_lineage_event`, and the champion siblings
+> `champion_experiment_lag`/`_month`/`champion_promotion_log`. On an older checkout, clear them
+> manually with `TRUNCATE TABLE <name> CASCADE;`.
 
 ## PHASE 2 — Confirm inputs present
 
@@ -208,8 +216,13 @@ make ui                     # Vite on :5173 — open http://localhost:5173
   `seasonal_naive`), so it cleaned nothing under `data/backtest/`. Left stale, Phase 6's
   `backtest-load-all-bulk` (loads every `data/backtest/*/`) would re-ingest last run's
   predictions and corrupt champion selection. Now globs `rm -rf data/backtest/*`.
-- **`db-truncate-data` staging gap (fixed 2026-06-17):** the truncate block cleared
-  `fact_candidate_forecast` and `fact_production_forecast` but omitted
-  `fact_production_forecast_staging`, so a prior run's generated forecasts survived the wipe and
-  appeared in the UI as stale model lines before any backtest/forecast ran. Now truncated too;
-  the Phase 1 verification query above catches it if you're on an older checkout.
+- **`db-truncate-data` derived-table gaps (fixed 2026-06-17/18):** the truncate block cleared
+  `fact_candidate_forecast`/`fact_production_forecast` and `champion_experiment` but **omitted**
+  several derived/history tables, so a prior run's data survived a "clean" wipe and rendered as
+  stale UI state before any new run: `fact_production_forecast_staging` (Forecast comparison),
+  `fact_inventory_backtest` + `fact_inventory_algorithm_comparison` (Inventory Planning Backtest),
+  `fact_dfu_policy_assignment`, `fact_exception_lifecycle`, `fact_lineage_event`, and the champion
+  siblings `champion_experiment_lag`/`_month`/`champion_promotion_log`. All now truncated; the
+  Phase 1 verification query catches any that survive on an older checkout. **Lesson for new
+  features:** any new fact/result/history table must be added to `db-truncate-data` in the same
+  change (see the Feature Integration checklist in `CLAUDE.md`).
