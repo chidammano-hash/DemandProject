@@ -597,11 +597,22 @@ def run_sweep(sweep_id: int) -> None:
         if composite_id is not None:
             comp_res = _experiment_results(conn, composite_id)
             comp_score = objective_score(comp_res, objective, lam=cfg["robust_lambda"], mu=cfg["robust_mu"])
+            comp_gate = gate_eligible(comp_res["champion_accuracy"], baseline_acc, gate)
             candidates_for_rec.append({
                 "experiment_id": composite_id, "score": comp_score,
-                "accuracy": comp_res["champion_accuracy"],
-                "gate_eligible": gate_eligible(comp_res["champion_accuracy"], baseline_acc, gate),
+                "accuracy": comp_res["champion_accuracy"], "gate_eligible": comp_gate,
             })
+            # Persist the composite's member scoring + a rank relative to the
+            # global candidates (the ranking loop in step 5 ran before it existed).
+            comp_rank = 1 + sum(
+                1 for s in scored
+                if s["score"] is not None and (comp_score is None or s["score"] > comp_score)
+            )
+            conn.execute(
+                "UPDATE champion_sweep_member SET global_rank = %s, global_score = %s, "
+                "gate_eligible = %s WHERE sweep_id = %s AND experiment_id = %s",
+                (comp_rank, comp_score, comp_gate, sweep_id, composite_id),
+            )
         recommended = _pick_recommendation(candidates_for_rec)
 
         runtime = time.time() - t0
@@ -692,6 +703,21 @@ def _build_segments_and_composite(
     seg_winner: dict[str, dict[str, Any]] = {}
     seg_rows: dict[str, list[dict[str, Any]]] = {}
     for seg, dfus in seg_to_dfus.items():
+        # Anti-overfit guard up front: a segment too small to trust never gets to
+        # pick a specialist — it falls back to the global winner. We skip scoring
+        # (and emit no per-segment rows) so the UI doesn't show a phantom
+        # acc=None / dfus=0 "winner" for near-empty segments (e.g. lumpy on
+        # dense-demand data where only a handful of DFUs are intermittent/lumpy).
+        if len(dfus) < min_dfus:
+            seg_winner[seg] = {
+                "experiment_id": best_global["experiment_id"],
+                "fallback": True, "reason": "below_min_segment_dfus", "n_dfus": len(dfus),
+            }
+            logger.info(
+                "Segment '%s' has %d DFUs (< min_segment_dfus=%d) — using global winner",
+                seg, len(dfus), min_dfus,
+            )
+            continue
         for s in scored:
             winners_df = _load_winners(s["experiment_id"])
             acc, n = _segment_accuracy(winners_df, dfus)
@@ -717,8 +743,8 @@ def _build_segments_and_composite(
                 (sweep_id, r["experiment_id"], seg, r["n_dfus"], r["accuracy"], r["score"], rank),
             )
         top = ranked[0] if ranked else None
-        # Anti-overfit: tiny segments fall back to the global winner.
-        if top is None or top["score"] is None or top["n_dfus"] < min_dfus:
+        # A scored segment can still fall back if its best candidate has no usable score.
+        if top is None or top["score"] is None:
             seg_winner[seg] = {"experiment_id": best_global["experiment_id"], "fallback": True}
         else:
             seg_winner[seg] = {"experiment_id": top["experiment_id"], "fallback": False}

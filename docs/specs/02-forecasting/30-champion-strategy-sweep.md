@@ -282,10 +282,13 @@ for any identifier interpolation.
 
 In the **Champion** stage (`frontend/src/tabs/champion/`):
 
-- **`SweepBuilder`** (modal): template chips (from `/champion-experiments/templates`), optional
-  model-subset variants, `mode` (global / per-segment / both), `segment_axis`, objective dropdown,
-  `parallel` toggle, a live "this expands to N candidates" counter, and a baseline selector defaulting
-  to current production.
+- **`SweepBuilder`** (modal): template chips (from `/champion-experiments/templates`); a **model-subset
+  picker** — a config-driven checklist of the enabled roster (from `/config/forecast_pipeline_config`,
+  labelled via `model-labels`) plus preset buttons (current champion, all-tree, all-foundation,
+  tree+foundation, all-competing), defaulting to the current `champion.models`; `mode` (global /
+  per-segment / both), `segment_axis`, objective dropdown, `parallel` toggle, and a live "expands to N
+  candidates" counter. The model subset does **not** multiply the candidate count (one subset competes
+  over all selected models); candidate count = number of selected templates.
 - **`SweepResultsPanel`** with two views:
   - **Global leaderboard** — Rank, Label, Strategy, Models, Accuracy %, Ceiling %, Gap (bps), Robust
     score, **Gate** badge (✓ eligible / ✗ below margin), Actions (View experiment → reuses existing
@@ -409,4 +412,10 @@ Key implementation choices vs. the design above:
   `promote_experiment`, which applies the full `champion.promote_gate` (WAPE + coverage) at commit time.
 - Composite promotion is restricted to `segment_axis='demand_class'` (maps to a runnable `per_segment`
   config); `ml_cluster`/`abc_xyz` produce diagnostic per-segment scores only.
+- The composite member is scored + ranked against the global candidates after assembly (its
+  `global_rank`/`global_score`/`gate_eligible` are written back), so it appears in the leaderboard
+  rather than as an unranked row.
+- Segments with fewer than `sweep.min_segment_dfus` DFUs are skipped (no per-segment score rows
+  emitted) and fall back to the global winner — so near-empty classes (e.g. `lumpy`/`intermittent` on
+  dense-demand datasets where almost all DFUs have ADI≈1) don't surface as phantom `acc=None` rows.
 ```

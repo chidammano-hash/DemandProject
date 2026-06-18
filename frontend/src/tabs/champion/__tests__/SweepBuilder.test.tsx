@@ -19,6 +19,20 @@ vi.mock("@/api/queries", () => ({
   }),
 }));
 
+// Model roster + current champion come from the pipeline config.
+vi.mock("@/api/queries/unified-model-tuning", () => ({
+  pipelineConfigKeys: { config: ["pipeline-config"] },
+  fetchPipelineConfig: vi.fn().mockResolvedValue({
+    algorithms: {
+      lgbm_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
+      catboost_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
+      chronos: { type: "foundation", enabled: true, compete: false, forecast: true },
+      chronos2: { type: "foundation", enabled: true, compete: true, forecast: true },
+    },
+    champion: { models: ["lgbm_cluster", "chronos"] },
+  }),
+}));
+
 function renderBuilder() {
   return render(
     <TestQueryWrapper>
@@ -30,27 +44,36 @@ function renderBuilder() {
 describe("SweepBuilder", () => {
   beforeEach(() => createChampionSweep.mockClear());
 
-  it("renders template chips and mode/axis/objective selects", async () => {
+  it("renders template chips, model roster, and mode/axis/objective selects", async () => {
     renderBuilder();
     expect(await screen.findByText("Rolling 6M")).toBeDefined();
     expect(screen.getByText("Ensemble Top-3")).toBeDefined();
+    // Config-driven model roster (labels via model-labels).
+    expect(await screen.findByText("LightGBM")).toBeDefined();
+    expect(screen.getByText("Chronos T5")).toBeDefined();
     expect(screen.getByText("Mode")).toBeDefined();
     expect(screen.getByText("Segment axis")).toBeDefined();
     expect(screen.getByText("Objective")).toBeDefined();
   });
 
-  it("previews candidate count = templates × variants and disables launch with no label", async () => {
+  it("offers model-subset presets", async () => {
     renderBuilder();
-    // One model variant is pre-selected; pick 2 templates → 2 candidates.
-    fireEvent.click(await screen.findByText("Rolling 6M"));
-    fireEvent.click(screen.getByText("Ensemble Top-3"));
-    expect(screen.getByText("2")).toBeDefined();
-    // No label yet → launch disabled.
-    const launch = screen.getByRole("button", { name: /Launch sweep/ });
-    expect((launch as HTMLButtonElement).disabled).toBe(true);
+    // Presets show with counts; "All tree (2)" from two tree models.
+    expect(await screen.findByText(/All tree \(2\)/)).toBeDefined();
+    expect(screen.getByText(/All foundation \(2\)/)).toBeDefined();
   });
 
-  it("launches with the assembled grid_spec", async () => {
+  it("candidate count = number of templates (model subset doesn't multiply)", async () => {
+    renderBuilder();
+    // Champion models (2) auto-selected → 1 template = 1 candidate, 2 = 2.
+    fireEvent.click(await screen.findByText("Rolling 6M"));
+    fireEvent.click(screen.getByText("Ensemble Top-3"));
+    expect(await screen.findByText("2")).toBeDefined();
+    const launch = screen.getByRole("button", { name: /Launch sweep/ });
+    expect((launch as HTMLButtonElement).disabled).toBe(true); // no label
+  });
+
+  it("launches with one model_variant = the selected subset", async () => {
     renderBuilder();
     fireEvent.click(await screen.findByText("Rolling 6M"));
     fireEvent.change(screen.getByPlaceholderText(/June champion/), { target: { value: "My sweep" } });
@@ -61,6 +84,6 @@ describe("SweepBuilder", () => {
     const body = createChampionSweep.mock.calls[0][0];
     expect(body.label).toBe("My sweep");
     expect(body.grid_spec.templates).toEqual(["rolling_6m"]);
-    expect(body.grid_spec.models_variants.length).toBe(1);
+    expect(body.grid_spec.models_variants).toEqual([["lgbm_cluster", "chronos"]]);
   });
 });
