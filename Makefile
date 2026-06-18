@@ -465,17 +465,16 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(MAKE) refresh-agg
 
 refresh-agg-sales:
-	# CONCURRENTLY safe: uq_agg_sales_item_loc_month (sql/119) is the required unique index.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly;" >/dev/null
+	# CONCURRENTLY when populated (unique idx uq_agg_sales_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_sales_monthly;" >/dev/null
 
 refresh-agg-forecast:
-	# CONCURRENTLY safe: uq_agg_forecast_item_loc_month_model (sql/119) is the required unique index.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly;" >/dev/null
+	# CONCURRENTLY when populated (unique idx uq_agg_forecast_item_loc_month_model, sql/119); plain refresh on first run when the MV is not yet populated.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
 
 refresh-agg-inventory:
-	# CONCURRENTLY safe: uq_agg_inv_item_loc_month (sql/119) is the required unique index.
-	$(PSQL) \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;"
+	# CONCURRENTLY when populated (unique idx uq_agg_inv_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_inventory_monthly;" >/dev/null
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
