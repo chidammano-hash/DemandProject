@@ -12,6 +12,11 @@ extracts), full product depth (forecast → promote → inventory → demand pla
 > the `Makefile`, `config/etl_config.yaml`, `common/core/domain_specs.py`, and
 > `config/forecasting/forecast_pipeline_config.yaml`.
 
+> **Prefer the UI for Phases 5–10?** See `docs/operations-manual/12-ui-pipeline-runbook.md`
+> — runs backtests, champion selection, production forecast + promote, and inventory jobs
+> from the **Model Tuning** and **Jobs** tabs instead of `make`. It also lists the few steps
+> that still require a `make`/API call.
+
 ---
 
 ## One-time PATH fix (avoids the "uv not on PATH under make" trap)
