@@ -293,7 +293,6 @@ def main() -> None:
     logger.info(f"Found {len(source_files)} inventory snapshot file(s) in {datafiles_dir}")
     logger.info(f"Output: {output_path}")
     logger.info(f"Workers: {workers}")
-    logger.info()
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -348,7 +347,7 @@ def main() -> None:
 
             for filepath in source_files:
                 source_path = Path(filepath)
-                logger.info(f"  Processing {source_path.name} ...", end=" ", flush=True)
+                logger.info(f"  Processing {source_path.name} ...")
 
                 with profiled_section(f"normalize_{source_path.stem}"):
                     rows_written, header_idx = normalize_file(source_path, writer, header_idx)
@@ -356,7 +355,6 @@ def main() -> None:
 
                 logger.info(f"{rows_written:,} rows")
 
-    logger.info()
     logger.info(f"Total rows written: {total_rows:,}")
     logger.info(f"Output file: {output_path}")
 
