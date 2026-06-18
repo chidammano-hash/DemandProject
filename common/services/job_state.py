@@ -700,6 +700,43 @@ def _run_champion_results_load(
     return {"experiment_id": experiment_id, "output_log": output or "Champion results loaded"}
 
 
+def _run_champion_sweep(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a champion strategy sweep (tournament).
+
+    Fans out a grid of candidate champion configs (each a real champion_experiment),
+    ranks them globally + per demand segment, assembles a per-segment composite, and
+    writes the recommendation back to champion_sweep. See spec 30.
+    """
+    import psycopg  # lazy — module keeps psycopg off the top-level import path
+
+    sweep_id = params["sweep_id"]
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Starting champion sweep #{sweep_id}")
+
+    # Store job_id on the sweep record for log/cancel correlation.
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE champion_sweep SET job_id = %s WHERE sweep_id = %s",
+                (job_id, sweep_id),
+            )
+    except psycopg.Error:
+        logger.warning("Failed to store job_id on champion sweep %d", sweep_id)
+
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_sweep.py",
+           "--sweep-id", str(sweep_id)]
+    output = _run_subprocess(cmd, progress_cb, "Running champion sweep",
+                             cancel_event=cancel_event, job_id=job_id)
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Champion sweep #{sweep_id} completed")
+    return {"sweep_id": sweep_id, "output_log": output or "Champion sweep completed"}
+
+
 def _run_train_production_model(
     params: dict[str, Any],
     progress_cb: Callable | None = None,

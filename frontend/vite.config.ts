@@ -49,6 +49,7 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/cluster-eda",
   "/cluster-experiments",
   "/champion-experiments",
+  "/champion-sweeps",
   "/feature-lab",
   "/accuracy-budget",
   "/model-tuning",

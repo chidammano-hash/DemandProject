@@ -8,6 +8,11 @@
 | **UI Tab** | Accuracy |
 | **Key Files** | `scripts/run_champion_selection.py`, `common/ml/champion/` (9-module package: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py`), `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
+> **Choosing the champion configuration.** Which strategy (single-model winner vs. blend) and which
+> model subset is best for *your* data is answered empirically by the **Champion Strategy Sweep**
+> (tournament) — see `docs/specs/02-forecasting/30-champion-strategy-sweep.md`. It ranks candidate
+> champion configs globally and per demand segment and recommends a winner to promote.
+
 ---
 
 ## Problem

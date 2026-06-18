@@ -55,6 +55,7 @@ from common.services.job_state import (
     _run_champion_experiment,
     _run_champion_results_load,
     _run_champion_select,
+    _run_champion_sweep,
     _run_classify_abc_xyz,
     _run_cluster_pipeline,
     _run_cluster_scenario,
@@ -267,6 +268,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="champion",
         callable=_run_champion_results_load,
         params_schema={"experiment_id": 0},
+    ),
+    "champion_sweep": JobTypeDef(
+        type_id="champion_sweep",
+        label="Champion Sweep",
+        description="Fan out a grid of champion configs, rank globally + per segment, recommend a winner",
+        group="champion",
+        callable=_run_champion_sweep,
+        params_schema={"sweep_id": 0},
     ),
     "generate_ai_insights": JobTypeDef(
         type_id="generate_ai_insights",

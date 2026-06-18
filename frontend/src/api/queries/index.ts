@@ -29,6 +29,7 @@ export * from "./accuracy-budget";
 export * from "./unified-model-tuning";
 export * from "./cluster-experiments";
 export * from "./champion-experiments";
+export * from "./champion-sweeps";
 export * from "./customer-analytics";
 export * from "./sku-features";
 export * from "./backtest-management";

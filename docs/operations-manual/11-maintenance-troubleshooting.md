@@ -696,6 +696,10 @@ TRUNCATE TABLE lgbm_tuning_run CASCADE;
 TRUNCATE TABLE cluster_experiment_comparison CASCADE;
 TRUNCATE TABLE cluster_experiment CASCADE;
 TRUNCATE TABLE cluster_tuning_profile_state CASCADE;
+-- champion_sweep before champion_experiment: sweep rows reference experiments via
+-- ON DELETE SET NULL, so they survive a champion_experiment truncate otherwise.
+-- (champion_sweep_member / _segment_score cascade from champion_sweep.)
+TRUNCATE TABLE champion_sweep CASCADE;
 TRUNCATE TABLE champion_experiment CASCADE;
 
 -- Group 20: Dimensions (facts already cleared)

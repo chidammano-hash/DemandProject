@@ -56,12 +56,22 @@ wall — fire them and monitor in Active Jobs.
 
 ---
 
-## 12.2 Phase 6 — Load results + accuracy (Model Tuning → Backtest stage)
+## 12.2 Phase 6 — Results auto-load + accuracy (Model Tuning → Backtest stage)
 
-- **Load a model's predictions into the DB:** the **Load** control on the selected model →
-  `POST /backtest-management/{model_id}/load` (writes predictions → `fact_candidate_forecast`).
-  Job type `backtest_load_model`. Do this for every model you backtested.
-- **Accuracy** is shown per model card (`GET /backtest-management/summary`); run history via
+- **Auto-load (no Load button):** a backtest's predictions are loaded into the DB
+  **automatically when the run completes** (server-side, inside the same job) — there is no
+  separate "Load" click. The load writes `fact_external_forecast_monthly` (+
+  `backtest_lag_archive`) and refreshes the `agg_forecast_monthly` MV, so each model's
+  historical backtest shows up as the `forecast_<model>` line in **Item Analysis** and feeds
+  the accuracy views. The Backtest-stage table (rows grouped by model family) shows
+  **"Loaded"** per model once this finishes.
+- **Recovery:** if the best-effort auto-load ever fails (a run shows **"Completed"** instead
+  of **"Loaded"**), a manual **Load to DB** button appears on that model's detail panel →
+  `POST /backtest-management/{model_id}/load` (job `backtest_load_model`). Re-running the
+  backtest also re-loads.
+- **Run all per group:** each family section (Tree / Foundation / Statistical / Deep Learning)
+  has a **Run all** action that queues a backtest for every model in that group.
+- **Accuracy** is shown per row (`GET /backtest-management/summary`); run history via
   `GET /backtest-management/{model_id}/runs`.
 - **External ML extracts** (`ext_lgbm/cat/xg/best`) and the **accuracy-MV refresh** have **no
   dedicated UI button** — run `make load-ext-all` and `make refresh-accuracy-mvs`, or submit a
@@ -80,6 +90,19 @@ The Champion stage (`ChampionExperimentsPanel`) creates and runs selection exper
 - These three job types are in the `champion` group and are **managed only here**, not in the
   generic Jobs tab job-group list.
 
+**Champion Strategy Sweep (tournament).** The **Run Sweep** button (next to "New Experiment")
+launches a `champion_sweep` job (`POST /champion-sweeps`) that fans out a grid of candidate champion
+configs — each a real `champion_experiment` — ranks them globally and within demand segments,
+assembles a per-segment composite, and recommends a winner. Pick template chips + optional model-subset
+variants in the **Sweep Builder**; the live counter shows how many candidates the grid expands to
+(capped at `sweep.max_candidates`, default 24; per-segment scoring adds **no** extra runs). The
+**Sweep Results** panel shows the global leaderboard (with gate-eligibility badges), the per-segment
+winner map, and a "composite vs. best global" headline. **Promote winner** delegates to the same
+Stage-1 promotion as a single experiment and is enabled only when the recommendation passes the
+promote gate (`min_wape_improvement_pct` / coverage). Composite promotion is available for the
+`demand_class` axis; `ml_cluster`/`abc_xyz` are diagnostic-only. See spec
+`docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
+
 ---
 
 ## 12.4 Phase 8 — Production forecast + promote (Model Tuning → Forecast stage)
@@ -89,12 +112,23 @@ The Forecast stage (`ForecastPanel`) is a guided Train → Generate → Promote 
 | Step | UI control → endpoint | Job type | Notes |
 |---|---|---|---|
 | **Train** production models | Train (per model or all) → `POST /backtest-management/{model_id}/train` (or `/all/train`) | `train_production_model` (`{model_id, all_models}`) | **Tree models only** — foundation/DL are zero-shot, no training |
-| **Generate** forecast | Generate → `POST /backtest-management/{model_id}/generate` | `generate_production_forecast` (`{horizon, model_id}`) | writes `fact_production_forecast_staging`; check counts via `GET /backtest-management/staging-summary` |
-| **Promote** to production | Promote → `POST /backtest-management/{model_id}/promote` (single) or `POST /backtest-management/champion/promote` (per-DFU champion) | — (direct call) | single-model promotes pass a **WAPE + coverage gate**; `model_id=champion` **bypasses** that gate (experiment-level gating). `X-API-Key` required; gate decisions logged to the AI ledger |
+| **Generate** forecast | Generate (per model) **or Generate All ready** → `POST /backtest-management/{model_id}/generate?horizon=&confidence_intervals=` | `generate_production_forecast` (`{horizon, model_id, confidence_intervals}`) | writes `fact_production_forecast_staging`; check counts via `GET /backtest-management/staging-summary`. The panel's **Horizon** input + **Include Confidence Intervals** toggle now thread through to every generate path (single / champion / Generate All) |
+| **Promote** to production | Promote → `POST /backtest-management/{model_id}/promote` (single) or `POST /backtest-management/champion/promote` (per-DFU champion) | — (direct call) | single-model promotes pass a **WAPE + coverage gate**; `model_id=champion` **bypasses** that gate (experiment-level gating). `X-API-Key` required; gate decisions logged to the AI ledger. **Gate rejections (409) and "no staged rows" (400) now surface as toasts** instead of failing silently |
+
+**Generate All** (Step 1 header button) fires a generate job for every ready model —
+non-tree models plus production-trained tree models — in one click, carrying the same
+horizon + CI settings.
 
 Promotion status is shown on the panel (`GET /backtest-management/promotion-status`). Keep the
 system date aligned with the planning month so staging and promote `plan_version` match
 (`2026-06`).
+
+> **Visualizing the result (Item Analysis tab).** Once generated/promoted, open **Item Analysis**
+> for a DFU to see each model's **future** forecast (`staging_<model>` lines + the promoted
+> `production_forecast` line) and its **past** backtest fit (`backtest_<model>` lines, dotted)
+> on one timeline. Toggle them via the **Staging** and **Backtest** pill rows. The backtest
+> lines read from `GET /forecast/candidate` (`fact_candidate_forecast`); they appear only
+> after a model's predictions have been **Loaded** (Phase 6).
 
 ---
 

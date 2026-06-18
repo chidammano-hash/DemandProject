@@ -431,6 +431,15 @@ champion:
   models:
   - lgbm_cluster
   - chronos
+sweep:
+  max_candidates: 24
+  default_objective: robust
+  default_mode: both
+  default_segment_axis: demand_class
+  robust_lambda: 0.5
+  robust_mu: 0.25
+  min_segment_dfus: 30
+  parallel_default: false
 production_forecast:
   horizon_months: 24
   lookback_months: 36
