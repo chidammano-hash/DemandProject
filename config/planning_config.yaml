@@ -2,7 +2,7 @@ planning:
   # Frozen reference date for development/testing against stale data.
   # When use_system_date is false, all date-sensitive operations use
   # planning_date instead of the real system clock.
-  planning_date: "2026-04-02"
+  planning_date: "2026-06-17"
 
   # Set to true to use the real system date (date.today()).
   # Use for production deployments or when data is current.
