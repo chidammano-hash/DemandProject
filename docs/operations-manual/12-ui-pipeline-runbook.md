@@ -45,8 +45,15 @@ families run concurrently — same family stays serial).
 | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` | `backtest_lgbm` / `_catboost` / `_xgboost` | tree models |
 | `chronos`, `chronos_bolt`, `chronos2`, `chronos2_enriched`, `bolt_hierarchical` | `backtest_chronos*` / `backtest_bolt_hierarchical` | foundation — slow (chronos2/enriched multi-hour) |
 | `seasonal_naive`, `rolling_mean` | `backtest_seasonal_naive` / `_rolling_mean` | statistical baselines (champion fallback) |
-| `mstl` | `backtest_mstl` | statistical decomposition |
+| `mstl` | `backtest_mstl` | statistical decomposition — **needs the `statistical` extra** (`uv sync --extra statistical` / `uv pip install statsforecast`); without `statsforecast` the run produces **zero predictions** and the model stays "No backtest" |
 | `nhits`, `nbeats` | `backtest_nhits` / `_nbeats` | deep learning (needs the `dl` extra) |
+
+> **statsforecast extra.** MSTL (and the expert-panel statistical models AutoCES,
+> DynamicOptimizedTheta, IMAPA, TSB, ADIDA) depend on `statsforecast`, declared as the
+> `statistical` optional extra in `pyproject.toml`. If it's not installed, the backtest logs
+> `statsforecast not installed; returning empty DataFrame` for every timeframe and exits with
+> `No predictions produced` — nothing loads, so the UI correctly shows "No backtest". Fix:
+> `uv pip install statsforecast` (or `uv sync --extra statistical`), then re-run.
 
 **Running the whole roster from the UI** (no single "Run all" button): use the
 **Jobs → Pipeline Builder** and add one step per backtest job type (`backtest_lgbm`,

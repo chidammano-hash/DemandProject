@@ -45,6 +45,12 @@ foundation = [
 dl = [
     "neuralforecast>=3.1.9",
 ]
+# Statistical baselines (MSTL, AutoCES, DynamicOptimizedTheta, IMAPA, TSB, ADIDA, SES).
+# Required by common/ml/expert_panel/statistical_upgrades.py and the MSTL backtest;
+# without it those models return empty predictions. Install via `uv sync --extra statistical`.
+statistical = [
+    "statsforecast>=2.0.0",
+]
 
 [dependency-groups]
 dev = [
