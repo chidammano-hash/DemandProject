@@ -408,9 +408,10 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: rolling
+  strategy: dfu_strategy_router
   strategy_params:
-    window_months: 6
+    eval_months: 3
+    min_prior_months: 3
   fallback_model_id: seasonal_naive
   metric: wape
   lag: execution
@@ -430,7 +431,12 @@ champion:
     performance_window: 6
   models:
   - lgbm_cluster
-  - chronos
+  - nhits
+  - nbeats
+  - mstl
+  - chronos2
+  - chronos2_enriched
+  - seasonal_naive
 sweep:
   max_candidates: 24
   default_objective: robust
