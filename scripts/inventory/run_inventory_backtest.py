@@ -8,9 +8,9 @@ For each (model_id, eval_month, item_id, loc):
   5. Determine if that SS level would have prevented stockouts
 
 Usage:
-    uv run python scripts/run_inventory_backtest.py
-    uv run python scripts/run_inventory_backtest.py --models lgbm_cluster,nbeats --months 6
-    uv run python scripts/run_inventory_backtest.py --dry-run
+    uv run python scripts/inventory/run_inventory_backtest.py
+    uv run python scripts/inventory/run_inventory_backtest.py --models lgbm_cluster,nbeats --months 6
+    uv run python scripts/inventory/run_inventory_backtest.py --dry-run
 """
 
 from __future__ import annotations

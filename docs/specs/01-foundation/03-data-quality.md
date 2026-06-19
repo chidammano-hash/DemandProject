@@ -125,4 +125,4 @@ Key parameters:
 ## See Also
 
 - [Storyboard](../06-ai-platform/04-storyboard.md) — exception-based planner workflow that depends on data quality
-- [Pipeline Orchestrator](../../../docs/RUNBOOK.md) — unified ETL pipeline with DQ checks after each load phase
+- Pipeline Orchestrator — unified ETL pipeline with DQ checks after each load phase (see operations-manual)

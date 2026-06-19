@@ -84,6 +84,7 @@ const completedExperiment = {
   is_promoted: false,
   promoted_at: null,
   artifacts_path: "/tmp/clustering_scenarios/sc_20260320_100000_abcd",
+  has_durable_labels: true,
 };
 
 const runningExperiment = {

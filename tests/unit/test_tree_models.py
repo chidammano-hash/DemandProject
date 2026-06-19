@@ -152,6 +152,11 @@ def _fake_lib_module(fixed_pred: float = _FIXED_PRED) -> MagicMock:
     lib_module.LGBMRegressor = model_class
     lib_module.early_stopping.return_value = "es"
     lib_module.log_evaluation.return_value = "log"
+    # Estimator construction is delegated to model_registry.build_tree_model
+    # (patched separately); expose the fake instance so tests can wire it as
+    # build_tree_model's return value. The lib_module itself is still imported
+    # via importlib so fit_model can reach early_stopping / log_evaluation.
+    lib_module.model_instance = model_instance
     return lib_module
 
 
@@ -181,6 +186,7 @@ class TestArchetypePartitionUsed:
 
         # importlib patch LAST to preserve fit_model/get_feature_columns patches
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -217,6 +223,7 @@ class TestArchetypePartitionUsed:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -252,6 +259,7 @@ class TestArchetypePartitionUsed:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -293,6 +301,7 @@ class TestMlClusterFallback:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -322,6 +331,7 @@ class TestMlClusterFallback:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -355,6 +365,7 @@ class TestMlClusterFallback:
         )
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -389,6 +400,7 @@ class TestEmptyPredictMonths:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -418,6 +430,7 @@ class TestEmptyPredictMonths:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -453,6 +466,7 @@ class TestUnknownModelSkipped:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -482,6 +496,7 @@ class TestUnknownModelSkipped:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -510,6 +525,7 @@ class TestUnknownModelSkipped:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -567,6 +583,7 @@ class TestArchetypeAsCategoricalFeature:
 
         # importlib patch LAST — preserves the fit_model side_effect
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model", side_effect=capture_fit),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch(
@@ -611,6 +628,7 @@ class TestArchetypeAsCategoricalFeature:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -653,6 +671,7 @@ class TestArchetypeAsCategoricalFeature:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -710,6 +729,7 @@ class TestSmallGroupSkipped:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -768,6 +788,7 @@ class TestConstantTargetGuard:
         # predict should NOT be called for constant-target path
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -808,6 +829,7 @@ class TestConstantTargetGuard:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -853,6 +875,8 @@ class TestLibraryImportError:
         )
         monkeypatch.setattr(_tree_models_mod, "importlib", fake_importlib)
 
+        # No build_tree_model patch: the import fails before any estimator is
+        # constructed, so build_tree_model is never reached.
         with (
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
@@ -901,7 +925,10 @@ class TestLibraryImportError:
             },
         }
 
+        # catboost imports fine; build_tree_model is what now constructs the
+        # estimator, so it returns the fake catboost model instance.
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=cat_model),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -939,6 +966,7 @@ class TestAlgoConfigOverride:
         mock_load_config = MagicMock()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -986,6 +1014,7 @@ class TestAlgoConfigOverride:
         monkeypatch.setattr(_tree_models_mod, "load_forecast_pipeline_config", mock_load_pipeline)
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -1027,6 +1056,7 @@ class TestOutputSchema:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
@@ -1053,6 +1083,7 @@ class TestOutputSchema:
         lib_module = _fake_lib_module()
 
         with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model", return_value=lib_module.model_instance),
             patch("common.ml.expert_panel.tree_models.fit_model"),
             patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
             patch("common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS),

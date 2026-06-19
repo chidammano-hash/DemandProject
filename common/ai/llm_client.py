@@ -1,20 +1,22 @@
-"""Provider-agnostic LLM client for the AI Planner FVA backtest.
+"""Provider-agnostic LLM client.
 
-Spec: docs/specs/PRD/PRD-ai-planner-fva-backtest.md (§8)
+Shared by the AI Champion adjuster (common/ai/champion_adjuster.py) and the
+agentic agents (ai_planner, tuning_advisor).
 
-Supports four providers:
+Supports five providers:
   - ollama         (default; local; $0; OpenAI-compatible API at :11434/v1)
   - openai_compat  (Together, Fireworks, DeepInfra, Groq — same API shape as Ollama)
   - openai         (GPT-4o etc.)
-  - anthropic      (Claude family)
+  - anthropic      (Claude family, e.g. claude-opus-4-7)
+  - google         (Gemini via its OpenAI-compatible endpoint; GOOGLE_API_KEY)
 
 All providers expose the same interface: chat(messages, json_mode=True) -> ChatResponse.
-The Ollama and openai_compat paths share the OpenAI Python SDK — they only differ
-by base_url and api_key.
+The ollama, openai_compat, openai, and google paths share the OpenAI Python SDK —
+they only differ by base_url and api_key. Only anthropic uses its own SDK.
 
-Strict JSON-mode is required for the FVA recommendation schema. Each call returns
-a ChatResponse including raw response text, parsed JSON dict, token counts, and
-elapsed milliseconds.
+Strict JSON-mode is required for structured recommendation schemas. Each call
+returns a ChatResponse including raw response text, parsed JSON dict, token
+counts, and elapsed milliseconds.
 """
 from __future__ import annotations
 
@@ -64,8 +66,8 @@ class LLMJSONParseError(LLMClientError):
 class LLMClient:
     """Single-call, single-provider LLM wrapper.
 
-    Construct one per backtest run. Reuses the underlying provider SDK across
-    calls so connection pooling and prompt caching (Anthropic) work.
+    Construct one per run. Reuses the underlying provider SDK across calls so
+    connection pooling and prompt caching (Anthropic) work.
 
     Parameters
     ----------
@@ -119,6 +121,18 @@ class LLMClient:
             if not api_key:
                 raise LLMClientError("openai provider requires OPENAI_API_KEY env var")
             return OpenAI(api_key=api_key, timeout=self.timeout)
+        if self.provider == "google":
+            # Gemini exposes an OpenAI-compatible endpoint, so we reuse the OpenAI SDK
+            # (no extra dependency) — only base_url + key differ.
+            from openai import OpenAI
+            api_key = os.environ.get("GOOGLE_API_KEY")
+            if not api_key:
+                raise LLMClientError("google provider requires GOOGLE_API_KEY env var")
+            return OpenAI(
+                base_url=base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
+                api_key=api_key,
+                timeout=self.timeout,
+            )
         if self.provider == "anthropic":
             from anthropic import Anthropic
             api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -221,17 +235,31 @@ class LLMClient:
                 msgs.append(m)
 
         # Force JSON via prompt — Anthropic doesn't have a strict response_format,
-        # but the model honors a clear "respond ONLY with JSON" instruction at temp=0.
+        # but the model honors a clear "respond ONLY with JSON" instruction.
         if json_mode and "JSON" not in system.upper():
             system = (system + "\n\nRespond ONLY with valid JSON, no prose.").strip()
 
-        resp = self._client.messages.create(
-            model=self.model,
-            messages=msgs,
-            system=system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        import anthropic  # local import; the client is only built when anthropic is installed
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": msgs,
+            "system": system,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        try:
+            resp = self._client.messages.create(**kwargs)
+        except anthropic.BadRequestError as exc:
+            # Newer Claude models (4.6+) deprecate `temperature`; retry without it
+            # rather than 500. Other bad requests surface as LLMClientError.
+            if "temperature" in str(exc).lower() and "temperature" in kwargs:
+                kwargs.pop("temperature")
+                resp = self._client.messages.create(**kwargs)
+            else:
+                raise LLMClientError(f"anthropic request rejected: {exc}") from exc
+        except anthropic.APIError as exc:
+            raise LLMClientError(f"anthropic API error: {exc}") from exc
         text = "".join(block.text for block in resp.content if hasattr(block, "text"))
         return ChatResponse(
             text=text,
@@ -246,11 +274,11 @@ class LLMClient:
 
 
 # ---------------------------------------------------------------------------
-# Convenience: build from config dict (the FVA backtest config shape)
+# Convenience: build from config dict (the ai_champion config shape)
 # ---------------------------------------------------------------------------
 
 def build_from_config(config: dict, *, override_provider: str | None = None) -> LLMClient:
-    """Build an LLMClient from the FVA backtest config dict.
+    """Build an LLMClient from a provider config dict (e.g. ai_champion_config).
 
     Looks at config["provider"] (or override_provider), then config["models"][provider]
     and config["endpoints"][provider]. Wires in ollama-specific extras from
@@ -273,3 +301,22 @@ def build_from_config(config: dict, *, override_provider: str | None = None) -> 
 
     return LLMClient(provider=provider, model=model, base_url=base_url,
                      timeout=timeout, extra=extra)
+
+
+def tools_to_openai(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic-format tool definitions to OpenAI function-calling format.
+
+    Shared by the agentic agents (ai_planner, tuning_advisor) which author tool
+    schemas in Anthropic shape but also drive OpenAI-compatible providers.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]

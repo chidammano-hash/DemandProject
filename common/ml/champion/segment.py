@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from common.ml.champion.basic import strategy_expanding
-from common.ml.champion.helpers import _expanding_stats
+from common.ml.champion.helpers import _expanding_stats, select_output_cols
 from common.ml.champion.registry import (
     _DFU_COLS,
     _DFU_MONTH_COLS,
@@ -331,7 +331,7 @@ def strategy_per_cluster(
     ].copy()
     winners = winners.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
 
-    parts: list[pd.DataFrame] = [winners[_OUTPUT_COLS]]
+    parts: list[pd.DataFrame] = [select_output_cols(winners)]
 
     # ── Handle unmapped DFUs (no cluster) with global best ────────────────
     if not no_cluster.empty:
@@ -342,9 +342,9 @@ def strategy_per_cluster(
         if not global_winners.empty:
             global_winners["prior_wape"] = 0.0
             for col in _OUTPUT_COLS:
-                if col not in global_winners.columns:
+                if col not in global_winners.columns and col != "source_mix":
                     global_winners[col] = 0.0
-            parts.append(global_winners[_OUTPUT_COLS])
+            parts.append(select_output_cols(global_winners))
 
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")

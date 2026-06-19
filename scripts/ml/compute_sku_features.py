@@ -33,6 +33,11 @@ from common.core.utils import _ts, load_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+
+class NoFeaturesComputedError(RuntimeError):
+    """Raised when a (non-dry-run) feature computation stamps 0 rows in dim_sku."""
+
+
 # ---------------------------------------------------------------------------
 # Default config (used when config/forecasting/sku_features_config.yaml is absent)
 # ---------------------------------------------------------------------------
@@ -236,7 +241,18 @@ def run_pipeline(
                 features_df=feature_df,
                 db_params=db_params,
             )
-            logger.info("%s Updated %s rows in dim_sku", _ts(), f"{rows_updated['updated']:,}")
+            updated = rows_updated["updated"]
+            logger.info("%s Updated %s rows in dim_sku", _ts(), f"{updated:,}")
+            # A run that stamps zero SKUs is a silent no-op (empty sales window,
+            # sku_ck join miss, or uncommitted write) — fail loudly instead of
+            # reporting success, so the UI/job status reflects reality.
+            if updated == 0:
+                raise NoFeaturesComputedError(
+                    "SKU feature computation wrote 0 rows to dim_sku "
+                    f"(computed {len(feature_df):,} feature rows, but none matched "
+                    "an existing dim_sku.sku_ck). Check the sales window and "
+                    "dim_sku join keys (item_id, customer_group, loc)."
+                )
 
     # ── Step 5: Write backward-compat clustering_features.csv ───────────────
     with profiled_section("write_clustering_csv"):

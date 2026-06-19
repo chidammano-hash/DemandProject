@@ -129,6 +129,37 @@ def sku_analysis(
 
         models = sorted(model_set)
 
+        # 2c. Champion's per-month winning model (item_location only).
+        #     The champion is selected per DFU per month; agg_forecast_monthly
+        #     collapses it to model_id='champion' and loses the source. We read
+        #     source_model_id straight from the fact table so the UI can label
+        #     the champion line "champion (N-BEATS)" for a single DFU. Only
+        #     meaningful for one DFU — across DFUs the source differs per item.
+        #     source_mix carries the blend composition for blended champions, so
+        #     the tooltip can show "champion (40% NBEATS, 35% LGBM, 25% Chronos)".
+        champion_source_by_month: dict[str, str] = {}
+        champion_mix_by_month: dict[str, Any] = {}
+        if mode == "item_location" and "champion" in model_set:
+            cur.execute(
+                """
+                SELECT startdate::text AS month, source_model_id, source_mix
+                FROM fact_external_forecast_monthly
+                WHERE item_id = %s AND loc = %s
+                  AND model_id = 'champion'
+                  AND (source_model_id IS NOT NULL OR source_mix IS NOT NULL)
+                GROUP BY startdate, source_model_id, source_mix
+                ORDER BY startdate
+                """,
+                [item_val, loc_val],
+            )
+            for row in cur.fetchall():
+                month_key = str(row[0])
+                if row[1] is not None:
+                    champion_source_by_month[month_key] = str(row[1])
+                if row[2] is not None:
+                    # psycopg returns JSONB already parsed to Python list/dict.
+                    champion_mix_by_month[month_key] = row[2]
+
         # 3. Merge into series
         all_months = sorted(
             set(shipped_by_month.keys())
@@ -155,6 +186,11 @@ def sku_analysis(
                 fcst = forecast_by_month.get(month, {}).get(model_id)
                 if fcst is not None:
                     point[f"forecast_{model_id}"] = fcst
+            # Per-month champion source model + blend mix (item_location only).
+            if month in champion_source_by_month:
+                point["champion_source"] = champion_source_by_month[month]
+            if month in champion_mix_by_month:
+                point["champion_mix"] = champion_mix_by_month[month]
             series.append(point)
 
         # 4. Build model_monthly for client-side KPI computation
@@ -221,6 +257,15 @@ def sku_analysis(
             if desc_row and desc_row[0]:
                 item_desc = str(desc_row[0])
 
+    # Dominant champion source (most months) — lets the UI label the champion
+    # line/legend with a single model name even though the pick varies by month.
+    champion_dominant_source: str | None = None
+    if champion_source_by_month:
+        counts: dict[str, int] = {}
+        for src in champion_source_by_month.values():
+            counts[src] = counts.get(src, 0) + 1
+        champion_dominant_source = max(counts, key=counts.get)
+
     return {
         "mode": mode,
         "item": item_val,
@@ -231,4 +276,7 @@ def sku_analysis(
         "model_monthly": model_monthly,
         "dfu_attributes": dfu_attrs,
         "item_desc": item_desc,
+        "champion_source_by_month": champion_source_by_month,
+        "champion_dominant_source": champion_dominant_source,
+        "champion_mix_by_month": champion_mix_by_month,
     }

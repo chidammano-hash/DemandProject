@@ -105,6 +105,12 @@ All source views must be refreshed before the control tower view is refreshed.
 
 ---
 
+## Financial & lifecycle KPIs
+
+- **$-denominated KPIs** — `GET /control-tower/kpis-financial` (inventory value, below-SS gap, excess, exception exposure).
+- **Working-capital analytics** — `GET /analytics/working-capital` (cash-to-cash, turns, DIO/DPO/DSO; `api/routers/inventory/working_capital.py`).
+- **Exception lifecycle + SLA** — `fact_exception_lifecycle` (append-only transitions + MTTR views) and SLA / root-cause grouping in `common/engines/exception_engine.py` (`config/operations/exception_sla.yaml`).
+
 ## See Also
 
 - `06-ai-platform/01-ai-planning-agent.md` -- AI agent queries control tower KPIs via `get_portfolio_health_summary` tool

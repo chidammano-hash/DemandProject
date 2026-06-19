@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion.registry import (
     _DFU_MODEL_COLS,
     _DFU_MONTH_COLS,
@@ -15,6 +16,61 @@ from common.ml.champion.registry import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Output row construction
+# ---------------------------------------------------------------------------
+
+def make_blend_row(
+    item_id: Any,
+    customer_group: Any,
+    loc: Any,
+    startdate: Any,
+    model_id: str,
+    prior_wape: float,
+    forecast: float,
+    actual: float,
+    source_mix: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build one champion output row keyed off ``_OUTPUT_COLS``.
+
+    Every champion strategy emits the same per-DFU-month result shape:
+    the DFU identity (``item_id``/``customer_group``/``loc``/``startdate``),
+    the winning/blended ``model_id``, its ``prior_wape``, the forecast
+    quantity (under ``FORECAST_QTY_COL``), and the realised ``tothist_dmd``.
+    Centralising the dict here keeps the forecast-quantity key in one place
+    (never the ``"basefcst_pref"`` literal) and guarantees column parity with
+    ``_OUTPUT_COLS`` across all ~20 emit sites.
+
+    ``source_mix`` is the blend composition for blended champions — a list of
+    ``{"model": <id>, "weight": <float>}`` dicts summing to ~1.0. Leave it
+    ``None`` for single-model picks (implies 100% of ``model_id``).
+    """
+    return {
+        "item_id": item_id,
+        "customer_group": customer_group,
+        "loc": loc,
+        "startdate": startdate,
+        "model_id": model_id,
+        "prior_wape": prior_wape,
+        FORECAST_QTY_COL: forecast,
+        "tothist_dmd": actual,
+        "source_mix": source_mix,
+    }
+
+
+def mix_from(top: "pd.DataFrame", weights: "pd.Series") -> list[dict[str, Any]]:
+    """Build a ``source_mix`` list from a top-K frame + aligned weight Series.
+
+    ``top`` must have a ``model_id`` column; ``weights`` is index-aligned to
+    ``top``. Tiny weights (< 0.5%) are dropped to keep the mix readable.
+    """
+    mix: list[dict[str, Any]] = []
+    for mid, w in zip(top["model_id"].to_numpy(), [float(x) for x in weights], strict=False):
+        if w >= 0.005:
+            mix.append({"model": str(mid), "weight": round(w, 4)})
+    return mix
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +114,7 @@ def _blend_forecasts(
 
     Returns (blended_fcst, actual, avg_wape).
     """
-    blended_fcst = float((top["basefcst_pref"].astype(float) * weights).sum())
+    blended_fcst = float((top[FORECAST_QTY_COL].astype(float) * weights).sum())
     actual = float(top["tothist_dmd"].iloc[0])
     avg_wape = float((top["prior_wape"] * weights).sum())
     return blended_fcst, actual, avg_wape
@@ -89,7 +145,7 @@ def _resolve_fallback_rows(
     )
     if "abs_err" not in fallback_df.columns:
         fallback_df["abs_err"] = (
-            fallback_df["basefcst_pref"] - fallback_df["tothist_dmd"]
+            fallback_df[FORECAST_QTY_COL] - fallback_df["tothist_dmd"]
         ).abs()
     if results:
         covered = {
@@ -119,7 +175,7 @@ def compute_strategy_accuracy(winners_df: pd.DataFrame) -> dict[str, Any]:
     if len(winners_df) == 0:
         return {"wape": None, "accuracy_pct": None, "n_dfu_months": 0}
 
-    abs_err = float((winners_df["basefcst_pref"] - winners_df["tothist_dmd"]).abs().sum())
+    abs_err = float((winners_df[FORECAST_QTY_COL] - winners_df["tothist_dmd"]).abs().sum())
     total_actual = float(winners_df["tothist_dmd"].sum())
 
     if abs(total_actual) == 0:
@@ -133,6 +189,20 @@ def compute_strategy_accuracy(winners_df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def select_output_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Return ``df[_OUTPUT_COLS]``, injecting ``source_mix=None`` if absent.
+
+    Single-model strategies select winner rows straight from the source/error
+    frame (which has no ``source_mix`` column). This keeps every strategy's
+    output schema uniform — required because router/segment strategies
+    ``pd.concat`` sub-strategy outputs and then slice ``[_OUTPUT_COLS]``.
+    """
+    if "source_mix" not in df.columns:
+        df = df.copy()
+        df["source_mix"] = None
+    return df[_OUTPUT_COLS].reset_index(drop=True)
+
+
 def compute_ceiling(df: pd.DataFrame) -> pd.DataFrame:
     """Compute oracle (ceiling) winners — lowest absolute error per DFU-month.
 
@@ -144,7 +214,7 @@ def compute_ceiling(df: pd.DataFrame) -> pd.DataFrame:
     )
     winners = ranked[ranked["_rank"] == 1].drop(columns=["_rank"])
     winners["prior_wape"] = 0.0  # ceiling has no prior WAPE concept
-    return winners[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(winners)
 
 
 # ---------------------------------------------------------------------------

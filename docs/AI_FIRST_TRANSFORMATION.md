@@ -6,11 +6,11 @@
 
 ## TL;DR — The Core Insight
 
-**The platform has already paid for the substrate of an AI-first product but ships a classical CRUD experience on top of it.**
+**The platform has already paid for a meaningful AI substrate, but the product experience is still fragmented across domain tabs and batch workflows.**
 
-The codebase contains: `decision_ledger`, `policy_engine`, `reversible`, `dry_run`, `lineage`, `orchestrator`, `causal`, `tuning_advisor`, `champion_strategies`, `shadow_rollout`, `external_signals`, `annotations`, `audit_log`, `pgvector RAG`, `notification_engine`, `outcome tracking`. None of these primitives are surfaced in the UI. The product is one composition layer away from being unrecognizable — in the best way.
+The codebase contains real building blocks: `decision_ledger`, `lineage`, `causal`, `tuning_advisor`, `champion_strategies`, `external_signals`, `annotations` / collaboration, `audit_log`, `pgvector`-backed RAG, `notification_engine`, and outcome tracking. Earlier `policy_engine` and `dry_run` prototypes were built but not kept as active production primitives. Some of the substrate is already surfaced in the UI, especially AI Planner FVA, model tuning, champion experiments, data quality, demand signals, and collaboration, but the experience is still split across many tabs and workflows.
 
-The transformation is not "add AI to the app." It is "stop hiding the AI we already built, retire the legacy CRUD shell wrapped around it, and let the agents drive."
+The transformation is not "add AI to the app." It is "connect the AI we already built into a coherent operating layer, retire the most brittle CRUD patterns, and let the agents drive where it makes sense."
 
 ---
 
@@ -35,8 +35,8 @@ The transformation is not "add AI to the app." It is "stop hiding the AI we alre
 - **Manual MV refresh chains.** `etl_config.yaml mv_refresh:` and `refresh-mvs-tiered` orchestrate ~15 MVs by hand. Brittle, blocking, all-or-nothing.
 - **Hand-coded per-source schemas.** `DomainSpec` + `sql/NNN_create_*.sql` per dataset. No schema registry, no inference, every new source is a Make-target ceremony.
 - **`api/llm.py` is a singleton chat client, not an agent runtime.** No tool registry, no turn loop, no token/cost ledger, no per-agent identity. Every caller re-implements (`MAX_TURNS=40`, `TOKEN_BUDGET=100_000` in `ai_planner.py`).
-- **Lineage exists in DDL only.** `sql/157_create_fact_lineage_event.sql` is OpenLineage-shaped but unwired. The killer feature is paid for and unshipped.
-- **No external-signal ingestion.** `sql/067` and `sql/141` define landing tables; zero rows flow.
+- **Lineage exists, but not end-to-end.** `sql/157_create_fact_lineage_event.sql` is now paired with a local emitter in `common/ai/lineage.py`, and forecast promotion emits lineage best-effort. What is missing is a universal lineage UX and broader event coverage.
+- **External-signal ingestion is partial.** `sql/067` and `sql/141` define the signal tables, and the router exists, but the flow is not yet an event-driven fabric.
 - **No CDC from upstream ERP/WMS.** Inputs are CSV dumps in `data/input/`. A 4-hour shipment delay can't reach a planner before the next nightly batch.
 - **Champion selection runs offline.** `make champion-all` is a shell command. No agent is in the loop.
 
@@ -81,18 +81,18 @@ The transformation is not "add AI to the app." It is "stop hiding the AI we alre
 
 ### 2.1 — Six Concrete Agents (replacing the "AI Planner" tab)
 
-Each agent uses the existing `policy_engine.evaluate()` + `decision_ledger.append_decision()` + `reversible.apply()` triad. Tier defaults from `config/ai/agent_autonomy.yaml`.
+These are target roles, not a shipped agent fleet. Each role is meant to sit on top of a future `policy_engine.evaluate()` layer (to be rebuilt — the prototype was removed as unwired), the existing `decision_ledger.append_decision()` primitive, and a reversible execution path. Tier defaults would live in `config/ai/agent_autonomy.yaml`.
 
 | Agent | Trigger | Tools | Escalation |
 |---|---|---|---|
 | **ExceptionResolver** | APScheduler 15-min + on `fact_replenishment_exceptions` insert | `simulate_options` (twin), `get_supplier_lead_times`, `get_alternate_locs`, `apply_reversible` | severity=critical OR `pct_change > guardrail` → human inbox; else auto-apply |
 | **ChampionGuardian** | Nightly + on backtest completion | Read `mv_control_tower_kpis`, `fact_candidate_forecast`, run `champion_strategies.simulate`, call promote endpoint | WAPE drift >5pp or new model wins by <2pp → human approval |
 | **TuneOrchestrator** | When `cluster_tuning_profile.stale=true` | `tuning_advisor.suggest_search_space`, kick `make tune-lgbm-clusters`, watch MLflow | Budget overrun >2x baseline → pause |
-| **DataQualitySentinel** | On each `make load-all` completion | `dq_engine` checks, `drift.py`, schema diff | P0 schema break → block; soft drift → quarantine partition |
-| **SOPNarrator** | Monthly + on-demand | Read `mv_network_balance`, `mv_supplier_performance`, generate exec memo | `advisory` permanently — humans always edit |
-| **PolicyDriftAuditor** | Weekly | Read `ai_decision_ledger`, compare actual vs predicted by `dry_run.py`, propose `agent_autonomy.yaml` edits | Every change human-approval (the meta-agent) |
+| **DataQualitySentinel** | On each `make load-all` completion | `dq_engine` checks, drift detection (to be rebuilt — prototype removed), schema diff | P0 schema break → block; soft drift → quarantine partition |
+| **SOPNarrator** | Monthly + on-demand | Read `mv_network_balance`, `mv_supplier_po_performance`, generate exec memo | `advisory` permanently — humans always edit |
+| **PolicyDriftAuditor** | Weekly | Read `ai_decision_ledger`, compare actual vs predicted by a dry-run preview layer (to be rebuilt — prototype removed), propose `agent_autonomy.yaml` edits | Every change human-approval (the meta-agent) |
 
-Underneath: replace `api/llm.py` with `common/ai/agent_runtime.py` — a single tool-loop runner (turn cap, token ledger, retry, provider failover) that all six agents inherit.
+Underneath, the roadmap is to replace `api/llm.py` with `common/ai/agent_runtime.py` — a single tool-loop runner (turn cap, token ledger, retry, provider failover) that all six agents would inherit.
 
 ### 2.2 — Decision Class Registry & Autonomy Levels (L0–L5)
 
@@ -125,7 +125,7 @@ A new table `fact_decision_class` maps `(decision_type, scope)` → autonomy lev
 
 - **RL-driven (s, S) policies per SKU.** Train contextual bandit / DQN: state = (on-hand, in-transit, forecast distribution, lead-time CDF, margin, days-to-event), action = order qty, reward = -(holding + stockout × lost-margin + expedite). Replace `compute_safety_stock.py` outputs with learned policy table; King formula only as cold-start prior for SKUs <12 months history.
 - **Multi-echelon stochastic optimization (MESO).** Replace per-loc SS with Graves-Willems Guaranteed-Service Model across `dim_transfer_lane` + supplier nodes. One service-level promise to the customer, optimized stock placement upstream. Data exists.
-- **Dynamic per-SKU service levels driven by economics.** `SL* = p / (p + h)` where `p = unit_margin + brand_penalty + customer_tier_weight`. Pull margin from `customer_analytics.py`. Kill `abc_xyz_service_level` as a stored column.
+- **Dynamic per-SKU service levels driven by economics.** `SL* = p / (p + h)` where `p = unit_margin + brand_penalty + customer_tier_weight`. Pull margin from the customer analytics router package. Kill `abc_xyz_service_level` as a stored column.
 - **Auto-resolved exceptions.** Each `fact_inventory_exceptions` row arrives with proposed action + simulated outcome + confidence. If `confidence > 0.85` AND `financial_impact < auto_approve_cap`, agent fires PO/transfer with `actor='agent'`. Humans see the long tail.
 - **Digital twin simulation before commit.** Every recommended order from `compute_replenishment_plan.py` runs through Monte Carlo over 8 weeks against forecast quantiles. UI shows P10/P50/P90 outcome before commit. No order leaves without stated stockout probability.
 - **Quantile-native planning.** Pipe P10/P50/P90 directly into policy. `sigma_D_daily / sqrt(30.44)` is a lossy round-trip — kill it.
@@ -227,7 +227,7 @@ Every Friday the champion model "confesses" its largest misses in plain English,
 *Risk:* LLM hallucinating spurious feature blame on intermittent series.
 
 ### 5. **The Negotiation Room**
-Multi-agent simulation where Buyer-AI, Supplier-AI (built from supplier's historical behavior in `mv_supplier_performance`), and CFO-AI debate a PO before it's sent. Output: recommended terms, BATNA, transcript.
+Multi-agent simulation where Buyer-AI, Supplier-AI (built from supplier's historical behavior in `mv_supplier_po_performance`), and CFO-AI debate a PO before it's sent. Output: recommended terms, BATNA, transcript.
 *Tech:* `common/ai/orchestrator.py` + supplier persona from MV + lead-time variance.
 *Risk:* Synthetic supplier persona drift — must be grounded.
 
@@ -253,11 +253,11 @@ CNBC-style ticker fed by an agent scanning X/Reddit/news/weather/port AIS, surfa
 
 ### 10. **The Auditor**
 Standing AI agent that continuously re-derives every dashboard KPI from raw facts and flags any drift between "what the dashboard says" and "what the data says." Self-policing trust layer.
-*Tech:* Shadow query layer + SQL diff engine + existing `query_tracker.py`.
+*Tech:* Shadow query layer + SQL diff engine + a query-tracking layer (an earlier `query_tracker.py` prototype was removed as unwired; this would be rebuilt).
 *Risk:* Compute overhead — must sample, not exhaust.
 
 ### Bonus: **Conversational Planning Replay**
-Planner asks: "Show me what would have happened in March if ExceptionResolver had been on autonomous tier." System replays the month against `decision_ledger` + `dry_run` twin, scoring counterfactual P&L, fill-rate, stock-outs vs actual. Then offers: "Promote autonomous tier under these guardrails?" with one-click commit. Only possible because every decision is hash-chained, reversible, and twin-simulatable — infrastructure already half-built.
+Planner asks: "Show me what would have happened in March if ExceptionResolver had been on autonomous tier." System replays the month against `decision_ledger` + a dry-run twin (the preview layer to be rebuilt — prototype removed), scoring counterfactual P&L, fill-rate, stock-outs vs actual. Then offers: "Promote autonomous tier under these guardrails?" with one-click commit. Only possible because every decision is hash-chained, reversible, and twin-simulatable — infrastructure already half-built.
 
 ---
 

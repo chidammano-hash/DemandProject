@@ -2,6 +2,7 @@
  * Shared utilities, constants, and types used across AI Planner panel components.
  */
 import type { AiInsight, InsightSeverity, InsightType } from "@/types/ai-planner";
+import { formatCurrencyFull } from "@/lib/formatters";
 import {
   AlertTriangle,
   AlertCircle,
@@ -128,7 +129,6 @@ export const CAUSAL_LAYER_ICONS: Record<CausalLink["layer"], React.FC<{ classNam
 
 export function buildCausalChain(insight: AiInsight): CausalLink[] {
   const chain: CausalLink[] = [];
-  const fmtCurrency = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
   // Forecast layer
   if (insight.champion_wape != null || insight.forecast_bias_pct != null) {
@@ -180,7 +180,7 @@ export function buildCausalChain(insight: AiInsight): CausalLink[] {
   chain.push({
     layer: "financial",
     signal: insight.financial_impact_estimate != null
-      ? fmtCurrency(insight.financial_impact_estimate)
+      ? formatCurrencyFull(insight.financial_impact_estimate)
       : "Est. pending",
     impact: insight.insight_type === "stockout_risk" ? "Lost sales"
           : insight.insight_type === "excess_inventory" ? "Capital locked"

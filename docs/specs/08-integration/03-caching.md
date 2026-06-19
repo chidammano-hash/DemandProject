@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `common/services/cache.py`, `common/services/query_tracker.py`, `config/platform/cache_config.yaml` |
+| **Key Files** | `common/services/cache.py`, `config/platform/cache_config.yaml` |
 
 ---
 
@@ -75,11 +75,6 @@ cache:
     on_data_load: [dashboard, accuracy, inventory]
     on_forecast_load: [dashboard, accuracy]
     on_mv_refresh: [inv_planning, control_tower]
-query_tracker:
-  enabled: true
-  slow_query_threshold_ms: 2000
-  flush_interval_seconds: 60
-  retention_days: 30
 ```
 
 ## Backends

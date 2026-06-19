@@ -17,6 +17,14 @@ vi.mock("@/api/queries/production-forecast", () => ({
   fetchProductionForecast: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("@/api/queries/ai-champion", () => ({
+  AI_CHAMPION_PROVIDERS: [{ value: "ollama", label: "Ollama (local, $0)" }],
+  aiChampionKeys: { saved: (i: string, l: string) => ["ai-champion", "saved", i, l] },
+  fetchAiChampionSaved: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  adjustAiChampion: vi.fn(),
+  saveAiChampion: vi.fn(),
+}));
+
 vi.mock("@/api/queries", () => ({
   queryKeys: {
     samplePair: (d: string) => ["sample-pair", d],
@@ -81,10 +89,6 @@ vi.mock("@/api/queries", () => ({
   fetchLtProfile: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
   correctionKeys: { byItem: (i: string, l: string) => ["dq", "corrections", i, l] },
   fetchCorrectionsByItem: vi.fn().mockResolvedValue({ corrections: [], total: 0 }),
-}));
-
-vi.mock("@/components/EChartContainer", () => ({
-  EChartContainer: () => <div data-testid="chart-mock" />,
 }));
 
 const { ItemAnalysisTab } = await import("@/tabs/ItemAnalysisTab");

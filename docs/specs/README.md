@@ -50,7 +50,6 @@ The data layer everything else depends on.
 | 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
 | 07 | [Customer Demand Fact](01-foundation/07-customer-demand-fact.md) | Customer-level demand fact table, monthly range-partitioned by startdate |
 | 08 | [Known Gaps](01-foundation/08-known-gaps.md) | Technical debt and known limitations tracked for future resolution |
-| 09 | [Pipeline Validation Report](01-foundation/09-pipeline-validation-report.md) | Full pipeline load + validation report (row counts, MV refresh, fill rate findings, gap tickets) |
 
 ---
 
@@ -76,14 +75,21 @@ Predict future demand using ML models, then select the best forecast per item.
 | 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
 | 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
+| 16 | [Expert System Backtest](02-forecasting/16-expert-system-backtest.md) | Segment→algorithm routing backtest (`expsys_accuracy` router) |
+| 17 | [External ML Forecast Loading](02-forecasting/17-ext-ml-forecast-load.md) | ETL to load externally-generated ML forecasts into the platform |
 | 18 | [Chronos Foundation Models](02-forecasting/18-chronos-foundation-models.md) | Four Chronos variants (T5, Bolt, Chronos 2, Chronos 2 Enriched) — architecture, covariates, configuration, performance benchmarks |
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
 | 20 | [Bolt Hierarchical](02-forecasting/20-bolt-hierarchical.md) | Customer-level bottom-up Chronos Bolt with top-down reconciliation — uses true demand from `fact_customer_demand_monthly` to correct stockout bias |
 | 21 | [Customer-Enriched Features](02-forecasting/21-customer-enriched-features.md) | 34 customer-derived features (concentration, churn, OOS, channel mix, customer attribute mix) for tree model enrichment |
 | 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
+| 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Candidate→production forecast promotion workflow (`fact_candidate_forecast` → `fact_production_forecast`) |
 | 25 | [Forecast Pipeline Workflow Guide](02-forecasting/25-forecast-pipeline-workflow-guide.md) | Concise 7-stage workflow guide (data → clustering → tuning → backtesting → load → champion → production forecast) with quick-reference commands and config table |
 | 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
+| 27 | [AI Champion Forecast](02-forecasting/27-ai-champion-forecast.md) | Interactive, single-DFU AI adjuster: from the Item Analysis tab an LLM (Ollama/Google/Anthropic/OpenAI) nudges the promoted champion forecast forward and writes a new `model_id='ai_champion'` (preview→save, no batch, no grading) |
+| 28 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/28-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
+| 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
+| 28 | [Feature Selection Pipeline](02-forecasting/28-feature-selection-pipeline.md) | Multi-stage per-timeframe feature selection (duplicate / near-zero-variance / correlation / cumulative SHAP) |
 
 **Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
 
@@ -96,7 +102,7 @@ Understand demand patterns — descriptive analytics that inform forecasting and
 | # | Spec | Summary |
 |---|------|---------|
 | 01 | [SKU Clustering & Experimentation Studio](03-demand-intelligence/01-sku-clustering.md) | Group SKUs by demand behavior (14 features, KMeans, What-If), experiment lifecycle (create, run, compare, promote), cluster-aware algorithm tuning |
-| 02 | [SKU Feature Engineering](01-foundation/02-sku-feature-engineering.md) | 34 time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle, statistical), derived classifications, `dim_sku` persistence, API + UI explorer |
+| 02 | [SKU Feature Engineering](03-demand-intelligence/02-sku-feature-engineering.md) | 34 time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle, statistical), derived classifications, `dim_sku` persistence, API + UI explorer |
 | 03 | [Blended Demand](03-demand-intelligence/03-blended-demand.md) | Alpha-weighted blend of statistical forecast + demand signals |
 | 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for 8 champion selection strategies (expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling) with 2-stage promotion |
 | 06 | [Demand History Workbench](03-demand-intelligence/06-demand-history-workbench.md) | 5-endpoint customer demand analysis API — reference panel, proportional decomposition, hierarchical drill-down, cross-reference matrix |
@@ -121,8 +127,11 @@ Convert demand forecasts into inventory decisions.
 | 09 | [Multi-Echelon](04-inventory/09-multi-echelon.md) | 2-echelon safety stock with risk pooling |
 | 10 | [Replenishment Plan](04-inventory/10-replenishment-plan.md) | Forward order schedule from CI bands + policies |
 | 11 | [Rebalancing](04-inventory/11-rebalancing.md) | Cross-location transfer optimization |
+| 12 | [Service-Level Unification](04-inventory/12-service-level-unification.md) | Single source of truth for SL targets across SS, fill rate, S&OP |
+| 13 | [Integrated Targets](04-inventory/13-integrated-targets.md) | Unified SS / ROP / EOQ targets per DFU for insights feed |
+| 14 | [Algorithm Comparison](04-inventory/14-algorithm-comparison.md) | Side-by-side inventory algorithm backtest comparison |
 
-**Reading order:** 01 (data) → 02 (analysis) → 03-04 (targets) → 05-06 (monitoring) → 07 (segmentation) → 08-09 (optimization) → 10-11 (execution)
+**Reading order:** 01 (data) → 02 (analysis) → 03-04 (targets) → 05-06 (monitoring) → 07 (segmentation) → 08-09 (optimization) → 10-11 (execution) → 12-14 (SL unification + targets)
 
 ---
 
@@ -136,6 +145,7 @@ Cross-functional planning processes that align demand, supply, and finance.
 | 02 | [Financial Planning](05-operations/02-financial-planning.md) | Inventory value, carrying cost, budget utilization |
 | 03 | [Event Calendar](05-operations/03-event-calendar.md) | Promotions and events that adjust demand forecasts |
 | 04 | [Scenario Planning](05-operations/04-scenario-planning.md) | What-if disruption simulation with financial impact |
+| 05 | [Working Capital Analytics](05-operations/05-working-capital-analytics.md) | DIO, DSO, DPO, cash-to-cash cycle, inventory turns |
 
 ---
 
@@ -149,6 +159,9 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | 02 | [Market Intel](06-ai-platform/02-market-intel.md) | Google search + GPT-4o market briefings for item-location pairs |
 | 03 | [Control Tower](06-ai-platform/03-control-tower.md) | Single pane of glass for supply chain health KPIs |
 | 04 | [Storyboard](06-ai-platform/04-storyboard.md) | Exception cards with causal chains and decision logging |
+| 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Append-only audit trail; policy engine planned |
+| 06 | [Forecast Explain API](06-ai-platform/06-explain-api.md) | SHAP-based forecast explanation per DFU |
+| 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Hash-chained append-only AI decision ledger (**Partial** — ledger shipped; policy engine not yet wired) |
 
 ---
 
@@ -185,29 +198,6 @@ Connect Supply Chain Command Center to the rest of the enterprise.
 | 08 | [Reporting](08-integration/08-reporting.md) | Scheduled report generation and delivery |
 | 09 | [API Governance](08-integration/09-api-governance.md) | Rate limiting, versioning, usage tracking |
 | 10 | [Webhooks](08-integration/10-webhooks.md) | Event-driven outbound notifications with retry |
-
----
-
-## Cross-Domain — Roadmap & Backlog
-
-Top-level specs that span multiple domains.
-
-| File | Summary |
-|------|---------|
-| [10-gen4-roadmap](10-gen4-roadmap.md) | Gen-4 multi-agent design review synthesis — 31-agent review, cross-cutting priorities, P0/P1 implementation plan |
-| [11-parking-lot-improvements](11-parking-lot-improvements.md) | 135 ranked improvements (Critical → Future) covering inventory planning, backtesting, and UI/UX, scored by 3 expert judges |
-
----
-
-## PRD — Product Requirements (Draft / Planned Work)
-
-Specs for features that are designed but not yet fully implemented. Kept separate from numbered implemented specs.
-
-| File | Domain | Summary |
-|------|--------|---------|
-| [PRD-bolt-bottom-up-reconciled](PRD/PRD-bolt-bottom-up-reconciled.md) | Forecasting | Hierarchical Bolt — customer-level bottom-up Chronos Bolt with MinTrace reconciliation |
-| [PRD-customer-enriched-forecasting](PRD/PRD-customer-enriched-forecasting.md) | Forecasting | Customer-enriched tree models with 34 customer-derived features added to competition roster |
-| [PRD-customer-analytics-visuals](PRD/PRD-customer-analytics-visuals.md) | Demand Intelligence | Enhanced customer map with demand volume, OOS hotspots, channel mix, and supply chain visuals |
 
 ---
 

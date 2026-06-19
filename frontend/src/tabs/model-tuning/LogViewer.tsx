@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import type { ModelType } from "@/api/queries";
+import { MODEL_PREFIX, type ModelType } from "@/api/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,12 +43,6 @@ interface LogResponse {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const MODEL_PREFIX: Record<ModelType, string> = {
-  lgbm: "/model-tuning/lgbm",
-  catboost: "/model-tuning/catboost",
-  xgboost: "/model-tuning/xgboost",
-};
-
 function formatDuration(startedAt: string | null): string {
   if (!startedAt) return "--";
   const start = new Date(startedAt).getTime();

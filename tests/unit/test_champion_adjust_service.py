@@ -1,0 +1,104 @@
+"""Unit tests for the interactive AI Champion adjust service (pure helpers)."""
+from datetime import date
+
+import pytest
+
+from common.ai.champion_adjust_service import (
+    UnknownProvider,
+    _months_from_rec,
+    _resolve_horizon,
+    _resolve_provider_model,
+)
+from common.ai.champion_adjuster import DfuContext, Recommendation, build_user_prompt
+
+
+def _forward():
+    return [
+        ("2026-05", 100.0, date(2026, 5, 1), 1),
+        ("2026-06", 200.0, date(2026, 6, 1), 2),
+        ("2026-07", 300.0, date(2026, 7, 1), 3),
+        ("2026-08", 400.0, date(2026, 8, 1), 4),  # beyond horizon=3
+    ]
+
+
+def test_months_from_rec_scales_within_horizon_only():
+    rec = Recommendation(recommendation_code="SCALE_UP", pct_change=10.0,
+                         apply_horizon_months=3, confidence=0.9, rationale="trend up clearly")
+    months = _months_from_rec(rec, _forward())
+    # First 3 months scaled by +10%, 4th untouched.
+    assert months[0].ai_qty == pytest.approx(110.0)
+    assert months[2].ai_qty == pytest.approx(330.0)
+    assert months[3].ai_qty == pytest.approx(400.0)
+    # Derived per-month pct_change reflects the actual change.
+    assert months[0].pct_change == pytest.approx(10.0)
+    assert months[3].pct_change == pytest.approx(0.0)
+
+
+def test_months_from_rec_keep_is_identity():
+    rec = Recommendation(recommendation_code="KEEP", confidence=0.5, rationale="baseline is fine")
+    months = _months_from_rec(rec, _forward())
+    assert [m.ai_qty for m in months] == [100.0, 200.0, 300.0, 400.0]
+
+
+def test_apply_horizon_months_accepts_up_to_12():
+    import pydantic
+    # 12 is now valid (raised from 6).
+    rec = Recommendation(recommendation_code="SCALE_UP", pct_change=10.0,
+                         apply_horizon_months=12, confidence=0.9, rationale="long ramp ahead")
+    assert rec.apply_horizon_months == 12
+    # 13 is out of range.
+    with pytest.raises(pydantic.ValidationError):
+        Recommendation(recommendation_code="SCALE_UP", pct_change=10.0,
+                       apply_horizon_months=13, confidence=0.9, rationale="too far out")
+
+
+def test_resolve_horizon_defends_against_bad_values():
+    # Valid positive int is honored.
+    assert _resolve_horizon({"defaults": {"horizon_months": 6}}) == 6
+    # Missing → default.
+    assert _resolve_horizon({}) == 3
+    # YAML footguns coerce to default, NOT to int(False)==0 / int(0)==0.
+    assert _resolve_horizon({"defaults": {"horizon_months": False}}) == 3
+    assert _resolve_horizon({"defaults": {"horizon_months": 0}}) == 3
+    assert _resolve_horizon({"defaults": {"horizon_months": -2}}) == 3
+    assert _resolve_horizon({"defaults": {"horizon_months": "x"}}) == 3
+
+
+def test_resolve_provider_model():
+    cfg = {"provider": "ollama", "models": {"ollama": "llama3.1:8b", "google": "gemini-2.0-flash"}}
+    assert _resolve_provider_model(cfg, None) == ("ollama", "llama3.1:8b")
+    assert _resolve_provider_model(cfg, "google") == ("google", "gemini-2.0-flash")
+    with pytest.raises(UnknownProvider):
+        _resolve_provider_model(cfg, "mystery")
+
+
+def test_prompt_includes_item_and_location_attributes():
+    ctx = DfuContext(
+        item_id="100", loc="L1", forecast_run_month=date(2026, 4, 1),
+        actuals_last_24m=[("2026-03", 90.0)], baseline_forecast=[("2026-05", 100.0)],
+        item_attrs={"brand": "Acme", "category": "Spirits"},
+        location_attrs={"site": "Dallas DC", "state": "TX"},
+    )
+    prompt = build_user_prompt(ctx)
+    assert "Item attributes: brand=Acme, category=Spirits" in prompt
+    assert "Location attributes: site=Dallas DC, state=TX" in prompt
+
+
+def test_prompt_includes_planner_comment_when_present():
+    ctx = DfuContext(
+        item_id="100", loc="L1", forecast_run_month=date(2026, 4, 1),
+        actuals_last_24m=[("2026-03", 90.0)], baseline_forecast=[("2026-05", 100.0)],
+        user_comment="New listing ramps from May; expect +20%.",
+    )
+    prompt = build_user_prompt(ctx)
+    assert "Planner comment" in prompt
+    assert "New listing ramps from May; expect +20%." in prompt
+
+
+def test_prompt_omits_planner_comment_when_blank():
+    ctx = DfuContext(
+        item_id="100", loc="L1", forecast_run_month=date(2026, 4, 1),
+        actuals_last_24m=[("2026-03", 90.0)], baseline_forecast=[("2026-05", 100.0)],
+        user_comment="   ",
+    )
+    assert "Planner comment" not in build_user_prompt(ctx)

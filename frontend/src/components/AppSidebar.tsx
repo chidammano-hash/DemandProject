@@ -10,7 +10,7 @@ import {
   Plug,
   Brain, Monitor,
   CalendarDays,
-  Shield, BarChart3, MapPin, FlaskConical, Beaker,
+  Shield, BarChart3, MapPin, FlaskConical,
   Settings2,
   TerminalSquare,
   History,
@@ -44,10 +44,6 @@ const NAV_ITEMS: NavItem[] = [
   { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "2" },
   { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "3" },
   { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
-  // U5.2 — distinct icon from "FVA & ROI" (BarChart3): the AI backtest is a
-  // walk-forward experiment run-runner, so a beaker/experiment glyph disambiguates
-  // the two consecutive Demand rows — critical in collapsed (icon-only) mode.
-  { key: "aiPlannerFva",      label: "AI FVA Backtest",icon: Beaker,          section: "demand" },
   { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
   { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
   { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },

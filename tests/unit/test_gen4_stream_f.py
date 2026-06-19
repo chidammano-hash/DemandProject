@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 
 def test_periodic_rop_adds_half_review_period():
-    from scripts.inventory.compute_safety_stock import compute_reorder_point_periodic
+    from common.inventory.safety_stock import compute_reorder_point_periodic
 
     # D_avg=10, LT=14, R=7  →  ROP = 10 * (14 + 3.5) + SS = 175 + SS
     rop = compute_reorder_point_periodic(
@@ -40,7 +40,7 @@ def test_periodic_rop_adds_half_review_period():
 
 def test_periodic_rop_zero_review_period_equals_continuous():
     """R=0 degenerates to LT-only protection (continuous ROP)."""
-    from scripts.inventory.compute_safety_stock import (
+    from common.inventory.safety_stock import (
         compute_reorder_point,
         compute_reorder_point_periodic,
     )
@@ -58,7 +58,7 @@ def test_periodic_rop_zero_review_period_equals_continuous():
 # ---------------------------------------------------------------------------
 
 def test_ss_combined_with_yield_variance_adds_component():
-    from scripts.inventory.compute_safety_stock import compute_ss_combined
+    from common.inventory.safety_stock import compute_ss_combined
 
     # z=1.64, sigma_d=2, LT=14, d_avg=10, lt_std=2
     base = compute_ss_combined(
@@ -77,7 +77,7 @@ def test_ss_combined_with_yield_variance_adds_component():
 
 
 def test_ss_components_returns_ss_yield_only():
-    from scripts.inventory.compute_safety_stock import compute_ss_components
+    from common.inventory.safety_stock import compute_ss_components
 
     result = compute_ss_components(
         z=1.64,

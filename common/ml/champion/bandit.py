@@ -14,7 +14,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common.ml.champion.helpers import _get_exec_lag
+from common.core.constants import FORECAST_QTY_COL
+from common.ml.champion.helpers import _get_exec_lag, make_blend_row
 from common.ml.champion.registry import (
     _DFU_COLS,
     _OUTPUT_COLS,
@@ -132,14 +133,11 @@ def strategy_thompson_sampling(
                     continue
 
             r = winner_row.iloc[0]
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": current_month,
-                "model_id": best_model,
-                "prior_wape": model_scores.get(best_model, 0.0),
-                "basefcst_pref": r["basefcst_pref"],
-                "tothist_dmd": r["tothist_dmd"],
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, current_month,
+                best_model, model_scores.get(best_model, 0.0),
+                r[FORECAST_QTY_COL], r["tothist_dmd"],
+            ))
 
             # -- Update posteriors with PREVIOUS available month --
             update_idx = n_available - 1
@@ -266,14 +264,11 @@ def strategy_linucb(
                     continue
 
             r = winner_row.iloc[0]
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": current_month,
-                "model_id": best_model,
-                "prior_wape": ucb_scores.get(best_model, 0.0),
-                "basefcst_pref": r["basefcst_pref"],
-                "tothist_dmd": r["tothist_dmd"],
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, current_month,
+                best_model, ucb_scores.get(best_model, 0.0),
+                r[FORECAST_QTY_COL], r["tothist_dmd"],
+            ))
 
             # -- Update with previous available month's reward --
             update_idx = n_available - 1
@@ -367,14 +362,11 @@ def strategy_exp3(
                     continue
 
             r = winner_row.iloc[0]
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": current_month,
-                "model_id": best_model,
-                "prior_wape": probs.get(best_model, 0.0),
-                "basefcst_pref": r["basefcst_pref"],
-                "tothist_dmd": r["tothist_dmd"],
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, current_month,
+                best_model, probs.get(best_model, 0.0),
+                r[FORECAST_QTY_COL], r["tothist_dmd"],
+            ))
 
             # -- Update weights with previous available month --
             update_idx = n_available - 1
@@ -470,18 +462,22 @@ def strategy_thompson_ensemble(
             actual = None
             for j, m in enumerate(top_models):
                 m_row = current_rows[current_rows["model_id"] == m].iloc[0]
-                blended += weights[j] * float(m_row["basefcst_pref"])
+                blended += weights[j] * float(m_row[FORECAST_QTY_COL])
                 if actual is None:
                     actual = float(m_row["tothist_dmd"])
 
             if actual is not None:
-                results.append({
-                    "item_id": item_id, "customer_group": customer_group,
-                    "loc": loc, "startdate": current_month,
-                    "model_id": "thompson_ensemble",
-                    "prior_wape": float(top_scores[0]),
-                    "basefcst_pref": blended, "tothist_dmd": actual,
-                })
+                source_mix = [
+                    {"model": m, "weight": round(float(w), 4)}
+                    for m, w in zip(top_models, weights, strict=False)
+                    if w >= 0.005
+                ]
+                results.append(make_blend_row(
+                    item_id, customer_group, loc, current_month,
+                    "thompson_ensemble", float(top_scores[0]),
+                    blended, actual,
+                    source_mix=source_mix,
+                ))
 
             # Update posteriors
             update_idx = n_available - 1

@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 
 logger = logging.getLogger(__name__)
@@ -174,7 +175,7 @@ async def dq_history(
     }
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_api_key)])
 async def dq_run(
     domain: str = Query("", description="Run checks for specific domain only"),
 ):
@@ -206,7 +207,7 @@ class FixApplyRequest(BaseModel):
     fix_ids: list[int]
 
 
-@router.post("/fix/apply")
+@router.post("/fix/apply", dependencies=[Depends(require_api_key)])
 async def dq_fix_apply(body: FixApplyRequest):
     """Apply selected fixes by their preview IDs.
 
@@ -374,7 +375,7 @@ async def dq_corrections_summary(
     return {"skus": skus, "total": total}
 
 
-@router.post("/fix")
+@router.post("/fix", dependencies=[Depends(require_api_key)])
 async def dq_fix(
     fix_type: str = Query("", description="Specific fix type (range, completeness, orphans)"),
     apply: bool = Query(False, description="Set true to apply fixes; false for dry-run preview"),

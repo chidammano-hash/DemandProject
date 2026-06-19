@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
-import psycopg
 
 from api.core import get_conn, set_cache
 from common.core.constants import ABC_CLASSES
+from common.core.sql_helpers import to_float as _safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,6 @@ _ABC_TARGETS: dict[str, float] = {"A": 80.0, "B": 70.0, "C": 55.0}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _safe_float(v: Any) -> float | None:
-    return float(v) if v is not None else None
 
 
 def _safe_int(v: Any) -> int | None:

@@ -1,6 +1,6 @@
 # Supply Chain Command Center — Unified Architecture & Data Flow Reference
 
-The single authoritative reference for system architecture, data flow, database schema, pipeline dependencies, API routing, ML pipeline, frontend components, and testing infrastructure.
+The single authoritative reference for system architecture, data flow, database schema, pipeline dependencies, API routing, ML pipeline, frontend components, and testing infrastructure — plus the platform overview, quick start, and feature catalog (folded in from the former PLATFORM_GUIDE). For the operator workflow and troubleshooting see `docs/RUNBOOK.md`; for per-feature design specs see `docs/specs/`.
 
 ---
 
@@ -30,6 +30,9 @@ The single authoritative reference for system architecture, data flow, database 
 22. [Make Target Quick Reference — Full Pipeline](#22-make-target-quick-reference--full-pipeline)
 23. [Testing Infrastructure](#23-testing-infrastructure)
 24. [How to Add Next Dataset](#24-how-to-add-next-dataset)
+25. [Platform Overview & Quick Start](#25-platform-overview--quick-start)
+26. [Feature Catalog](#26-feature-catalog)
+27. [Key Paths](#27-key-paths)
 
 ---
 
@@ -401,6 +404,7 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - `useUrlState.ts` includes `itemAnalysis` in VALID_TABS with backward compat redirects from `dfuAnalysis`/`inventory`
    - Sidebar: single "Item Analysis" nav item replaces two separate items
    - **Demand side:** Unified sales vs multi-model forecast overlay on a single chart; three analysis modes (Item @ Location, All Items @ Location, Item @ All Locations); `GET /sku/analysis` endpoint; per-model KPI cards; toggleable measure visibility; typeahead item/location filters
+   - **Past backtest + future forecast on one timeline:** the chart overlays each model's **future** staging forecast (`staging_<model>`, from `GET /forecast/production/staging`) and its **past** out-of-sample backtest fit (`backtest_<model>`, dotted, from `GET /forecast/candidate` → `fact_candidate_forecast`), toggled via **Staging** and **Backtest** pill rows. Backtest lines appear only after a model's predictions are Loaded (candidate→production workflow). See `docs/specs/02-forecasting/24-candidate-forecast-promotion.md` §5.4
    - **Clickable forecast lines**: clicking any backtest model line sets `selectedModel` state; selected line renders thicker + unselected lines fade to 30% opacity; hint text "click a forecast line to explore SHAP" near toggles
    - **Per-DFU SHAP Panel** (`DfuShapPanel.tsx`): on model selection renders a stacked Recharts BarChart below the overlay chart showing signed SHAP feature contributions per month; future months rendered at 45% fill opacity; 15-color palette per feature; scrollable container (min 800px); dual-stack with `ReferenceLine y={0}` baseline; falls back to cluster-level summary SHAP (existing `/forecast/shap/{model}/summary` endpoint) with warning banner when per-DFU pkl artifacts are not available (404); placeholder card when no model selected
    - **Supply side:** Inventory KPI cards, trend chart (dual Y-axis), paginated position table, item detail drill-down — all from sub-panels in `tabs/inventory/`
@@ -608,11 +612,11 @@ erDiagram
 - **`model_promotion_log`** — audit trail for every promotion/demotion event. Tracks model_id, promotion_type (single/champion), plan_version, is_active, dfu_count, total_rows.
 - **`backtest_run`** extended with `is_loaded_to_candidate` and `candidate_loaded_at` columns to track candidate loading state.
 
-### AI & Exception Tables (9)
+### AI & Exception Tables
 
-`ai_insights`, `ai_planning_memos`, `ai_call_log`, `ai_recommendation_outcomes`, `fact_storyboard_exceptions`, `ai_fva_backtest_run`, `fact_ai_forecast_recommendation`, `fact_ai_adjusted_forecast`, `ai_planner_backtest_audit`
+`ai_insights`, `ai_planning_memos`, `ai_call_log`, `ai_recommendation_outcomes`, `fact_storyboard_exceptions`, `ai_champion_run`, `fact_ai_champion_forecast`
 
-The last four are the AI Planner FVA backtest store (spec [02-27](specs/02-forecasting/27-ai-fva-backtest.md)). Per-run materialized views: `mv_ai_fva_overall`, `mv_ai_fva_by_recommendation`, `mv_ai_fva_by_month`, `mv_ai_fva_by_dfu` — refreshed by the runner ([scripts/forecasting/run_ai_fva_backtest.py](../scripts/forecasting/run_ai_fva_backtest.py)) at end of each backtest run.
+The last two are the **AI Champion** forward adjuster store (spec [02-27](specs/02-forecasting/27-ai-champion-forecast.md)): the LLM adjusts the promoted champion forecast forward and writes a new forecast with `model_id='ai_champion'`. **Interactive, single-DFU** — produced on demand from the Item Analysis tab ("AI Adjust") via [common/ai/champion_adjust_service.py](../common/ai/champion_adjust_service.py) (`POST /ai-champion/adjust` + `/save`); no batch pipeline. Forward-only — no backtest, no accuracy grading.
 
 ### Operations Tables (12)
 
@@ -904,7 +908,7 @@ flowchart TD
 | **N-BEATS Backtest** | `run_backtest_dl.py --model nbeats` | sales, forecast | `data/backtest/nbeats/` | `forecast_pipeline_config.yaml` (`algorithms.nbeats`) |
 | **Backtest Load** | `load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — (flags: `--models`, `--bulk`, `--main-only`, `--archive-only`) |
 | **Champion** | `run_champion_selection.py` | `fact_external_forecast_monthly`, archive | rows with `model_id='champion'`, `'ceiling'` | `forecast_pipeline_config.yaml` (champion section) |
-| **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_candidate_forecast` (staging), then promoted to `fact_production_forecast` | `forecast_pipeline_config.yaml` (production_forecast section). Staged workflow: Train → Generate → Load (→ `fact_candidate_forecast`) → Promote (→ `fact_production_forecast`). Horizon: 24 months, lookback: 36 months. Cold-start routing: < 12 mo history -> rolling_mean; < 3 mo -> skipped. Embargo: 1 month. Promotion types: single model (copy all candidates) or champion (DFU-level best-accuracy selection from `data/champion/dfu_assignments.csv`). API: `/backtest-management/{model_id}/generate`, `/backtest-management/{model_id}/promote`. |
+| **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_candidate_forecast` (staging), then promoted to `fact_production_forecast` | `forecast_pipeline_config.yaml` (production_forecast section). Staged workflow: Train → Generate → Load (→ `fact_candidate_forecast`) → Promote (→ `fact_production_forecast`). Horizon: 24 months, lookback: 36 months. Cold-start routing: < 12 mo history -> rolling_mean; < 3 mo -> skipped. Embargo: 1 month. Promotion types: single model (copy all candidates) or champion (DFU-level best-accuracy selection from `data/champion/dfu_assignments.csv`). API: `/backtest-management/{model_id}/generate?horizon=&confidence_intervals=` (horizon + CI threaded to the job/script), `/backtest-management/{model_id}/promote`. Per-DFU reads: `/forecast/production/staging` (future) + `/forecast/candidate` (past backtest) power the Item Analysis overlay. |
 | **Repl Plan** | `compute_replenishment_plan.py` | `fact_production_forecast`, SS, EOQ | `fact_replenishment_plan` | — |
 | **AI Insights** | `generate_ai_insights.py` | multi-table queries (DFU, forecast, inventory, health) | `ai_insights`, `ai_planning_memos`, `ai_call_log` | `ai_planner_config.yaml` |
 | **Storyboard** | `generate_storyboard_exceptions.py` | forecast, inventory, accuracy views | `fact_storyboard_exceptions` | `exception_config.yaml` |
@@ -943,7 +947,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 
 | Frontend Tab | API Endpoints | Primary DB Tables/Views |
 |-------------|---------------|------------------------|
-| **Dashboard** | `/dashboard/kpis`, `/trend`, `/heatmap`, `/alerts`, `/top-movers` | `fact_external_forecast_monthly`, `agg_sales_monthly`, `fact_sales_monthly` (inline query) |
+| **Dashboard** | `/dashboard/kpis`, `/trend`, `/heatmap`, `/alerts`, `/top-movers`, `/pipeline-readiness` | `fact_external_forecast_monthly`, `agg_sales_monthly`, `fact_sales_monthly` (inline query), `dim_sku` |
 | **Data Explorer** | `/domains/{domain}/rows`, `/search`, `/filter`, `/meta` | All dimension + fact tables |
 | **Portfolio Analysis** | `/forecast/accuracy/slice`, `/lag-curve`, `/champions/*`, `/shap/*` | `agg_accuracy_by_dim`, `backtest_lag_archive`, `fact_external_forecast_monthly` |
 | **Item Analysis** | `/sku/*`, `/forecast/shap/{model}/sku`, `/inventory/*` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, SHAP CSVs |
@@ -1011,7 +1015,11 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/engines/exception_engine.py` | `ExceptionEngine` class: threshold evaluation, severity scoring, exception type classification for storyboard (Feature 40) |
 | `common/core/sql_helpers.py` | Shared SQL utilities for load scripts: `qident()`, `typed_expr()`, `business_key_expr()`, `_elapsed()`, `NULL_SQL`, `MV_REFRESH_ARCHIVE`, constants (`IQR_OUTLIER_MULTIPLIER`, `LEAD_TIME_MAX_DAYS`, `LEAD_TIME_DEFAULT_DAYS`, `HASH_CHUNK_SIZE`, `EXTERNAL_MODEL_ID`, percentile constants); canonical row→dict helpers `row_to_dict_from_cursor(cur, row)` and `row_to_dict_from_cols(cols, row)` (use these instead of hand-rolled per-router `dict(zip(cols, row))` patterns) |
 | `api/core.py` | API SQL helpers, filtering, pagination; `domain_row_to_dict(spec, row)` (renamed from `row_to_dict` to disambiguate from the generic helpers in `common/core/sql_helpers.py` — it specifically maps a `DomainSpec` row to a dict using domain column metadata) |
-| `common/services/query_tracker.py` | API query tracking + usage metrics for governance and observability |
+| `common/core/sql_helpers.py` (DB-value coercion) | `parse_db_json(val)` (tolerant JSON parse of a DB column value) and `to_float(v, decimals=None)` (safe float coercion with optional rounding) — the single source for JSON/float coercion of DB-returned values; use instead of ad-hoc `json.loads`/`float()` calls in routers |
+| `api/error_handling.py` | `@db_endpoint(detail, status_code=500)` route-handler decorator (sync + async): re-raises any deliberate `HTTPException`, but converts every other exception into a `logger.exception()` log plus a sanitized 5xx whose `detail` is the supplied short verb-phrase — no exception text is leaked to the client. Encapsulates the "5xx responses never interpolate exception text" rule |
+| `common/inventory/` | NEW package of pure, DB-free safety-stock math (IPfeature3/IPfeature11). `safety_stock.py` holds 15 unit-testable functions (`compute_ss_*`, `get_z_score`, `classify_xyz`, `detect_outliers`, seasonal factors, guard rails, position metrics) extracted verbatim from `scripts/inventory/compute_safety_stock.py` so the formulas import and test without pulling in the CLI script |
+| `common/ml/champion/helpers.py` | `make_blend_row()` builds the champion blend output row, keying the forecast under `FORECAST_QTY_COL` (never the literal `"basefcst_pref"`) |
+| `common/ai/llm_client.py` | `tools_to_openai()` converts Anthropic-style tool schemas to the OpenAI tool-schema shape for cross-provider tool calling |
 
 Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting which to pass to `run_tree_backtest()` based on the `cluster_strategy` key in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS` in `constants.py`) to prevent data leakage from full-history cluster assignments. It is merged into the feature grid as a metadata column so that `per_cluster` mode can partition DFUs into separate models per cluster, but models never see it as an input feature. Algorithm behavior (cluster_strategy, recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. Per-cluster SHAP (`compute_timeframe_shap_per_cluster`) returns `dict[str, list[str]]` — the backtest framework handles per-cluster retrain and per-cluster prediction with independent feature sets. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero. Recursive lag smoothing (`recursive_lag_smooth: 0.15`) damps compounding errors from step 3 onward. Intermittent clusters (>70% zeros) are automatically routed to rolling mean baseline instead of tree models. Per-cluster tuning profiles (`cluster_tuning_profiles.yaml`) are resolved via `resolve_cluster_params()` with Phase 1 `cluster_name` exact match before Phase 2 statistical criteria fallback.
 
@@ -1298,11 +1306,11 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 23. Product-grade UI overhaul (feature36):
    - Collapsible sidebar navigation (12 nav items across 5 sections (tower, operations, supply, demand, system), 64px collapsed / 240px expanded, mobile drawer)
    - Global filter bar: brand, category, market, channel multi-select dropdowns with debounced URL sync via React context
-   - Dashboard overview landing page: 6 KPI cards with sparklines/trends, AlertPanel (severity-coded), HeatmapGrid (category x time accuracy), TopMovers (period-over-period), ForecastTrendChart (ECharts)
+   - Dashboard overview landing page: 6 KPI cards with sparklines/trends, HeatmapGrid (category x time accuracy), TopMovers (period-over-period), ForecastTrendChart (recharts) — note: the original `AlertPanel` component has since been removed as dead code
    - Single professional theme: General (Supply Chain Command Center) with light/dark color modes
    - 5 new API endpoints: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
    - `fact_sales_monthly` (inline query) materialized view for period-over-period volume changes
-   - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, AlertPanel, HeatmapGrid, TopMovers, ForecastTrendChart, DashboardTab
+   - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, HeatmapGrid, TopMovers, ForecastTrendChart (`AlertPanel` was later removed as dead code)
    - Enhanced KpiCard with sparkline SVG, trend delta, severity, icon support
    - Keyboard shortcuts: `[` sidebar toggle, `d` dark mode toggle, 1-7 tab switch
 24. Job Scheduler/Monitor — APScheduler (existing, in-process) and pg-queue (new, durable):
@@ -1467,9 +1475,11 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 
 ## 19. Frontend Component Architecture
 
-### Charting Library (standardized on recharts)
+### Charting Library (recharts default; echarts-modular for 8 heavy panels)
 
-`echarts` and `echarts-for-react` have been removed from the bundle (-728 KB raw, -250 KB gzipped). All charts now use `recharts`. 8 customer-analytics ECharts panels were ported: Sankey, Sunburst, Treemap, Scatter, and `ComposedChart` (with an Area-tuple confidence-interval band rendering pattern). `HeatmapGrid` was extended with a compact mode and clickable headers as part of the migration.
+`recharts` is the default and only general-purpose chart engine. The old `EChartContainer.tsx` wrapper has been **removed** — do not reintroduce it. Components that previously used it (e.g. `ForecastTrendChart`) are now implemented directly in `recharts` (the confidence-interval band uses the Area-tuple `[low, high]` rendering pattern). `HeatmapGrid` was extended with a compact mode and clickable headers during the migration.
+
+The single sanctioned exception is `frontend/src/components/echarts-modular.tsx` (`ModularReactECharts`), retained ONLY for the 8 heavy customer-analytics panels recharts can't render well — treemap, sunburst, sankey, heatmap, bubble, affinity, lifecycle, order-patterns. It tree-shakes echarts to just the chart types those panels use, so `echarts ^6` ships for that subset only. Every other chart in the app uses recharts.
 
 ### Below-the-fold Lazy Loading (`LazyPanel`)
 
@@ -1484,13 +1494,18 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | Tab Shell | Subfolder | Extracted Panels |
 |-----------|-----------|-----------------|
 | `tabs/AccuracyTab.tsx` (224L) | `tabs/accuracy/` | KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel |
-| `tabs/ItemAnalysisTab.tsx` | `tabs/sku-analysis/` + `tabs/inventory/` | Merged: SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel (demand) + KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel (supply); checkbox toggle toolbar via `usePanelToggles` |
+| `tabs/ItemAnalysisTab.tsx` | `tabs/item-analysis/` + `tabs/sku-analysis/` + `tabs/inventory/` | Merged demand + supply view. `tabs/item-analysis/` holds the unified chart split (UnifiedChart, UnifiedChartPanel, MeasureDefaultsMenu, TogglePill, `colors.ts`, `measures.ts`, `monthRange.ts`, `breadcrumb.ts`); demand panels from `sku-analysis/` (SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel) + supply panels from `inventory/` (KpiSection, TrendChartPanel); checkbox toggle toolbar via `usePanelToggles` |
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
 | `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
-| `tabs/ModelTuningTab.tsx` (212L, was 975L) | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — Model Readiness table with 4-step action buttons per model: Train → Generate → Load → Promote; "Candidates" column showing loaded DFU count; "Promote Champion" button for DFU-level champion selection; crown badge on currently promoted production model; tree-model-only validation on Train), Cluster EDA, Feature Lab. Sub-folder `tabs/model-tuning/` adds: AIAdvisorFAB, BacktestDetailPanel, BacktestStagePanel, EnhancedPromoteModal, LagFilterBar, LogViewer, ParameterTable, PipelineConfigPanel, RunHistoryTable, TemplateSelector, TuneStagePanel, `_helpers.ts`, `_types.ts` |
+| `tabs/ModelTuningTab.tsx` (212L, was 975L) | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — Model Readiness table with 4-step action buttons per model: Train → Generate → Load → Promote; "Candidates" column showing loaded DFU count; "Promote Champion" button for DFU-level champion selection; crown badge on currently promoted production model; tree-model-only validation on Train), Cluster EDA, Feature Lab. Sub-folder `tabs/model-tuning/` adds: AIAdvisorFAB, BacktestDetailPanel, BacktestStagePanel, EnhancedPromoteModal, LagFilterBar, LogViewer, ParameterTable, RunHistoryTable, TemplateSelector, TuneStagePanel, `_helpers.ts`, `_types.ts` |
 | `tabs/SkuFeaturesTab.tsx` (113L, was 821L) | `tabs/sku-features/` | SummaryCards, FeatureTable, FeatureHistograms, CategoricalDistributions, ComputeButton, `constants.ts`, `utils.ts` |
 | `tabs/ExplorerTab.tsx` (245L, was 810L) | `tabs/explorer/` | 11 co-located files: ExplorerHeader, ExplorerTable, ExplorerPagination, ExplorerErrorBanner, DomainFiltersPanel, FieldVisibilityPanel, useExplorerState, useExplorerQueries, useColumnSuggestions, `_helpers.ts`, `types.ts` |
+| `tabs/CommandCenterTab.tsx` | `tabs/command-center/` | KpiSummaryCard, ExceptionFeedCard, `exceptions.ts` |
+| `tabs/DataQualityTab.tsx` | `tabs/data-quality/` | CheckCatalogPanel, CorrectionsSection, PipelineLineageSection, RecentIssuesPanel, SelfHealPanel, `dqShared.ts` |
+| `tabs/AggregateAnalysisTab.tsx` | `tabs/aggregate-analysis/` | KpiCardsSection, AccuracyHeatmapSection, FilterDropdowns, `aggregateShared.ts` |
+| `tabs/StoryboardTab.tsx` | `tabs/storyboard/` | SbKpiCard, ExceptionCard, InvestigationPanel, `storyboardShared.ts` |
+| `tabs/forecast/` (ForecastPanel, used by ModelTuningTab Forecast sub-tab) | `tabs/forecast/` | ForecastPanel, AlgorithmSelectionCard, ModelReadinessCard, GenerateForecastCard, RecentJobsCard, TrainingStatusIndicator, ConfigRow, `forecastPanelShared.ts` |
 
 ### API Query Sub-modules
 
@@ -1521,7 +1536,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `queries/inv-planning-rebalancing.ts` | Inventory rebalancing query keys + fetch functions |
 | `queries/inv-planning-replenishment.ts` | Replenishment plan query keys + fetch functions |
 | `queries/production-forecast.ts` | Production forecast query keys + fetch functions (F1.1) |
-| `queries/unified-model-tuning.ts` | Unified model tuning query keys + fetch/mutate functions (Feature 46) |
+| `queries/unified-model-tuning.ts` | Unified model tuning query keys + fetch/mutate functions (Feature 46); exports `MODEL_PREFIX` (per-model-type id prefix map) |
 | `queries/cluster-experiments.ts` | Cluster experiment query keys + fetch/mutate functions (Feature 47) |
 | `queries/champion-experiments.ts` | Champion experiment query keys + fetch/mutate/compare/promote functions (Feature 48) |
 
@@ -1771,7 +1786,6 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `queries.test.ts` | TanStack Query keys + stale times | 10 |
 | `Skeleton.test.tsx` | Loading skeleton components | 7 |
 | `KeyboardShortcutHelp.test.tsx` | Keyboard help dialog | 5 |
-| `EChartContainer.test.tsx` | ECharts wrapper | 4 |
 | `ExplorerTab.test.tsx` | Data Explorer tab | 2 |
 | `AccuracyTab.test.tsx` | Accuracy tab | 1 |
 | `ItemAnalysisTab.test.tsx` | Item Analysis tab (merged DFU Analysis + Inventory) | varies |
@@ -1784,7 +1798,6 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `ThemeSelector.test.tsx` | Theme + color mode picker | 9 |
 | `GlobalFilterBar.test.tsx` | Global filter bar | 7 |
 | `WidgetGrid.test.tsx` | Widget grid layout | 11 |
-| `AlertPanel.test.tsx` | Alert severity panel | 6 |
 | `TopMovers.test.tsx` | Top movers list | 5 |
 | `HeatmapGrid.test.tsx` | Heatmap grid | 13 |
 | `DashboardTab.test.tsx` | Dashboard overview tab | 4 |
@@ -1836,3 +1849,128 @@ End-to-end smoke tests run against the full stack (API + UI must be running).
 6. Run `make generate-embeddings` to update chat context with new schema metadata
 
 **Example: Inventory domain** — uses dedicated normalize script (`normalize_inventory_csv.py`) for multi-file merge, dedicated API endpoints (`/inventory/*`), and dedicated UI tab (`InventoryTab`). Domain spec still lives in `common/core/domain_specs.py` for schema metadata.
+
+---
+
+## 25. Platform Overview & Quick Start
+
+A full-stack supply chain analytics platform for demand planning and inventory optimization. Ingests historical sales and forecast data, stores it in PostgreSQL, runs ML-based forecasting pipelines, and serves an interactive React dashboard for planners and analysts.
+
+Data flow: `data/input/` raw CSVs → normalize scripts → `data/staged/*_clean.csv` → PostgreSQL → FastAPI (:8000) → React UI (:5173). (Tech stack: §6 Component Technologies. Datasets: §7 Dimensions / §8 Facts. Data scale + table catalog: §10.)
+
+```bash
+cd DemandProject
+
+make init              # Create .venv, install uv, sync dependencies
+make up                # Start Docker services (Postgres, MLflow, Redis)
+make db-apply-sql      # Apply DDL schemas
+make normalize-all     # Normalize all source domains -> data/staged/*_clean.csv
+make load-all          # Load data/staged/*_clean.csv into Postgres + refresh materialized views
+
+make api               # Start FastAPI on :8000
+make ui-init           # Install npm deps
+make ui                # Start React dev server on :5173
+```
+
+Open the UI at `http://127.0.0.1:5173`. For the full operator workflow (every phase, troubleshooting, cleanup), see `docs/RUNBOOK.md`. For the complete Make-target reference, see §22.
+
+**One-command setup targets:**
+
+```
+setup-all                     # Everything: data + ML + planning + ops (~4-6 hours)
+├── setup-backtest            # features → backtest-all → champion-all
+│   └── setup-features        # setup-data (normalize-all + load-all) → features-compute → cluster/lt/abc-xyz/demand-signals
+├── setup-inv-planning        # SS, EOQ, policies, exceptions, health, fill rate, supplier, investment, rebalancing
+├── setup-demand-planning     # production forecasts, projections, POs, quantile, consensus, planned orders, bias, blended, service level, echelon
+└── setup-ops                 # S&OP, events, financial plan, storyboard, scenarios, DQ
+
+setup-data        # Data only (~30 min)
+setup-planning    # Data + inventory planning, no ML (~1 hour)
+```
+
+---
+
+## 26. Feature Catalog
+
+A capability-level summary of what the platform does. (Architecture/data-flow details for each are in the sections above and in `docs/specs/`.)
+
+### 1. Demand Forecasting & Accuracy
+
+Three tree-based backtest models (LightGBM, CatBoost, XGBoost) plus three customer-enriched variants (34 customer-derived features from `fact_customer_demand_monthly`), five Amazon Chronos foundation models (T5, Bolt, Chronos 2, Chronos 2 Enriched, Bolt Hierarchical), one statistical model (MSTL via statsforecast), two deep learning models (N-HiTS, N-BEATS via neuralforecast + PyTorch), and two baselines (seasonal_naive, rolling_mean) — all configured via `config/forecasting/forecast_pipeline_config.yaml` (`algorithms.<model_id>.params`). Foundation models are zero-shot pretrained. Bolt Hierarchical runs Chronos Bolt at the customer level, aggregates bottom-up to item×location, and reconciles with a top-down forecast to correct stockout bias. All models share `common/ml/model_registry.py` (canonical↔native params, unified `fit_model()`, `get_best_iteration()`, standardized early stopping). Expanding-window backtesting across 10 timeframes (A–J) stores lag 0–4 predictions in an archive. Champion selection picks the best model per DFU per month using 8 strategies with exec-lag-aware causal safeguards. Production inference generates versioned 24-month forecasts with P10/P90 bands. Cold-start routing sends DFUs with <12 months history to rolling_mean (<3 months skipped). Advanced options: recursive multi-step forecasting, SHAP feature selection, Bayesian tuning (Optuna), per-timeframe inline causal tuning. See `docs/specs/02-forecasting/`.
+
+**Hyperparameter Tuning:** (1) production scoring — tune once on full history (`make tune-lgbm`); (2) honest backtesting — `tune_inline: true` for per-timeframe causal tuning; (3) per-cluster — `make tune-lgbm-clusters` produces overrides in `config/forecasting/cluster_tuning_profiles.yaml` (Phase 1 `cluster_name` match → Phase 2 statistical fallback).
+
+**SHAP Feature Selection:** `shap_select: true`; per-timeframe SHAP covering 90% cumulative importance, with per-cluster support (`compute_timeframe_shap_per_cluster()`), stratified sampling for sparse clusters, and protected features. 4 read-only endpoints under `/forecast/shap/`.
+
+**Unified Model Tuning Studio:** UI-driven hyperparameter tuning for LightGBM/CatBoost/XGBoost — Experiment Builder with templates, resilient backtest jobs (subprocess isolation, PID tracking, log streaming), execution-lag-filtered comparison (per-lag/cluster/month, param + feature diffs), and promotion to the champion pipeline. Unified router `/model-tuning/{model}/` (the `api/routers/forecasting/tuning/` package, 15 modules). See `docs/specs/02-forecasting/11-unified-model-tuning-v2.md`.
+
+**Champion Experimentation Studio:** sub-tab for testing the 8 champion-selection strategies with 9 templates, 2-stage promotion (write config + backup → run selection job). API `/champion-experiments`; tables `champion_experiment`, `champion_experiment_comparison`; frontend `src/tabs/champion/`.
+
+**Champion Strategy Sweep (tournament):** fans out a grid of candidate champion configs (each a real `champion_experiment`), ranks them globally **and** within demand segments, assembles a per-segment composite (promotable as a `per_segment` config), and recommends a gate-eligible winner. Per-segment scoring is post-hoc slicing — no extra runs. Job `champion_sweep` → `scripts/ml/run_champion_sweep.py`; API `/champion-sweeps`; tables `champion_sweep`, `champion_sweep_member`, `champion_sweep_segment_score` (`sql/192`); frontend `SweepBuilder`/`SweepResultsPanel` in `src/tabs/champion/`. Spec `docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
+
+**Production Forecast Panel:** staged candidate→production workflow — predictions land in `fact_candidate_forecast`, only the promoted model is copied to `fact_production_forecast`. Model Readiness table (Train → Generate → Load → Promote per model) + Algorithm Selection. Audit trail in `model_promotion_log`. Frontend `src/tabs/forecast/`.
+
+**Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
+
+### 2. SKU Clustering & Segmentation
+
+KMeans clustering of ~112K SKUs by demand patterns using 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle). Optimal K via Silhouette + Calinski-Harabasz with a 5% min-cluster-size constraint. Priority-ordered taxonomy labeling (e.g. `high_volume_seasonal_growing`). What-If scenario engine for trial clusterings. ABC-XYZ classification cross-segments by revenue volume × demand variability into a 3×3 policy matrix. **Cluster Experimentation Studio** — labeled experiments from templates, run as jobs, compared with SKU migration matrices + quality deltas; completed experiments are selectable as the cluster source for tuning experiments. API `/cluster-experiments`. See `docs/specs/03-demand-intelligence/01-sku-clustering.md`.
+
+### 3. Inventory Planning (15 sub-features, 34 panels)
+
+Two-column layout, 8 color-coded sidebar groups, 5 role-based presets. **Insights group:** Unified Action Feed, Network Heatmap, Segment Dashboard, Planning Scorecard, Cash Flow Timeline, Service Level Waterfall, Budget Optimizer. **Core features:** Safety Stock Engine (Z-score + Monte Carlo), EOQ/Cycle Stock, Replenishment Policies (4 types, ABC-XYZ auto-assign), Exception Queue (6 types, dedup, root cause, AI annotations), Fill Rate Analytics, Demand Signals, Intramonth Stockout Detection, Supplier Performance, Capital Investment Optimization, Portfolio Health Score, Inventory Rebalancing (greedy + LP), Replenishment Plan, Blended Demand, Multi-Echelon Safety Stock, Inventory Projection. Formula math lives in `common/inventory/safety_stock.py`. See `docs/specs/04-inventory/`.
+
+### 4. AI Planning Agent
+
+Proactive exception work-queue (not a chatbot) powered by Claude via the `tool_use` API: 9 read-only SQL lookups + `create_insight`. Generates structured insight cards (severity, summary, recommendation, financial impact, causal chain). Circuit-breaker guarded. Async portfolio scans write to `ai_insights`; observability via `ai_call_log`. See `docs/specs/06-ai-platform/`.
+
+### 5. Operations & Planning
+
+S&OP Cycle (6-stage machine with gap analysis + approval), Control Tower (cross-dimensional KPIs + alerts), Storyboard (exception-driven workflow with causal-chain cards + decision logging), Market Intelligence (Google Search + GPT-4o briefings), Financial Planning, Event Calendar, Scenario Planning. See `docs/specs/05-operations/`.
+
+### 6. Performance Profiling
+
+Centralized profiling for scripts, endpoints, and pipelines: `@profile_function` decorators, `profiled_section()` context managers, auto DB-query tracking via `wrap_connection()`, `tracemalloc` memory monitoring, and a rule-based suggestion engine (8 anti-patterns). All profiled connections are read-only + always rollback. Config `config/platform/perf_config.yaml`. See `docs/specs/01-foundation/05-performance-profiling.md`.
+
+### 7. Platform Services
+
+Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBAC (JWT, 4 roles, sessions), Notifications (Slack/Teams/Email/PagerDuty), Collaboration (threaded annotations), External Signals, FVA & ROI ladder, SQL Runner (read-only ad-hoc SQL + schema browser + history + CSV export), Reporting (scheduled PDF/Excel), API Governance (per-role rate limiting, versioning, usage analytics), Webhooks (HMAC-SHA256 signed delivery with retry + DLQ), Caching (in-memory LRU + optional Redis). See `docs/specs/08-integration/`.
+
+### 8. Job Automation
+
+APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Jobs tab with live progress, kill button, cross-tab completion alerts.
+
+### 9. UI Platform
+
+12-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System). Light/dark themes. Global filter bar synced across tabs via URL state. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the 8 heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
+
+---
+
+## 27. Key Paths
+
+| Purpose | Path |
+|---|---|
+| Project spec / conventions | `CLAUDE.md` |
+| Operations runbook | `docs/RUNBOOK.md` |
+| API entry point | `api/main.py` |
+| API routers | `api/routers/` (core/, forecasting/, intelligence/, inventory/, operations/, platform/; sub-router packages `forecasting/tuning/`, `intelligence/customer_analytics/`) |
+| Shared Python modules | `common/` (core/, ml/, engines/, services/, ai/, inventory/) |
+| Champion strategies package | `common/ml/champion/` |
+| Shared SQL helpers | `common/core/sql_helpers.py` (`row_to_dict_from_cursor`/`row_to_dict_from_cols`, coercion `parse_db_json`/`to_float`, streaming `stream_query_in_chunks`/`read_sql_chunked`) |
+| Inventory formula math | `common/inventory/safety_stock.py` (pure, DB-free SS / ROP / guard-rail / XYZ / outlier / seasonal-adjustment formulas) |
+| Sanitized 5xx route decorator | `api/error_handling.py` (`@db_endpoint`) |
+| pg-queue scaffold | `common/services/pg_queue.py` + worker `scripts/ops/pg_queue_worker.py` |
+| Cache (LRU + Redis single-flight) | `common/services/cache.py` (`cached_async`, `reset_cache`) |
+| Async + read-replica pools | `api/pool.py`, `api/core.py` (`get_conn`, `get_async_conn`, `get_read_only_conn`, `get_async_read_only_conn`) |
+| Shared constants | `common/core/constants.py` (`FORECAST_QTY_COL`) |
+| AI guardrails / unenforced-rule checks | `scripts/ai_checks/check_unenforced_rules.sh` + `scripts/ai_checks/allowlists/` |
+| Domain config | `common/core/domain_specs.py` |
+| Normalized clean CSVs | `data/staged/` |
+| YAML configs | `config/` |
+| Pipeline scripts | `scripts/` |
+| DDL migrations | `sql/` |
+| Frontend app / tabs / queries | `frontend/src/App.tsx`, `frontend/src/tabs/`, `frontend/src/api/queries/` |
+| Lazy panel wrapper | `frontend/src/components/LazyPanel.tsx` |
+| Tests (backend / frontend / e2e / scale) | `tests/`, `frontend/src/**/__tests__/`, `frontend/e2e/tests/`, `tests/scale/` |
+| Design specs | `docs/specs/` |
+| Makefile | `Makefile` |

@@ -143,7 +143,7 @@ The script `run_unified_pipeline()` does the following in one shot:
 
 1. Reads default `feature_params` / `model_params` / `label_params` from the **currently promoted** row in `cluster_experiment` (falls back to hardcoded defaults if no promotion exists).
 2. Inserts a new `cluster_experiment` row with `status = 'running'`.
-3. Calls `run_scenario()` (from `scripts/run_clustering_scenario.py`) which executes:
+3. Calls `run_scenario()` (from `scripts/ml/run_clustering_scenario.py`) which executes:
    - **Feature load** — reads pre-computed features from `dim_sku` (NOT from `fact_sales_monthly`). The features pipeline must have been run first.
    - **K selection + KMeans training** — `find_optimal_k()` over `model_params.k_range`, then `train_kmeans()` from `common/ml/clustering/training.py`.
    - **Labeling** — `assign_cluster_labels()` from `common/ml/clustering/labeling.py` produces human-readable cluster names from centroid characteristics.
@@ -239,6 +239,8 @@ DDL: `/Users/manoharchidambaram/projects/DemandProject/sql/101_cluster_experimen
 ### 4.2 UI
 
 Create, evaluate, compare, and promote experiments from the **Cluster** tab in the React UI. Clustering is intentionally **hidden from the Jobs tab** — it is managed exclusively through the Cluster tab and `make cluster-all`.
+
+Cluster assignments are filterable in the Data Explorer via the `cluster_assignment` column and viewable via `/domains/sku/clusters`.
 
 ### 4.3 Promotion semantics
 

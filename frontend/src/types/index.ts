@@ -90,6 +90,62 @@ export type LagCurvePayload = {
   by_lag: LagPoint[];
 };
 
+// --- Per-DFU accuracy decomposition (diagnostic layer, /forecast/accuracy/decomposition) ---
+export type UnweightedAccuracy = {
+  n_dfus: number;
+  n_undefined: number;
+  mean_accuracy_pct: number | null;
+  median_accuracy_pct: number | null;
+};
+
+export type DecompositionModelEntry = {
+  volume_weighted: AccuracyKpis;
+  unweighted: UnweightedAccuracy;
+  error_contribution_pct: number | null;
+  n_dfus: number;
+};
+
+export type DecompositionRow = {
+  bucket: string;
+  by_model: Record<string, DecompositionModelEntry>;
+};
+
+export type AccuracyDecompositionPayload = {
+  group_by: string;
+  lag_filter: number;
+  models: string[] | null;
+  rows: DecompositionRow[];
+  source: string;
+};
+
+export type ErrorContributor = {
+  item_id: string;
+  customer_group: string;
+  loc: string;
+  cluster_assignment: string;
+  region: string;
+  abc_vol: string;
+  seasonality_profile: string;
+  sum_actual: number;
+  sum_abs_error: number;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  bias_direction: string;
+  error_contribution_pct: number | null;
+  cumulative_contribution_pct: number | null;
+};
+
+export type ErrorContributorsPayload = {
+  models: string[] | null;
+  lag_filter: number;
+  limit: number;
+  total_abs_error: number;
+  total_dfus: number;
+  contributors: ErrorContributor[];
+  source: string;
+};
+
 export type MarketIntelPayload = {
   item_id: string;
   location_id: string;
@@ -120,12 +176,21 @@ export type SkuAnalysisPayload = {
   location: string;
   points: number;
   models: string[];
-  series: Record<string, number | string>[];
+  // Values are numbers/strings, except champion_mix which is a {model,weight}[] array.
+  series: Record<string, number | string | { model: string; weight: number }[]>[];
   model_monthly: Record<string, SkuModelMonthly[]>;
   dfu_attributes: Record<string, string | null>[];
   // Human-readable item description (dim_item.item_desc) for the breadcrumb (U3.5).
   item_desc?: string | null;
   scope_count?: number;
+  // The champion's winning source model per month (item_location mode only) and
+  // the dominant one across months — lets the chart label the champion line
+  // "champion (N-BEATS)". Empty/null when source_model_id isn't populated.
+  champion_source_by_month?: Record<string, string>;
+  champion_dominant_source?: string | null;
+  // Per-month blend composition for blended champions, e.g.
+  // {"2025-01-01": [{model, weight}, ...]}. Drives the champion tooltip mix.
+  champion_mix_by_month?: Record<string, { model: string; weight: number }[]>;
 };
 
 export type InventoryPosition = {

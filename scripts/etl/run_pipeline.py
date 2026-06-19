@@ -144,7 +144,7 @@ def build_incremental_delete(changed_files: list[Path]) -> str:
 
 def normalize_domain(domain: str, source_dir: Path) -> bool:
     """Normalize a single domain via subprocess. Returns True on success."""
-    script = ROOT / "scripts" / "normalize_dataset_csv.py"
+    script = ROOT / "scripts" / "etl" / "normalize_dataset_csv.py"
     cmd = [sys.executable, str(script), "--dataset", domain, "--source-dir", str(source_dir)]
     logger.info("  Normalizing %s ...", domain)
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -157,7 +157,7 @@ def normalize_domain(domain: str, source_dir: Path) -> bool:
 def normalize_inventory(source_dir: Path, output: Path | None = None,
                         files: list[Path] | None = None) -> bool:
     """Normalize inventory snapshots. If files is given, only process those files."""
-    script = ROOT / "scripts" / "normalize_inventory_csv.py"
+    script = ROOT / "scripts" / "etl" / "normalize_inventory_csv.py"
     cmd = [sys.executable, str(script), "--datafiles-dir", str(source_dir)]
     if output:
         cmd.extend(["--output", str(output)])

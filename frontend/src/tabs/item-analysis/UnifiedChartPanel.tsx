@@ -1,178 +1,38 @@
-import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { memo, useMemo, useState, useCallback } from "react";
 
-import { useChartColors } from "@/hooks/useChartColors";
 import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
-import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import type {
   SkuAnalysisPayload,
   InventoryTrendPoint,
   InventoryTrendParams,
 } from "@/types";
-import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
-import { modelLabel } from "@/lib/model-labels";
+import type { ProductionForecastPayload, StagingForecastsPayload, CandidateForecastsPayload } from "@/api/queries/production-forecast";
+import { modelLabel, formatChampionLabel } from "@/lib/model-labels";
 import type { DQCorrection } from "@/api/queries/platform";
 import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-const PROD_FORECAST_COLOR = "#7c3aed";
-const CHART_MARGIN = { top: 8, right: 40, left: 18, bottom: 8 };
-const DESELECT_OPACITY = 0.25;
-
-/** Per-model colors for staging forecast lines */
-const STAGING_COLORS: Record<string, string> = {
-  lgbm_cluster: "#2563eb",
-  catboost_cluster: "#dc2626",
-  xgboost_cluster: "#16a34a",
-  lgbm_cust_enriched: "#1d4ed8",
-  catboost_cust_enriched: "#b91c1c",
-  xgboost_cust_enriched: "#15803d",
-  nbeats: "#ea580c",
-  nhits: "#9333ea",
-  chronos_bolt: "#0891b2",
-  chronos: "#0e7490",
-  chronos2: "#155e75",
-  chronos2_enriched: "#164e63",
-  bolt_hierarchical: "#0d9488",
-  mstl: "#ca8a04",
-  seasonal_naive: "#64748b",
-  rolling_mean: "#78716c",
-};
-const STAGING_FALLBACK_COLOR = "#6b7280";
-
-const SUPPLY_COLORS: Record<string, string> = {
-  total_on_hand: "#2563EB",
-  total_on_order: "#0D9488",
-  total_position: "#a855f7",
-  inv_monthly_sales: "#0891B2",
-  dos: "#DC2626",
-  avg_lead_time: "#D97706",
-  safety_stock: "#8b5cf6",
-  cycle_stock: "#06b6d4",
-};
-
-interface SupplySeriesDef {
-  key: string;
-  label: string;
-  color: string;
-  axis: "left" | "right";
-  defaultVisible: boolean;
-  dashArray?: string;
-  strokeWidth?: number;
-}
-
-const SUPPLY_SERIES_DEFS: SupplySeriesDef[] = [
-  { key: "total_on_hand", label: "On Hand", color: SUPPLY_COLORS.total_on_hand, axis: "left", defaultVisible: true },
-  { key: "total_on_order", label: "On Order", color: SUPPLY_COLORS.total_on_order, axis: "left", defaultVisible: false },
-  { key: "total_position", label: "Position", color: SUPPLY_COLORS.total_position, axis: "left", defaultVisible: false, dashArray: "8 3" },
-  { key: "inv_monthly_sales", label: "Inv Sales", color: SUPPLY_COLORS.inv_monthly_sales, axis: "left", defaultVisible: false },
-  { key: "dos", label: "DOS", color: SUPPLY_COLORS.dos, axis: "right", defaultVisible: true, strokeWidth: 2.5 },
-  { key: "avg_lead_time", label: "Lead Time", color: SUPPLY_COLORS.avg_lead_time, axis: "right", defaultVisible: false, dashArray: "5 3" },
-  { key: "safety_stock", label: "Safety Stock", color: SUPPLY_COLORS.safety_stock, axis: "left", defaultVisible: false, dashArray: "6 3" },
-  { key: "cycle_stock", label: "Cycle Stock", color: SUPPLY_COLORS.cycle_stock, axis: "left", defaultVisible: false },
-];
-
-const DEFAULT_HIDDEN_SUPPLY = new Set(
-  SUPPLY_SERIES_DEFS.filter((s) => !s.defaultVisible).map((s) => s.key),
-);
-
-// ---------------------------------------------------------------------------
-// Persistent default-measure preferences (localStorage)
-// ---------------------------------------------------------------------------
-const LS_KEY_DEMAND = "ds:itemAnalysis:defaultMeasures";
-const LS_KEY_SUPPLY = "ds:itemAnalysis:defaultSupply";
-
-/** All static demand measure keys (sales-side). */
-const SALES_MEASURE_KEYS = ["tothist_dmd", "sales_qty", "qty_shipped", "qty_ordered"] as const;
-
-/** Load saved demand defaults from localStorage. */
-export function loadDefaultMeasures(): Set<string> {
-  try {
-    const raw = localStorage.getItem(LS_KEY_DEMAND);
-    if (raw) return new Set(JSON.parse(raw) as string[]);
-  } catch { /* ignore */ }
-  return new Set<string>(SALES_MEASURE_KEYS);
-}
-
-/** Load saved supply hidden-set from localStorage. */
-export function loadDefaultHiddenSupply(): Set<string> {
-  try {
-    const raw = localStorage.getItem(LS_KEY_SUPPLY);
-    if (raw) return new Set(JSON.parse(raw) as string[]);
-  } catch { /* ignore */ }
-  return new Set(DEFAULT_HIDDEN_SUPPLY);
-}
-
-function saveDemandDefaults(keys: Set<string>) {
-  localStorage.setItem(LS_KEY_DEMAND, JSON.stringify([...keys]));
-}
-
-function saveSupplyDefaults(hiddenKeys: Set<string>) {
-  localStorage.setItem(LS_KEY_SUPPLY, JSON.stringify([...hiddenKeys]));
-}
-
-/** Return a new Set with `key` toggled (added if absent, removed if present). */
-function toggleInSet<T>(prev: Set<T>, key: T): Set<T> {
-  const next = new Set(prev);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  return next;
-}
-
-/**
- * Build the visible-series set for a new SKU load, using saved defaults.
- * Forecast model keys are always included; sales measures follow user prefs.
- */
-export function buildInitialVisibleSeries(
-  models: string[],
-): Set<string> {
-  const defaults = loadDefaultMeasures();
-  const keys = new Set<string>();
-  for (const k of SALES_MEASURE_KEYS) {
-    if (defaults.has(k)) keys.add(k);
-  }
-  for (const m of models) keys.add(`forecast_${m}`);
-  if (defaults.has("production_forecast")) keys.add("production_forecast");
-  return keys;
-}
-
-const DQ_ORIG_COLOR = "#DC2626"; // red for original (pre-DQ) values
+import {
+  PROD_FORECAST_COLOR,
+  AI_CHAMPION_COLOR,
+  STAGING_COLORS,
+  STAGING_FALLBACK_COLOR,
+  DQ_ORIG_COLOR,
+  TOOLTIP_LABELS,
+} from "./colors";
+import {
+  SUPPLY_SERIES_DEFS,
+  loadDefaultMeasures,
+  loadDefaultHiddenSupply,
+  toggleInSet,
+} from "./measures";
+import { TogglePill } from "./TogglePill";
+import { MeasureDefaultsMenu } from "./MeasureDefaultsMenu";
+import { UnifiedChart } from "./UnifiedChart";
 
 // Map DB column_name + table → chart dataKey for the original series
 const DQ_COLUMN_MAP: Record<string, { dataKey: string; origKey: string; label: string }> = {
   "fact_sales_monthly:qty": { dataKey: "sales_qty", origKey: "sales_qty_orig", label: "Sale Qty (original)" },
   "fact_sales_monthly:qty_shipped": { dataKey: "qty_shipped", origKey: "qty_shipped_orig", label: "Shipped (original)" },
   "fact_inventory_snapshot:qty_on_hand": { dataKey: "total_on_hand", origKey: "total_on_hand_orig", label: "On Hand (original)" },
-};
-
-const TOOLTIP_LABELS: Record<string, string> = {
-  tothist_dmd: "Sale Qty (external)",
-  sales_qty: "Sale Qty",
-  sales_qty_orig: "Sale Qty (original)",
-  qty_shipped: "Qty Shipped",
-  qty_shipped_orig: "Shipped (original)",
-  qty_ordered: "Qty Ordered",
-  production_forecast: "Production Forecast",
-  total_on_hand: "On Hand",
-  total_on_hand_orig: "On Hand (original)",
-  total_on_order: "On Order",
-  total_position: "Total Position",
-  inv_monthly_sales: "Inv Monthly Sales",
-  dos: "Days of Supply",
-  avg_lead_time: "Avg Lead Time",
-  safety_stock: "Safety Stock",
-  cycle_stock: "Cycle Stock",
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +52,7 @@ export interface UnifiedChartPanelProps {
   setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
   prodForecastData?: ProductionForecastPayload | null;
   stagingForecastData?: StagingForecastsPayload | null;
+  candidateForecastData?: CandidateForecastsPayload | null;
   selectedModel?: string | null;
   onModelSelect?: (model: string | null) => void;
   // Supply data (optional)
@@ -200,6 +61,10 @@ export interface UnifiedChartPanelProps {
   // DQ corrections overlay (optional)
   corrections?: DQCorrection[];
   showCorrections?: boolean;
+  // Saved AI Champion forward forecast overlay (optional)
+  hasAiChampion?: boolean;
+  aiChampionRecCode?: string | null;
+  aiChampionRationale?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,14 +83,17 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   setSkuVisibleSeries,
   prodForecastData,
   stagingForecastData,
+  candidateForecastData,
   selectedModel = null,
   onModelSelect,
   trendData = [],
   trendParams,
   corrections = [],
   showCorrections = false,
+  hasAiChampion = false,
+  aiChampionRecCode = null,
+  aiChampionRationale = null,
 }: UnifiedChartPanelProps) {
-  const { chartColors } = useChartColors();
   const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(() => loadDefaultHiddenSupply());
   // Tracks demand series whose pill is shown but chart line is hidden (dimmed pill)
   const [hiddenDemand, setHiddenDemand] = useState<Set<string>>(new Set());
@@ -235,6 +103,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   // Staging pills hidden from the toolbar entirely (Defaults menu unchecks them).
   // Pill click only dims via hiddenStaging; Defaults menu removes the pill.
   const [hiddenStagingPills, setHiddenStagingPills] = useState<Set<string>>(new Set());
+
+  // Backtest (candidate) model visibility — same pattern as staging, hidden by default.
+  const [hiddenBacktest, setHiddenBacktest] = useState<Set<string>>(new Set());
 
   const hasProdForecast = (prodForecastData?.forecasts.length ?? 0) > 0;
   const prodForecastLabel = hasProdForecast
@@ -253,6 +124,14 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   }, [stagingForecastData, promotedModelId]);
 
   const hasStagingModels = stagingModelIds.length > 0;
+
+  // Derive backtest model IDs from candidate data (backtest_* lines over history).
+  const backtestModelIds = useMemo(() => {
+    if (!candidateForecastData?.models) return [];
+    return Object.keys(candidateForecastData.models);
+  }, [candidateForecastData]);
+  const hasBacktestModels = backtestModelIds.length > 0;
+
   const ss = trendParams?.safety_stock ?? null;
   const ropUnits = trendParams?.reorder_point_units ?? null;
   const hasSs = ss != null;
@@ -346,6 +225,20 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     });
   }, [allStagingOn, stagingModelIds]);
 
+  // Backtest model toggle (single + all), mirroring the staging controls.
+  const toggleBacktestModel = useCallback((modelId: string) => {
+    setHiddenBacktest((prev) => toggleInSet(prev, modelId));
+  }, []);
+  const allBacktestOn = hasBacktestModels && backtestModelIds.every((m) => !hiddenBacktest.has(m));
+  const toggleAllBacktest = useCallback(() => {
+    setHiddenBacktest((prev) => {
+      if (allBacktestOn) {
+        return new Set(backtestModelIds);
+      }
+      return new Set();
+    });
+  }, [allBacktestOn, backtestModelIds]);
+
   // Supply toggle
   const toggleSupply = useCallback((key: string) => {
     setHiddenSupply((prev) => toggleInSet(prev, key));
@@ -379,8 +272,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     const keys = salesMeasures.map((s) => s.key);
     keys.push(...skuData.models.map((m) => `forecast_${m}`));
     if (hasProdForecast) keys.push("production_forecast");
+    if (hasAiChampion) keys.push("ai_champion");
     return keys;
-  }, [skuData.models, hasProdForecast]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [skuData.models, hasProdForecast, hasAiChampion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "All on" means all enabled pills have their lines visible (not hidden)
   const enabledDemandKeys = allDemandKeys.filter((k) => skuVisibleSeries.has(k));
@@ -445,10 +339,14 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             const isEnabled = skuVisibleSeries.has(key);
             if (!isEnabled) return null;
             const isShapSelected = selectedModel === model;
+            const pillLabel =
+              model === "champion" && skuData.champion_dominant_source
+                ? formatChampionLabel(null, skuData.champion_dominant_source)
+                : model;
             return (
               <span key={key} className="inline-flex items-center gap-0.5">
                 <TogglePill
-                  label={model}
+                  label={pillLabel}
                   color={color}
                   active={!hiddenDemand.has(key)}
                   onClick={() => toggleDemandLineVisibility(key)}
@@ -480,6 +378,15 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
               dashed
             />
           )}
+          {hasAiChampion && skuVisibleSeries.has("ai_champion") && (
+            <TogglePill
+              label="AI Champion"
+              color={AI_CHAMPION_COLOR}
+              active={!hiddenDemand.has("ai_champion")}
+              onClick={() => toggleDemandLineVisibility("ai_champion")}
+              dashed
+            />
+          )}
         </div>
 
         {/* Staging forecast model pills */}
@@ -507,6 +414,32 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                   />
                 );
               })}
+          </div>
+        )}
+
+        {/* Backtest (past, out-of-sample) model pills — counterpart to Staging */}
+        {hasBacktestModels && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={toggleAllBacktest}
+              className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors text-left"
+              title={allBacktestOn ? "Hide all backtest models" : "Show all backtest models"}
+            >
+              {allBacktestOn ? "Backtest −" : "Backtest +"}
+            </button>
+            {backtestModelIds.map((mid) => {
+              const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+              return (
+                <TogglePill
+                  key={`backtest_${mid}`}
+                  label={modelLabel(mid)}
+                  color={color}
+                  active={!hiddenBacktest.has(mid)}
+                  onClick={() => toggleBacktestModel(mid)}
+                  dashed
+                />
+              );
+            })}
           </div>
         )}
 
@@ -638,484 +571,44 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
         )}
       </div>
 
+      {/* ---- AI Champion rationale (the reasons behind the amber line) ---- */}
+      {hasAiChampion && aiChampionRationale && !hiddenDemand.has("ai_champion") && (
+        <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <span className="font-semibold" style={{ color: AI_CHAMPION_COLOR }}>
+            AI Champion{aiChampionRecCode ? ` (${aiChampionRecCode})` : ""}:
+          </span>{" "}
+          {aiChampionRationale}
+        </p>
+      )}
+
       {/* ---- Chart ---- */}
-      <div className="h-[400px] overflow-x-auto overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
-        <div
-          className="h-full"
-          style={{ minWidth: `${Math.max(800, mergedData.length * 40)}px` }}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={mergedData} margin={CHART_MARGIN}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
-              <XAxis dataKey="month" tick={{ fill: chartColors.axis, fontSize: 11 }} />
-              <YAxis
-                yAxisId="left"
-                width={78}
-                tickFormatter={formatCompactNumber}
-                tick={{ fill: chartColors.axis, fontSize: 11 }}
-                label={{ value: "Units", angle: -90, position: "insideLeft", fontSize: 10, offset: 10 }}
-              />
-              {hasRightAxis && (
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={{ fill: chartColors.axis, fontSize: 11 }}
-                  tickFormatter={(v: number) => `${Number(v).toFixed(0)}d`}
-                  label={{ value: "Days", angle: 90, position: "insideRight", fontSize: 10, offset: 10 }}
-                />
-              )}
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: chartColors.tooltip_bg,
-                  borderColor: chartColors.tooltip_border,
-                }}
-                formatter={(value: number, name: string) => {
-                  let label = TOOLTIP_LABELS[name] ?? name;
-                  // Resolve staging model names to readable labels
-                  if (name.startsWith("staging_")) {
-                    const mid = name.slice("staging_".length);
-                    label = `${modelLabel(mid)} (staging)`;
-                  }
-                  if (name === "dos" || name === "avg_lead_time")
-                    return [`${Number(value).toFixed(1)} days`, label];
-                  return [
-                    formatNumber(Number.isFinite(Number(value)) ? Number(value) : null),
-                    label,
-                  ];
-                }}
-              />
-
-              {/* ---- Demand lines ---- */}
-              {skuVisibleSeries.has("tothist_dmd") && !hiddenDemand.has("tothist_dmd") && (
-                <Line
-                  type="monotone"
-                  dataKey="tothist_dmd"
-                  yAxisId="left"
-                  name="tothist_dmd"
-                  stroke={SKU_SALES_COLORS.tothist_dmd}
-                  strokeWidth={2.5}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              )}
-              {skuVisibleSeries.has("sales_qty") && !hiddenDemand.has("sales_qty") && (
-                <Line
-                  type="monotone"
-                  dataKey="sales_qty"
-                  yAxisId="left"
-                  name="sales_qty"
-                  stroke={SKU_SALES_COLORS.sales_qty}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              )}
-              {skuVisibleSeries.has("qty_shipped") && !hiddenDemand.has("qty_shipped") && (
-                <Line
-                  type="monotone"
-                  dataKey="qty_shipped"
-                  yAxisId="left"
-                  name="qty_shipped"
-                  stroke={SKU_SALES_COLORS.qty_shipped}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              )}
-              {skuVisibleSeries.has("qty_ordered") && !hiddenDemand.has("qty_ordered") && (
-                <Line
-                  type="monotone"
-                  dataKey="qty_ordered"
-                  yAxisId="left"
-                  name="qty_ordered"
-                  stroke={SKU_SALES_COLORS.qty_ordered}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              )}
-              {skuData.models
-                .filter((m) => skuVisibleSeries.has(`forecast_${m}`) && !hiddenDemand.has(`forecast_${m}`))
-                .map((model, idx) => {
-                  const isSelected = selectedModel === model;
-                  const isOtherSelected = selectedModel !== null && selectedModel !== model;
-                  return (
-                    <Line
-                      key={model}
-                      type="monotone"
-                      dataKey={`forecast_${model}`}
-                      yAxisId="left"
-                      name={model}
-                      stroke={skuModelColor(model, idx)}
-                      strokeWidth={isSelected ? 3 : model === "champion" ? 2.5 : 1.5}
-                      strokeDasharray={model === "champion" ? undefined : "5 3"}
-                      dot={false}
-                      style={{ opacity: isOtherSelected ? DESELECT_OPACITY : 1 }}
-                      activeDot={{ r: isSelected ? 7 : 4 }}
-                    />
-                  );
-                })}
-              {hasProdForecast && skuVisibleSeries.has("production_forecast") && !hiddenDemand.has("production_forecast") && (
-                <Line
-                  type="monotone"
-                  dataKey="production_forecast"
-                  yAxisId="left"
-                  name="production_forecast"
-                  stroke={PROD_FORECAST_COLOR}
-                  strokeWidth={2.5}
-                  strokeDasharray="6 3"
-                  dot={false}
-                  activeDot={{ r: 5 }}
-                />
-              )}
-
-              {/* ---- Staging forecast lines ---- */}
-              {stagingModelIds
-                .filter((mid) => !hiddenStaging.has(mid) && !hiddenStagingPills.has(mid))
-                .map((mid) => {
-                  const key = `staging_${mid}`;
-                  const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
-                  return (
-                    <Line
-                      key={key}
-                      type="monotone"
-                      dataKey={key}
-                      yAxisId="left"
-                      name={key}
-                      stroke={color}
-                      strokeWidth={1.5}
-                      strokeDasharray="4 3"
-                      dot={false}
-                      connectNulls
-                      activeDot={{ r: 3 }}
-                    />
-                  );
-                })}
-
-              {/* ---- Supply lines ---- */}
-              {hasSupplyData &&
-                availableSupply
-                  .filter((s) => !hiddenSupply.has(s.key))
-                  .map((s) => (
-                    <Line
-                      key={s.key}
-                      type="monotone"
-                      dataKey={s.key}
-                      yAxisId={s.axis}
-                      name={s.key}
-                      stroke={s.color}
-                      strokeWidth={s.strokeWidth ?? 2}
-                      strokeDasharray={s.dashArray}
-                      dot={false}
-                      connectNulls
-                      activeDot={{ r: 3 }}
-                    />
-                  ))}
-
-              {/* ---- DQ correction original-value lines ---- */}
-              {showCorrections &&
-                activeCorrectionSeries.map((origKey) => (
-                  <Line
-                    key={origKey}
-                    type="monotone"
-                    dataKey={origKey}
-                    yAxisId="left"
-                    name={origKey}
-                    stroke={DQ_ORIG_COLOR}
-                    strokeWidth={2}
-                    strokeDasharray="4 3"
-                    dot={{ r: 3, fill: DQ_ORIG_COLOR }}
-                    connectNulls={false}
-                    activeDot={{ r: 5 }}
-                  />
-                ))}
-
-              {/* ---- Reference lines ---- */}
-              {hasSs && showSupply("safety_stock") && (
-                <ReferenceLine
-                  yAxisId="left"
-                  y={ss!}
-                  stroke="#8b5cf6"
-                  strokeDasharray="6 3"
-                  strokeWidth={1.5}
-                  label={{
-                    value: `SS ${ss!.toFixed(0)}u`,
-                    position: "insideTopLeft",
-                    fontSize: 10,
-                    fill: "#8b5cf6",
-                  }}
-                />
-              )}
-              {ropUnits != null && showSupply("safety_stock") && (
-                <ReferenceLine
-                  yAxisId="left"
-                  y={ropUnits}
-                  stroke="#f97316"
-                  strokeDasharray="4 2"
-                  strokeWidth={1.5}
-                  label={{
-                    value: `ROP ${ropUnits.toFixed(0)}u`,
-                    position: "insideBottomLeft",
-                    fontSize: 10,
-                    fill: "#f97316",
-                  }}
-                />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      <UnifiedChart
+        mergedData={mergedData}
+        hasRightAxis={hasRightAxis}
+        models={skuData.models}
+        skuVisibleSeries={skuVisibleSeries}
+        hiddenDemand={hiddenDemand}
+        selectedModel={selectedModel}
+        hasProdForecast={hasProdForecast}
+        hasAiChampion={hasAiChampion}
+        aiChampionLineHidden={hiddenDemand.has("ai_champion")}
+        championDominantSource={skuData.champion_dominant_source}
+        stagingModelIds={stagingModelIds}
+        hiddenStaging={hiddenStaging}
+        hiddenStagingPills={hiddenStagingPills}
+        backtestModelIds={backtestModelIds}
+        hiddenBacktest={hiddenBacktest}
+        hasSupplyData={hasSupplyData}
+        availableSupply={availableSupply}
+        hiddenSupply={hiddenSupply}
+        showSupply={showSupply}
+        showCorrections={showCorrections}
+        activeCorrectionSeries={activeCorrectionSeries}
+        hasSs={hasSs}
+        ss={ss}
+        ropUnits={ropUnits}
+      />
 
     </div>
-  );
-});
-
-// ---------------------------------------------------------------------------
-// MeasureDefaultsMenu — gear icon dropdown to set default visible measures
-// ---------------------------------------------------------------------------
-const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
-  models,
-  hasProdForecast,
-  prodForecastLabel,
-  hasSupplyData,
-  availableSupply,
-  stagingModelIds,
-  hiddenStagingPills,
-  setSkuVisibleSeries,
-  setHiddenSupply,
-  setHiddenStagingPills,
-}: {
-  models: string[];
-  hasProdForecast: boolean;
-  prodForecastLabel: string;
-  hasSupplyData: boolean;
-  availableSupply: SupplySeriesDef[];
-  stagingModelIds: string[];
-  hiddenStagingPills: Set<string>;
-  setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
-  setHiddenSupply: React.Dispatch<React.SetStateAction<Set<string>>>;
-  setHiddenStagingPills: React.Dispatch<React.SetStateAction<Set<string>>>;
-}) {
-  const [open, setOpen] = useState(false);
-  const [demandDefaults, setDemandDefaults] = useState<Set<string>>(loadDefaultMeasures);
-  const [supplyHidden, setSupplyHidden] = useState<Set<string>>(loadDefaultHiddenSupply);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
-
-  // Compute fixed position from button rect when opening
-  useEffect(() => {
-    if (open && btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (
-        menuRef.current && !menuRef.current.contains(e.target as Node) &&
-        btnRef.current && !btnRef.current.contains(e.target as Node)
-      ) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
-
-  const toggleDemand = useCallback((key: string) => {
-    setDemandDefaults((prev) => {
-      const next = toggleInSet(prev, key);
-      saveDemandDefaults(next);
-      return next;
-    });
-    // Update live chart state immediately
-    setSkuVisibleSeries((prev) => toggleInSet(prev, key));
-  }, [setSkuVisibleSeries]);
-
-  const toggleSupply = useCallback((key: string) => {
-    setSupplyHidden((prev) => {
-      const next = toggleInSet(prev, key);
-      saveSupplyDefaults(next);
-      return next;
-    });
-    // Update live chart state immediately
-    setHiddenSupply((prev) => toggleInSet(prev, key));
-  }, [setHiddenSupply]);
-
-  const toggleStaging = useCallback((mid: string) => {
-    setHiddenStagingPills((prev) => toggleInSet(prev, mid));
-  }, [setHiddenStagingPills]);
-
-  const demandItems: { key: string; label: string; color: string }[] = [
-    { key: "tothist_dmd", label: "Sale Qty (ext)", color: SKU_SALES_COLORS.tothist_dmd },
-    { key: "sales_qty", label: "Sale Qty", color: SKU_SALES_COLORS.sales_qty },
-    { key: "qty_shipped", label: "Shipped", color: SKU_SALES_COLORS.qty_shipped },
-    { key: "qty_ordered", label: "Ordered", color: SKU_SALES_COLORS.qty_ordered },
-    ...models.map((m, i) => ({ key: `forecast_${m}`, label: m, color: skuModelColor(m, i) })),
-    ...(hasProdForecast ? [{ key: "production_forecast", label: prodForecastLabel, color: PROD_FORECAST_COLOR }] : []),
-  ];
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        onClick={() => setOpen((v) => !v)}
-        className={`flex h-6 items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${
-          open
-            ? "border-primary text-primary"
-            : "border-input text-muted-foreground hover:text-foreground hover:border-foreground"
-        }`}
-        title="Configure which measures are visible by default when loading a new DFU"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-        Defaults
-      </button>
-      {open && (
-        <div
-          ref={menuRef}
-          className="fixed z-[9999] min-w-[200px] overflow-y-auto rounded-md border bg-white p-2.5 shadow-lg dark:bg-zinc-900"
-          style={{ top: pos.top, right: pos.right, maxHeight: `calc(100vh - ${pos.top}px - 16px)` }}
-        >
-          {/* Demand section */}
-          <DefaultsSectionHeader label="Demand" withDivider={false} />
-          {demandItems.map(({ key, label, color }) => (
-            <DefaultCheckboxRow
-              key={key}
-              label={label}
-              color={color}
-              checked={demandDefaults.has(key)}
-              onChange={() => toggleDemand(key)}
-            />
-          ))}
-
-          {/* Staging section */}
-          {stagingModelIds.length > 0 && (
-            <>
-              <DefaultsSectionHeader label="Staging" />
-              {stagingModelIds.map((mid) => {
-                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
-                return (
-                  <DefaultCheckboxRow
-                    key={`staging_${mid}`}
-                    label={modelLabel(mid)}
-                    color={color}
-                    checked={!hiddenStagingPills.has(mid)}
-                    onChange={() => toggleStaging(mid)}
-                  />
-                );
-              })}
-            </>
-          )}
-
-          {/* Supply section */}
-          {hasSupplyData && availableSupply.length > 0 && (
-            <>
-              <DefaultsSectionHeader label="Supply" />
-              {availableSupply.map((s) => (
-                <DefaultCheckboxRow
-                  key={s.key}
-                  label={s.label}
-                  color={s.color}
-                  checked={!supplyHidden.has(s.key)}
-                  onChange={() => toggleSupply(s.key)}
-                />
-              ))}
-            </>
-          )}
-        </div>
-      )}
-    </>
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Defaults menu row — checkbox + color dot + label (shared by Demand/Staging/Supply)
-// ---------------------------------------------------------------------------
-function DefaultsSectionHeader({ label, withDivider = true }: { label: string; withDivider?: boolean }) {
-  return (
-    <>
-      {withDivider && <div className="my-1.5 border-t border-border" />}
-      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-    </>
-  );
-}
-
-function DefaultCheckboxRow({
-  label,
-  color,
-  checked,
-  onChange,
-}: {
-  label: string;
-  color: string;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-muted">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="h-3 w-3 rounded border-muted-foreground accent-current"
-        style={{ accentColor: color }}
-      />
-      <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: color }} />
-      {label}
-    </label>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// TogglePill — reusable pill button for series visibility
-// ---------------------------------------------------------------------------
-const TogglePill = memo(function TogglePill({
-  label,
-  color,
-  active,
-  onClick,
-  dashed,
-  ring,
-  suffix,
-}: {
-  label: string;
-  color: string;
-  active: boolean;
-  onClick: () => void;
-  dashed?: boolean;
-  ring?: boolean;
-  suffix?: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-opacity",
-        active ? "opacity-100" : "opacity-30",
-        ring ? "ring-2 ring-primary ring-offset-1" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      style={{ borderColor: color, color: active ? color : undefined }}
-    >
-      <span
-        className="inline-block h-0.5 w-3"
-        style={
-          dashed
-            ? { borderTop: `2px dashed ${color}`, backgroundColor: "transparent" }
-            : { backgroundColor: color }
-        }
-      />
-      {label}
-      {suffix && (
-        <span className="text-[9px] text-muted-foreground">({suffix})</span>
-      )}
-    </button>
   );
 });

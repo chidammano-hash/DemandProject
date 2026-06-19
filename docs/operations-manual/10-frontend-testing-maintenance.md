@@ -159,13 +159,29 @@ Playwright tests assume:
 
 Failure artifacts land in `frontend/e2e/test-results/` (screenshots + video on retain-on-failure) and `frontend/e2e/playwright-report/` (HTML).
 
+### 4.4 Validation checks
+
+Beyond the test suite, these targets validate that the running stack is healthy:
+
+```bash
+make check-db    # Table row counts in Postgres
+make check-api   # curl API health + sample endpoints
+make check-all   # DB + API (full)
+make test-all    # Full test suite (backend + frontend)
+
+# E2E smoke tests (requires API + UI running)
+make e2e-install # Install Playwright browsers (one-time)
+make e2e         # Run all E2E smoke tests (headless)
+```
+
 ---
 
 ## 5. Test Patterns
 
 ### 5.1 Backend (pytest)
 
-- **Mock pool factory**: import `from tests.api.conftest import make_pool as _make_pool`. Patch `api.core._get_pool` with a `make_pool(...)` call.
+- **Mock pool factory**: import `from tests.api.conftest import make_pool as _make_pool`. Patch `api.core._get_pool` with a `make_pool(...)` call. The `mock_pool` fixture wraps `make_pool`. `make_pool` accepts an optional `description=` arg to set `cursor.description` (column names) when the route reads it. Async (`get_async_read_only_conn` / `get_async_pool`) routes use `make_async_pool` and must patch `api.core._get_async_pool`.
+- **Rate limiter**: an autouse fixture resets the global rate limiter between tests, so per-test request counts start clean.
 - **Multi-fetchall endpoints**: set `cursor.fetchall.side_effect = [list1, list2, ...]` (one list per `cursor.fetchall()` invocation in the route).
 - **Single-call endpoints**: set `cursor.fetchall.return_value = [...]`.
 - **API client**: inline `httpx.AsyncClient(transport=ASGITransport(app=app))` inside the test — no live server needed.
@@ -176,7 +192,7 @@ Failure artifacts land in `frontend/e2e/test-results/` (screenshots + video on r
 
 - **Wrapper**: `TestQueryWrapper` from `frontend/src/tabs/__tests__/test-utils.tsx` (provides `QueryClientProvider`, `ThemeProvider`, `GlobalFilterProvider`).
 - **API mocks**: `vi.mock("../api/queries")` for the barrel module. Tests must export every key/fetcher the component imports — see CLAUDE.md MEMORY notes for known traps (`InvPlanningTab.test.tsx` needs `insightKeys`, `STALE_INSIGHTS`, evolution keys, sourcing/PO fetchers, etc.).
-- **Charts**: mock `echarts-for-react` (e.g. `vi.mock("echarts-for-react", () => ({ default: () => null }))`) — jsdom cannot render canvas/SVG-heavy charts.
+- **Charts**: Recharts is the default engine and renders in jsdom without mocking. Only the 8 heavy customer-analytics panels use ECharts (via `ModularReactECharts` in `frontend/src/components/echarts-modular.tsx`); for those, mock `echarts-for-react` (e.g. `vi.mock("echarts-for-react", () => ({ default: () => null }))`) since jsdom cannot render canvas/SVG-heavy charts. `EChartContainer` has been removed — do not reference it. `ForecastTrendChart` is now a Recharts component.
 - **Virtualized rows**: mock `@tanstack/react-virtual` so virtualized lists render synchronously.
 - **Theme**: use `useThemeContext()` / `useChartColors()` — never accept a `theme` prop from `App.tsx`.
 
@@ -307,7 +323,8 @@ The `170-185` SQL range and the supporting code paths cover this session's perf 
 | Cache + single-flight | `common/services/cache.py` `cached_async` decorator wraps hot endpoints with single-flight de-dup; `reset_cache` flushes the live backend (in-memory + Redis) | `common/services/cache.py` |
 | Streaming ETL | `stream_query_in_chunks`, `read_sql_chunked` for bounded-memory loads | `common/core/sql_helpers.py` (see Section 02 §2.3) |
 | Weekly partition cutover prep | DDL prepared; `auto_create_partitions.py` extended for weekly intervals | `sql/184`, `sql/185`, `scripts/db/auto_create_partitions.py` |
-| Frontend chart consolidation | Standardised on Recharts (ECharts paths removed where present); `LazyPanel.tsx` IntersectionObserver wrapper added; `HeatmapGrid` extended with compact mode + clickable headers | `frontend/src/components/LazyPanel.tsx`, `frontend/src/components/HeatmapGrid` |
+| Frontend chart consolidation | Recharts is the default engine; `EChartContainer` removed and `ForecastTrendChart` ported to Recharts. ECharts retained only for the 8 heavy customer-analytics panels via `ModularReactECharts` (tree-shaken `echarts-modular`). `LazyPanel.tsx` IntersectionObserver wrapper added; `HeatmapGrid` extended with compact mode + clickable headers | `frontend/src/components/echarts-modular.tsx`, `frontend/src/components/LazyPanel.tsx`, `frontend/src/components/HeatmapGrid` |
+| Tab splits + dead-file cleanup | Large tabs split into subpanel dirs (`command-center/`, `data-quality/`, `aggregate-analysis/`, `storyboard/`, `forecast/`, `item-analysis/`). Removed dead frontend files: `AlertPanel`, `ItemDetailPanel`, `PipelineConfigPanel`, `expsys`, `useTabVisibility` | `frontend/src/tabs/` |
 | Scale tests | New `tests/scale/` directory with `make scale-test` (synthetic 100K rows by default; `SCALE=10000000` for nightly) | `tests/scale/`, `tests/unit/test_pg_queue.py`, `tests/unit/test_auto_create_partitions.py` |
 
 ---
@@ -342,6 +359,138 @@ Follow this checklist whenever you add a new sidebar tab, panel, or shared compo
 - [ ] `make audit-routers` reports zero drift.
 - [ ] `cd frontend && npm run gen:types` if backend response shapes changed.
 - [ ] Manual smoke: open the new tab in `make ui` — no “HTML instead of JSON” errors in the browser console.
+
+---
+
+## 8a. Starting Services & Platform Configuration
+
+### 8a.1 API middleware stack
+
+The FastAPI backend includes platform middleware applied in `api/main.py`:
+
+- **GZip compression** — responses > 1KB are gzip-compressed
+- **CORS** — allows `localhost:5173` (dev) origins
+- **Cache layer** — `common/services/cache.py` provides `@cached` decorator with TTL-based caching.
+  Two backends: Redis (when `REDIS_URL` env var set) or in-memory fallback.
+  Config in `config/platform/cache_config.yaml`. Cache invalidation on write endpoints.
+- **Query performance tracking** — endpoint latency + DB query counts logged to
+  `fact_query_performance` for API governance and observability.
+
+### 8a.2 Start services
+
+```bash
+# Terminal 1 — FastAPI backend
+make api                     # FastAPI on :8000
+
+# Terminal 2 — React frontend
+make ui                      # Vite dev server on :5173
+```
+
+Open in browser:
+- **UI:** `http://localhost:5173`
+- **API:** `http://localhost:8000`
+- **MLflow:** `http://localhost:5003`
+
+> **Vite proxy:** Every new API path prefix must be added to `frontend/vite.config.ts` — otherwise the frontend receives HTML instead of JSON. Restart `make ui` after changes.
+
+### 8a.3 Authentication & authorization (Spec 08-02)
+
+Set `JWT_SECRET` in `.env` to enable JWT-based auth:
+
+```bash
+# .env
+JWT_SECRET=your-secret-key-here    # Required for token signing/verification
+JWT_ALGORITHM=HS256                # Default algorithm (optional, defaults to HS256)
+JWT_EXPIRY_MINUTES=60              # Token lifetime (optional, defaults to 60)
+```
+
+**Default dev mode:** When `JWT_SECRET` is not set, the API runs in anonymous admin mode — all requests are treated as authenticated with admin privileges. Set `JWT_SECRET` in any non-local environment.
+
+Passwords are hashed with bcrypt (12 rounds). Plaintext passwords are never stored.
+
+**New Python dependencies** (added to `pyproject.toml`):
+- `bcrypt` — password hashing for user accounts
+- `PyJWT` — JWT token creation and validation
+
+### 8a.4 Cache management (Spec 08-03)
+
+Default backend is **InMemory** (no external dependencies). For production, configure Redis:
+
+```bash
+# .env (optional — InMemory is the default)
+CACHE_BACKEND=redis               # "memory" (default) or "redis"
+CACHE_REDIS_URL=redis://localhost:6379/0
+CACHE_DEFAULT_TTL=300             # Default TTL in seconds (optional)
+```
+
+InMemory cache is cleared on process restart. Redis cache persists across restarts and is shared across workers.
+
+### 8a.5 Notifications (Spec 08-04)
+
+Configure notification channels in `config/platform/notification_config.yaml`:
+
+```yaml
+channels:
+  email:
+    enabled: false
+    smtp_host: smtp.example.com
+    smtp_port: 587
+    from_address: alerts@example.com
+  slack:
+    enabled: false
+    webhook_url: https://hooks.slack.com/services/...
+  webhook:
+    enabled: false
+    url: https://your-endpoint.com/notify
+```
+
+Channels are disabled by default. Enable and configure as needed. Notification preferences are per-user and managed via the API.
+
+### 8a.6 Webhooks (Spec 08-10)
+
+Webhooks use **HMAC-SHA256 signing** for payload verification. Each webhook subscription has its own signing secret.
+
+```bash
+# Create a webhook subscription via API
+curl -X POST http://localhost:8000/webhooks/subscriptions \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-endpoint.com/hook", "events": ["insight.created", "exception.generated"]}'
+```
+
+Failed deliveries are retried with exponential backoff (3 attempts by default). Delivery history is available via `GET /webhooks/deliveries`.
+
+### 8a.7 Reports (Spec 08-08)
+
+Report templates are managed via API. Schedules use the existing job engine:
+
+```bash
+# List available report templates
+curl http://localhost:8000/reports/templates
+
+# Schedule a recurring report
+curl -X POST http://localhost:8000/reports/schedule \
+  -H "Content-Type: application/json" \
+  -d '{"template_id": "portfolio_summary", "schedule": "0 8 * * 1", "recipients": ["team@example.com"]}'
+```
+
+Templates define the data queries, layout, and output format (PDF/CSV/Excel).
+
+### 8a.8 Rate limiting (Spec 08-09)
+
+Configure rate limits in `config/api_governance_config.yaml`:
+
+```yaml
+rate_limiting:
+  enabled: true
+  default_limit: "100/minute"
+  burst_limit: "20/second"
+  per_endpoint:
+    /ai-planner/portfolio-scan: "5/hour"
+  per_user: true          # Apply limits per authenticated user (vs global)
+  backend: "memory"       # "memory" or "redis" (for multi-worker deployments)
+```
+
+When rate limited, the API returns HTTP 429 with `Retry-After` header. Limits are applied per authenticated user when `per_user: true`; otherwise globally.
 
 ---
 

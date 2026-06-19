@@ -9,203 +9,36 @@ const ThemeWrapper = ({ children }: { children: ReactNode }) => (
 
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ThemeWrapper });
 
-// Mock all ECharts modules before importing the component
-vi.mock("echarts-for-react/lib/core", () => ({
-  default: ({ style, className }: { style?: React.CSSProperties; className?: string }) => (
-    <div data-testid="echarts-mock" style={style} className={className} />
-  ),
-}));
+// recharts is replaced by the shared mock at frontend/__mocks__/recharts.tsx,
+// which renders ComposedChart as <div data-testid="composed-chart"> and leaf
+// series as null. We assert the container / empty-state, not pixels.
+vi.mock("recharts");
 
-vi.mock("echarts/core", () => ({
-  use: vi.fn(),
-}));
+import { ForecastTrendChart } from "@/components/ForecastTrendChart";
 
-vi.mock("echarts/charts", () => ({
-  LineChart: {},
-}));
-
-vi.mock("echarts/components", () => ({
-  GridComponent: {},
-  TooltipComponent: {},
-  LegendComponent: {},
-  DataZoomComponent: {},
-}));
-
-vi.mock("echarts/renderers", () => ({
-  CanvasRenderer: {},
-}));
-
-import { ForecastTrendChart, buildForecastTrendOption } from "@/components/ForecastTrendChart";
-
-const defaultChartColors = {
-  grid: "#e5e5e5",
-  axis: "#737373",
-  tooltip: "#ffffff",
-};
-
-const defaultSeriesColors = ["#6366f1", "#f59e0b"];
-
-const sampleData = [
-  { month: "2024-01", forecast: 1000, actual: 950 },
-  { month: "2024-02", forecast: 1100, actual: 1050 },
-  { month: "2024-03", forecast: 1200, actual: 1180 },
+const sample = [
+  { month: "2026-01", forecast: 1200, actual: 1100 },
+  { month: "2026-02", forecast: 1300, actual: 1250 },
 ];
 
 describe("ForecastTrendChart", () => {
-  it("renders without crashing with empty data array", () => {
-    render(
-      <ForecastTrendChart
-        data={[]}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
+  it("renders a chart when data is provided", () => {
+    render(<ForecastTrendChart data={sample} />);
+    expect(screen.getByTestId("composed-chart")).toBeTruthy();
   });
 
-  it("shows empty state message when data is empty", () => {
-    render(
-      <ForecastTrendChart
-        data={[]}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
-    expect(screen.getByText("No forecast data available")).toBeInTheDocument();
+  it("shows an empty state and no chart when there is no data", () => {
+    render(<ForecastTrendChart data={[]} />);
+    expect(screen.getByText("No forecast data available")).toBeTruthy();
+    expect(screen.queryByTestId("composed-chart")).toBeNull();
   });
 
-  it("does NOT show empty state when data is provided", () => {
-    render(
-      <ForecastTrendChart
-        data={sampleData}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
-    expect(screen.queryByText("No forecast data available")).not.toBeInTheDocument();
-  });
-
-  it("renders ECharts container when data is provided", () => {
-    render(
-      <ForecastTrendChart
-        data={sampleData}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
-  });
-
-  it("renders with dark theme without crashing", () => {
-    render(
-      <ForecastTrendChart
-        data={sampleData}
-        theme="dark"
-        chartColors={{ grid: "#333", axis: "#aaa", tooltip: "#222" }}
-        seriesColors={["#818cf8", "#fbbf24"]}
-      />
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
-  });
-
-  it("renders with a single data point without crashing", () => {
-    render(
-      <ForecastTrendChart
-        data={[{ month: "2024-01", forecast: 500, actual: 480 }]}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
-  });
-
-  it("renders with many data points without crashing", () => {
-    const largeData = Array.from({ length: 24 }, (_, i) => ({
-      month: `2023-${String(i % 12 + 1).padStart(2, "0")}`,
-      forecast: 1000 + i * 50,
-      actual: 980 + i * 45,
-    }));
-    render(
-      <ForecastTrendChart
-        data={largeData}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
-  });
-
-  it("renders with zero values in data without crashing", () => {
-    render(
-      <ForecastTrendChart
-        data={[
-          { month: "2024-01", forecast: 0, actual: 0 },
-          { month: "2024-02", forecast: 0, actual: 100 },
-        ]}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-      />
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
-  });
-
-  it("renders with includeCI + quantile band data without crashing (UX-3)", () => {
-    const dataWithCI = [
-      { month: "2024-01", forecast: 1000, actual: 950, lower_80: 900, upper_80: 1100 },
-      { month: "2024-02", forecast: 1100, actual: 1050, lower_80: 990, upper_80: 1210 },
-      { month: "2024-03", forecast: 1200, actual: 1180, lower_80: 1080, upper_80: 1320 },
+  it("still renders when includeCI is set and 80% quantiles are present", () => {
+    const withCI = [
+      { month: "2026-01", forecast: 1200, actual: 1100, lower_80: 1000, upper_80: 1400 },
+      { month: "2026-02", forecast: 1300, actual: 1250, lower_80: 1100, upper_80: 1500 },
     ];
-    render(
-      <ForecastTrendChart
-        data={dataWithCI}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-        includeCI
-      />,
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
-  });
-
-  // U4.2 — the "Forecast vs Actual" tooltip rendered raw 7-digit integers
-  // (e.g. 2157763) with no thousands separators, inconsistent with the
-  // compact K/M axis and the KPI tiles. The tooltip must carry a
-  // valueFormatter that thousands-separates the hover value.
-  it("tooltip has a valueFormatter that thousands-separates large integers (U4.2)", () => {
-    const option = buildForecastTrendOption({
-      data: sampleData,
-      theme: "light",
-      chartColors: defaultChartColors,
-      seriesColors: defaultSeriesColors,
-      hasCI: false,
-      lowers: [],
-      bandHeights: [],
-    });
-    const fmt = (option.tooltip as { valueFormatter?: (v: unknown) => string })
-      .valueFormatter;
-    expect(typeof fmt).toBe("function");
-    expect(fmt!(2157763)).toBe("2,157,763");
-    expect(fmt!(null)).toBe("—");
-  });
-
-  it("ignores includeCI flag when data lacks quantile fields", () => {
-    // includeCI=true but data doesn't have lower_80/upper_80 — should
-    // degrade gracefully to the regular forecast/actual view.
-    render(
-      <ForecastTrendChart
-        data={sampleData}
-        theme="light"
-        chartColors={defaultChartColors}
-        seriesColors={defaultSeriesColors}
-        includeCI
-      />,
-    );
-    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+    render(<ForecastTrendChart data={withCI} includeCI />);
+    expect(screen.getByTestId("composed-chart")).toBeTruthy();
   });
 });

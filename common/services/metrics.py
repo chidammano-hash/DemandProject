@@ -14,6 +14,7 @@ Canonical formulas:
 For SQL-level usage, use ``ACCURACY_SQL_TEMPLATE``.
 """
 
+import statistics
 from collections.abc import Sequence
 from typing import Any
 
@@ -87,6 +88,53 @@ def compute_wape(
     if abs_sum == 0:
         return None
     return sum(abs(f - a) for f, a in zip(forecasts, actuals)) / abs_sum
+
+
+def compute_unweighted_accuracy(
+    per_dfu: Sequence[tuple[float, float]],
+) -> dict[str, float | int | None]:
+    """Unweighted per-DFU accuracy: WAPE per DFU, then mean/median across DFUs.
+
+    The headline accuracy (``compute_accuracy`` / ``compute_kpis``) is
+    *volume-weighted* — it sums error across every DFU before dividing, so a few
+    high-volume SKUs dominate. This function instead scores each DFU on its own
+    and averages, giving every DFU equal say and exposing the long tail.
+
+    Each element of ``per_dfu`` is ``(sum_actual, sum_abs_error)`` for one DFU,
+    already aggregated over that DFU's months. Per-DFU accuracy uses the canonical
+    formula ``max(0, 100 * (1 - sum_abs_error / abs(sum_actual)))``.
+
+    A DFU with ``sum_actual == 0`` has an undefined WAPE (zero denominator). Such
+    DFUs are EXCLUDED from the mean/median and reported in ``n_undefined`` rather
+    than counted as 0% — folding clamped zeros into the average would overstate the
+    long-tail problem and conflate "no demand" with "badly forecast".
+
+    Returns a dict with keys ``n_dfus``, ``n_undefined``, ``mean_accuracy_pct``,
+    ``median_accuracy_pct``. Mean/median are ``None`` when every DFU is undefined.
+    """
+    accuracies: list[float] = []
+    n_undefined = 0
+    for sum_actual, sum_abs_error in per_dfu:
+        if abs(sum_actual) == 0:
+            n_undefined += 1
+            continue
+        accuracies.append(max(0.0, 100.0 * (1.0 - sum_abs_error / abs(sum_actual))))
+
+    n_dfus = len(per_dfu)
+    if not accuracies:
+        return {
+            "n_dfus": n_dfus,
+            "n_undefined": n_undefined,
+            "mean_accuracy_pct": None,
+            "median_accuracy_pct": None,
+        }
+
+    return {
+        "n_dfus": n_dfus,
+        "n_undefined": n_undefined,
+        "mean_accuracy_pct": round(statistics.fmean(accuracies), 4),
+        "median_accuracy_pct": round(statistics.median(accuracies), 4),
+    }
 
 
 def compute_accuracy_metrics(

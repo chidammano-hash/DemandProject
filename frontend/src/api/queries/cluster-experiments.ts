@@ -6,6 +6,7 @@
  */
 
 import { buildSearchParams } from "./helpers";
+import { fetchJson } from "./core";
 import type { PCAScatterData } from "./core";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,8 @@ export interface ClusterExperiment {
   is_promoted: boolean;
   promoted_at: string | null;
   artifacts_path: string | null;
+  /** True when per-SKU labels are durably stored — re-promotable without re-running. */
+  has_durable_labels: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,15 +183,6 @@ export const CLUSTER_EXP_STALE = {
 
 const BASE = "/cluster-experiments";
 
-async function fetchOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Request failed: ${res.status}`);
-  }
-  return res.json();
-}
-
 // ---------------------------------------------------------------------------
 // Fetchers — READ
 // ---------------------------------------------------------------------------
@@ -207,16 +201,17 @@ export async function fetchClusterExperiments(
     page_size: params?.page_size,
   });
   const qs = sp.toString();
-  return fetchOrThrow(`${BASE}${qs ? `?${qs}` : ""}`, {
-    cache: "no-cache",
-  });
+  return fetchJson<{ experiments: ClusterExperiment[]; total: number }>(
+    `${BASE}${qs ? `?${qs}` : ""}`,
+    { cache: "no-cache" },
+  );
 }
 
 /** Get a single cluster experiment with full detail. */
 export async function fetchClusterExperiment(
   id: number,
 ): Promise<ClusterExperiment> {
-  return fetchOrThrow(`${BASE}/${id}`);
+  return fetchJson<ClusterExperiment>(`${BASE}/${id}`);
 }
 
 /** Compare two cluster experiments (quality, profiles, migration matrix). */
@@ -225,28 +220,32 @@ export async function fetchClusterComparison(
   bId: number,
 ): Promise<ClusterExperimentComparison> {
   const sp = buildSearchParams({ a_id: aId, b_id: bId });
-  return fetchOrThrow(`${BASE}/compare?${sp}`);
+  return fetchJson<ClusterExperimentComparison>(`${BASE}/compare?${sp}`);
 }
 
 /** Get available cluster experiment templates. */
 export async function fetchClusterTemplates(): Promise<{
   templates: ClusterExperimentTemplate[];
 }> {
-  return fetchOrThrow(`${BASE}/templates`);
+  return fetchJson<{ templates: ClusterExperimentTemplate[] }>(`${BASE}/templates`);
 }
 
 /** List only completed experiments (for algorithm tuning cluster source dropdown). */
 export async function fetchCompletedClusterExperiments(): Promise<{
   experiments: ClusterExperiment[];
 }> {
-  return fetchOrThrow(`${BASE}/completed`, { cache: "no-cache" });
+  return fetchJson<{ experiments: ClusterExperiment[] }>(`${BASE}/completed`, {
+    cache: "no-cache",
+  });
 }
 
 /** List algorithm tuning experiments that reference this cluster experiment. */
 export async function fetchClusterExperimentUsedBy(
   id: number,
 ): Promise<{ runs: Array<{ run_id: number; run_label: string; model_id: string; status: string }> }> {
-  return fetchOrThrow(`${BASE}/${id}/used-by`);
+  return fetchJson<{ runs: Array<{ run_id: number; run_label: string; model_id: string; status: string }> }>(
+    `${BASE}/${id}/used-by`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +261,12 @@ export async function createClusterExperiment(
   status: string;
   job_id: string;
 }> {
-  return fetchOrThrow(BASE, {
+  return fetchJson<{
+    experiment_id: number;
+    scenario_id: string;
+    status: string;
+    job_id: string;
+  }>(BASE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -273,7 +277,7 @@ export async function createClusterExperiment(
 export async function deleteClusterExperiment(
   id: number,
 ): Promise<{ deleted: boolean }> {
-  return fetchOrThrow(`${BASE}/${id}`, {
+  return fetchJson<{ deleted: boolean }>(`${BASE}/${id}`, {
     method: "DELETE",
   });
 }
@@ -282,7 +286,8 @@ export async function deleteClusterExperiment(
 export async function promoteClusterExperiment(
   id: number,
 ): Promise<{ status: string; dfus_updated: number }> {
-  return fetchOrThrow(`${BASE}/${id}/promote`, {
-    method: "POST",
-  });
+  return fetchJson<{ status: string; dfus_updated: number }>(
+    `${BASE}/${id}/promote`,
+    { method: "POST" },
+  );
 }

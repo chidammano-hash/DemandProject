@@ -185,17 +185,15 @@ async def test_fva_waterfall_custom_months():
 
 
 @pytest.mark.asyncio
-async def test_fva_waterfall_ai_adjusted_promoted():
-    """ai_adjusted promotion (F2.4): a 3-column ai_fva row promotes without IndexError.
+async def test_fva_waterfall_ai_adjusted_reserved():
+    """The ai_adjusted and planner_adjusted stages are always reserved ("planned").
 
-    The waterfall endpoint runs the seasonal-naive query (2 cols) then the
-    ai_fva query (3 cols: run_id, ai_wape_pct, n_dfus) on the same cursor.
-    A short row must never raise IndexError; a full 3-col row must promote.
+    The AI FVA backtest was removed; the forward-only AI Champion forecast has
+    no historical actual overlap, so it cannot feed this accuracy waterfall.
     """
     rows = [("external", 72.5, 1000), ("champion", 78.3, 1000)]
     pool, conn, cursor = _make_pool(fetchall_return=rows)
-    # 1st fetchone: naive row (2-tuple). 2nd fetchone: ai_fva row (3-tuple).
-    cursor.fetchone.side_effect = [(60.2, 1000), ("run-abc", 30.0, 800)]
+    cursor.fetchone.return_value = (60.2, 1000)  # naive; champion falls back to rollup
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -204,10 +202,50 @@ async def test_fva_waterfall_ai_adjusted_promoted():
     assert resp.status_code == 200
     stages = resp.json()["waterfall"]["stages"]
     ai_stage = next(s for s in stages if s["stage_id"] == "ai_adjusted")
-    assert ai_stage["state"] == "actual"
-    assert ai_stage["accuracy_pct"] == 70.0  # 100 - 30.0 WAPE
-    assert ai_stage["n_rows"] == 800
-    assert ai_stage["ai_fva_run_id"] == "run-abc"
+    assert ai_stage["state"] == "planned"
+    assert ai_stage["accuracy_pct"] is None
+    assert "ai_fva_run_id" not in ai_stage
+    # No SQL in the endpoint may reference the removed backtest tables.
+    all_sql = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list)
+    assert "ai_fva" not in all_sql
+    assert "mv_ai_fva" not in all_sql
+
+
+@pytest.mark.asyncio
+async def test_fva_waterfall_champion_from_backtest_experiment():
+    """Champion accuracy is sourced from the promoted champion-selection
+    experiment's backtest, month-windowed via ``champion_experiment_month``
+    (champ, ceiling, n). It must surface champion as ``actual`` AND populate the
+    ceiling benchmark, with delta_vs_prev computed against external.
+    """
+    # external from the rollup; no champion/ceiling there (production reality).
+    rows = [("external", 71.5, 111146)]
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    # fetchone order after the AI-backtest removal: naive, then champion experiment.
+    cursor.fetchone.side_effect = [
+        (64.7, 111146),         # naive
+        (71.62, 75.63, 20517),  # champion_experiment_month aggregate: champ, ceiling, n
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/fva/waterfall")
+    assert resp.status_code == 200
+    wf = resp.json()["waterfall"]
+    champion = next(s for s in wf["stages"] if s["stage_id"] == "champion")
+    assert champion["state"] == "actual"
+    assert champion["accuracy_pct"] == 71.62
+    assert champion["n_rows"] == 20517
+    assert champion["delta_vs_prev"] == 0.1  # 71.62 - 71.5, rounded to 1dp
+    # Ceiling benchmark populated from the same row.
+    assert wf["benchmark"]["state"] == "actual"
+    assert wf["benchmark"]["accuracy_pct"] == 75.63
+    # Champion is the 3rd execute (rollup, naive, champion) — month-windowed source.
+    champ_sql = cursor.execute.call_args_list[2].args[0]
+    assert "champion_experiment_month" in champ_sql
+    assert "is_promoted = TRUE" in champ_sql
+    assert "month_start" in champ_sql
 
 
 # ---------------------------------------------------------------------------

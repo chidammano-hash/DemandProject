@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from datetime import date
 
 try:
-    from scripts.inventory.compute_safety_stock import (
+    from common.inventory.safety_stock import (
         apply_guard_rails,
         apply_seasonal_adjustment,
         classify_xyz,
@@ -38,7 +38,7 @@ try:
         get_z_score,
     )
 except ImportError:
-    pytest.skip("compute_safety_stock not yet implemented", allow_module_level=True)
+    pytest.skip("safety_stock formulas not yet implemented", allow_module_level=True)
 
 
 # ---------------------------------------------------------------------------

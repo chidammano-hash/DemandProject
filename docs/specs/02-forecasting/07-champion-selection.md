@@ -8,6 +8,11 @@
 | **UI Tab** | Accuracy |
 | **Key Files** | `scripts/run_champion_selection.py`, `common/ml/champion/` (9-module package: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py`), `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
+> **Choosing the champion configuration.** Which strategy (single-model winner vs. blend) and which
+> model subset is best for *your* data is answered empirically by the **Champion Strategy Sweep**
+> (tournament) — see `docs/specs/02-forecasting/30-champion-strategy-sweep.md`. It ranks candidate
+> champion configs globally and per demand segment and recommends a winner to promote.
+
 ---
 
 ## Problem
@@ -24,9 +29,15 @@ Champion selection evaluates prior model performance for each DFU (Demand Foreca
 2. For each DFU-month, compute prior WAPE (Weighted Absolute Percentage Error) per model using only causally available data
 3. Pick the model with the lowest prior WAPE -- this becomes the champion for that month
 4. Fill warm-up months (where there is insufficient history) with a fallback model
-5. Store champion predictions as `model_id = 'champion'` in the forecast table
+5. Store champion predictions as `model_id = 'champion'` in the forecast table, with `source_model_id` recording **which underlying model/strategy won per DFU-month** (e.g. `nbeats`). Written by both `insert_champion_forecasts` (single-model winners) and `insert_ensemble_forecasts` (router/blend strategies) in `scripts/ml/run_champion_selection.py`.
 6. Separately compute the ceiling: pick the best model per DFU-month using that month's actual error (after-the-fact oracle)
 7. Store ceiling as `model_id = 'ceiling'` -- the gap between champion and ceiling measures improvement opportunity
+
+### Per-DFU champion source label + blend mix (Item Analysis)
+
+Because the champion picks a different model per DFU, the **Item Analysis** chart (single-DFU / `item_location` mode) labels the champion line and legend pill with the winning model — e.g. `champion (N-BEATS)`. The `/sku/analysis` endpoint returns `champion_source_by_month` (the per-month source) and `champion_dominant_source` (the most-frequent across months, used for the single legend label), read straight from `fact_external_forecast_monthly.source_model_id` (not the `agg_forecast_monthly` MV, which doesn't carry it). The label appears only after a champion selection run has populated `source_model_id`; older rows written before source-tracking show a bare `champion`.
+
+**Blend mix.** When the champion is a *blend* (ensemble / learned_blend / shrinkage / etc.), a single model name isn't enough — the forecast is a weighted combination. Every champion winner row carries `source_mix`: a JSON array of `{"model": <id>, "weight": <0-1>}` (NULL for single-model picks). It is captured at selection time — `make_blend_row(..., source_mix=mix_from(top, weights))` via the `source_mix` column added to the canonical `_OUTPUT_COLS` (so it survives router/segment `pd.concat`), persisted by `insert_ensemble_forecasts` into `fact_external_forecast_monthly.source_mix` (`sql/193`). `/sku/analysis` exposes it as `champion_mix_by_month`, and the chart's **tooltip** shows that month's exact composition — e.g. `champion (40% N-BEATS, 35% LightGBM, 25% Chronos T5)` (the mix is per-DFU **per-month**, so it can change month to month). The shared formatter is `formatChampionLabel(mix, source)` in `frontend/src/lib/model-labels.ts`.
 
 ### Execution-Lag Causality (Critical)
 

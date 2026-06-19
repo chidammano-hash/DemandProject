@@ -18,6 +18,7 @@ import psycopg
 import yaml
 
 from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 
 logging.basicConfig(
     level=logging.INFO,
@@ -202,7 +203,7 @@ def run_retention(conn: psycopg.Connection, *, execute: bool = False) -> None:
 
     for table, policy in policies.items():
         months = policy["months"]
-        cutoff = date.today().replace(day=1) - timedelta(days=months * 30)
+        cutoff = get_planning_date().replace(day=1) - timedelta(days=months * 30)
         policy_type = policy["type"]
 
         logger.info("  Table: %-40s  retention: %d months  cutoff: %s", table, months, cutoff)

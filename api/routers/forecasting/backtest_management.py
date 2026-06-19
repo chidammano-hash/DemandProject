@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from api.auth import require_api_key
 from api.core import get_conn
@@ -49,6 +49,7 @@ MODEL_TO_JOB_TYPE: dict[str, str] = {
     "xgboost_cust_enriched": "backtest_xgboost",
     "chronos": "backtest_chronos",
     "chronos_bolt": "backtest_chronos_bolt",
+    "chronos_bolt_ft": "backtest_chronos_bolt_ft",
     "chronos2": "backtest_chronos2",
     "chronos2_enriched": "backtest_chronos2_enriched",
     "bolt_hierarchical": "backtest_bolt_hierarchical",
@@ -70,6 +71,7 @@ MODEL_TO_DIR: dict[str, str] = {
     "xgboost_cust_enriched": "xgboost_cust_enriched",
     "chronos": "chronos",
     "chronos_bolt": "chronos_bolt",
+    "chronos_bolt_ft": "chronos_bolt_ft",
     "chronos2": "chronos2",
     "chronos2_enriched": "chronos2_enriched",
     "bolt_hierarchical": "bolt_hierarchical",
@@ -394,12 +396,45 @@ def get_current_metadata(model_id: str):
     return meta
 
 
+def _release_queued_run(run_id: int) -> None:
+    """Mark a never-dispatched backtest_run failed so it can't block future runs.
+
+    Best-effort: called when ``submit_job`` fails after the tracking row was
+    already committed. Only flips rows still at 'queued' (never clobbers a row a
+    racing job may have moved to 'running').
+    """
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE backtest_run SET status = 'failed', completed_at = NOW() "
+                "WHERE id = %s AND status = 'queued'",
+                (run_id,),
+            )
+            conn.commit()
+    except psycopg.Error:
+        logger.warning("Failed to release queued backtest_run %d after submit failure", run_id)
+
+
 @router.post("/{model_id}/run", status_code=201, dependencies=[Depends(require_api_key)])
-def submit_backtest_run(model_id: str):
+def submit_backtest_run(model_id: str, response: Response, parallel: bool = False):
     """Submit a backtest job for the given model.
 
     Validates model_id exists in pipeline config, maps to the correct job type,
     inserts a tracking row into backtest_run, and submits the job.
+
+    Concurrency is non-blocking by design — a submission is never rejected:
+      - If THIS model already has a run queued or running, no duplicate is
+        started; the response is ``status="already_running"`` (HTTP 200) so the
+        UI can show a calm "already in progress" note instead of an error.
+      - Otherwise the job is submitted. When another backtest is active it simply
+        queues — the JobManager serialises per group — and the response is
+        ``status="queued"`` (HTTP 201).
+      - ``parallel=False`` (default): the job uses the shared ``backtest`` group, so
+        backtests run one at a time (extra submissions queue and run sequentially).
+      - ``parallel=True``: the job uses a per-job-type group, so DIFFERENT model
+        families run concurrently (bounded by the scheduler's worker pool). Each
+        model writes its own output dir, so sequential same-family runs never
+        clobber each other.
     """
     # Validate model_id is in pipeline config
     roster = get_algorithm_roster()
@@ -417,6 +452,31 @@ def submit_backtest_run(model_id: str):
             detail=f"No backtest job type configured for model '{model_id}'",
         )
 
+    # Don't pile up duplicates: if THIS model already has a run in flight, return
+    # the existing job instead of starting another. This is informational, not an
+    # error — the caller gets status="already_running" and a friendly message.
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT job_id FROM backtest_run "
+                "WHERE model_id = %s AND status IN ('queued', 'running') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (model_id,),
+            )
+            existing = cur.fetchone()
+    except psycopg.Error:
+        logger.exception("In-flight check failed for %s", model_id)
+        raise HTTPException(status_code=500, detail="Failed to check running jobs") from None
+    if existing:
+        response.status_code = 200
+        return {
+            "run_id": None,
+            "job_id": existing[0],
+            "model_id": model_id,
+            "status": "already_running",
+            "message": f"A backtest for {model_id} is already in progress.",
+        }
+
     # Insert tracking row
     try:
         with get_conn() as conn, conn.cursor() as cur:
@@ -430,22 +490,37 @@ def submit_backtest_run(model_id: str):
             )
             run_id = cur.fetchone()[0]
             conn.commit()
-    except Exception:
+    except psycopg.Error:
         logger.exception("Failed to insert backtest_run for %s", model_id)
         raise HTTPException(status_code=500, detail="Failed to create backtest run") from None
 
-    # Submit job via JobManager
+    # Submit job via JobManager. If another backtest is active, submit_job queues
+    # this one (FIFO per group) rather than failing — so concurrency just delays,
+    # never blocks. If the submit fails for ANY reason, the `finally` releases the
+    # queued tracking row: the in-flight check above keys on status IN
+    # ('queued','running'), so a stranded 'queued' row would otherwise lock this
+    # model's run endpoint out permanently.
+    from common.services.job_registry import JobManager
+    jm = JobManager()
+    job_id: str | None = None
     try:
-        from common.services.job_registry import JobManager
-        jm = JobManager()
         job_id = jm.submit_job(
             job_type=job_type,
             params={"backtest_run_id": run_id},
             label=f"Backtest: {model_id}",
+            # Per-job-type group → different families run in parallel; the shared
+            # default "backtest" group → strictly sequential.
+            group_override=(job_type if parallel else None),
         )
-    except ValueError as exc:
+    except ValueError:
         logger.exception("Failed to submit backtest job for %s", model_id)
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        raise HTTPException(status_code=400, detail="Invalid backtest job configuration") from None
+    except psycopg.Error:
+        logger.exception("Failed to submit backtest job for %s", model_id)
+        raise HTTPException(status_code=500, detail="Failed to submit backtest run") from None
+    finally:
+        if job_id is None:
+            _release_queued_run(run_id)
 
     # Store job_id on the tracking row
     try:
@@ -455,7 +530,7 @@ def submit_backtest_run(model_id: str):
                 (job_id, run_id),
             )
             conn.commit()
-    except Exception:
+    except psycopg.Error:
         logger.warning("Failed to store job_id %s on backtest_run %d", job_id, run_id)
 
     return {
@@ -663,13 +738,33 @@ def get_staging_summary():
 
 
 @router.post("/{model_id}/generate", status_code=201, dependencies=[Depends(require_api_key)])
-def submit_generate_forecast(model_id: str):
-    """Submit production forecast generation for a model, writing to staging."""
+def submit_generate_forecast(
+    model_id: str,
+    horizon: int | None = None,
+    confidence_intervals: bool | None = None,
+):
+    """Submit production forecast generation for a model, writing to staging.
+
+    Args:
+        model_id: Algorithm to generate forecasts for.
+        horizon: Months ahead to forecast. Omitted → pipeline config default.
+        confidence_intervals: Force CI (P10/P90) bands on/off. Omitted → config
+            default (``confidence_interval.enabled`` in the pipeline config).
+
+    The horizon and CI flags are threaded into the job params so they reach
+    ``generate_production_forecasts.py`` — previously they were dropped for
+    single-model generation, silently ignoring the panel's controls.
+    """
     from common.services.job_registry import JobManager
     jm = JobManager()
+    params: dict[str, Any] = {"model_id": model_id}
+    if horizon is not None:
+        params["horizon"] = horizon
+    if confidence_intervals is not None:
+        params["confidence_intervals"] = confidence_intervals
     job_id = jm.submit_job(
         job_type="generate_production_forecast",
-        params={"model_id": model_id},
+        params=params,
         label=f"Generate Forecast: {model_id}",
     )
     return {"job_id": job_id, "model_id": model_id}

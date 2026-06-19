@@ -47,7 +47,6 @@ scripts/inventory/compute_rebalancing.py
 scripts/inventory/refresh_health_scores.py
 scripts/inventory/run_supply_chain_scenario.py
 scripts/inventory/update_lead_time_actuals.py
-scripts/ml/fit_elasticity.py
 scripts/ml/generate_customer_features.py
 scripts/ml/run_clustering_scenario.py
 scripts/ml/run_expert_system_backtest.py

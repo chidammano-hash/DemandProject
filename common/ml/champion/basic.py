@@ -7,12 +7,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion.helpers import (
     _blend_forecasts,
     _compute_blend_weights,
     _expanding_stats,
     _get_exec_lag,
     _rolling_stats,
+    make_blend_row,
+    mix_from,
+    select_output_cols,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -53,7 +57,7 @@ def strategy_expanding(
     qualified = qualified.sort_values("prior_wape")
     winners = qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
 
-    return winners[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(winners)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +89,7 @@ def strategy_rolling(
     qualified = qualified.sort_values("prior_wape")
     winners = qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
 
-    return winners[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(winners)
 
 
 # ---------------------------------------------------------------------------
@@ -160,16 +164,11 @@ def strategy_decay(
                 row = current_rows[current_rows["model_id"] == best_model]
                 if len(row) > 0:
                     r = row.iloc[0]
-                    results.append({
-                        "item_id": item_id,
-                        "customer_group": customer_group,
-                        "loc": loc,
-                        "startdate": current_month,
-                        "model_id": best_model,
-                        "prior_wape": best_wape,
-                        "basefcst_pref": r["basefcst_pref"],
-                        "tothist_dmd": r["tothist_dmd"],
-                    })
+                    results.append(make_blend_row(
+                        item_id, customer_group, loc, current_month,
+                        best_model, best_wape,
+                        r[FORECAST_QTY_COL], r["tothist_dmd"],
+                    ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -215,16 +214,11 @@ def strategy_ensemble(
         weights = _compute_blend_weights(top["prior_wape"], weight_method)
         blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
-        results.append({
-            "item_id": item_id,
-            "customer_group": customer_group,
-            "loc": loc,
-            "startdate": startdate,
-            "model_id": "ensemble",
-            "prior_wape": avg_wape,
-            "basefcst_pref": blended_fcst,
-            "tothist_dmd": actual,
-        })
+        results.append(make_blend_row(
+            item_id, customer_group, loc, startdate,
+            "ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
+        ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -269,16 +263,11 @@ def strategy_ensemble_rolling(
         weights = _compute_blend_weights(top["prior_wape"], weight_method)
         blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
-        results.append({
-            "item_id": item_id,
-            "customer_group": customer_group,
-            "loc": loc,
-            "startdate": startdate,
-            "model_id": "ensemble",
-            "prior_wape": avg_wape,
-            "basefcst_pref": blended_fcst,
-            "tothist_dmd": actual,
-        })
+        results.append(make_blend_row(
+            item_id, customer_group, loc, startdate,
+            "ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
+        ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)

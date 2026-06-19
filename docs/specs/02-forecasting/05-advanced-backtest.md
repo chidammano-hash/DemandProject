@@ -71,7 +71,7 @@ Feature importance and correlation structure shift over time. A single static fe
 5. Retrain final model on selected features only
 6. Write per-timeframe and summary CSVs to `data/backtest/<model_id>/shap/`
 
-See [spec 23 — Feature Selection Pipeline](23-feature-selection-pipeline.md) for full details.
+See [spec 28 — Feature Selection Pipeline](28-feature-selection-pipeline.md) for full details.
 
 ### SHAP API
 

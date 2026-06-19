@@ -127,6 +127,13 @@ def _apply_tweedie_objective(
         overrides["loss_function"] = "MAE"
         merged = {**params, **overrides}
         merged.pop("boost_from_average", None)
+        # CatBoost forbids the Newton leaf-estimation method under MAE (no
+        # Hessian). Drop the RMSE/Newton-oriented leaf-estimation settings so
+        # CatBoost falls back to its valid MAE default (Exact); otherwise
+        # intermittent clusters crash with "Newton leaves estimation method is
+        # not supported for MAE loss function".
+        merged.pop("leaf_estimation_method", None)
+        merged.pop("leaf_estimation_iterations", None)
     elif model_name == "xgboost":
         overrides["objective"] = "reg:absoluteerror"
         merged = {**params, **overrides}
@@ -249,6 +256,12 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "default_params": lambda algo, seed=42: {
             k: v
             for k, v in {
+                # Default to MAE (reg:absoluteerror) like LGBM's regression_l1.
+                # Without this XGBoost falls back to reg:squarederror (MSE), which
+                # chases demand spikes and over-predicts on skewed low-volume DFUs.
+                # Keep backtest and production training consistent so the champion
+                # judges XGBoost on the same objective it will run in production.
+                "objective": algo.get("objective", "reg:absoluteerror"),
                 "n_estimators": algo.get("n_estimators", 500),
                 "learning_rate": algo.get("learning_rate", 0.05),
                 "max_depth": algo.get("max_depth", 6),

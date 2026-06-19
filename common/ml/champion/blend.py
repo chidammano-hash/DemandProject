@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion.basic import strategy_expanding
 from common.ml.champion.helpers import (
     _blend_forecasts,
@@ -29,6 +30,9 @@ from common.ml.champion.helpers import (
     _get_exec_lag,
     _MODEL_FAMILIES,
     _resolve_fallback_rows,
+    make_blend_row,
+    mix_from,
+    select_output_cols,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -101,7 +105,7 @@ def strategy_learned_blend(
             pivot = prior_data.pivot_table(
                 index="startdate",
                 columns="model_id",
-                values="basefcst_pref",
+                values=FORECAST_QTY_COL,
                 aggfunc="first",
             )
             # Target = actual demand (same for all models in a given month)
@@ -146,21 +150,21 @@ def strategy_learned_blend(
                 model_row = current_rows[current_rows["model_id"] == model_id]
                 if len(model_row) > 0:
                     blended_fcst += raw_weights[j] * float(
-                        model_row["basefcst_pref"].iloc[0],
+                        model_row[FORECAST_QTY_COL].iloc[0],
                     )
 
             actual = float(current_rows["tothist_dmd"].iloc[0])
 
-            results.append({
-                "item_id": item_id,
-                "customer_group": customer_group,
-                "loc": loc,
-                "startdate": current_month,
-                "model_id": "learned_blend",
-                "prior_wape": 0.0,
-                "basefcst_pref": blended_fcst,
-                "tothist_dmd": actual,
-            })
+            source_mix = [
+                {"model": m, "weight": round(float(w), 4)}
+                for m, w in zip(model_cols, raw_weights, strict=False)
+                if w >= 0.005
+            ]
+            results.append(make_blend_row(
+                item_id, customer_group, loc, current_month,
+                "learned_blend", 0.0, blended_fcst, actual,
+                source_mix=source_mix,
+            ))
 
     # ── Fallback: expanding strategy for DFUs with insufficient history ──
     _resolve_fallback_rows(fallback_rows, results, min_prior_months=1)
@@ -242,7 +246,7 @@ def strategy_ridge_blend(
             pivot = prior_data.pivot_table(
                 index="startdate",
                 columns="model_id",
-                values="basefcst_pref",
+                values=FORECAST_QTY_COL,
                 aggfunc="first",
             )
 
@@ -313,21 +317,21 @@ def strategy_ridge_blend(
                 model_row = current_rows[current_rows["model_id"] == model_id]
                 if len(model_row) > 0:
                     blended_fcst += full_weights[j] * float(
-                        model_row["basefcst_pref"].iloc[0],
+                        model_row[FORECAST_QTY_COL].iloc[0],
                     )
 
             actual = float(current_rows["tothist_dmd"].iloc[0])
 
-            results.append({
-                "item_id": item_id,
-                "customer_group": customer_group,
-                "loc": loc,
-                "startdate": current_month,
-                "model_id": "ridge_blend",
-                "prior_wape": 0.0,
-                "basefcst_pref": blended_fcst,
-                "tothist_dmd": actual,
-            })
+            source_mix = [
+                {"model": m, "weight": round(float(w), 4)}
+                for m, w in zip(model_cols, full_weights, strict=False)
+                if w >= 0.005
+            ]
+            results.append(make_blend_row(
+                item_id, customer_group, loc, current_month,
+                "ridge_blend", 0.0, blended_fcst, actual,
+                source_mix=source_mix,
+            ))
 
     # ── Fallback: expanding strategy for DFU-months with insufficient data ──
     _resolve_fallback_rows(fallback_rows, results, min_prior_months=min_prior_months)
@@ -397,17 +401,15 @@ def strategy_shrinkage_blend(
             weight_sums[model_id_w] = weight_sums.get(model_id_w, 0.0) + float(w)
         weight_count += 1
 
-        blended = (month_df["basefcst_pref"].astype(float) * weights).sum()
+        blended = (month_df[FORECAST_QTY_COL].astype(float) * weights).sum()
         actual = float(month_df["tothist_dmd"].iloc[0])
         avg_wape = float((month_df["prior_wape"] * weights).sum())
 
-        results.append({
-            "item_id": item_id, "customer_group": customer_group,
-            "loc": loc, "startdate": startdate,
-            "model_id": "shrinkage_blend",
-            "prior_wape": avg_wape,
-            "basefcst_pref": blended, "tothist_dmd": actual,
-        })
+        results.append(make_blend_row(
+            item_id, customer_group, loc, startdate,
+            "shrinkage_blend", avg_wape, blended, actual,
+            source_mix=mix_from(month_df, weights),
+        ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -511,19 +513,22 @@ def strategy_bayesian_model_avg(
             for m in models:
                 m_row = current_rows[current_rows["model_id"] == m]
                 if len(m_row) > 0:
-                    blended += weights[m] * float(m_row["basefcst_pref"].iloc[0])
+                    blended += weights[m] * float(m_row[FORECAST_QTY_COL].iloc[0])
                     if actual is None:
                         actual = float(m_row["tothist_dmd"].iloc[0])
 
             if actual is not None:
                 best_model = max(weights, key=weights.get)
-                results.append({
-                    "item_id": item_id, "customer_group": customer_group,
-                    "loc": loc, "startdate": current_month,
-                    "model_id": "bayesian_avg",
-                    "prior_wape": weights.get(best_model, 0.0),
-                    "basefcst_pref": blended, "tothist_dmd": actual,
-                })
+                source_mix = [
+                    {"model": k, "weight": round(float(v), 4)}
+                    for k, v in weights.items() if v >= 0.005
+                ]
+                results.append(make_blend_row(
+                    item_id, customer_group, loc, current_month,
+                    "bayesian_avg", weights.get(best_model, 0.0),
+                    blended, actual,
+                    source_mix=source_mix,
+                ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -570,7 +575,7 @@ def strategy_error_correcting(
     df_exp = _expanding_stats(df)
 
     # Also compute signed errors for bias correction
-    df_exp["signed_err"] = df_exp["basefcst_pref"].astype(float) - df_exp["tothist_dmd"].astype(float)
+    df_exp["signed_err"] = df_exp[FORECAST_QTY_COL].astype(float) - df_exp["tothist_dmd"].astype(float)
 
     qualified = df_exp[df_exp["prior_count"] >= min_prior_months].copy()
     qualified["prior_wape"] = qualified["cum_abs_err"] / qualified["cum_actual"].abs()
@@ -603,17 +608,14 @@ def strategy_error_correcting(
                 recent_bias = 0.0
 
             # Correct the forecast
-            raw_fcst = float(best_row["basefcst_pref"])
+            raw_fcst = float(best_row[FORECAST_QTY_COL])
             corrected = raw_fcst - correction_strength * recent_bias
 
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": startdate,
-                "model_id": best_model,
-                "prior_wape": float(best_row["prior_wape"]),
-                "basefcst_pref": corrected,
-                "tothist_dmd": float(best_row["tothist_dmd"]),
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                best_model, float(best_row["prior_wape"]),
+                corrected, float(best_row["tothist_dmd"]),
+            ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -683,16 +685,11 @@ def strategy_adaptive_ensemble(
 
         blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
-        results.append({
-            "item_id": item_id,
-            "customer_group": customer_group,
-            "loc": loc,
-            "startdate": startdate,
-            "model_id": "ensemble",
-            "prior_wape": avg_wape,
-            "basefcst_pref": blended_fcst,
-            "tothist_dmd": actual,
-        })
+        results.append(make_blend_row(
+            item_id, customer_group, loc, startdate,
+            "ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
+        ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -775,7 +772,7 @@ def strategy_uncertainty_aware(
         # -- Single-model selection: lowest risk-adjusted score --------
         qualified = qualified.sort_values("_risk_score")
         winners = qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
-        return winners[_OUTPUT_COLS].reset_index(drop=True)
+        return select_output_cols(winners)
 
     # -- Ensemble mode: blend top-K by inverse risk-adjusted score -----
     results: list[dict[str, Any]] = []
@@ -789,20 +786,15 @@ def strategy_uncertainty_aware(
         inv_scores = 1.0 / top["_risk_score"].clip(lower=1e-6)
         weights = inv_scores / inv_scores.sum()
 
-        blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
+        blended_fcst = (top[FORECAST_QTY_COL].astype(float) * weights).sum()
         actual = float(top["tothist_dmd"].iloc[0])
         avg_wape = float((top["prior_wape"] * weights).sum())
 
-        results.append({
-            "item_id": item_id,
-            "customer_group": customer_group,
-            "loc": loc,
-            "startdate": startdate,
-            "model_id": "uncertainty_ensemble",
-            "prior_wape": avg_wape,
-            "basefcst_pref": blended_fcst,
-            "tothist_dmd": actual,
-        })
+        results.append(make_blend_row(
+            item_id, customer_group, loc, startdate,
+            "uncertainty_ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
+        ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -889,16 +881,11 @@ def strategy_diverse_ensemble(
         weights = _compute_blend_weights(top["prior_wape"])
         blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
-        results.append({
-            "item_id": item_id,
-            "customer_group": customer_group,
-            "loc": loc,
-            "startdate": startdate,
-            "model_id": "diverse_ensemble",
-            "prior_wape": avg_wape,
-            "basefcst_pref": blended_fcst,
-            "tothist_dmd": actual,
-        })
+        results.append(make_blend_row(
+            item_id, customer_group, loc, startdate,
+            "diverse_ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
+        ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -959,22 +946,19 @@ def strategy_cascade_ensemble(
 
         if len(top) == 1:
             r = top.iloc[0]
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": startdate,
-                "model_id": r["model_id"], "prior_wape": best_wape,
-                "basefcst_pref": r["basefcst_pref"],
-                "tothist_dmd": r["tothist_dmd"],
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                r["model_id"], best_wape,
+                r[FORECAST_QTY_COL], r["tothist_dmd"],
+            ))
         else:
             weights = _compute_blend_weights(top["prior_wape"], weight_method)
             blended, actual, _ = _blend_forecasts(top, weights)
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": startdate,
-                "model_id": "cascade_ensemble", "prior_wape": best_wape,
-                "basefcst_pref": blended, "tothist_dmd": actual,
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                "cascade_ensemble", best_wape, blended, actual,
+                source_mix=mix_from(top, weights),
+            ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -1021,17 +1005,15 @@ def strategy_adversarial_filter(
         if len(month_df) < 2:
             # Only 1 model — no filtering possible
             r = month_df.iloc[0]
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": startdate,
-                "model_id": r["model_id"], "prior_wape": float(r["prior_wape"]),
-                "basefcst_pref": r["basefcst_pref"],
-                "tothist_dmd": r["tothist_dmd"],
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                r["model_id"], float(r["prior_wape"]),
+                r[FORECAST_QTY_COL], r["tothist_dmd"],
+            ))
             continue
 
         # Compute forecast z-scores
-        fcsts = month_df["basefcst_pref"].astype(float)
+        fcsts = month_df[FORECAST_QTY_COL].astype(float)
         mean_fcst = fcsts.mean()
         std_fcst = fcsts.std()
         if std_fcst > 1e-6:
@@ -1049,23 +1031,19 @@ def strategy_adversarial_filter(
 
         if len(top) == 1:
             r = top.iloc[0]
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": startdate,
-                "model_id": r["model_id"], "prior_wape": float(r["prior_wape"]),
-                "basefcst_pref": r["basefcst_pref"],
-                "tothist_dmd": r["tothist_dmd"],
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                r["model_id"], float(r["prior_wape"]),
+                r[FORECAST_QTY_COL], r["tothist_dmd"],
+            ))
         else:
             weights = _compute_blend_weights(top["prior_wape"], weight_method)
             blended, actual, avg_wape = _blend_forecasts(top, weights)
-            results.append({
-                "item_id": item_id, "customer_group": customer_group,
-                "loc": loc, "startdate": startdate,
-                "model_id": "adversarial_filter",
-                "prior_wape": avg_wape,
-                "basefcst_pref": blended, "tothist_dmd": actual,
-            })
+            results.append(make_blend_row(
+                item_id, customer_group, loc, startdate,
+                "adversarial_filter", avg_wape, blended, actual,
+                source_mix=mix_from(top, weights),
+            ))
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)

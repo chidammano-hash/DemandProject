@@ -581,10 +581,10 @@ export function ClusterExperimentsPanel() {
                                   title="Promoted to production"
                                 />
                               )}
-                              {exp.is_promoted && (
+                              {exp.has_durable_labels && (
                                 <Database
                                   className="shrink-0 h-3 w-3 text-blue-500"
-                                  title="Assignments loaded to production"
+                                  title="Assignments saved — can be re-promoted anytime"
                                 />
                               )}
                             </div>

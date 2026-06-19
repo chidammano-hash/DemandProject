@@ -46,6 +46,10 @@ class RateLimiter:
         remaining = max_requests - len(window)
         return True, remaining
 
+    def reset(self) -> None:
+        """Clear all sliding windows (used by tests for isolation)."""
+        self._windows.clear()
+
     def get_tier_limit(self, tier: str = "standard") -> int:
         """Get requests-per-minute for a tier."""
         cfg = _load_config()

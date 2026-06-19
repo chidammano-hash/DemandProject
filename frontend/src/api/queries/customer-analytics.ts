@@ -1,4 +1,5 @@
 import { buildQuerySuffix } from "./helpers";
+import { fetchJson } from "./core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -292,15 +293,6 @@ export interface ItemsPayload {
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
-
 function filterParams(f?: CustomerAnalyticsFilters): Record<string, string | undefined> {
   if (!f) return {};
   return {
@@ -534,4 +526,22 @@ export function fetchCustomerAnalyticsAlerts(
 ): Promise<AlertsPayload> {
   const qs = buildQuerySuffix(filterParams(filters));
   return fetchJson(`/customer-analytics/alerts${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Recalculate — refresh the customer-analytics materialized views (background)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger a background refresh of the customer-analytics MVs. Returns a job_id
+ * pollable via fetchJobDetail; the tab invalidates its queries on completion.
+ */
+export async function triggerRecalculateCustomerAnalytics(): Promise<{
+  job_id: string;
+  status: string;
+}> {
+  return fetchJson<{ job_id: string; status: string }>(
+    "/customer-analytics/recalculate",
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
 }

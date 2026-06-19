@@ -180,8 +180,9 @@ Be specific and actionable. Focus on factors that would help a planner or analys
                 temperature=0.7,
             )
             narrative = chat_resp.choices[0].message.content or ""
-        except Exception as e:  # noqa: BLE001 — OpenAI SDK raises provider-specific errors; surface as 502
-            raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
+        except Exception:  # noqa: BLE001 — OpenAI SDK raises provider-specific errors; surface as 502
+            logger.exception("AI narrative generation failed")
+            raise HTTPException(status_code=502, detail="AI generation failed") from None
 
     from datetime import datetime, timezone
     return {

@@ -16,10 +16,12 @@ import numpy as np
 import pandas as pd
 from datetime import date
 
+from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion import (
     STRATEGY_REGISTRY,
     compute_ceiling,
     compute_strategy_accuracy,
+    make_blend_row,
     strategy_expanding,
     strategy_rolling,
     strategy_decay,
@@ -74,6 +76,52 @@ def _make_monthly_errors(
 
 MONTHS_6 = [date(2024, m, 1) for m in range(1, 7)]
 MONTHS_8 = [date(2024, m, 1) for m in range(1, 9)]
+
+
+# ---------------------------------------------------------------------------
+# make_blend_row
+# ---------------------------------------------------------------------------
+
+class TestMakeBlendRow:
+    def test_builds_full_output_row(self):
+        from common.ml.champion.registry import _OUTPUT_COLS
+
+        row = make_blend_row(
+            "ITEM1", "GRP1", "LOC1", pd.Timestamp("2024-03-01"),
+            "ensemble", 0.12, 150.0, 140.0,
+        )
+        # Exactly the canonical output schema — no extra/missing keys.
+        assert set(row.keys()) == set(_OUTPUT_COLS)
+        assert row["item_id"] == "ITEM1"
+        assert row["customer_group"] == "GRP1"
+        assert row["loc"] == "LOC1"
+        assert row["startdate"] == pd.Timestamp("2024-03-01")
+        assert row["model_id"] == "ensemble"
+        assert row["prior_wape"] == 0.12
+        assert row["tothist_dmd"] == 140.0
+
+    def test_forecast_keyed_off_constant(self):
+        row = make_blend_row(
+            "I", "G", "L", pd.Timestamp("2024-01-01"),
+            "m", 0.0, 99.0, 100.0,
+        )
+        # The forecast value lands under FORECAST_QTY_COL, never a literal.
+        assert row[FORECAST_QTY_COL] == 99.0
+
+    def test_rows_assemble_into_output_dataframe(self):
+        from common.ml.champion.registry import _OUTPUT_COLS
+
+        rows = [
+            make_blend_row(
+                "I", "G", "L", pd.Timestamp(f"2024-0{m}-01"),
+                "ensemble", 0.1, float(m), float(m) + 1,
+            )
+            for m in range(1, 4)
+        ]
+        df = pd.DataFrame(rows)[_OUTPUT_COLS]
+        assert list(df.columns) == _OUTPUT_COLS
+        assert len(df) == 3
+        assert df[FORECAST_QTY_COL].tolist() == [1.0, 2.0, 3.0]
 
 
 # ---------------------------------------------------------------------------

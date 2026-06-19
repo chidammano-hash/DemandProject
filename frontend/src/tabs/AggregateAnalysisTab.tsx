@@ -8,13 +8,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, CalendarClock, ChartColumn } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { KpiCard } from "@/components/KpiCard";
 import { Skeleton } from "@/components/Skeleton";
 import { ForecastTrendChart } from "@/components/ForecastTrendChart";
-import { HeatmapGrid, makeHeatmapScale } from "@/components/HeatmapGrid";
+import { makeHeatmapScale } from "@/components/HeatmapGrid";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 import { useDebounce } from "@/hooks/useDebounce";
@@ -55,15 +53,19 @@ import type { AccuracySliceRow, LagPoint } from "@/types";
 // Accuracy sub-panels
 import { SliceTablePanel } from "./accuracy/SliceTablePanel";
 import { TrendChartPanel } from "./accuracy/TrendChartPanel";
+import { LagLeaderboardPanel } from "./aggregate-analysis/LagLeaderboardPanel";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
+import { ErrorDecompositionPanel } from "./accuracy/ErrorDecompositionPanel";
 
 // Extracted sub-components
 import {
   FilterDropdown,
   SearchableFilterDropdown,
   TimeGrainToggle,
+  KpiCardsSection,
+  AccuracyHeatmapSection,
   PANEL_DEFAULTS,
   PANELS,
   FILTERS,
@@ -71,9 +73,7 @@ import {
   HEATMAP_SCALE,
   buildCascade,
   hasActiveFilters,
-  formatNumberCompact,
-  formatHeatmapAccuracy,
-  trendDirection,
+  type HmGrain,
   type LocalFilters,
 } from "./aggregate-analysis";
 
@@ -119,7 +119,6 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const TREND_OPTIONS = [6, 12, 18, 24];
 
   // --------------- Heatmap state ---------------
-  type HmGrain = "category" | "brand" | "location" | "class" | "sub_class" | "date";
   const [heatmapRowGrain, setHeatmapRowGrain] = useState<HmGrain>("category");
   const [heatmapColGrain, setHeatmapColGrain] = useState<HmGrain>("date");
   const [heatmapModel, setHeatmapModel] = useState("external");
@@ -394,88 +393,17 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* KPI Cards                                                        */}
       {/* ================================================================ */}
       {visible.kpis && (
-        <CollapsibleSection
-          title="Performance KPIs"
-          headerRight={
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 text-[10px]">
-                <span className="text-muted-foreground font-medium">Model</span>
-                <select
-                  className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
-                  value={kpiModel}
-                  onChange={(e) => setKpiModel(e.target.value)}
-                >
-                  {(heatmapModels ?? ["external"]).map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-1">
-                {KPI_OPTIONS.map((w) => (
-                  <button key={w} onClick={() => setKpiWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", kpiWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
-                    {w}mo
-                  </button>
-                ))}
-              </div>
-            </div>
-          }
-        >
-          {kpiQ.isLoading ? (
-            <div className="grid grid-cols-5 gap-3">
-              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
-            </div>
-          ) : kpi ? (
-            <div className="grid grid-cols-5 gap-3">
-              {/* UX-2: enriched hero KPIs with target thresholds + sparkline when trend data present. */}
-              <KpiCard
-                label="Accuracy %"
-                size="lg"
-                value={kpi.accuracy_pct != null ? `${kpi.accuracy_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), goodDirection: "up", unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
-                severity={kpi.accuracy_pct != null ? (kpi.accuracy_pct >= 90 ? "best" : kpi.accuracy_pct >= 80 ? "neutral" : "warning") : "neutral"}
-                target={{ value: ">= 90%", label: "Target" }}
-                sparkline={(() => {
-                  const rows = (trendQ.data as { trend?: Array<{ accuracy_pct?: number | null }> } | undefined)?.trend;
-                  return Array.isArray(rows) ? rows.slice(-12).map((p) => Number(p.accuracy_pct ?? 0)) : undefined;
-                })()}
-              />
-              <KpiCard
-                label="WAPE %"
-                size="lg"
-                value={kpi.wape_pct != null ? `${kpi.wape_pct.toFixed(1)}%` : "N/A"}
-                // U6.1: display the TRUE delta sign; color by goodDirection ("down" = lower WAPE is better).
-                trend={kpi.deltas?.wape_pct != null ? { delta: kpi.deltas.wape_pct, direction: trendDirection(kpi.deltas.wape_pct), goodDirection: "down", unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
-                severity={kpi.wape_pct != null ? (kpi.wape_pct <= 10 ? "best" : kpi.wape_pct <= 20 ? "neutral" : "warning") : "neutral"}
-                target={{ value: "<= 10%", label: "Target" }}
-                sparkline={(() => {
-                  const rows = (trendQ.data as { trend?: Array<{ wape_pct?: number | null }> } | undefined)?.trend;
-                  return Array.isArray(rows) ? rows.slice(-12).map((p) => Number(p.wape_pct ?? 0)) : undefined;
-                })()}
-              />
-              <KpiCard
-                label="Bias %"
-                size="lg"
-                value={kpi.bias_pct != null ? `${kpi.bias_pct.toFixed(1)}%` : "N/A"}
-                // U6.1: show the TRUE signed bias change. "Good" = moving toward zero,
-                // so when current bias is positive lower is better ("down"), and when
-                // negative higher is better ("up").
-                trend={kpi.deltas?.bias_pct != null ? { delta: kpi.deltas.bias_pct, direction: trendDirection(kpi.deltas.bias_pct), goodDirection: (kpi.bias_pct ?? 0) >= 0 ? "down" : "up", unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
-                severity={kpi.bias_pct != null ? (Math.abs(kpi.bias_pct) <= 5 ? "best" : Math.abs(kpi.bias_pct) <= 15 ? "neutral" : "warning") : "neutral"}
-                target={{ value: "+/- 5%", label: "Target" }}
-              />
-              <KpiCard
-                label="Forecast Vol"
-                value={formatNumberCompact(kpi.total_forecast)}
-                severity="neutral"
-              />
-              <KpiCard
-                label="Actual Vol"
-                value={formatNumberCompact(kpi.total_actual)}
-                severity="neutral"
-              />
-            </div>
-          ) : null}
-        </CollapsibleSection>
+        <KpiCardsSection
+          kpi={kpi}
+          isLoading={kpiQ.isLoading}
+          kpiModel={kpiModel}
+          kpiWindow={kpiWindow}
+          kpiOptions={KPI_OPTIONS}
+          heatmapModels={heatmapModels}
+          trendData={trendQ.data}
+          onKpiModelChange={setKpiModel}
+          onKpiWindowChange={setKpiWindow}
+        />
       )}
 
       {/* ================================================================ */}
@@ -509,80 +437,19 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* Accuracy Heatmap                                                 */}
       {/* ================================================================ */}
       {visible.heatmap && (
-        <CollapsibleSection
-          title="Accuracy Heatmap"
-          headerRight={
-            <div className="flex items-center gap-2 text-[10px]">
-              <span className="text-muted-foreground font-medium">Model</span>
-              <select
-                className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
-                value={heatmapModel}
-                onChange={(e) => setHeatmapModel(e.target.value)}
-              >
-                {(heatmapModels ?? ["external"]).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-              <span className="text-muted-foreground font-medium">Rows</span>
-              <select
-                className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
-                value={heatmapRowGrain}
-                onChange={(e) => {
-                  const v = e.target.value as HmGrain;
-                  setHeatmapRowGrain(v);
-                  if (v === heatmapColGrain) setHeatmapColGrain(v === "date" ? "category" : "date");
-                }}
-              >
-                <option value="category">Category</option>
-                <option value="brand">Brand</option>
-                <option value="class">Class</option>
-                <option value="sub_class">Sub-class</option>
-                <option value="location">Location</option>
-                <option value="date">Date</option>
-              </select>
-              <span className="text-muted-foreground font-medium">Columns</span>
-              <select
-                className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
-                value={heatmapColGrain}
-                onChange={(e) => {
-                  const v = e.target.value as HmGrain;
-                  setHeatmapColGrain(v);
-                  if (v === heatmapRowGrain) setHeatmapRowGrain(v === "date" ? "category" : "date");
-                }}
-              >
-                <option value="category">Category</option>
-                <option value="brand">Brand</option>
-                <option value="class">Class</option>
-                <option value="sub_class">Sub-class</option>
-                <option value="location">Location</option>
-                <option value="date">Date</option>
-              </select>
-            </div>
-          }
-        >
-          {heatmapQ.isLoading ? (
-            <Skeleton className="h-[200px]" />
-          ) : (
-            <>
-              <HeatmapGrid
-                rows={heatmapRows}
-                columnLabels={heatmapLabels}
-                colorScale={colorScale}
-                valueFormat={formatHeatmapAccuracy}
-                showLegend
-                minLabel="<0%"
-                maxLabel="100%"
-              />
-              {/* F3.2 / U3.6 — explain the floored cells so a low-base artifact
-                  isn't mistaken for a broken model. */}
-              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                Accuracy = 100 − WAPE. Cells marked <span className="font-medium">&lt;0%*</span> have
-                actuals near zero on a tiny base (WAPE &gt; 100%) — review WAPE rather than reading
-                the negative literally.
-              </p>
-            </>
-          )}
-        </CollapsibleSection>
+        <AccuracyHeatmapSection
+          isLoading={heatmapQ.isLoading}
+          rows={heatmapRows}
+          columnLabels={heatmapLabels}
+          colorScale={colorScale}
+          heatmapModel={heatmapModel}
+          heatmapModels={heatmapModels}
+          heatmapRowGrain={heatmapRowGrain}
+          heatmapColGrain={heatmapColGrain}
+          onHeatmapModelChange={setHeatmapModel}
+          onRowGrainChange={setHeatmapRowGrain}
+          onColGrainChange={setHeatmapColGrain}
+        />
       )}
 
       {/* ================================================================ */}
@@ -609,13 +476,32 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
               />
             )}
             {visible.lagCurve && (
-              <TrendChartPanel
-                lagCurveData={lagCurveData} lagModels={lagModels}
-                sliceKpis={sliceKpis} activeLagMetric={activeLagMetric}
-                onLagCurveMetricChange={handleLagCurveMetricChange}
-              />
+              <>
+                <TrendChartPanel
+                  lagCurveData={lagCurveData} lagModels={lagModels}
+                  sliceKpis={sliceKpis} activeLagMetric={activeLagMetric}
+                  onLagCurveMetricChange={handleLagCurveMetricChange}
+                />
+                <LagLeaderboardPanel />
+              </>
             )}
           </div>
+        </CollapsibleSection>
+      )}
+
+      {/* ================================================================ */}
+      {/* Error Decomposition (diagnostic: where the accuracy gap lives)  */}
+      {/* ================================================================ */}
+      {visible.decomposition && (
+        <CollapsibleSection title="Error Decomposition" defaultOpen={false}>
+          <ErrorDecompositionPanel
+            models={sliceModels}
+            lag={sliceLag}
+            monthFrom={monthFrom}
+            clusterAssignment={clusterParam}
+            seasonalityProfile={seasonalityProfile || undefined}
+            enabled={visible.decomposition}
+          />
         </CollapsibleSection>
       )}
 

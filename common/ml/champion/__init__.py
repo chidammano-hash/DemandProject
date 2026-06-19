@@ -33,6 +33,9 @@ from common.ml.champion.registry import STRATEGY_REGISTRY, register_strategy
 from common.ml.champion.helpers import (
     compute_ceiling,
     compute_strategy_accuracy,
+    make_blend_row,
+    mix_from,
+    select_output_cols,
 )
 from common.ml.champion.basic import (
     strategy_decay,
@@ -87,6 +90,8 @@ __all__ = [
     # Metrics / helpers
     "compute_ceiling",
     "compute_strategy_accuracy",
+    "make_blend_row",
+    "mix_from",
     # Basic
     "strategy_decay",
     "strategy_ensemble",

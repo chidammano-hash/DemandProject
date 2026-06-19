@@ -26,7 +26,7 @@ describe("AppSidebar", () => {
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(18);
+    expect(NAV_ITEMS.length).toBe(17);  // AI FVA Backtest tab removed
   });
 
   it("sections appear in Tower -> Demand -> Supply -> Operations -> System order (UX-1)", () => {
@@ -108,16 +108,5 @@ describe("AppSidebar", () => {
   it("renders mobile toggle button", () => {
     renderSidebar();
     expect(screen.getByLabelText("Toggle navigation")).toBeInTheDocument();
-  });
-
-  // U5.2 — "FVA & ROI" and "AI FVA Backtest" sat on consecutive Demand rows
-  // with the IDENTICAL BarChart3 icon, indistinguishable when the sidebar is
-  // collapsed to icon-only. They must render different glyphs.
-  it("FVA & ROI and AI FVA Backtest use distinct icons (U5.2)", () => {
-    const fva = NAV_ITEMS.find((i) => i.key === "fva");
-    const aiFva = NAV_ITEMS.find((i) => i.key === "aiPlannerFva");
-    expect(fva).toBeDefined();
-    expect(aiFva).toBeDefined();
-    expect(fva!.icon).not.toBe(aiFva!.icon);
   });
 });

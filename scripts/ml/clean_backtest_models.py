@@ -110,6 +110,7 @@ def clean_models(
     views = [
         "agg_forecast_monthly",
         "agg_accuracy_by_dim",
+        "agg_accuracy_by_dfu",
         "agg_dfu_coverage",
         "agg_accuracy_lag_archive",
         "agg_dfu_coverage_lag_archive",

@@ -178,6 +178,7 @@ async def test_submit_override_auto_approved():
     cursor.fetchone.return_value = (1, "approved", False, 30.0, 150.0)  # RETURNING
 
     with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.forecasting.consensus_plan.record_override_approval") as mock_ledger, \
          patch.dict("os.environ", {}, clear=False):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -202,6 +203,7 @@ async def test_submit_override_auto_approved():
     data = resp.json()
     assert "override_id" in data
     assert data["status"] == "approved"
+    mock_ledger.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -297,10 +299,12 @@ async def test_submit_override_multiplier_out_of_bounds():
 async def test_approve_override_success():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (
-        42, "approved", "manager", datetime.datetime(2026, 3, 7, 10, 0, 0)
+        42, "approved", "manager", datetime.datetime(2026, 3, 7, 10, 0, 0),
+        "100320", "1401-BULK", datetime.date(2026, 5, 1), "PROMO",
     )
 
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.forecasting.consensus_plan.record_override_approval") as mock_ledger:
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -314,6 +318,7 @@ async def test_approve_override_success():
     assert data["override_id"] == 42
     assert data["status"] == "approved"
     assert data["approved_by"] == "manager"
+    mock_ledger.assert_called_once()
 
 
 @pytest.mark.asyncio

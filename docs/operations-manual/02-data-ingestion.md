@@ -46,6 +46,42 @@ The following sentinel values are normalized to SQL `NULL` during the normalize 
 
 Matching is case-insensitive and trimmed.
 
+### Optional pre-filter (`data/input/cleanup_input.py`)
+
+`data/input/cleanup_input.py` trims the **raw** input files **in place** *before* normalize/load, so unwanted rows never enter the pipeline. It is optional — skip it entirely for a full-scope load.
+
+> **Destructive & in-place — no built-in backup.** It overwrites the raw files in `data/input/`. Back up first if you need the originals: `cp data/input/<file> data/input/<file>.bak`.
+
+Default filters (run all when invoked with no flags):
+
+| File | Filter |
+|---|---|
+| `dfu.txt` | drop rows where `U_CLUSTER_ASSIGNMENT` starts with `L3_` |
+| `dfu_lvl2_hist.txt` | keep only `U_LVL == 121` |
+| `dfu_stat_fcst.txt` | keep DFUs present in `dfu.txt` **and** `startdate` within the last 12 months (cutoff derived from the system date) |
+| `Inventory_Snapshot_*.csv` | keep only `(item, loc)` present in `dfu.txt` |
+
+Two flags scope the run:
+
+- `--files {dfu,hist,fcst,inventory} ...` — run only the listed filters (default: all four).
+- `--loc <LOC>` — on `dfu_lvl2_hist.txt` and `dfu_stat_fcst.txt`, additionally keep **only** rows whose `LOC`/`loc` equals `<LOC>` (i.e. remove every other location). Applied **on top of** the default filters above.
+
+Example — restrict history and forecast to a single location:
+
+```bash
+~/.local/bin/uv run python data/input/cleanup_input.py --files hist fcst --loc 1401-BULK
+```
+
+The script is **idempotent** — re-running on an already-trimmed file removes 0 rows. It only rewrites the raw files; the corresponding tables are not updated until you re-`normalize` + `load` them (which `TRUNCATE`+reload, so trimmed-out rows are removed). After a LOC-scoped trim of `hist`/`fcst`:
+
+```bash
+make normalize-sales && make load-sales            # fact_sales_monthly
+make normalize-forecast && make load-forecast      # fact_external_forecast_monthly
+make refresh-mvs-tiered
+```
+
+`dim_sku` and inventory are untouched by a `--files hist fcst` run, so they do **not** need reloading; but features/clustering (`make features-compute && make cluster-all && ...`) should be re-run since `fact_sales_monthly` changed.
+
 ---
 
 ## 2.2 Normalize Stage
@@ -459,7 +495,60 @@ If the UI shows stale numbers, run `make refresh-mvs-tiered` first before assumi
 
 ---
 
-## 2.9 Reference
+## 2.9 Ingestion Performance Baseline
+
+Capture before/after timings for the ingestion pipeline. These are the reference numbers the streamlining work (DFU-filter relocation, scoped archive load, size-based indexing, batched PO inserts) is measured against.
+
+```bash
+make perf-ingestion MODE=full        # times normalize-all, load-all, refresh-mvs-tiered
+make perf-ingestion MODE=refresh     # times pipeline-refresh (incremental)
+```
+
+The harness (`scripts/tools/bench_ingestion.py`) prints a Markdown table and flags any stage slower than `thresholds.function_slow_s` in `config/platform/perf_config.yaml` (no hardcoded threshold). Annotate results with dataset scale from `make health` (row counts) and the host.
+
+**Baseline (populate on first run against a representative DB):**
+
+| Date | Host | Dataset (rows) | full normalize-all | full load-all | refresh-mvs-tiered | pipeline-refresh (no change) | pipeline-refresh (1 domain) |
+|---|---|---|---|---|---|---|---|
+| _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+
+> The table is intentionally empty until measured on a live DB — do not fabricate numbers. Fill the row, then re-measure after each streamlining story and record the delta.
+
+---
+
+## 2.10 Running the Pipeline (API / UI / Managed Job)
+
+Besides the Make targets, the whole ingestion pipeline can be run as a managed job and triggered from the UI:
+
+- **Job type** `etl_pipeline` (JobManager, group `etl` — one ingestion run at a time). Params: `mode` (`full` | `refresh`), `domains` (optional subset), `parallel`. Runs `run_pipeline.run_full` / `run_refresh` and streams progress. `refresh` is change-detected (SHA-256 vs `audit_load_batch`) and incremental; prefer routing very large `full` reloads to the pg-queue worker.
+- **API**: `POST /integration/pipeline` `{mode, domains?, parallel?}` → 202 + `job_id` (requires API key). Poll status/logs via the unified `/jobs/{id}` endpoints.
+- **UI**: Integration tab → **Run Pipeline** (full/refresh + parallel, live status). Load lineage with domain/status filters is on the Data Quality tab (Pipeline Lineage) and now includes `customer_demand`.
+
+`customer_demand` participates in `pipeline-refresh` change detection (records `audit_load_batch` lineage); its full load still uses `make load-customer-demand`.
+
+---
+
+## 2.11 Post-Ingestion Data Quality Checks
+
+Run after the ingestion load completes to validate loaded data. Can also be scheduled as a recurring pipeline step.
+
+Data quality checks are config-driven (`config/platform/data_quality_config.yaml`). `common/engines/dq_engine.py` runs SQL-based checks: freshness, completeness, uniqueness, range validation, volume delta, referential integrity. Results are written to `fact_dq_check_results`; domain health scores roll up into `mv_dq_dashboard`.
+
+```bash
+make dq-run                  # Run all enabled DQ checks → fact_dq_check_results
+```
+
+A dry-run/preview mode (checks executed with `--dry-run`, no writes) is available via the DQ engine for previewing checks without persisting results.
+
+API endpoints (`/data-quality/*`):
+- `GET /data-quality/dashboard` — domain health scores and recent check trends
+- `GET /data-quality/checks` — list all check definitions from catalog
+- `GET /data-quality/results` — recent check results with pass/fail/warn status
+- `POST /data-quality/run` — trigger ad-hoc DQ check run (requires planner role)
+
+---
+
+## 2.12 Reference
 
 - **Orchestrator**: `scripts/etl/run_pipeline.py`
 - **Per-domain normalize**: `scripts/normalize_dataset_csv.py` (and `scripts/normalize_inventory_csv.py`, `scripts/etl/normalize_customer_demand_csv.py`)

@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatPct, formatFixed } from "@/lib/formatters";
-import type { ModelType, TuningRun } from "@/api/queries";
+import { MODEL_PREFIX, type ModelType, type TuningRun } from "@/api/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,12 +47,6 @@ const MODEL_LABELS: Record<ModelType, string> = {
   lgbm: "LightGBM",
   catboost: "CatBoost",
   xgboost: "XGBoost",
-};
-
-const MODEL_PREFIX: Record<ModelType, string> = {
-  lgbm: "/model-tuning/lgbm",
-  catboost: "/model-tuning/catboost",
-  xgboost: "/model-tuning/xgboost",
 };
 
 const PARAM_STEPS = [

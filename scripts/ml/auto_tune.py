@@ -217,7 +217,7 @@ def print_leaderboard(results: list[dict[str, Any]], baseline_accuracy: float | 
 def run_backtest(config_path: Path, label: str, model: str = "lgbm") -> tuple[bool, float]:
     """Run a single backtest with the given config. Returns (success, duration_secs)."""
     cmd = [
-        UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
+        UV, "run", "python", str(ROOT / "scripts" / "ml" / "run_backtest.py"),
         "--model", model,
         "--config", str(config_path),
     ]

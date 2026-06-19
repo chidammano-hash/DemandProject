@@ -71,11 +71,36 @@ _SUBPROCESS_TIMEOUT = 7200  # 2 hours — prevents hung jobs from blocking the e
 _LOG_FLUSH_INTERVAL = 5  # seconds between DB log flushes
 _LOG_FLUSH_LINES = 20  # flush after this many buffered lines
 
-# Model name → backtest output directory mapping (shared across job callables)
+# Tree-model membership gate + output-dir lookup for the *tunable tree* job
+# callables (used as `model in MODEL_OUTPUT_DIRS` in a few places — do NOT add
+# non-tree models here, it would widen those gates).
 MODEL_OUTPUT_DIRS: dict[str, str] = {
     "lgbm": "lgbm_cluster",
     "catboost": "catboost_cluster",
     "xgboost": "xgboost_cluster",
+}
+
+# Backtest model key → output directory under data/backtest/, for the FULL
+# roster. Single source of truth shared by _update_backtest_run_on_completion
+# and _auto_load_backtest so the metadata read and the auto-load read the same
+# directory. Tree aliases map to the _cluster dir; everything else is identity.
+_BACKTEST_OUTPUT_DIRS: dict[str, str] = {
+    "lgbm": "lgbm_cluster",
+    "catboost": "catboost_cluster",
+    "xgboost": "xgboost_cluster",
+    "lgbm_cust_enriched": "lgbm_cust_enriched",
+    "catboost_cust_enriched": "catboost_cust_enriched",
+    "xgboost_cust_enriched": "xgboost_cust_enriched",
+    "chronos": "chronos",
+    "chronos_bolt": "chronos_bolt",
+    "chronos2": "chronos2",
+    "chronos2_enriched": "chronos2_enriched",
+    "bolt_hierarchical": "bolt_hierarchical",
+    "mstl": "mstl",
+    "nbeats": "nbeats",
+    "nhits": "nhits",
+    "seasonal_naive": "seasonal_naive",
+    "rolling_mean": "rolling_mean",
 }
 
 
@@ -323,6 +348,7 @@ def _run_cluster_pipeline(
         label_params=params.get("label_params"),
         label=params.get("label", "Job Pipeline Run"),
         auto_promote=params.get("auto_promote", True),
+        job_id=job_id,
     )
 
     if progress_cb:
@@ -346,17 +372,8 @@ def _update_backtest_run_on_completion(run_id: int, model: str) -> None:
     import json
     from pathlib import Path
 
-    # Model ID mapping (backtest key → output directory model_id)
-    _MODEL_TO_DIR = {
-        "lgbm": "lgbm_cluster", "catboost": "catboost_cluster", "xgboost": "xgboost_cluster",
-        "chronos": "chronos", "chronos_bolt": "chronos_bolt", "chronos2": "chronos2",
-        "chronos2_enriched": "chronos2_enriched", "bolt_hierarchical": "bolt_hierarchical",
-        "mstl": "mstl", "nbeats": "nbeats", "nhits": "nhits",
-        "seasonal_naive": "seasonal_naive", "rolling_mean": "rolling_mean",
-        "lgbm_cust_enriched": "lgbm_cust_enriched", "catboost_cust_enriched": "catboost_cust_enriched",
-        "xgboost_cust_enriched": "xgboost_cust_enriched",
-    }
-    model_dir = _MODEL_TO_DIR.get(model, model)
+    # Backtest key → output directory (shared with _auto_load_backtest).
+    model_dir = _BACKTEST_OUTPUT_DIRS.get(model, model)
     meta_path = Path("data/backtest") / model_dir / "backtest_metadata.json"
 
     try:
@@ -386,6 +403,53 @@ def _update_backtest_run_on_completion(run_id: int, model: str) -> None:
         logger.warning("Failed to update backtest_run %d after completion", run_id)
 
 
+def _auto_load_backtest(
+    model: str,
+    run_id: int,
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> None:
+    """Best-effort: load a completed backtest's predictions into the DB.
+
+    Runs immediately after a successful backtest so results show up in accuracy
+    views and the Item Analysis ``forecast_<model>`` line without a separate
+    "Load" click. Resolves the output directory via ``_BACKTEST_OUTPUT_DIRS``
+    (the same map :func:`_update_backtest_run_on_completion` uses to read
+    metadata) and reuses :func:`_run_load_backtest_model`, which writes
+    ``fact_external_forecast_monthly`` + refreshes ``agg_forecast_monthly``.
+
+    Never raises: any load failure is swallowed and logged for manual retry —
+    the run itself already succeeded, so it must not be reported as failed.
+
+    Note: the load refreshes the ``agg_forecast_monthly`` MV. Under a parallel
+    "Run all", concurrent refreshes serialize on the MV lock (slower, not a
+    deadlock); sequential runs (the default) avoid this.
+    """
+    import psycopg  # lazy — module keeps psycopg off the top-level import path
+
+    from common.core.paths import PROJECT_ROOT as ROOT
+
+    model_dir = _BACKTEST_OUTPUT_DIRS.get(model, model)
+    pred_path = ROOT / "data" / "backtest" / model_dir / "backtest_predictions.csv"
+    if not pred_path.exists():
+        logger.warning("Auto-load skipped for %s: no predictions at %s", model, pred_path)
+        return
+    try:
+        _run_load_backtest_model(
+            {"model_id": model_dir, "run_id": run_id},
+            progress_cb, cancel_event, job_id,
+        )
+    except (RuntimeError, OSError, subprocess.SubprocessError, psycopg.Error):
+        # Best-effort: a load failure must not fail an already-completed backtest.
+        # _run_subprocess raises RuntimeError on non-zero exit / timeout / cancel;
+        # psycopg.Error guards a transient DB blip during the load's status write.
+        logger.warning(
+            "Auto-load failed for %s (run %s); load manually if needed",
+            model, run_id, exc_info=True,
+        )
+
+
 def _run_backtest(
     model: str,
     params: dict[str, Any],
@@ -398,27 +462,42 @@ def _run_backtest(
     Supports tree models (direct script), foundation models (module invocation),
     deep learning (--model flag), and statistical baselines.
     """
-    # Tree models: direct script invocation
+    # Tree models: direct script invocation (all backtest scripts live in scripts/ml/)
     tree_scripts = {
-        "lgbm": "scripts/run_backtest.py",
-        "catboost": "scripts/run_backtest_catboost.py",
-        "xgboost": "scripts/run_backtest_xgboost.py",
+        "lgbm": "scripts/ml/run_backtest.py",
+        "catboost": "scripts/ml/run_backtest_catboost.py",
+        "xgboost": "scripts/ml/run_backtest_xgboost.py",
     }
     # Foundation models: python -m invocation
     foundation_modules = {
         "chronos": "scripts.ml.run_backtest_chronos",
         "chronos_bolt": "scripts.ml.run_backtest_chronos_bolt",
+        "chronos_bolt_ft": "scripts.ml.run_backtest_chronos_bolt_ft",
         "chronos2": "scripts.ml.run_backtest_chronos2",
         "chronos2_enriched": "scripts.ml.run_backtest_chronos2_enriched",
     }
+    # Models whose backtest scripts need a heavy optional dependency, mapped to the
+    # extra that provides it. Chronos variants (+ bolt_hierarchical) import
+    # chronos-forecasting (the `foundation` extra); nbeats/nhits import
+    # neuralforecast (the `dl` extra). Both pull torch.
+    _MODEL_EXTRAS = {
+        "chronos": "foundation",
+        "chronos_bolt": "foundation",
+        "chronos_bolt_ft": "foundation",
+        "chronos2": "foundation",
+        "chronos2_enriched": "foundation",
+        "bolt_hierarchical": "foundation",
+        "nhits": "dl",
+        "nbeats": "dl",
+    }
     # Special scripts: direct file path
     special_scripts = {
-        "bolt_hierarchical": "scripts/run_backtest_bolt_hierarchical.py",
-        "mstl": "scripts/run_backtest_mstl.py",
-        "seasonal_naive": ("scripts/run_backtest.py", ["--model", "seasonal_naive"]),
-        "rolling_mean": ("scripts/run_backtest.py", ["--model", "rolling_mean"]),
-        "nhits": ("scripts/run_backtest_dl.py", ["--model", "nhits"]),
-        "nbeats": ("scripts/run_backtest_dl.py", ["--model", "nbeats"]),
+        "bolt_hierarchical": "scripts/ml/run_backtest_bolt_hierarchical.py",
+        "mstl": "scripts/ml/run_backtest_mstl.py",
+        "seasonal_naive": ("scripts/ml/run_backtest.py", ["--model", "seasonal_naive"]),
+        "rolling_mean": ("scripts/ml/run_backtest.py", ["--model", "rolling_mean"]),
+        "nhits": ("scripts/ml/run_backtest_dl.py", ["--model", "nhits"]),
+        "nbeats": ("scripts/ml/run_backtest_dl.py", ["--model", "nbeats"]),
     }
 
     backtest_run_id = params.get("backtest_run_id")
@@ -436,17 +515,25 @@ def _run_backtest(
         except Exception:
             logger.warning("Failed to mark backtest_run %d as running", backtest_run_id)
 
+    # Pass --extra for models that need a heavy optional dep, so `uv run` ensures
+    # it's present even after a plain `uv sync` would otherwise strip it (the
+    # recurring "was working, then not" failure).
+    run_prefix = [_UV, "run"]
+    extra = _MODEL_EXTRAS.get(model)
+    if extra:
+        run_prefix += ["--extra", extra]
+
     if model in tree_scripts:
-        cmd = [_UV, "run", "python", tree_scripts[model]]
+        cmd = [*run_prefix, "python", tree_scripts[model]]
     elif model in foundation_modules:
-        cmd = [_UV, "run", "python", "-m", foundation_modules[model]]
+        cmd = [*run_prefix, "python", "-m", foundation_modules[model]]
     elif model in special_scripts:
         entry = special_scripts[model]
         if isinstance(entry, tuple):
             script, extra_args = entry
-            cmd = [_UV, "run", "python", script] + extra_args
+            cmd = [*run_prefix, "python", script, *extra_args]
         else:
-            cmd = [_UV, "run", "python", entry]
+            cmd = [*run_prefix, "python", entry]
     else:
         raise ValueError(f"Unknown backtest model: {model}")
 
@@ -470,12 +557,21 @@ def _run_backtest(
                 pass
         raise
 
-    if progress_cb:
-        progress_cb(pct=100, msg=f"{model} backtest completed")
-
-    # Update backtest_run tracking row with results
+    # Auto-load predictions into the DB so backtest results appear without a
+    # separate "Load" click. Run it BEFORE the completion update so, in the happy
+    # path, is_loaded_to_db is set before the UI sees status='completed' (avoids a
+    # poll landing in the gap and showing completed-but-unloaded). The completion
+    # update runs in `finally` so an unexpected auto-load error can never strand a
+    # successful backtest as 'running' — at worst it stays completed-but-unloaded,
+    # which the panel's recovery "Load to DB" button handles.
     if backtest_run_id:
-        _update_backtest_run_on_completion(backtest_run_id, model)
+        try:
+            _auto_load_backtest(model, backtest_run_id, progress_cb, cancel_event, job_id)
+        finally:
+            _update_backtest_run_on_completion(backtest_run_id, model)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"{model} backtest complete (results loaded)")
 
     return {"model": model, "output_log": output if output else "Completed"}
 
@@ -498,6 +594,7 @@ _run_backtest_catboost = _make_backtest_runner("catboost")
 _run_backtest_xgboost = _make_backtest_runner("xgboost")
 _run_backtest_chronos = _make_backtest_runner("chronos")
 _run_backtest_chronos_bolt = _make_backtest_runner("chronos_bolt")
+_run_backtest_chronos_bolt_ft = _make_backtest_runner("chronos_bolt_ft")
 _run_backtest_chronos2 = _make_backtest_runner("chronos2")
 _run_backtest_chronos2_enriched = _make_backtest_runner("chronos2_enriched")
 _run_backtest_bolt_hierarchical = _make_backtest_runner("bolt_hierarchical")
@@ -517,7 +614,7 @@ def _run_champion_select(
     """Run champion model selection."""
     if progress_cb:
         progress_cb(pct=10, msg="Running champion selection")
-    cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_selection.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Champion selection completed"}
 
@@ -543,7 +640,7 @@ def _run_champion_experiment(
     except Exception:
         logger.warning("Failed to store job_id on champion experiment %d", experiment_id)
 
-    cmd = [_UV, "run", "python", "scripts/run_champion_experiment.py",
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_experiment.py",
            "--experiment-id", str(experiment_id)]
     output = _run_subprocess(cmd, progress_cb, "Running champion experiment",
                              cancel_event=cancel_event, job_id=job_id)
@@ -571,7 +668,7 @@ def _run_champion_results_load(
 
     # Check for cached winners CSV from experiment run
     winners_csv = _SCRIPTS_DIR.parent / "data" / "champion" / f"experiment_{experiment_id}_winners.csv"
-    cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_selection.py"]
     if winners_csv.exists():
         cmd.extend(["--load-winners-from", str(winners_csv)])
         logger.info("Using cached winners from experiment %d: %s", experiment_id, winners_csv)
@@ -604,6 +701,43 @@ def _run_champion_results_load(
     if progress_cb:
         progress_cb(pct=100, msg="Champion results loaded successfully")
     return {"experiment_id": experiment_id, "output_log": output or "Champion results loaded"}
+
+
+def _run_champion_sweep(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a champion strategy sweep (tournament).
+
+    Fans out a grid of candidate champion configs (each a real champion_experiment),
+    ranks them globally + per demand segment, assembles a per-segment composite, and
+    writes the recommendation back to champion_sweep. See spec 30.
+    """
+    import psycopg  # lazy — module keeps psycopg off the top-level import path
+
+    sweep_id = params["sweep_id"]
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Starting champion sweep #{sweep_id}")
+
+    # Store job_id on the sweep record for log/cancel correlation.
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE champion_sweep SET job_id = %s WHERE sweep_id = %s",
+                (job_id, sweep_id),
+            )
+    except psycopg.Error:
+        logger.warning("Failed to store job_id on champion sweep %d", sweep_id)
+
+    cmd = [_UV, "run", "python", "scripts/ml/run_champion_sweep.py",
+           "--sweep-id", str(sweep_id)]
+    output = _run_subprocess(cmd, progress_cb, "Running champion sweep",
+                             cancel_event=cancel_event, job_id=job_id)
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Champion sweep #{sweep_id} completed")
+    return {"sweep_id": sweep_id, "output_log": output or "Champion sweep completed"}
 
 
 def _run_train_production_model(
@@ -658,18 +792,31 @@ def _run_generate_production_forecast(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the production forecast generation pipeline (F1.1)."""
-    horizon = params.get("horizon", 24)
+    horizon = params.get("horizon")
     model_id = params.get("model_id")
+    # Tri-state: None → use the script/config default; True/False → force on/off.
+    confidence_intervals = params.get("confidence_intervals")
     if progress_cb:
-        progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon})")
-    cmd = [_UV, "run", "python", "scripts/generate_production_forecasts.py", "--horizon", str(horizon)]
+        horizon_label = horizon if horizon is not None else "config default"
+        progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon_label})")
+    cmd = [_UV, "run", "python", "scripts/forecasting/generate_production_forecasts.py"]
+    if horizon is not None:
+        cmd.extend(["--horizon", str(horizon)])
     if model_id:
         cmd.extend(["--model-id", str(model_id)])
+    if confidence_intervals is True:
+        cmd.append("--confidence-intervals")
+    elif confidence_intervals is False:
+        cmd.append("--no-confidence-intervals")
     output = _run_subprocess(cmd, progress_cb, "Generating production forecasts",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
         progress_cb(pct=100, msg="Production forecast generation complete")
-    return {"horizon": horizon, "output_log": output if output else "Production forecast generation completed"}
+    return {
+        "horizon": horizon,
+        "confidence_intervals": confidence_intervals,
+        "output_log": output if output else "Production forecast generation completed",
+    }
 
 
 def _run_compute_replenishment_plan(
@@ -681,7 +828,7 @@ def _run_compute_replenishment_plan(
     """Run the forward-looking replenishment plan computation (CI Bands + Repl. Plan)."""
     if progress_cb:
         progress_cb(pct=10, msg="Starting replenishment plan computation")
-    cmd = [_UV, "run", "python", "scripts/compute_replenishment_plan.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_replenishment_plan.py"]
     output = _run_subprocess(cmd, progress_cb, "Computing replenishment plan from production forecast",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
@@ -698,7 +845,7 @@ def _run_generate_ai_insights(
     """Run AI Planning Agent portfolio scan to generate insights."""
     if progress_cb:
         progress_cb(pct=5, msg="Starting AI insights generation")
-    cmd = [_UV, "run", "python", "scripts/generate_ai_insights.py", "--portfolio"]
+    cmd = [_UV, "run", "python", "scripts/ai/generate_ai_insights.py", "--portfolio"]
     output = _run_subprocess(cmd, progress_cb, "Scanning portfolio for exceptions",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
@@ -715,7 +862,7 @@ def _run_generate_storyboard(
     """Generate storyboard exceptions for all DFUs."""
     if progress_cb:
         progress_cb(pct=10, msg="Generating storyboard exceptions")
-    cmd = [_UV, "run", "python", "scripts/generate_storyboard_exceptions.py"]
+    cmd = [_UV, "run", "python", "scripts/ops/generate_storyboard_exceptions.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Storyboard exceptions generated"}
 
@@ -727,7 +874,7 @@ def _run_inventory_backtest(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run inventory backtest simulation."""
-    cmd = [_UV, "run", "python", "scripts/run_inventory_backtest.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/run_inventory_backtest.py"]
     if params.get("models"):
         cmd.extend(["--models", params["models"]])
     if params.get("months"):
@@ -747,7 +894,7 @@ def _run_inventory_planning_pipeline(
 ) -> dict[str, Any]:
     """Run the end-to-end inventory planning pipeline."""
     steps = params.get("steps")
-    cmd = [_UV, "run", "python", "scripts/run_inventory_planning_pipeline.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/run_inventory_planning_pipeline.py"]
     if steps:
         cmd.extend(["--steps", steps])
     if progress_cb:
@@ -770,7 +917,7 @@ def _run_compute_safety_stock(
     """Compute safety stock targets for all DFUs."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing safety stock targets")
-    cmd = [_UV, "run", "python", "scripts/compute_safety_stock.py", "--config", "config/inventory/safety_stock_config.yaml"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_safety_stock.py", "--config", "config/inventory/safety_stock_config.yaml"]
     if params.get("forecast_source"):
         cmd.extend(["--forecast-source", params["forecast_source"]])
     if params.get("model_id"):
@@ -788,7 +935,7 @@ def _run_compute_eoq(
     """Compute EOQ cycle stock targets."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing EOQ targets")
-    cmd = [_UV, "run", "python", "scripts/compute_eoq.py", "--config", "config/inventory/eoq_config.yaml"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_eoq.py", "--config", "config/inventory/eoq_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "EOQ computation completed"}
 
@@ -802,7 +949,7 @@ def _run_compare_inventory_algorithms(
     """Compare SS/EOQ/ROP across forecast algorithms."""
     if progress_cb:
         progress_cb(pct=10, msg="Comparing inventory algorithms")
-    cmd = [_UV, "run", "python", "scripts/compare_inventory_algorithms.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compare_inventory_algorithms.py"]
     models = params.get("models")
     if models:
         cmd.extend(["--models", models])
@@ -819,7 +966,7 @@ def _run_assign_policies(
     """Upsert replenishment policies and auto-assign DFUs by segment."""
     if progress_cb:
         progress_cb(pct=10, msg="Assigning replenishment policies")
-    cmd = [_UV, "run", "python", "scripts/assign_replenishment_policies.py",
+    cmd = [_UV, "run", "python", "scripts/inventory/assign_replenishment_policies.py",
            "--config", "config/inventory/replenishment_policy_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Policy assignment completed"}
@@ -834,7 +981,7 @@ def _run_generate_exceptions(
     """Detect replenishment exceptions and write to queue."""
     if progress_cb:
         progress_cb(pct=10, msg="Detecting replenishment exceptions")
-    cmd = [_UV, "run", "python", "scripts/generate_replenishment_exceptions.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/generate_replenishment_exceptions.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Exception detection completed"}
 
@@ -848,7 +995,7 @@ def _run_classify_abc_xyz(
     """Run ABC-XYZ classification and write to dim_sku."""
     if progress_cb:
         progress_cb(pct=10, msg="Running ABC-XYZ classification")
-    cmd = [_UV, "run", "python", "scripts/classify_abc_xyz.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/classify_abc_xyz.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "ABC-XYZ classification completed"}
 
@@ -879,7 +1026,8 @@ def _run_compute_sku_features(
 
     if progress_cb:
         progress_cb(pct=10, msg="Computing SKU features")
-    result = run_pipeline(time_window_months=params.get("time_window_months", 36))
+    # The job/params schema uses "time_window_months"; run_pipeline's kwarg is "time_window".
+    result = run_pipeline(time_window=params.get("time_window_months", 36))
     if progress_cb:
         progress_cb(pct=100, msg="Complete")
     return result
@@ -894,7 +1042,7 @@ def _run_compute_demand_signals(
     """Compute short-horizon demand signals from sales velocity."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing demand signals")
-    cmd = [_UV, "run", "python", "scripts/compute_demand_signals.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_demand_signals.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Demand signals computation completed"}
 
@@ -908,7 +1056,7 @@ def _run_compute_investment(
     """Compute efficient frontier and capital investment allocation."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing investment plan")
-    cmd = [_UV, "run", "python", "scripts/compute_investment_plan.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/compute_investment_plan.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Investment plan computation completed"}
 
@@ -922,7 +1070,7 @@ def _run_refresh_health_scores(
     """Refresh the inventory health score materialized view."""
     if progress_cb:
         progress_cb(pct=10, msg="Refreshing inventory health scores")
-    cmd = [_UV, "run", "python", "scripts/refresh_health_scores.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/refresh_health_scores.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Health scores refreshed"}
 
@@ -936,7 +1084,7 @@ def _run_refresh_intramonth(
     """Refresh the intramonth stockout materialized view."""
     if progress_cb:
         progress_cb(pct=10, msg="Refreshing intramonth stockout view")
-    cmd = [_UV, "run", "python", "scripts/refresh_intramonth_stockout.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/refresh_intramonth_stockout.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Intramonth stockout view refreshed"}
 
@@ -997,6 +1145,69 @@ def _run_refresh_forecast_views(
     return {"refreshed": refreshed, "failed": failed}
 
 
+def _run_refresh_customer_analytics(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Refresh the materialized views backing the Customer Analytics tab.
+
+    Backs the "Recalculate" button on that tab. The CA panels read from these
+    MVs instead of aggregating fact tables per-request (see the Make targets
+    ``refresh-customer-mv`` / ``refresh-customer-filter-options`` /
+    ``refresh-ca-mvs``); this job runs the same refresh off the request thread.
+    ``mv_customer_activity_monthly`` is refreshed first since it is the core
+    activity rollup the rest of the tab builds on.
+
+    Returns a dict with ``refreshed`` and ``failed`` lists of MV names.
+    """
+    import psycopg
+    from psycopg import sql
+
+    mvs = (
+        "mv_customer_activity_monthly",
+        "mv_customer_filter_options",
+        "mv_ca_segment_trends",
+        "mv_ca_demand_at_risk",
+        "mv_ca_order_patterns",
+        "mv_ca_item_state",
+    )
+    refreshed: list[str] = []
+    failed: list[str] = []
+
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Refreshing {len(mvs)} customer-analytics views")
+
+    # autocommit=True (default for _get_conn) is required: REFRESH MATERIALIZED
+    # VIEW CONCURRENTLY cannot run inside a transaction block.
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SET maintenance_work_mem = '512MB'")
+            except psycopg.Error:
+                logger.exception("Failed to set maintenance_work_mem")
+            for idx, mv in enumerate(mvs, start=1):
+                if cancel_event and cancel_event.is_set():
+                    raise RuntimeError("Job cancelled by user")
+                if progress_cb:
+                    pct = int(5 + (idx - 1) / len(mvs) * 90)
+                    progress_cb(pct=pct, msg=f"Refreshing {mv}")
+                stmt = sql.SQL("REFRESH MATERIALIZED VIEW CONCURRENTLY {}").format(
+                    sql.Identifier(mv)
+                )
+                try:
+                    cur.execute(stmt)
+                    refreshed.append(mv)
+                except psycopg.Error:
+                    logger.exception("Failed to refresh %s", mv)
+                    failed.append(mv)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Refreshed {len(refreshed)}/{len(mvs)} views")
+    return {"refreshed": refreshed, "failed": failed}
+
+
 def _run_ss_simulation(
     params: dict[str, Any],
     progress_cb: Callable | None = None,
@@ -1006,7 +1217,7 @@ def _run_ss_simulation(
     """Run Monte Carlo safety stock simulation."""
     if progress_cb:
         progress_cb(pct=10, msg="Running Monte Carlo SS simulation")
-    cmd = [_UV, "run", "python", "scripts/run_ss_simulation.py"]
+    cmd = [_UV, "run", "python", "scripts/inventory/run_ss_simulation.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "SS simulation completed"}
 
@@ -1080,7 +1291,7 @@ def _run_tuning_backtest(
 
     # 2. Run backtest via _run_subprocess (gets PID tracking + cancel + log streaming)
     cmd = [
-        _UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
+        _UV, "run", "python", str(ROOT / "scripts" / "ml" / "run_backtest.py"),
         "--model", "lgbm",
         "--config", str(tmp_path),
     ]
@@ -1152,7 +1363,7 @@ def _run_model_tuning_experiment(
 
     # 2. Build backtest command — optionally include cluster override
     cmd = [
-        _UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
+        _UV, "run", "python", str(ROOT / "scripts" / "ml" / "run_backtest.py"),
         "--model", model,
         "--config", config_path,
     ]
@@ -1299,7 +1510,7 @@ def _run_load_backtest_results(
 
     cmd = [
         _UV, "run", "python",
-        str(ROOT / "scripts" / "load_backtest_forecasts.py"),
+        str(ROOT / "scripts" / "etl" / "load_backtest_forecasts.py"),
         "--model", model_id, "--replace",
     ]
     start = time.time()
@@ -1368,7 +1579,7 @@ def _run_load_backtest_model(
 
     cmd = [
         _UV, "run", "python",
-        str(ROOT / "scripts" / "load_backtest_forecasts.py"),
+        str(ROOT / "scripts" / "etl" / "load_backtest_forecasts.py"),
         "--model", model_id, "--replace",
     ]
     start = time.time()

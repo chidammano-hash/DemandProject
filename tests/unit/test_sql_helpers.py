@@ -277,3 +277,42 @@ class TestReadSqlChunked:
             )
         assert mock_read.call_args.kwargs["params"] == ("a", 42)
         assert mock_read.call_args.kwargs["chunksize"] == 10
+
+
+# ---------------------------------------------------------------------------
+# parse_db_json / to_float (shared router coercion helpers)
+# ---------------------------------------------------------------------------
+import pytest
+from common.core.sql_helpers import parse_db_json, to_float
+
+
+class TestParseDbJson:
+    def test_none(self):
+        assert parse_db_json(None) is None
+
+    def test_passthrough_dict_list(self):
+        assert parse_db_json({"a": 1}) == {"a": 1}
+        assert parse_db_json([1, 2]) == [1, 2]
+
+    def test_parses_json_string(self):
+        assert parse_db_json('{"a": 1}') == {"a": 1}
+        assert parse_db_json("[1, 2]") == [1, 2]
+
+    def test_malformed_returns_original(self):
+        assert parse_db_json("not json") == "not json"
+
+
+class TestToFloat:
+    def test_none(self):
+        assert to_float(None) is None
+
+    @pytest.mark.parametrize("v,expected", [(1, 1.0), ("2.5", 2.5), (3.0, 3.0)])
+    def test_coerces(self, v, expected):
+        assert to_float(v) == expected
+
+    def test_bad_value_returns_none(self):
+        assert to_float("abc") is None
+
+    def test_decimals_rounds(self):
+        assert to_float(1.23456, decimals=2) == 1.23
+        assert to_float(None, decimals=2) is None

@@ -18,9 +18,15 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+import logging
+
+import psycopg
 from api.auth import require_api_key
 from api.core import get_conn
 from common.core.planning_date import get_planning_date
+from common.engines.override_ledger import record_override_approval
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["consensus-plan"])
 
@@ -325,7 +331,23 @@ async def submit_override(body: OverrideSubmitRequest, request: Request):
                 body.statistical_qty, impact_units, impact_value,
             ))
             row = cur.fetchone()
-            conn.commit()
+            if row[1] == "approved":
+                record_override_approval(
+                    cur,
+                    override_id=int(row[0]),
+                    item_id=body.item_id,
+                    loc=body.loc,
+                    override_month=body.override_month,
+                    override_type=body.override_type,
+                    actor=body.created_by,
+                    source="auto_approve",
+                )
+            try:
+                conn.commit()
+            except psycopg.Error:
+                logger.exception("Failed to commit override submit")
+                conn.rollback()
+                raise HTTPException(status_code=500, detail="Override submit failed") from None
 
     msg = ("Override submitted. Pending approval from demand_manager role."
            if requires_approval else "Override approved automatically.")
@@ -356,7 +378,8 @@ async def approve_override(override_id: int, body: ApproveRequest, request: Requ
             approved_at = NOW()
         WHERE override_id = %s
           AND status = 'pending_approval'
-        RETURNING override_id, status, approved_by, approved_at
+        RETURNING override_id, status, approved_by, approved_at,
+                  item_id, loc, override_month, override_type
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -365,7 +388,22 @@ async def approve_override(override_id: int, body: ApproveRequest, request: Requ
             if not row:
                 raise HTTPException(status_code=404,
                                     detail="Override not found or not in pending_approval state.")
-            conn.commit()
+            record_override_approval(
+                cur,
+                override_id=int(row[0]),
+                item_id=row[4],
+                loc=row[5],
+                override_month=row[6],
+                override_type=row[7],
+                actor=body.approved_by,
+                source="manager_approve",
+            )
+            try:
+                conn.commit()
+            except psycopg.Error:
+                logger.exception("Failed to commit override approval")
+                conn.rollback()
+                raise HTTPException(status_code=500, detail="Override approval failed") from None
 
     return {
         "override_id": row[0],

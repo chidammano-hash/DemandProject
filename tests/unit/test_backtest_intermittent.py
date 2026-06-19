@@ -144,6 +144,24 @@ class TestApplyTweedieObjective:
         assert result["loss_function"] == "MAE"
         assert result["iterations"] == 300
 
+    def test_catboost_intermittent_drops_newton_leaf_estimation(self) -> None:
+        """MAE forbids Newton leaf estimation — the Newton-oriented settings
+        must be dropped so CatBoost falls back to its valid MAE default."""
+        from scripts.ml.run_backtest import _apply_tweedie_objective
+
+        params = {
+            "iterations": 300,
+            "loss_function": "RMSE",
+            "leaf_estimation_method": "Newton",
+            "leaf_estimation_iterations": 1,
+            "boost_from_average": True,
+        }
+        result = _apply_tweedie_objective(params, "catboost", "intermittent")
+        assert result["loss_function"] == "MAE"
+        assert "leaf_estimation_method" not in result
+        assert "leaf_estimation_iterations" not in result
+        assert "boost_from_average" not in result
+
     def test_xgboost_intermittent_gets_absoluteerror(self) -> None:
         from scripts.ml.run_backtest import _apply_tweedie_objective
 
@@ -240,3 +258,40 @@ class TestYAMLConfigIntegration:
         cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]
         assert backtest["embargo_months"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Production-training variant: scripts.ml.train_production_models
+# ---------------------------------------------------------------------------
+
+
+class TestProductionTrainingTweedieObjective:
+    """train_production_models._apply_tweedie_objective mirrors the backtest
+    helper. CatBoost intermittent training must drop the Newton leaf-estimation
+    settings under MAE (regression: catboost_cluster production training crashed
+    with "Newton leaves estimation method is not supported for MAE loss")."""
+
+    def test_catboost_intermittent_drops_newton_leaf_estimation(self) -> None:
+        from scripts.ml.train_production_models import _apply_tweedie_objective
+
+        params = {
+            "iterations": 800,
+            "loss_function": "RMSE",
+            "leaf_estimation_method": "Newton",
+            "leaf_estimation_iterations": 1,
+            "boost_from_average": True,
+        }
+        result = _apply_tweedie_objective(params, "catboost", "intermittent")
+        assert result["loss_function"] == "MAE"
+        assert "leaf_estimation_method" not in result
+        assert "leaf_estimation_iterations" not in result
+        assert "boost_from_average" not in result
+
+    def test_catboost_continuous_keeps_newton(self) -> None:
+        """Continuous clusters keep RMSE + Newton (no MAE conflict)."""
+        from scripts.ml.train_production_models import _apply_tweedie_objective
+
+        params = {"iterations": 800, "leaf_estimation_method": "Newton"}
+        result = _apply_tweedie_objective(params, "catboost", "continuous")
+        assert result["leaf_estimation_method"] == "Newton"
+        assert result.get("loss_function") != "MAE"

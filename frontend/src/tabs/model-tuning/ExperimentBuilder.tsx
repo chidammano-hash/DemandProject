@@ -30,6 +30,7 @@ import type { ModelType } from "@/api/queries";
 import {
   clusterExperimentKeys,
   fetchCompletedClusterExperiments,
+  MODEL_PREFIX,
   type ClusterExperiment,
 } from "@/api/queries";
 
@@ -62,12 +63,6 @@ const MODEL_LABELS: Record<ModelType, string> = {
   lgbm: "LightGBM",
   catboost: "CatBoost",
   xgboost: "XGBoost",
-};
-
-const MODEL_PREFIX: Record<ModelType, string> = {
-  lgbm: "/model-tuning/lgbm",
-  catboost: "/model-tuning/catboost",
-  xgboost: "/model-tuning/xgboost",
 };
 
 // ---------------------------------------------------------------------------

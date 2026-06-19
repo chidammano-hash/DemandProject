@@ -1,11 +1,14 @@
 # 05 — AI Decision Ledger + Policy Engine
 
-**Gen-4 Roadmap AI-10 P0 + AI-1 P0.** Append-only audit trail and
-declarative autonomy guardrails for every AI write action.
+Append-only audit trail and declarative autonomy guardrails for every AI
+write action.
 
-**Status:** Foundation landed (2026-04-23). Ledger + policy engine callable
-from any agent; wiring specific agents to the engine happens in Phase 0
-(weeks 1–8).
+**Status: Partial.** Ledger foundation landed (2026-04-23) and is callable from any
+agent. The policy engine prototype (`common/ai/policy_engine.py`) was built
+and unit-tested but never wired into a runtime path, and has since been
+removed as unwired code. The guardrail design below is therefore **not yet
+implemented** — it remains the intended Phase 0 (weeks 1–8) work, to be
+rebuilt against real agent call sites rather than as a standalone module.
 
 ---
 
@@ -66,13 +69,15 @@ error list, so a single pass surfaces every break.
 
 ---
 
-## Policy Engine
+## Policy Engine (planned — not yet implemented)
 
-- Policies: [config/ai/agent_autonomy.yaml](../../config/ai/agent_autonomy.yaml)
-- Engine: [common/ai/policy_engine.py](../../common/ai/policy_engine.py)
-- Tests: [tests/unit/test_policy_engine.py](../../tests/unit/test_policy_engine.py)
+- Policies: [config/ai/agent_autonomy.yaml](../../config/ai/agent_autonomy.yaml) (config exists)
+- Engine: not yet implemented. An earlier `common/ai/policy_engine.py`
+  prototype was removed as unwired (no production callers); the engine will
+  be rebuilt during Phase 0 against real agent write sites.
 
-Every write action supplies an `ActionContext` with the runtime facts
+The design below describes the intended behavior. Every write action will
+supply an `ActionContext` with the runtime facts
 (policy id, requested tier, blast radius, magnitude, human review flag,
 etc.). `evaluate(ctx)` returns a `PolicyDecision`:
 
@@ -81,7 +86,7 @@ etc.). `evaluate(ctx)` returns a `PolicyDecision`:
 - `reasons: list[str]` — one string per guardrail that fired (empty if
   permitted)
 
-Guardrails supported today:
+Guardrails planned for the engine:
 
 - `tier` ceiling (requested must not exceed max)
 - `requires_human_review`
@@ -98,7 +103,8 @@ New guardrails follow the same pattern: add a branch in
 
 ## Intended Integration
 
-Every agent-originated write goes through this envelope:
+Once the engine is rebuilt, every agent-originated write will go through
+this envelope:
 
 ```python
 ctx = ActionContext(
@@ -126,6 +132,15 @@ with conn, conn.cursor() as cur:
 ```
 
 ---
+
+## Related implemented AI foundations
+
+The decision ledger anchors a set of AI-platform primitives that have shipped:
+
+- **Three-tier memory** — `common/ai/memory.py` (working / episodic / semantic; episodic FKs the ledger via `fact_decision`).
+- **RAG + knowledge graph** — `common/ai/rag.py` over `rag_chunk` (HNSW + BM25 RRF fusion) and `kg_node` / `kg_edge` (`sql/139`–`140`); `rag_chunk` is the single embedding store.
+- **Explainability API** — `GET /forecast/explain/{item_id}/{loc}` (`api/routers/intelligence/explain.py`) reads SHAP when available and writes to the ledger.
+- **OpenLineage emission** — `common/ai/lineage.py` + `fact_lineage_event` (`sql/157`), wired into the MLflow promote path.
 
 ## Follow-ups (subsequent roadmap work)
 

@@ -534,3 +534,24 @@ async def test_dq_fix_apply_missing_body():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/data-quality/fix/apply")
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Auth: write endpoints require X-API-Key when API_KEY is configured
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path", [
+    ("post", "/data-quality/run"),
+    ("post", "/data-quality/fix/apply"),
+    ("post", "/data-quality/fix"),
+])
+async def test_dq_write_endpoints_require_api_key(method, path, monkeypatch):
+    """With API_KEY set, the mutating endpoints reject a request with no key."""
+    monkeypatch.setenv("API_KEY", "secret-key")
+    pool, _, _ = _make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await getattr(client, method)(path)
+    assert resp.status_code in (401, 403)

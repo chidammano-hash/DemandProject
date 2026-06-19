@@ -11,6 +11,7 @@
  */
 
 import { buildQuerySuffix } from "./helpers";
+import { fetchJson } from "./core";
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -71,19 +72,6 @@ export interface SkuFeaturesListParams {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch helper
-// ---------------------------------------------------------------------------
-
-async function fetchOrThrow<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Request failed: ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-// ---------------------------------------------------------------------------
 // Query key factory
 // ---------------------------------------------------------------------------
 
@@ -115,7 +103,7 @@ const BASE = "/sku-features";
 
 /** Fetch aggregate summary: totals, categorical distributions, averages. */
 export async function fetchSkuFeaturesSummary(): Promise<SkuFeaturesSummary> {
-  return fetchOrThrow(`${BASE}/summary`);
+  return fetchJson<SkuFeaturesSummary>(`${BASE}/summary`);
 }
 
 /** Fetch paginated, sortable, filterable list of SKU feature rows. */
@@ -132,7 +120,7 @@ export async function fetchSkuFeaturesList(
     variability_class: params?.variability_class,
     trend_direction: params?.trend_direction,
   });
-  return fetchOrThrow(`${BASE}/list${qs}`);
+  return fetchJson<{ rows: SkuFeatureRow[]; total: number }>(`${BASE}/list${qs}`);
 }
 
 /** Fetch histogram distributions for continuous features. */
@@ -140,21 +128,16 @@ export async function fetchSkuFeaturesDistributions(
   bins?: number,
 ): Promise<FeatureDistributions> {
   const qs = buildQuerySuffix({ bins });
-  return fetchOrThrow(`${BASE}/distributions${qs}`);
+  return fetchJson<FeatureDistributions>(`${BASE}/distributions${qs}`);
 }
 
 /** Trigger background computation of all SKU features. Returns job_id. */
 export async function triggerComputeSkuFeatures(
   timeWindowMonths = 36,
 ): Promise<{ job_id: string; status: string }> {
-  const res = await fetch(`${BASE}/compute`, {
+  return fetchJson<{ job_id: string; status: string }>(`${BASE}/compute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ time_window_months: timeWindowMonths }),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Request failed: ${res.status}`);
-  }
-  return res.json();
 }

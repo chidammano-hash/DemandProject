@@ -531,23 +531,32 @@ def insert_ensemble_forecasts(
     deleted = cur.rowcount
     print(f"  Deleted {deleted:,} existing champion rows")
 
-    # 2. Create temp table with blended forecast values
+    # 2. Create temp table with blended forecast values + the per-DFU winning
+    #    sub-model/strategy label (so source_model_id is recorded even for
+    #    router/blend strategies, not just single-model winners — lets the UI
+    #    label the champion line "champion (<model>)").
     cur.execute("""
         CREATE TEMP TABLE _ensemble_winners (
             item_id TEXT NOT NULL,
             customer_group TEXT NOT NULL,
             loc TEXT NOT NULL,
             startdate DATE NOT NULL,
-            blended_fcst DOUBLE PRECISION NOT NULL
+            blended_fcst DOUBLE PRECISION NOT NULL,
+            source_model_id TEXT,
+            source_mix JSONB
         ) ON COMMIT DROP
     """)
 
-    # 3. COPY ensemble data
+    # 3. COPY ensemble data. source_mix is JSON (no tabs/newlines from
+    #    json.dumps default separators) so tab-delimited COPY is safe; '\N'
+    #    encodes SQL NULL for rows without a mix.
     buf = io.StringIO()
     for _, row in winners_df.iterrows():
+        mix = row.get("source_mix")
+        mix_cell = json.dumps(mix) if isinstance(mix, list) and mix else r"\N"
         buf.write(
             f"{row['item_id']}\t{row['customer_group']}\t{row['loc']}\t"
-            f"{row['startdate'].date()}\t{row['basefcst_pref']}\n"
+            f"{row['startdate'].date()}\t{row['basefcst_pref']}\t{row['model_id']}\t{mix_cell}\n"
         )
     buf.seek(0)
     with cur.copy("COPY _ensemble_winners FROM STDIN") as copy:
@@ -558,11 +567,12 @@ def insert_ensemble_forecasts(
         """
         INSERT INTO fact_external_forecast_monthly
             (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-             lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+             lag, execution_lag, basefcst_pref, tothist_dmd, model_id,
+             source_model_id, source_mix)
         SELECT DISTINCT ON (f.item_id, f.customer_group, f.loc, f.startdate)
             f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, w.blended_fcst, f.tothist_dmd,
-            %s
+            %s, w.source_model_id, w.source_mix
         FROM fact_external_forecast_monthly f
         INNER JOIN _ensemble_winners w
             ON f.item_id = w.item_id
@@ -684,7 +694,7 @@ def generate_summary(
     champ_actual_sum = 0.0
     unique_dfus: set[tuple[str, str, str]] = set()
 
-    for item_id, customer_group, loc, _startdate, model_id, _prior_wape, basefcst_pref, tothist_dmd in winners:
+    for item_id, customer_group, loc, _startdate, model_id, _prior_wape, basefcst_pref, tothist_dmd, *_ in winners:
         model_wins[model_id] = model_wins.get(model_id, 0) + 1
         champ_abs_err_sum += abs(float(basefcst_pref) - float(tothist_dmd))
         champ_actual_sum += float(tothist_dmd)
@@ -786,6 +796,11 @@ def _load_cached_winners(
     for col in [FORECAST_QTY_COL, "tothist_dmd", "prior_wape"]:
         if col in winners_df.columns:
             winners_df[col] = pd.to_numeric(winners_df[col], errors="coerce")
+    # source_mix round-trips through CSV as a JSON string — parse back to a list.
+    if "source_mix" in winners_df.columns:
+        winners_df["source_mix"] = winners_df["source_mix"].apply(
+            lambda x: json.loads(x) if isinstance(x, str) and x.strip() else None
+        )
     winners = list(winners_df.itertuples(index=False, name=None))
     # Detect ensemble: if winner model_ids contain values not in the
     # competing model list, the strategy produced blended forecasts.
@@ -990,6 +1005,7 @@ def main() -> None:
                 columns=[
                     "item_id", "customer_group", "loc", "startdate",
                     "model_id", "prior_wape", FORECAST_QTY_COL, "tothist_dmd",
+                    "source_mix",
                 ],
             )
             champ_merged = champ_df.merge(

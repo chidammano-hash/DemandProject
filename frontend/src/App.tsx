@@ -45,7 +45,6 @@ const StoryboardTab = lazy(() => import("./tabs/StoryboardTab"));
 const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 const SopTab = lazy(() => import("./tabs/SopTab"));
 const FVATab = lazy(() => import("./tabs/FVATab"));
-const AiPlannerFvaTab = lazy(() => import("./tabs/AiPlannerFvaTab"));
 const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
 const CustomerAnalyticsTab = lazy(() => import("./tabs/CustomerAnalyticsTab").then((m) => ({ default: m.CustomerAnalyticsTab })));
 const CommandCenterTab = lazy(() => import("./tabs/CommandCenterTab"));
@@ -262,11 +261,6 @@ export default function App() {
                 {activeTab === "fva" && (
                   <TabPanel tabKey="fva" resetKeys={[activeTab]}>
                     <FVATab />
-                  </TabPanel>
-                )}
-                {activeTab === "aiPlannerFva" && (
-                  <TabPanel tabKey="aiPlannerFva" resetKeys={[activeTab]}>
-                    <AiPlannerFvaTab />
                   </TabPanel>
                 )}
                 {activeTab === "dataQuality" && (

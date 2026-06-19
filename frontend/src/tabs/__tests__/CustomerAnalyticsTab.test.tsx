@@ -184,6 +184,15 @@ vi.mock("@/api/queries/customer-analytics", () => ({
       { source: "CA", target: "On Premise", value: 8000 },
     ],
   }),
+  triggerRecalculateCustomerAnalytics: vi
+    .fn()
+    .mockResolvedValue({ job_id: "job-ca-1", status: "queued" }),
+}));
+
+// RecalculateButton in the header polls the jobs API; stub it out.
+vi.mock("@/api/queries/jobs", () => ({
+  fetchActiveJobs: vi.fn().mockResolvedValue({ jobs: [] }),
+  fetchJobDetail: vi.fn().mockResolvedValue(null),
 }));
 
 const { CustomerAnalyticsTab } = await import("@/tabs/CustomerAnalyticsTab");

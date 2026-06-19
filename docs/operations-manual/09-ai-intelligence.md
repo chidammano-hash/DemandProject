@@ -84,7 +84,7 @@ The AI Planner is a **proactive batch agent**, not a chatbot. It scans the deman
 
 - Module: `common/ai/ai_planner.py` (class `AIPlannerAgent`)
 - Router: `api/routers/intelligence/ai_planner.py`
-- Frontend tab: `frontend/src/tabs/AIPlannerTab.tsx` (sub-panels in `frontend/src/tabs/ai-planner/`)
+- Frontend surface: AI Planner insight sub-panels in `frontend/src/tabs/ai-planner/` (rendered inside the Command Center / Market Intelligence tabs)
 - Config: `config/ai/ai_planner_config.yaml`
 - Provider: configurable — `provider: "openai"` (default, uses `OPENAI_API_KEY`) or `provider: "anthropic"` (uses `ANTHROPIC_API_KEY`)
 
@@ -143,6 +143,24 @@ When either is hit the agent logs a warning and exits cleanly with whatever insi
 | Single DFU (sync) | `POST /ai-planner/analyze` from the UI / curl |
 | Portfolio (background) | `POST /ai-planner/portfolio-scan` — runs on the in-process `ThreadPoolExecutor(max_workers=2)` defined in the router |
 | Scheduled scan | Wire to APScheduler via `common/services/job_scheduler.py` (call `AIPlannerAgent.run_portfolio_scan(...)` directly inside a job) |
+
+#### CLI / Make-target batch pipeline (IPAIfeature1)
+
+For headless / cron-driven runs (outside the API + UI), drive the agent through
+`scripts/ai/generate_ai_insights.py` via these Make targets. Run them **after
+Phases 2–7** so the agent has full forecast + inventory context. Requires
+`ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) in `.env`.
+
+```bash
+make ai-insights-schema      # Apply sql/036, sql/039, sql/040 (ai_insights + ai_call_log + outcomes)
+make ai-insights-scan        # Portfolio-wide AI exception scan → ai_insights table
+make ai-insights-scan-dry    # Same scan with --dry-run (no DB writes)
+make ai-insights-dfu ITEM=100320 LOC=1401-BULK  # Single-DFU analysis (--item / --loc)
+make ai-insights-all         # ai-insights-schema + ai-insights-scan (full pipeline)
+```
+
+> The single-DFU target is `make ai-insights-dfu ITEM=<item> LOC=<loc>` —
+> it shells out to `scripts/ai/generate_ai_insights.py --item $(ITEM) --loc $(LOC)`.
 
 ---
 
@@ -279,7 +297,7 @@ Otherwise `total_tokens += usage.total_tokens or 0` raises `TypeError` and the l
 
 | Surface | File | Sidebar location |
 |---|---|---|
-| AI Planner tab | `frontend/src/tabs/AIPlannerTab.tsx` (+ sub-panels in `ai-planner/`) | First entry — keyboard shortcut `1` (see `KeyboardShortcutHelp.tsx`) |
+| AI Planner insights | sub-panels in `frontend/src/tabs/ai-planner/` (Command Center / Market Intelligence) | no numeric shortcut (see `KeyboardShortcutHelp.tsx`) |
 | Tuning Chat | `frontend/src/tabs/lgbm-tuning/TuningChatPanel.tsx` | Inside `ModelTuningTab` / LGBM Tuning tab |
 
 ### 9.8.1 Vite proxy entries
@@ -371,97 +389,44 @@ python -m scripts.ai.ingest_docs --root docs/sop --source sop --dry-run
 
 ---
 
-## 9.11 FVA Backtest — Dev/Test Provider Modes (Ollama & Manual Opus)
+## 9.11 AI Champion adjuster — Interactive (Item Analysis tab)
 
-How to run the AI Planner FVA backtest during development and testing **without
-paying for the metered API**. Design reference: spec [02-27 §8.1](../specs/02-forecasting/27-ai-fva-backtest.md). There
-are two zero-cost modes — **A: Ollama** (automated, default) and **B: Manual Opus
-spot-check via Claude Code** (interactive only) — plus the metered `anthropic` path
-for the authoritative run.
+The forward-only **AI Champion** adjuster (spec
+[02-27](../specs/02-forecasting/27-ai-champion-forecast.md)) is **interactive and
+single-DFU** — there is no batch job, script, or Make target. A planner adjusts
+the promoted champion forecast for one item at a time from the **Item Analysis**
+tab and writes `model_id='ai_champion'`. Provider defaults live in
+`config/ai/ai_champion_config.yaml`; the UI overrides the provider per call.
 
-> ⚠ **Read this before Mode B.** The Anthropic Consumer Terms (Pro / Max / Claude
-> Code) forbid automated access "except … via an Anthropic API Key." Mode B is a
-> **manual, human-driven** spot-check and nothing more. Do **not** automate it —
-> no `claude -p` from the backtest, no OpenAI-compatible proxy in front of the
-> subscription. The only automated Claude path is `provider: anthropic` (the API).
-> See spec §8.1 "Compliance boundary."
+**How to use it.**
+1. Open the **Item Analysis** tab and select an item + location. The
+   **"AI Champion"** panel is shown by default (toggle it via the panel toolbar).
+2. Pick a provider in the panel dropdown and click **AI Adjust**. One LLM call
+   runs for that DFU (item + location attributes, actuals, champion forecast,
+   top customers go into the prompt).
+3. Review the **"Preview — not saved"** card (recommendation, rationale,
+   champion-vs-AI table). Click **Save** to persist it as `ai_champion`.
 
-### 9.11.1 Mode A — Ollama (default, automated, $0)
+Endpoints: `POST /ai-champion/adjust` (preview, no write) and
+`POST /ai-champion/save` (persist); `GET /ai-champion/forecast?item_id&loc`
+returns the saved adjustment. Saves land under an `interactive` run in
+`ai_champion_run`.
 
-```bash
-# 1. Start the local Ollama server (OpenAI-compatible at :11434/v1)
-ollama serve            # leave running; or `brew services start ollama`
+### 9.11.1 Providers (keys read server-side from `.env`)
 
-# 2. Pull the model named in config (config/ai/ai_planner_fva_backtest_config.yaml)
-ollama pull qwen2.5:32b     # primary; llama3.1:8b for faster screening
+The UI sends only the provider *name*; the API key never leaves the server.
 
-# 3. Confirm the config selects Ollama (this is the default — no edit needed)
-#    provider: ollama
-#    keep_alive: 24h          # keeps the model resident across a long backtest
+| Provider | Key | Cost |
+|---|---|---|
+| **Ollama** (default) | none (local) | $0 — `ollama serve` + `ollama pull llama3.1:8b` |
+| **Google Gemini** | `GOOGLE_API_KEY` | metered (Gemini OpenAI-compatible endpoint) |
+| **Anthropic (Opus)** | `ANTHROPIC_API_KEY` | metered |
+| **OpenAI (GPT-4o)** | `OPENAI_API_KEY` | metered |
 
-# 4. Run the backtest (API or CLI per spec §6 / §12). It runs unattended at $0.
-```
+> ⚠ **Cost reality.** The anthropic/google/openai paths bill their respective
+> APIs per token. A Claude Code Pro/Max subscription covers only the Claude Code
+> CLI — **not** programmatic API calls. Use **Ollama** for $0 runs; the metered
+> providers are one click and one DFU at a time, so spend is naturally bounded.
 
-Verify the pre-flight cost estimate reads `$0.00` (driven by
-`cost_controls.per_call_estimated_cost_usd.ollama: 0.0`). Use Mode A for **all**
-volume iteration — prompt tuning, schema debugging, methodology sweeps.
-
-### 9.11.2 Mode B — Manual Opus spot-check via Claude Code (interactive, $0)
-
-Use this to decide **"is real Opus materially better than Ollama on these DFUs, i.e.
-worth paying the API for?"** before committing budget to an `anthropic` run. It is a
-hand-driven comparison on a **small sample** (≈5–20 DFUs), not a backtest run.
-
-1. **Pick a representative sample** — a few DFUs per stratum (cluster / demand
-   pattern / volume tier) where Ollama's recommendation looked weak or borderline.
-2. **Get the exact prompt for each DFU.** Reuse the prompt the backtest already
-   sends — the simplest source is the `ai_planner_audit_log` row (or
-   `ai_response_raw` capture) for that DFU from a prior Mode A run, which stores the
-   full rendered context. Copy that prompt verbatim.
-3. **Run it interactively in Claude Code.** Open a Claude Code session (Opus),
-   paste the prompt, and read back the JSON recommendation. One DFU at a time, by
-   hand — this is the compliance boundary.
-4. **Record the result** into `usertestinputs/cycleN/capture-dump.json` (the
-   capture file this workflow already uses), tagged by `item_id` + `loc` so it lines
-   up with the Ollama output for the same DFU.
-5. **Compare** Opus vs Ollama recommendations side by side (KEEP/adjust, confidence,
-   evidence quality). If Opus is clearly better on enough of the sample, proceed to
-   §9.11.3; if not, stay on Ollama and save the spend.
-
-### 9.11.3 Full Opus-vs-Ollama comparison run (metered API)
-
-To run the **entire** backtest through Claude and compare its FVA against Ollama,
-use the API. A full automated run **cannot** use Mode B / the subscription (Consumer
-Terms forbid automated access except via an API key), so the Claude side runs on
-`provider: anthropic`. This is also the exact production code path.
-
-```bash
-# 1. Run the Ollama side first (Mode A, §9.11.1) over the stratified sample — $0.
-#    Note the scan_run_id; this is the baseline to compare against.
-
-# 2. Set the key for the Claude side
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# 3. In config/ai/ai_planner_fva_backtest_config.yaml — Claude side, fair comparison:
-#    provider: anthropic
-#    models.anthropic: claude-opus-4-8     # current Opus (config still names 4-7 — bump it)
-#    hybrid_routing.enabled: false         # no screener — clean head-to-head vs Ollama
-#    sampling: <identical to the Ollama run>   # same DFUs, same prompt_version, same guardrails
-
-# 4. Bound the cost (backtests are non-latency-sensitive — both levers apply):
-#    - Batches API  → 50% discount
-#    - Prompt caching on the shared system/rubric prefix → up to ~90% off input tokens
-#    - per_run_max_cost_usd stays the hard stop; keep max_dfus at its cap
-
-# 5. Run the backtest, then compare the two scan_run_ids' FVA (WAPE uplift vs baseline,
-#    recommendation mix, confidence/evidence quality) on the FVA Backtest tab.
-```
-
-**Cost ballpark:** a stratified Opus run (`max_dfus` cap) is ~$1.1K direct, ~$0.5K
-with Batches, less again with caching — and is hard-capped by `per_run_max_cost_usd`.
-
-Tiering summary: **Ollama** = automated volume dev + the comparison baseline ($0);
-**manual Opus (Claude Code)** = interactive quality spot-checks only (§9.11.2);
-**`anthropic` API** = the full automated Opus-vs-Ollama comparison *and* production.
-Opus 4.8 is the quality benchmark; Sonnet 4.6 is the cheaper option for
-exploratory or screener-stage volume.
+To switch the local Ollama model to `qwen2.5:32b` (higher quality, slower), edit
+`models.ollama` in `config/ai/ai_champion_config.yaml`.

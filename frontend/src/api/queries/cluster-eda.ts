@@ -1,8 +1,12 @@
 /**
- * Cluster EDA — API types, query keys, and fetchers for cluster exploratory data analysis.
+ * Cluster EDA (Exploratory Data Analysis) — API types, query keys, and fetchers.
  *
- * NOTE: Fetchers normalise backend response shapes into the types below.
+ * Fetchers normalise backend response shapes into the frontend contract types.
+ * The `Raw*` interfaces mirror the actual FastAPI response shapes from
+ * `api/routers/forecasting/cluster_eda.py`.
  */
+
+import { fetchJson } from "./core";
 
 // --- Types (frontend contract) ---
 
@@ -46,6 +50,77 @@ export interface SeasonalityHeatmapResponse {
   rows: SeasonalityHeatmapRow[];
 }
 
+// --- Raw wire shapes (mirror api/routers/forecasting/cluster_eda.py) ---
+
+/** One row from GET /cluster-eda/profile `clusters[]`. */
+interface RawProfileCluster {
+  ml_cluster: number;
+  n_dfus: number;
+  mean_demand: number | null;
+  cv_demand: number | null;
+  zero_pct: number | null;
+  overall_mean: number | null;
+  demand_std: number | null;
+  accuracy_pct: number | null;
+  wape: number | null;
+}
+
+interface RawProfileResponse {
+  clusters: RawProfileCluster[];
+  warning: string | null;
+}
+
+/** GET /cluster-eda/error-concentration. */
+interface RawErrorConcentrationResponse {
+  top_error_dfus: { top_10pct_share: number | null; top_20pct_share: number | null };
+  error_by_month: Array<{ month: number; wape: number | null; bias: number | null }>;
+  error_by_cluster: Array<{
+    cluster: number;
+    wape: number | null;
+    bias: number | null;
+    share_of_total_error: number | null;
+  }>;
+  error_by_abc: Array<{ abc_class: string; wape: number | null; bias: number | null }>;
+  warning: string | null;
+}
+
+/** GET /cluster-eda/demand-distribution/{cluster_id}. */
+interface RawDistributionResponse {
+  cluster_id: number;
+  n_dfus: number;
+  histogram: Array<{ bucket: string; count: number }>;
+  percentiles: Record<string, number | null>;
+  top_dfus: Array<{ sku_ck: string; mean_demand: number | null; cv: number | null }>;
+  warning: string | null;
+}
+
+/** GET /cluster-eda/residual-analysis. */
+interface RawResidualResponse {
+  residual_stats: {
+    mean: number | null;
+    std: number | null;
+    skew: number | null;
+    kurtosis: number | null;
+  };
+  residual_by_horizon: Array<{ lag: number; mean_error: number | null; rmse: number | null }>;
+  worst_dfus: Array<{
+    sku_ck: string;
+    mean_abs_error: number | null;
+    bias: number | null;
+    cluster: number;
+  }>;
+  bias_by_cluster: Array<{ cluster: number; bias: number | null; direction: string }>;
+  warning: string | null;
+}
+
+/** GET /cluster-eda/seasonality-heatmap — month numbers, cluster ids, and a values matrix. */
+interface RawSeasonalityResponse {
+  clusters: number[];
+  months: number[];
+  values: Array<Array<number | null>>;
+  warning?: string;
+}
+
 // --- Query keys ---
 
 export const clusterEdaKeys = {
@@ -57,58 +132,67 @@ export const clusterEdaKeys = {
   seasonalityHeatmap: () => [...clusterEdaKeys.all, "seasonality-heatmap"] as const,
 };
 
+// --- Helpers ---
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+function monthLabel(monthNum: number): string {
+  return MONTH_LABELS[monthNum - 1] ?? String(monthNum);
+}
+
+/** Parse a backend histogram bucket label ("0", "1-10", "1000+") into numeric bounds. */
+function parseBucket(bucket: string): { start: number; end: number } {
+  if (bucket.endsWith("+")) {
+    const start = Number(bucket.slice(0, -1));
+    return { start, end: start };
+  }
+  const dash = bucket.indexOf("-");
+  if (dash === -1) {
+    const value = Number(bucket);
+    return { start: value, end: value };
+  }
+  return { start: Number(bucket.slice(0, dash)), end: Number(bucket.slice(dash + 1)) };
+}
+
 // --- Fetchers ---
 
 export async function fetchClusterProfile(): Promise<{ rows: ClusterProfileRow[] }> {
-  const res = await fetch("/cluster-eda/profile");
-  if (!res.ok) throw new Error(`fetchClusterProfile: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
-  // API returns {clusters: [...]} or {rows: [...]}
-  const rows: ClusterProfileRow[] = (raw.rows ?? raw.clusters ?? []).map(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (r: any) => ({
-      cluster: r.cluster ?? r.ml_cluster ?? 0,
-      n_dfus: r.n_dfus ?? 0,
-      mean_demand: r.mean_demand ?? 0,
-      cv: r.cv ?? r.cv_demand ?? 0,
-      zero_pct: r.zero_pct ?? r.zero_demand_pct ?? 0,
-      seasonal_amplitude: r.seasonal_amplitude ?? 0,
-      accuracy_pct: r.accuracy_pct ?? null,
-    }),
-  );
+  const raw = await fetchJson<RawProfileResponse>("/cluster-eda/profile");
+  const rows: ClusterProfileRow[] = (raw.clusters ?? []).map((r) => ({
+    cluster: r.ml_cluster ?? 0,
+    n_dfus: r.n_dfus ?? 0,
+    mean_demand: r.mean_demand ?? 0,
+    cv: r.cv_demand ?? 0,
+    zero_pct: r.zero_pct ?? 0,
+    // The profile endpoint does not expose seasonal amplitude; surfaced as 0
+    // until a dedicated seasonality column is added to the response.
+    seasonal_amplitude: 0,
+    accuracy_pct: r.accuracy_pct,
+  }));
   return { rows };
 }
 
 export async function fetchErrorConcentration(): Promise<ErrorConcentration> {
-  const res = await fetch("/cluster-eda/error-concentration");
-  if (!res.ok) throw new Error(`fetchErrorConcentration: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
+  const raw = await fetchJson<RawErrorConcentrationResponse>("/cluster-eda/error-concentration");
 
-  // API returns {top_error_dfus: {top_10pct_share}, error_by_month: [...], error_by_cluster: [...]}
-  const topShare =
-    raw.top_10_pct_share ??
-    raw.top_error_dfus?.top_10pct_share ??
-    raw.top_error_dfus?.top_10_pct_share ??
-    0;
+  const topShare = raw.top_error_dfus?.top_10pct_share ?? 0;
 
-  const worst_months = (raw.worst_months ?? raw.error_by_month ?? []).map(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (m: any) => ({
-      month: m.month ?? "",
-      error_share: m.error_share ?? m.wape ?? 0,
-    }),
-  );
+  // The backend reports WAPE per month/cluster; rank descending so "worst" first.
+  const worst_months = (raw.error_by_month ?? [])
+    .map((m) => ({ month: monthLabel(m.month), error_share: m.wape ?? 0 }))
+    .sort((a, b) => b.error_share - a.error_share);
 
-  const worst_clusters = (raw.worst_clusters ?? raw.error_by_cluster ?? []).map(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (c: any) => ({
-      cluster: c.cluster ?? c.ml_cluster ?? 0,
-      error_share: c.error_share ?? c.wape ?? 0,
-      n_dfus: c.n_dfus ?? 0,
-    }),
-  );
+  const worst_clusters = (raw.error_by_cluster ?? [])
+    .map((c) => ({
+      cluster: c.cluster ?? 0,
+      error_share: c.wape ?? 0,
+      // The error-by-cluster aggregation does not return a DFU count.
+      n_dfus: 0,
+    }))
+    .sort((a, b) => b.error_share - a.error_share);
 
   return { top_10_pct_share: topShare, worst_months, worst_clusters };
 }
@@ -116,47 +200,41 @@ export async function fetchErrorConcentration(): Promise<ErrorConcentration> {
 export async function fetchClusterDistribution(
   id: number,
 ): Promise<{ cluster: number; bins: ClusterDistributionBin[] }> {
-  const res = await fetch(`/cluster-eda/demand-distribution/${id}`);
-  if (!res.ok) throw new Error(`fetchClusterDistribution: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
-  return {
-    cluster: raw.cluster ?? id,
-    bins: raw.bins ?? [],
-  };
+  const raw = await fetchJson<RawDistributionResponse>(`/cluster-eda/demand-distribution/${id}`);
+  const bins: ClusterDistributionBin[] = (raw.histogram ?? []).map((h) => {
+    const { start, end } = parseBucket(h.bucket);
+    return { bin_start: start, bin_end: end, count: h.count };
+  });
+  return { cluster: raw.cluster_id ?? id, bins };
 }
 
 export async function fetchResidualAnalysis(
   modelId = "lgbm_cluster",
 ): Promise<{ model_id: string; clusters: ResidualPoint[] }> {
-  const res = await fetch(`/cluster-eda/residual-analysis?model_id=${modelId}`);
-  if (!res.ok) throw new Error(`fetchResidualAnalysis: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
-  return {
-    model_id: raw.model_id ?? modelId,
-    clusters: raw.clusters ?? [],
-  };
+  const raw = await fetchJson<RawResidualResponse>(
+    `/cluster-eda/residual-analysis?model_id=${modelId}`,
+  );
+  // The endpoint returns per-cluster bias and a single residual-stats summary;
+  // project them onto the per-cluster residual contract.
+  const stats = raw.residual_stats ?? { mean: null, std: null, skew: null, kurtosis: null };
+  const clusters: ResidualPoint[] = (raw.bias_by_cluster ?? []).map((c) => ({
+    cluster: c.cluster ?? 0,
+    mean_residual: c.bias ?? 0,
+    std_residual: stats.std ?? 0,
+    skew: stats.skew ?? 0,
+    n_dfus: 0,
+  }));
+  return { model_id: modelId, clusters };
 }
 
 export async function fetchSeasonalityHeatmap(): Promise<SeasonalityHeatmapResponse> {
-  const res = await fetch("/cluster-eda/seasonality-heatmap");
-  if (!res.ok) throw new Error(`fetchSeasonalityHeatmap: ${res.status}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await res.json();
+  const raw = await fetchJson<RawSeasonalityResponse>("/cluster-eda/seasonality-heatmap");
 
-  // API returns {clusters: number[], months: string[], values: number[][]}
-  const months: string[] = raw.months ?? [];
-  let rows: SeasonalityHeatmapRow[] = [];
-
-  if (Array.isArray(raw.rows)) {
-    rows = raw.rows;
-  } else if (Array.isArray(raw.clusters) && Array.isArray(raw.values)) {
-    rows = raw.clusters.map((clusterId: number, idx: number) => ({
-      cluster: clusterId,
-      values: raw.values[idx] ?? [],
-    }));
-  }
+  const months: string[] = (raw.months ?? []).map((m) => monthLabel(m));
+  const rows: SeasonalityHeatmapRow[] = (raw.clusters ?? []).map((clusterId, idx) => ({
+    cluster: clusterId,
+    values: (raw.values[idx] ?? []).map((v) => v ?? 0),
+  }));
 
   return { months, rows };
 }

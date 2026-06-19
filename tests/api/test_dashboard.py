@@ -893,3 +893,59 @@ async def test_customer_map_zip_fallback_to_state_centroid(mock_pool):
     # Falls back to CA state centroid
     assert abs(loc["lat"] - 36.12) < 0.1
     assert "lon" in loc
+
+
+# ===========================================================================
+# /dashboard/pipeline-readiness
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_flags_total_loss_of_clustering(mock_pool):
+    """Zero SKUs clustered -> a high-severity clustering check with a navigate action."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.return_value = (300_000, 0)  # total, clustered (none assigned)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/pipeline-readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    check = data["checks"][0]
+    assert check["stage"] == "clustering"
+    assert check["status"] == "stale"
+    assert check["severity"] == "high"
+    assert check["action"]["kind"] == "navigate"
+    assert check["action"]["target"] == "clusters"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_ready_when_active_skus_clustered(mock_pool):
+    """A healthy partial clustering (most SKUs inactive/NULL) is NOT stale."""
+    pool, _, cursor = mock_pool
+    # 300k total, only the ~13k active SKUs clustered — the normal healthy state.
+    cursor.fetchone.return_value = (300_000, 13_000)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/pipeline-readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is True
+    assert data["checks"] == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_ready_when_dim_sku_empty(mock_pool):
+    """No SKUs at all -> nothing to flag (not stale)."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.return_value = (0, 0)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/pipeline-readiness")
+    assert resp.status_code == 200
+    assert resp.json()["ready"] is True

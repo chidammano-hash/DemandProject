@@ -234,19 +234,26 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
           )}
           {isRunning || hasActiveRun ? "Backtest Running..." : "Run Backtest"}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => handleLoad(latestCompleted?.id)}
-          disabled={isLoading || hasActiveLoad || !latestCompleted}
-          className="gap-2"
-        >
-          {isLoading || hasActiveLoad ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Database className="h-4 w-4" />
-          )}
-          {isLoading || hasActiveLoad ? "Loading to DB..." : "Load to DB"}
-        </Button>
+        {/* Backtests auto-load into the DB on completion, so the manual Load is
+            a recovery affordance only — shown when a completed run never loaded
+            (e.g. the best-effort auto-load failed). */}
+        {((isLoading || hasActiveLoad) ||
+          (latestCompleted && !latestCompleted.is_loaded_to_db)) && (
+          <Button
+            variant="outline"
+            onClick={() => handleLoad(latestCompleted?.id)}
+            disabled={isLoading || hasActiveLoad || !latestCompleted}
+            title="Backtests load into the database automatically on completion. Use this only if the automatic load didn't run."
+            className="gap-2"
+          >
+            {isLoading || hasActiveLoad ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Database className="h-4 w-4" />
+            )}
+            {isLoading || hasActiveLoad ? "Loading to DB..." : "Load to DB"}
+          </Button>
+        )}
       </div>
 
       {/* Run history table */}

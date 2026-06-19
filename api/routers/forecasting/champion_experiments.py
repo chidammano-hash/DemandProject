@@ -11,7 +11,6 @@ import copy
 import json
 import logging
 import shutil
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -21,8 +20,9 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
-from common.ml.champion import STRATEGY_REGISTRY as _STRAT_REG
+from common.core.sql_helpers import parse_db_json as _parse_json
 from common.core.utils import reset_config
+from common.ml.champion import STRATEGY_REGISTRY as _STRAT_REG
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ router = APIRouter(prefix="/champion-experiments", tags=["champion-experiments"]
 # ---------------------------------------------------------------------------
 
 from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
+
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "champion_experiment_templates.yaml"
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
@@ -88,18 +89,6 @@ class CreateChampionExperimentBody(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _parse_json(val: Any) -> Any:
-    """Parse JSON from a DB value that may be a string, dict, list, or None."""
-    if val is None:
-        return None
-    if isinstance(val, (dict, list)):
-        return val
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError):
-        return val
-
 
 _SELECT_COLS = """
     experiment_id, label, notes, template_id, status,

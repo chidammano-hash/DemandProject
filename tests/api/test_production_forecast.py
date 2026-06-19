@@ -311,3 +311,56 @@ async def test_dfu_promoted_run_null_when_no_promoted():
     assert resp.status_code == 200
     data = resp.json()
     assert data["promoted_run"] is None
+
+
+# ---------------------------------------------------------------------------
+# /forecast/candidate — per-model backtest (past, out-of-sample) predictions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_candidate_groups_by_model():
+    """GET /forecast/candidate groups rows by model_id with forecast + actual."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        # model_id, forecast_month, forecast_qty, lower, upper,
+        # actual_qty, accuracy_pct, wape, bias, horizon_months, cluster_id
+        ("lgbm_cluster", datetime.date(2025, 1, 1), 100.0, 90.0, 110.0, 105.0, 95.2, 4.8, -0.05, 1, "c1"),
+        ("lgbm_cluster", datetime.date(2025, 2, 1), 120.0, 108.0, 132.0, 118.0, 96.0, 4.0, 0.02, 1, "c1"),
+        ("seasonal_naive", datetime.date(2025, 1, 1), 80.0, None, None, 105.0, 76.0, 24.0, -0.24, 1, None),
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/forecast/candidate?item_id=100320&loc=1401-BULK")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["item_id"] == "100320"
+    assert data["loc"] == "1401-BULK"
+    assert set(data["models"].keys()) == {"lgbm_cluster", "seasonal_naive"}
+    lgbm = data["models"]["lgbm_cluster"]
+    assert len(lgbm) == 2
+    assert lgbm[0]["forecast_qty"] == 100.0
+    assert lgbm[0]["actual_qty"] == 105.0
+    assert lgbm[0]["accuracy_pct"] == 95.2
+    # Null CI bounds survive as None (not 0).
+    assert data["models"]["seasonal_naive"][0]["forecast_qty_lower"] is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_table_missing_returns_empty():
+    """A missing fact_candidate_forecast table degrades to empty models (clean install)."""
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.UndefinedTable("relation does not exist")
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/forecast/candidate?item_id=X&loc=Y")
+
+    assert resp.status_code == 200
+    assert resp.json()["models"] == {}

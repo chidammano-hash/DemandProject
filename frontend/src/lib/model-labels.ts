@@ -29,3 +29,24 @@ export const MODEL_TYPE_COLORS: Record<string, string> = {
 export function modelLabel(id: string): string {
   return MODEL_LABELS[id] || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
+
+/** Format the champion line/tooltip label from its blend mix or single source.
+ *
+ * - With a blend mix → "champion (40% NBEATS, 35% LGBM, 25% Chronos)" (sorted desc).
+ * - Else with a single source model → "champion (N-BEATS)".
+ * - Else → "champion".
+ */
+export function formatChampionLabel(
+  mix?: { model: string; weight: number }[] | null,
+  source?: string | null,
+): string {
+  if (Array.isArray(mix) && mix.length > 0) {
+    const parts = mix
+      .slice()
+      .sort((a, b) => b.weight - a.weight)
+      .map((m) => `${Math.round(m.weight * 100)}% ${modelLabel(m.model)}`);
+    return `champion (${parts.join(", ")})`;
+  }
+  if (source) return `champion (${modelLabel(source)})`;
+  return "champion";
+}

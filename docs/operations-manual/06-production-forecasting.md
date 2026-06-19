@@ -197,6 +197,33 @@ All four scripts share the same date semantics via `common.planning_date.get_pla
 
 ---
 
+## 5b. Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
+
+Run **after** the production forecast exists (Section 2 generate + promote). This step computes a forward-looking replenishment plan — forward safety stock, EOQ, and order quantities — driven by the **CI-band** production forecasts. Output lands in `fact_replenishment_plan`.
+
+```bash
+make replplan-compute        # Compute 12-month replenishment plan → fact_replenishment_plan
+# preview without writing:
+make replplan-compute-dry
+```
+
+Schema bootstrap and full pipeline:
+
+```bash
+make replplan-schema         # apply sql/041_create_replenishment_plan.sql
+make replplan-all            # replplan-schema + replplan-compute (full pipeline)
+```
+
+Script: `scripts/inventory/compute_replenishment_plan.py` (`Makefile:1159-1165`).
+
+**Dependency chain for `make replplan-compute`:**
+
+1. `fact_production_forecast` must have rows (from Section 2 generate + promote)
+2. `fact_safety_stock_targets` must have rows (`make ss-compute`)
+3. `fact_eoq_targets` must have rows (`make eoq-compute`)
+
+---
+
 ## 6. Tree-Only Production Training Endpoint
 
 ```
@@ -392,6 +419,8 @@ ORDER BY src, forecast_month;
 | Active promotion | `curl -s "$BASE/backtest-management/promotion-status"` |
 | Staging summary | `curl -s "$BASE/backtest-management/staging-summary"` |
 | Candidate summary | `curl -s "$BASE/backtest-management/candidate-summary"` |
+| Replenishment plan (CI bands) | `make replplan-compute` |
+| Replenishment plan dry-run | `make replplan-compute-dry` |
 | Quantile forecasts | `make quantile-train VERSION=$(date +%Y-%m)` |
 | Blended forecast | `make blended-all` |
 | Consensus plan | `make consensus-generate VERSION=$(date +%Y-%m)` |

@@ -320,4 +320,4 @@ The profiler does not create database tables. All output is written to local fil
 
 - [01-infrastructure](01-infrastructure.md) -- Platform overview and implemented features list
 - [04-planning-date](04-planning-date.md) -- Configurable date used in profiled pipeline runs
-- [../../PLATFORM_GUIDE.md](../../PLATFORM_GUIDE.md) -- Quick start and feature summary
+- [../../ARCHITECTURE.md](../../ARCHITECTURE.md) -- Quick start and feature summary

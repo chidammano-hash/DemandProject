@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { buildQuerySuffix } from "./helpers";
+import { fetchJson } from "./core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,19 +111,6 @@ export interface MatrixDrillData {
 export type WorkbenchGrain = "item" | "item_loc" | "item_loc_customer";
 export type MatrixDim = "item" | "location" | "customer";
 export type MatrixMetric = "demand_qty" | "sales_qty" | "fill_rate";
-
-// ---------------------------------------------------------------------------
-// Fetch helpers
-// ---------------------------------------------------------------------------
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
 
 // ---------------------------------------------------------------------------
 // Query keys

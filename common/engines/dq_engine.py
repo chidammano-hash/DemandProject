@@ -8,7 +8,7 @@ import json
 import logging
 
 from common.core.db import get_db_params
-from common.core.utils import load_config, reset_config
+from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,6 @@ _CONFIG_NAME = "data_quality_config.yaml"
 def _load_config() -> dict:
     return load_config(_CONFIG_NAME)
 
-
-def _reset_config():
-    reset_config(_CONFIG_NAME)
 
 
 # ---------------------------------------------------------------------------

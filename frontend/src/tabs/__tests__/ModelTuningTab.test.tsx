@@ -88,6 +88,12 @@ vi.mock("@/api/queries", () => ({
   queryKeys: {},
 }));
 
+// The dependency-readiness banner self-fetches; stub it out — its own behaviour
+// is covered by PipelineReadinessBanner.test.tsx.
+vi.mock("@/components/PipelineReadinessBanner", () => ({
+  PipelineReadinessBanner: () => null,
+}));
+
 // ---------------------------------------------------------------------------
 // Mock @/hooks/useChartColors
 // ---------------------------------------------------------------------------

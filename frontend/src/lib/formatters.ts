@@ -95,6 +95,18 @@ export function formatCurrency(value: number | null | undefined): string {
 }
 
 /**
+ * Format a nullable number as USD currency with the full (non-compact) value and
+ * thousands separators, no decimals (e.g. 1234567 → "$1,234,567"); "—" for
+ * null/undefined/NaN. Use this where the exact dollar amount matters; use
+ * `formatCurrency` for the compact "$1.2M" style. Consolidates three identical
+ * inline `fmtCurrency` definitions (storyboard, ai-planner, scenario-planning).
+ */
+export function formatCurrencyFull(value: number | null | undefined): string {
+  if (value == null || isNaN(value as number)) return "—";
+  return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+/**
  * Format a number as compact K/M (e.g. 1234567 → "1.2M", 12345 → "12.3K").
  * Intentionally uses our own thresholds rather than `Intl.NumberFormat`
  * compact notation — Intl rounds more aggressively (12345 → "12K" vs our

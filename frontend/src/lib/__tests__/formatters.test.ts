@@ -6,6 +6,7 @@ import {
   formatCell,
   formatDate,
   titleCase,
+  formatCurrencyFull,
 } from "@/lib/formatters";
 
 describe("formatNumber", () => {
@@ -165,6 +166,26 @@ describe("formatDate", () => {
 
   it("returns '—' for an unparseable value rather than 'Invalid Date'", () => {
     expect(formatDate("not-a-date")).toBe("—");
+  });
+});
+
+describe("formatCurrencyFull", () => {
+  it("formats with a dollar sign and thousands separators, no decimals", () => {
+    expect(formatCurrencyFull(1234567)).toBe("$1,234,567");
+  });
+
+  it("rounds away fractional cents (maximumFractionDigits: 0)", () => {
+    expect(formatCurrencyFull(1234.56)).toBe("$1,235");
+  });
+
+  it("formats zero as '$0'", () => {
+    expect(formatCurrencyFull(0)).toBe("$0");
+  });
+
+  it("returns '—' for null/undefined/NaN", () => {
+    expect(formatCurrencyFull(null)).toBe("—");
+    expect(formatCurrencyFull(undefined)).toBe("—");
+    expect(formatCurrencyFull(NaN)).toBe("—");
   });
 });
 

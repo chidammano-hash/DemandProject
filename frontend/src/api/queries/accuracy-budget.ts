@@ -4,6 +4,8 @@
  *          /monthly-trend, /forecast-value
  */
 
+import { fetchJson } from "./core";
+
 // ---------------------------------------------------------------------------
 // Types — match actual API response shapes
 // ---------------------------------------------------------------------------
@@ -90,28 +92,25 @@ export const accuracyBudgetKeys = {
 export async function fetchAccuracyDecomposition(
   modelId = "lgbm_cluster",
 ): Promise<DecompositionResponse> {
-  const res = await fetch(
+  return fetchJson<DecompositionResponse>(
     `/accuracy-budget/decomposition?model_id=${encodeURIComponent(modelId)}`,
   );
-  if (!res.ok) throw new Error(`fetchAccuracyDecomposition: ${res.status}`);
-  return res.json();
 }
 
 export async function fetchAbcBreakdown(): Promise<{
   classes: AbcBreakdownRow[];
 }> {
-  const res = await fetch("/accuracy-budget/abc-breakdown");
-  if (!res.ok) throw new Error(`fetchAbcBreakdown: ${res.status}`);
-  return res.json();
+  return fetchJson<{ classes: AbcBreakdownRow[] }>("/accuracy-budget/abc-breakdown");
 }
 
 export async function fetchModelComparison(): Promise<{
   models: ModelComparisonRow[];
   oracle_ceiling: { accuracy: number; wape: number } | null;
 }> {
-  const res = await fetch("/accuracy-budget/model-comparison");
-  if (!res.ok) throw new Error(`fetchModelComparison: ${res.status}`);
-  return res.json();
+  return fetchJson<{
+    models: ModelComparisonRow[];
+    oracle_ceiling: { accuracy: number; wape: number } | null;
+  }>("/accuracy-budget/model-comparison");
 }
 
 export async function fetchMonthlyTrend(): Promise<{
@@ -119,9 +118,11 @@ export async function fetchMonthlyTrend(): Promise<{
   worst_month: MonthlyTrendPoint | null;
   best_month: MonthlyTrendPoint | null;
 }> {
-  const res = await fetch("/accuracy-budget/monthly-trend");
-  if (!res.ok) throw new Error(`fetchMonthlyTrend: ${res.status}`);
-  return res.json();
+  return fetchJson<{
+    months: MonthlyTrendPoint[];
+    worst_month: MonthlyTrendPoint | null;
+    best_month: MonthlyTrendPoint | null;
+  }>("/accuracy-budget/monthly-trend");
 }
 
 export async function fetchForecastValue(): Promise<{
@@ -129,7 +130,9 @@ export async function fetchForecastValue(): Promise<{
   ml_model: { name: string; accuracy: number | null; wape: number | null } | null;
   value_added: Record<string, number | null> | null;
 }> {
-  const res = await fetch("/accuracy-budget/forecast-value");
-  if (!res.ok) throw new Error(`fetchForecastValue: ${res.status}`);
-  return res.json();
+  return fetchJson<{
+    baselines: ForecastValueBaseline[];
+    ml_model: { name: string; accuracy: number | null; wape: number | null } | null;
+    value_added: Record<string, number | null> | null;
+  }>("/accuracy-budget/forecast-value");
 }

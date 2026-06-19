@@ -1,6 +1,10 @@
 SHELL := /bin/zsh
 
 DC := docker compose
+# Put the project root on PYTHONPATH so any `python scripts/<domain>/<x>.py` can
+# `import common` regardless of the script's own sys.path bootstrap (scripts moved
+# into domain subdirs during the restructure left some bootstraps one level short).
+export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 UV := uv run
 POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
@@ -463,19 +467,19 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset purchase_order
 	$(UV) python scripts/etl/load_customer_demand_postgres.py --replace
 	$(MAKE) refresh-agg
+	$(MAKE) db-analyze  # refresh planner statistics after bulk load — without this the planner seq-scans (slow even at small scale)
 
 refresh-agg-sales:
-	# CONCURRENTLY safe: uq_agg_sales_item_loc_month (sql/119) is the required unique index.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly;" >/dev/null
+	# CONCURRENTLY when populated (unique idx uq_agg_sales_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_sales_monthly;" >/dev/null
 
 refresh-agg-forecast:
-	# CONCURRENTLY safe: uq_agg_forecast_item_loc_month_model (sql/119) is the required unique index.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly;" >/dev/null
+	# CONCURRENTLY when populated (unique idx uq_agg_forecast_item_loc_month_model, sql/119); plain refresh on first run when the MV is not yet populated.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
 
 refresh-agg-inventory:
-	# CONCURRENTLY safe: uq_agg_inv_item_loc_month (sql/119) is the required unique index.
-	$(PSQL) \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;"
+	# CONCURRENTLY when populated (unique idx uq_agg_inv_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_inventory_monthly;" >/dev/null
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
@@ -691,6 +695,18 @@ backtest-load-bolt:
 
 backtest-bolt-full: backtest-bolt backtest-load-bolt
 
+# Fine-tuned Chronos-Bolt (spec 32): fine-tune first, then backtest the post-cutoff holdout.
+finetune-chronos-bolt:
+	$(UV) python scripts/ml/finetune_chronos_bolt.py $(ARGS)
+
+backtest-bolt-ft:
+	$(UV) python -m scripts.ml.run_backtest_chronos_bolt_ft
+
+backtest-load-bolt-ft:
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos_bolt_ft --replace
+
+backtest-bolt-ft-full: backtest-bolt-ft backtest-load-bolt-ft
+
 backtest-bolt-hier:
 	$(UV) python -m scripts.ml.run_backtest_bolt_hierarchical
 
@@ -841,10 +857,10 @@ forecast-clean-list:
 
 accuracy-slice-refresh:
 	# CONCURRENTLY safe: uq_agg_accuracy_dim, uq_agg_accuracy_lag_archive,
-	# uq_dfu_coverage_model_lag_dfu, and uq_dfu_coverage_lag_archive (sql/119)
-	# back the four MVs respectively.
+	# uq_dfu_coverage_model_lag_dfu, uq_dfu_coverage_lag_archive (sql/119) and
+	# uq_agg_accuracy_by_dfu (sql/193) back the five MVs respectively.
 	$(PSQL) -v ON_ERROR_STOP=1 \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive;"
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive;"
 
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
@@ -966,25 +982,8 @@ expsys-backtest-dry:     ## ExpSys accuracy only — no DB loading (--skip-load)
 expsys-backtest-replace: ## ExpSys: delete existing rows first, then reload
 	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --replace
 
-# ── AI Planner FVA Backtest (PRD 02-27) — defaults to Ollama (local, free) ────
-# As-of dates default to the latest values supported by this DB's external
-# forecast coverage (2025-03 → 2026-02). Override on the command line, e.g.
-#   make ai-fva-backtest-smoke FVA_AS_OF=2025-10-01
-# When the source-system forecast feed is refreshed, bump these defaults.
-FVA_AS_OF_SMOKE ?= 2025-11-01
-FVA_AS_OF_FULL  ?= 2025-12-01
-
-ai-fva-backtest-smoke:    ## AI FVA backtest smoke run: 50 DFUs, 3 months, Ollama (~5 min)
-	$(UV) python -m scripts.forecasting.run_ai_fva_backtest \
-		--as-of-date $(FVA_AS_OF_SMOKE) --window-months 3 --limit-dfus 50 --skip-mvs
-
-ai-fva-backtest:          ## AI FVA backtest: full 10-month walk-forward, default sample
-	$(UV) python -m scripts.forecasting.run_ai_fva_backtest \
-		--as-of-date $(FVA_AS_OF_FULL) --window-months 10
-
-ai-fva-backtest-dry:      ## AI FVA backtest dry-run: prints plan + cost estimate, no LLM/DB calls
-	$(UV) python -m scripts.forecasting.run_ai_fva_backtest \
-		--as-of-date $(FVA_AS_OF_FULL) --window-months 10 --dry-run
+# AI Champion is interactive-only (per-DFU "AI Adjust" button on the Item Analysis
+# tab → POST /ai-champion/adjust + /save). No batch Make target by design.
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
@@ -1578,7 +1577,11 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE fact_rebalancing_plan CASCADE;' \
 	  'TRUNCATE TABLE backtest_lag_archive CASCADE;' \
 	  'TRUNCATE TABLE fact_external_forecast_monthly CASCADE;' \
+	  'TRUNCATE TABLE fact_candidate_forecast CASCADE;' \
+	  'TRUNCATE TABLE fact_production_forecast_staging CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
+	  'TRUNCATE TABLE fact_ai_champion_forecast CASCADE;' \
+	  'TRUNCATE TABLE ai_champion_run CASCADE;' \
 	  'TRUNCATE TABLE fact_blended_demand_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_plan_weekly CASCADE;' \
@@ -1632,9 +1635,19 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE lgbm_tuning_cluster CASCADE;' \
 	  'TRUNCATE TABLE lgbm_tuning_timeframe CASCADE;' \
 	  'TRUNCATE TABLE lgbm_tuning_run CASCADE;' \
+	  'TRUNCATE TABLE backtest_run CASCADE;' \
+	  'TRUNCATE TABLE cluster_tuning_profile_state CASCADE;' \
 	  'TRUNCATE TABLE cluster_experiment_comparison CASCADE;' \
 	  'TRUNCATE TABLE cluster_experiment CASCADE;' \
 	  'TRUNCATE TABLE champion_experiment CASCADE;' \
+	  'TRUNCATE TABLE champion_experiment_lag CASCADE;' \
+	  'TRUNCATE TABLE champion_experiment_month CASCADE;' \
+	  'TRUNCATE TABLE champion_promotion_log CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_backtest CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_algorithm_comparison CASCADE;' \
+	  'TRUNCATE TABLE fact_dfu_policy_assignment CASCADE;' \
+	  'TRUNCATE TABLE fact_exception_lifecycle CASCADE;' \
+	  'TRUNCATE TABLE fact_lineage_event CASCADE;' \
 	  'TRUNCATE TABLE dim_sku CASCADE;' \
 	  'TRUNCATE TABLE dim_item CASCADE;' \
 	  'TRUNCATE TABLE dim_location CASCADE;' \
@@ -1649,11 +1662,9 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	@echo "✓ Reset complete. Configuration masters preserved."
 
 clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
-	rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
-	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/ data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
-	rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
-	rm -rf data/clustering/ data/champion/ data/models/
+	find data/staged -maxdepth 1 -name '*_clean.csv' -delete 2>/dev/null || true  # find: zsh (SHELL := /bin/zsh) aborts a recipe on a no-match glob; find no-ops cleanly
 	rm -f data/staged/seasonality_results.csv data/staged/clustering_features.csv
+	rm -rf data/backtest data/tuning data/perf_reports data/clustering data/champion data/models  # whole generated dirs (no glob); recreated by the pipeline
 	@echo "✓ Intermediate artifacts cleaned."
 
 refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers, auto-detects first run)
@@ -1662,7 +1673,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	  agg_sales_monthly agg_forecast_monthly agg_inventory_monthly \
 	  mv_inventory_forecast_monthly mv_fill_rate_monthly mv_intramonth_stockout \
 	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
-	  agg_accuracy_by_dim agg_dfu_coverage \
+	  agg_accuracy_by_dim agg_accuracy_by_dfu agg_dfu_coverage \
 	  mv_inventory_health_score mv_control_tower_kpis \
 	  mv_integrated_planning_targets \
 	  mv_customer_activity_monthly \
@@ -1677,6 +1688,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest load)
 	$(PSQL) -v ON_ERROR_STOP=1 -c " \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; \
+	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive; \

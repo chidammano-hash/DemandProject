@@ -81,7 +81,15 @@ No dedicated config file. Accuracy formulas are defined in `common/services/metr
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column enables per-model accuracy
 - [Backtest Framework](./03-backtest-framework.md) -- populates `backtest_lag_archive` for lag curves
 - Clustering (in `03-demand-intelligence/`) -- provides `cluster_assignment` for slicing
-- [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md) -- provides `seasonality_profile` and `variability_class` for filtering
+- [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) -- provides `seasonality_profile` and `variability_class` for filtering
+
+## Probabilistic & weekly metrics
+
+Beyond point accuracy (WAPE / bias / accuracy%), the platform ships:
+
+- **CRPS + pinball loss** — `common/ml/crps.py` (`compute_crps`, `compute_pinball_loss`); selectable as the champion-selection metric via `champion.metric` in `forecast_pipeline_config.yaml` (currently `wape`; falls back to WAPE until quantile rows are guaranteed).
+- **FM quantile → safety-stock bridge** — `common/ml/fm_quantile_bridge.py` turns foundation-model quantile output into a demand distribution for downstream safety stock.
+- **Weekly granularity + rolling 13-week view** — `agg_sales_weekly` (`sql/150`) plus a rolling-13-week analytics endpoint.
 
 ## See Also
 

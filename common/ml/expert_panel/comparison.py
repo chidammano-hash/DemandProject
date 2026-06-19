@@ -588,7 +588,6 @@ def compute_portfolio_predictions(
         )
 
         missing_skus = routed.loc[missing_mask, "sku_ck"].unique()
-        missing_keys = routed.loc[missing_mask, ["sku_ck"]].drop_duplicates()
 
         # Demand-aware fallback: intermittent/erratic archetypes perform
         # catastrophically with seasonal_naive — prefer croston_sba → tsb →

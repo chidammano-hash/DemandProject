@@ -364,13 +364,22 @@ Heatmap cells: tooltip on hover "2,345 SKUs moved from [source] to [target]"
 ## Promotion & Downstream Impact
 
 `promote_scenario()` performs:
-1. Copy artifacts to `data/clustering/` (production location)
-2. Bulk UPDATE `dim_sku.ml_cluster` for all SKUs
-3. REFRESH MATERIALIZED VIEW CONCURRENTLY:
+1. Load per-SKU labels — from the working `cluster_labels.csv` if present, else from
+   the durable gzip copy on the experiment row (`cluster_experiment.cluster_labels_gz`,
+   sql/191), reconstructing the production CSV
+2. Copy artifacts to `data/clustering/` (production location)
+3. Bulk UPDATE `dim_sku.ml_cluster` for all SKUs
+4. REFRESH MATERIALIZED VIEW CONCURRENTLY:
    - `agg_accuracy_by_dim`
    - `agg_accuracy_lag_archive`
    - `agg_dfu_coverage`
    - `agg_dfu_coverage_lag_archive`
+
+**Durable re-promotion:** on completion, `store_durable_labels()` saves the per-SKU
+assignments (gzip) onto the experiment row, so any completed experiment can be
+re-promoted later without re-running clustering — even after the working
+`/tmp/clustering_scenarios/<id>/` artifacts are cleared. The promote endpoint rejects
+(409) an experiment that has no cluster results.
 
 ### Cluster Experiment Promotion
 
@@ -905,7 +914,7 @@ scikit-learn, pandas, numpy, scipy, matplotlib, seaborn, MLflow
 
 ## See Also
 
-- [02-sku-feature-engineering](../01-foundation/02-sku-feature-engineering.md) -- Seasonality detection + demand variability profiling (complementary demand pattern analysis)
+- [02-sku-feature-engineering](../03-demand-intelligence/02-sku-feature-engineering.md) -- Seasonality detection + demand variability profiling (complementary demand pattern analysis)
 - [../02-forecasting/06-algorithm-config](../02-forecasting/06-algorithm-config.md) -- `cluster_strategy` config key
 - [../07-user-experience/04-job-scheduler](../07-user-experience/04-job-scheduler.md) -- Background scenario execution
 - [../02-forecasting/11-unified-model-tuning-v2](../02-forecasting/11-unified-model-tuning-v2.md) -- Algorithm tuning studio (cluster source selector)

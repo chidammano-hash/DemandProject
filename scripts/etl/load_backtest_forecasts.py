@@ -456,6 +456,9 @@ def _load_one(
                 t1 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
                 logger.info(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
+                t1a = time.time()
+                cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dfu")
+                logger.info(f"    agg_accuracy_by_dfu refreshed ({time.time() - t1a:.1f}s)")
                 t2 = time.time()
                 cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
                 logger.info(f"    agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
@@ -570,7 +573,7 @@ Examples:
                     recreate_forecast_archive_indexes_and_constraints(cur)
             conn.commit()
 
-        main_mvs = ["agg_forecast_monthly", "agg_accuracy_by_dim", "agg_dfu_coverage"]
+        main_mvs = ["agg_forecast_monthly", "agg_accuracy_by_dim", "agg_accuracy_by_dfu", "agg_dfu_coverage"]
         archive_mvs = ["agg_accuracy_lag_archive", "agg_dfu_coverage_lag_archive"]
         mvs = []
         if load_main:

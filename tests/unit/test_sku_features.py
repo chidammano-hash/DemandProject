@@ -589,3 +589,38 @@ class TestClassifierIntegration:
                 features["zero_demand_pct"],
             )
             assert result == "erratic"
+
+
+# ---------------------------------------------------------------------------
+# run_pipeline 0-row guard (regression: a no-op write must not look successful)
+# ---------------------------------------------------------------------------
+
+class TestRunPipelineZeroRowGuard:
+    """A non-dry-run that stamps 0 dim_sku rows must raise, not report success."""
+
+    def _patch_pipeline(self, monkeypatch, tmp_path, updated: int):
+        import scripts.ml.compute_sku_features as csf
+
+        feature_df = pd.DataFrame({
+            "sku_ck": ["SKU-1"],
+            "seasonality_profile": ["non_seasonal"],
+            "variability_class": ["low"],
+        })
+        monkeypatch.setattr(csf, "get_db_params", lambda: {})
+        monkeypatch.setattr(csf, "load_sales_from_db", lambda **_: _make_sales_df([1.0, 2.0, 3.0]))
+        monkeypatch.setattr(csf, "compute_all_sku_features", lambda **_: feature_df)
+        monkeypatch.setattr(csf, "_apply_classifiers", lambda df, cfg: df)
+        monkeypatch.setattr(csf, "write_features_to_dim_sku", lambda **_: {"updated": updated})
+        monkeypatch.setattr(csf, "_CLUSTERING_FEATURES_CSV", tmp_path / "clustering_features.csv")
+        return csf
+
+    def test_raises_when_zero_rows_stamped(self, monkeypatch, tmp_path):
+        csf = self._patch_pipeline(monkeypatch, tmp_path, updated=0)
+        with pytest.raises(csf.NoFeaturesComputedError):
+            csf.run_pipeline()
+
+    def test_dry_run_does_not_raise_on_zero(self, monkeypatch, tmp_path):
+        csf = self._patch_pipeline(monkeypatch, tmp_path, updated=0)
+        # dry_run skips the write entirely — no stamping, so no guard trip.
+        result = csf.run_pipeline(dry_run=True)
+        assert result["skus_processed"] == 1

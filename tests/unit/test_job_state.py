@@ -247,3 +247,256 @@ class TestRunSubprocess:
 
         cb.assert_any_call(msg="Starting")
         cb.assert_any_call(msg="hello")
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_compute_sku_features param mapping
+# ---------------------------------------------------------------------------
+
+class TestComputeSkuFeaturesHandler:
+    """The job/params schema exposes ``time_window_months`` but run_pipeline's
+    kwarg is ``time_window`` — the handler must map between them (regression)."""
+
+    def test_maps_time_window_months_param_to_run_pipeline_time_window(self):
+        from common.services.job_state import _run_compute_sku_features
+
+        with patch("scripts.ml.compute_sku_features.run_pipeline") as mock_run:
+            mock_run.return_value = {"skus_processed": 5}
+            result = _run_compute_sku_features({"time_window_months": 24})
+
+        mock_run.assert_called_once_with(time_window=24)
+        assert result == {"skus_processed": 5}
+
+    def test_defaults_time_window_to_36_when_param_absent(self):
+        from common.services.job_state import _run_compute_sku_features
+
+        with patch("scripts.ml.compute_sku_features.run_pipeline") as mock_run:
+            mock_run.return_value = {}
+            _run_compute_sku_features({})
+
+        mock_run.assert_called_once_with(time_window=36)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_refresh_customer_analytics (Recalculate button handler)
+# ---------------------------------------------------------------------------
+
+class TestRefreshCustomerAnalyticsHandler:
+    """Refreshes the 6 CA materialized views CONCURRENTLY off the request thread."""
+
+    def _mock_conn_with_cursor(self):
+        mock_cur = MagicMock()
+        mock_cur.__enter__ = MagicMock(return_value=mock_cur)
+        mock_cur.__exit__ = MagicMock(return_value=False)
+        mock_conn = _make_mock_conn()
+        mock_conn.cursor = MagicMock(return_value=mock_cur)
+        return mock_conn, mock_cur
+
+    def test_refreshes_all_six_mvs_concurrently(self):
+        from common.services.job_state import _run_refresh_customer_analytics
+
+        mock_conn, mock_cur = self._mock_conn_with_cursor()
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
+            result = _run_refresh_customer_analytics({})
+
+        assert result["failed"] == []
+        assert result["refreshed"] == [
+            "mv_customer_activity_monthly",
+            "mv_customer_filter_options",
+            "mv_ca_segment_trends",
+            "mv_ca_demand_at_risk",
+            "mv_ca_order_patterns",
+            "mv_ca_item_state",
+        ]
+        # activity rollup must be refreshed first
+        executed = " ".join(str(c.args[0]) for c in mock_cur.execute.call_args_list)
+        assert "CONCURRENTLY" in executed
+
+    def test_continues_past_a_failing_mv(self):
+        import psycopg
+
+        from common.services.job_state import _run_refresh_customer_analytics
+
+        mock_conn, mock_cur = self._mock_conn_with_cursor()
+
+        # First REFRESH (after the SET) raises; the rest succeed.
+        calls = {"n": 0}
+
+        def _execute(stmt, *a, **k):
+            text = str(stmt)
+            if "REFRESH" in text:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise psycopg.Error("lock timeout")
+            return MagicMock()
+
+        mock_cur.execute.side_effect = _execute
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
+            result = _run_refresh_customer_analytics({})
+
+        assert len(result["failed"]) == 1
+        assert len(result["refreshed"]) == 5
+
+    def test_raises_when_cancelled(self):
+        from threading import Event
+
+        from common.services.job_state import _run_refresh_customer_analytics
+
+        mock_conn, _ = self._mock_conn_with_cursor()
+        cancel = Event()
+        cancel.set()
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
+            with pytest.raises(RuntimeError, match="cancelled"):
+                _run_refresh_customer_analytics({}, cancel_event=cancel)
+
+
+class TestJobScriptPathsExist:
+    """Guard against script-path rot: every script a job launches must exist.
+
+    The backtest/pipeline scripts were reorganized into domain subdirs
+    (scripts/ml, scripts/inventory, ...). job_state.py held flat scripts/<name>.py
+    paths that no longer resolved, so UI-launched jobs failed with
+    'No such file or directory'. These tests parse the real path literals from
+    the module source so a future move can't silently break the Jobs tab again.
+    """
+
+    def _module_src(self) -> str:
+        from pathlib import Path
+
+        import common.services.job_state as job_state
+
+        return Path(job_state.__file__).read_text()
+
+    def test_all_referenced_script_files_exist(self):
+        import re
+
+        from common.core.paths import PROJECT_ROOT
+
+        refs = sorted(set(re.findall(r'"(scripts/[A-Za-z0-9_./-]+\.py)"', self._module_src())))
+        assert refs, "expected job_state to reference at least one script path"
+        missing = [r for r in refs if not (PROJECT_ROOT / r).is_file()]
+        assert not missing, f"job_state references missing script files: {missing}"
+
+    def test_foundation_module_paths_resolve(self):
+        import re
+
+        from common.core.paths import PROJECT_ROOT
+
+        mods = sorted(set(re.findall(r'"(scripts\.ml\.[A-Za-z0-9_.]+)"', self._module_src())))
+        missing = [m for m in mods if not (PROJECT_ROOT / (m.replace(".", "/") + ".py")).is_file()]
+        assert not missing, f"job_state references missing foundation modules: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_generate_production_forecast — horizon + CI flag threading
+# ---------------------------------------------------------------------------
+
+class TestGenerateProductionForecastCmd:
+    """The generate handler must thread horizon + CI into the subprocess cmd."""
+
+    def _run(self, params):
+        from common.services.job_state import _run_generate_production_forecast
+        with patch(
+            "common.services.job_state._run_subprocess", return_value="ok"
+        ) as m_sub:
+            _run_generate_production_forecast(params)
+        return m_sub.call_args[0][0]  # first positional arg = cmd list
+
+    def test_threads_horizon_and_model_id(self):
+        cmd = self._run({"model_id": "lgbm_cluster", "horizon": 9})
+        assert "--horizon" in cmd
+        assert cmd[cmd.index("--horizon") + 1] == "9"
+        assert "--model-id" in cmd
+        assert cmd[cmd.index("--model-id") + 1] == "lgbm_cluster"
+
+    def test_confidence_intervals_true_adds_flag(self):
+        cmd = self._run({"model_id": "lgbm_cluster", "confidence_intervals": True})
+        assert "--confidence-intervals" in cmd
+        assert "--no-confidence-intervals" not in cmd
+
+    def test_confidence_intervals_false_adds_negated_flag(self):
+        cmd = self._run({"model_id": "lgbm_cluster", "confidence_intervals": False})
+        assert "--no-confidence-intervals" in cmd
+        assert "--confidence-intervals" not in cmd
+
+    def test_unset_params_omit_optional_flags(self):
+        cmd = self._run({"model_id": "lgbm_cluster"})
+        assert "--horizon" not in cmd
+        assert "--confidence-intervals" not in cmd
+        assert "--no-confidence-intervals" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# Tests: auto-load after a successful backtest (no manual Load needed)
+# ---------------------------------------------------------------------------
+
+_MOD = "common.services.job_state"
+
+
+class TestAutoLoadBacktest:
+    """_auto_load_backtest loads predictions on completion, best-effort."""
+
+    def test_calls_loader_when_predictions_exist(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("lgbm", 7)
+        m_load.assert_called_once()
+        args, _ = m_load.call_args
+        # First positional arg is the params dict: full dir model_id + run_id.
+        assert args[0] == {"model_id": "lgbm_cluster", "run_id": 7}
+
+    def test_skips_when_no_predictions(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=False),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("catboost", 3)
+        m_load.assert_not_called()
+
+    def test_swallows_loader_errors(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model", side_effect=RuntimeError("boom")),
+        ):
+            # Must not raise — a load failure cannot fail a completed backtest.
+            _auto_load_backtest("xgboost", 9)
+
+    def test_non_tree_model_uses_identity_dir(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("chronos_bolt", 1)
+        assert m_load.call_args[0][0] == {"model_id": "chronos_bolt", "run_id": 1}
+
+
+class TestRunBacktestAutoLoadsBeforeCompletion:
+    """_run_backtest auto-loads BEFORE marking the run completed, so the UI sees
+    is_loaded_to_db set by the time status flips to 'completed'."""
+
+    def test_auto_load_runs_before_completion_update(self):
+        from common.services.job_state import _run_backtest
+        manager = MagicMock()
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok"),
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}._auto_load_backtest") as m_auto,
+            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
+        ):
+            manager.attach_mock(m_auto, "auto")
+            manager.attach_mock(m_update, "update")
+            _run_backtest("lgbm", {"backtest_run_id": 5})
+
+        m_auto.assert_called_once()
+        # auto-load got (model, run_id)
+        assert m_auto.call_args[0][0] == "lgbm"
+        assert m_auto.call_args[0][1] == 5
+        # ordering: auto-load before completion update
+        names = [c[0] for c in manager.mock_calls]
+        assert names.index("auto") < names.index("update")

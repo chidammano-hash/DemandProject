@@ -23,6 +23,7 @@ import logging
 import time
 import uuid
 from datetime import date
+from common.ai.llm_client import tools_to_openai as _tools_to_openai
 from common.core.planning_date import get_planning_date
 from typing import Any, Annotated, Literal
 
@@ -527,19 +528,6 @@ def create_insight(
 # Tool definitions (Anthropic format — converted to OpenAI format on demand)
 # ---------------------------------------------------------------------------
 
-def _tools_to_openai(tools: list[dict]) -> list[dict]:
-    """Convert Anthropic-format tool definitions to OpenAI function-calling format."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["input_schema"],
-            },
-        }
-        for t in tools
-    ]
 
 
 _TOOL_DEFINITIONS = [

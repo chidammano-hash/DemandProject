@@ -1,10 +1,12 @@
 """Tests for common/metrics.py — compute_accuracy_metrics."""
 
-import pytest
 import pandas as pd
-import numpy as np
+import pytest
 
-from common.services.metrics import compute_accuracy_metrics
+from common.services.metrics import (
+    compute_accuracy_metrics,
+    compute_unweighted_accuracy,
+)
 
 
 class TestComputeAccuracyMetrics:
@@ -93,3 +95,46 @@ class TestComputeAccuracyMetrics:
         assert isinstance(result["bias"], float)
         assert isinstance(result["accuracy_pct"], float)
         assert isinstance(result["n_rows"], int)
+
+
+class TestComputeUnweightedAccuracy:
+    """Per-DFU WAPE then mean/median across DFUs (every DFU weighted equally)."""
+
+    def test_basic_mean_and_median(self):
+        # per-DFU accuracies: 80, 50, 90  ->  mean 73.33, median 80
+        per_dfu = [(100.0, 20.0), (100.0, 50.0), (100.0, 10.0)]
+        result = compute_unweighted_accuracy(per_dfu)
+        assert result["n_dfus"] == 3
+        assert result["n_undefined"] == 0
+        assert result["mean_accuracy_pct"] == pytest.approx(73.3333, abs=1e-3)
+        assert result["median_accuracy_pct"] == pytest.approx(80.0, abs=1e-3)
+
+    def test_zero_actual_dfu_excluded_not_counted_as_zero(self):
+        # The zero-actual DFU is undefined; it must NOT drag the mean to 0.
+        per_dfu = [(100.0, 20.0), (0.0, 5.0)]
+        result = compute_unweighted_accuracy(per_dfu)
+        assert result["n_dfus"] == 2
+        assert result["n_undefined"] == 1
+        assert result["mean_accuracy_pct"] == pytest.approx(80.0, abs=1e-3)
+        assert result["median_accuracy_pct"] == pytest.approx(80.0, abs=1e-3)
+
+    def test_per_dfu_accuracy_clamped_at_zero(self):
+        # abs_error > actual would give negative accuracy; clamp to 0 (matches
+        # compute_accuracy). One DFU at 0, one at 100 -> mean 50.
+        per_dfu = [(100.0, 250.0), (100.0, 0.0)]
+        result = compute_unweighted_accuracy(per_dfu)
+        assert result["mean_accuracy_pct"] == pytest.approx(50.0, abs=1e-3)
+
+    def test_all_undefined_returns_none(self):
+        result = compute_unweighted_accuracy([(0.0, 0.0), (0.0, 3.0)])
+        assert result["n_dfus"] == 2
+        assert result["n_undefined"] == 2
+        assert result["mean_accuracy_pct"] is None
+        assert result["median_accuracy_pct"] is None
+
+    def test_empty_input(self):
+        result = compute_unweighted_accuracy([])
+        assert result["n_dfus"] == 0
+        assert result["n_undefined"] == 0
+        assert result["mean_accuracy_pct"] is None
+        assert result["median_accuracy_pct"] is None

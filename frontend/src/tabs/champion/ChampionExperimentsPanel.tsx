@@ -17,6 +17,7 @@ import {
   TrendingUp,
   Activity,
   BarChart3,
+  Trophy,
 } from "lucide-react";
 
 import {
@@ -53,6 +54,13 @@ import { LagFilterBar } from "@/tabs/model-tuning/LagFilterBar";
 import { ChampionExperimentBuilder } from "./ChampionExperimentBuilder";
 import { ChampionComparisonPanel } from "./ChampionComparisonPanel";
 import { ChampionPromoteModal } from "./ChampionPromoteModal";
+import { SweepBuilder } from "./SweepBuilder";
+import { SweepResultsPanel } from "./SweepResultsPanel";
+import {
+  championSweepKeys,
+  fetchChampionSweeps,
+  type ChampionSweep,
+} from "@/api/queries";
 
 // ---------------------------------------------------------------------------
 // Status filter
@@ -107,6 +115,8 @@ export function ChampionExperimentsPanel() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [execLag, setExecLag] = useState<number | undefined>(undefined);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [showSweepBuilder, setShowSweepBuilder] = useState(false);
+  const [selectedSweepId, setSelectedSweepId] = useState<number | null>(null);
   const [baselineId, setBaselineId] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
   const [logExpId, setLogExpId] = useState<number | null>(null);
@@ -125,6 +135,18 @@ export function ChampionExperimentsPanel() {
   });
 
   const experiments = data?.experiments ?? [];
+
+  // Sweeps — most recent first; auto-select the newest so results show after launch.
+  const { data: sweepData } = useQuery({
+    queryKey: championSweepKeys.list(),
+    queryFn: () => fetchChampionSweeps({ limit: 20 }),
+    refetchInterval: (q) => {
+      const sweeps = (q.state.data as { sweeps: ChampionSweep[] } | undefined)?.sweeps ?? [];
+      return sweeps.some((s) => s.status === "queued" || s.status === "running") ? 3000 : false;
+    },
+  });
+  const sweeps = sweepData?.sweeps ?? [];
+  const activeSweepId = selectedSweepId ?? sweeps[0]?.sweep_id ?? null;
 
   // Log fetcher
   const { data: logData } = useQuery({
@@ -248,11 +270,24 @@ export function ChampionExperimentsPanel() {
           </Select>
           <LagFilterBar value={execLag} onChange={setExecLag} />
         </div>
-        <Button size="sm" onClick={() => setShowBuilder(true)}>
-          <Plus className="mr-1 h-3.5 w-3.5" />
-          New Experiment
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowSweepBuilder(true)}>
+            <Trophy className="mr-1 h-3.5 w-3.5" />
+            Run Sweep
+          </Button>
+          <Button size="sm" onClick={() => setShowBuilder(true)}>
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            New Experiment
+          </Button>
+        </div>
       </div>
+
+      {/* Sweep results (tournament) — shows the latest/selected sweep */}
+      {activeSweepId != null ? (
+        <SweepResultsPanel sweepId={activeSweepId} />
+      ) : null}
+
+      {showSweepBuilder ? <SweepBuilder onClose={() => setShowSweepBuilder(false)} /> : null}
 
       {/* Layout: table + comparison */}
       <div className="flex gap-4">

@@ -138,8 +138,8 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 29 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, lgbmTuning, sqlRunner, skuFeatures, and demandHistory", () => {
-      expect(VALID_TABS).toHaveLength(29);
+    it("VALID_TABS has 28 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, lgbmTuning, sqlRunner, skuFeatures, and demandHistory", () => {
+      expect(VALID_TABS).toHaveLength(28);  // aiPlannerFva removed
       expect(VALID_TABS).toContain("commandCenter");
       expect(VALID_TABS).toContain("aggregateAnalysis");
       expect(VALID_TABS).toContain("overview");

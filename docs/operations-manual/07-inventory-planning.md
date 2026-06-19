@@ -90,11 +90,179 @@ Scripts live at `scripts/` root (the `scripts/inventory/` subdirectory does not 
 ### Algorithm comparison + backtest
 
 ```bash
-make ip-backtest        # run_inventory_backtest.py — backtest SS/policy choices
-make ip-compare         # compare_inventory_algorithms.py — A/B between policy variants
+# Inventory backtest — no Make target; runs via the job registry
+# (job type "inventory_backtest" → scripts/inventory/run_inventory_backtest.py).
+# Trigger from the Jobs UI/API, or invoke the script directly:
+uv run python scripts/inventory/run_inventory_backtest.py   # backtest SS/policy choices
+
+make algo-comparison    # scripts/inventory/compare_inventory_algorithms.py — A/B between policy variants
 ```
 
 Surfaces in the **Inventory Algorithm Comparison** API router for the UI A/B view.
+
+### Granular per-feature targets (`IPfeatureN`)
+
+Each inventory-planning computation is tracked as an `IPfeatureN` feature and exposes granular `-schema` / `-compute` / `-refresh` Make targets in addition to the `-all` rollups invoked by `setup-inv-planning`. Run individually when re-running a single stage. Dependencies are noted inline.
+
+```bash
+# Safety stock (IPfeature3 — requires sales + inventory loaded)
+make ss-compute              # Compute Z-score safety stock targets per DFU
+
+# EOQ & cycle stock (IPfeature4 — requires inventory loaded)
+make eoq-compute             # Wilson EOQ formula → fact_eoq_targets
+
+# Replenishment policies (IPfeature5)
+make policy-assign           # Upsert 4 default policies + auto-assign DFUs by ABC segment
+
+# Health score (IPfeature6 — requires safety stock computed)
+make health-refresh          # Refresh mv_inventory_health_score
+
+# Exception queue (IPfeature7 — requires EOQ + safety stock)
+# IMPORTANT: Must run AFTER ss-compute completes (fact_safety_stock_targets must have rows)
+#   Dependency chain: make ss-compute → make exceptions-generate
+make exceptions-generate     # Detect stockout/excess/below-ROP exceptions → DB
+
+# Fill rate (IPfeature8 — requires inventory loaded)
+make fill-rate-refresh       # Refresh mv_fill_rate_monthly
+
+# Lead time variability (IPfeature2/3 — requires inventory loaded)
+make lt-profile-compute      # LT CV, reliability bands → fact_lead_time_profile
+
+# Demand signals (IPfeature9 — requires inventory + sales)
+make demand-signals-compute  # Short-horizon signals → fact_demand_signals
+
+# Monte Carlo simulation (IPfeature10 — requires safety stock)
+make sim-run                 # Monte Carlo SS simulation → fact_ss_simulation_results
+
+# ABC-XYZ segmentation (IPfeature11 — requires sales loaded)
+make abc-xyz-classify        # Volume × variability classification → dim_sku
+
+# Supplier performance (IPfeature12 — requires inventory loaded)
+make supplier-perf-refresh   # Refresh mv_supplier_performance
+
+# Capital investment plan (IPfeature13 — requires safety stock + EOQ)
+make investment-plan         # Efficient frontier → fact_inventory_investment_plan
+
+# Intramonth stockout (IPfeature14 — requires inventory loaded)
+make intramonth-refresh      # Refresh mv_intramonth_stockout
+
+# Inventory Rebalancing (requires agg_inventory_monthly + fact_safety_stock_targets)
+make rebalancing-refresh     # Refresh mv_network_balance (network surplus/deficit view)
+make rebalancing-compute     # Compute rebalancing recommendations → fact_rebalancing_recommendations
+# preview without writing:
+make rebalancing-compute-dry # Preview recommendations (--dry-run)
+# or all-in-one:
+make rebalancing-all         # rebalancing-schema + rebalancing-refresh + rebalancing-compute
+
+# Control Tower KPIs (IPfeature15 — requires all above)
+make control-tower-refresh   # Refresh mv_control_tower_kpis
+```
+
+> NOTE: Demand variability (`IPfeature1/3`) no longer has a standalone `variability-compute` target — CV, dispersion, and volatility profiles are now computed as part of `make features-compute` (Section 3) and written to `dim_sku`.
+
+**Per-feature target breakdown** (schema / compute / refresh variants):
+
+**EOQ computation** (IPfeature4 — requires inventory loaded):
+```bash
+make eoq-all         # Apply schema + compute EOQ metrics → fact_eoq_targets
+make eoq-schema      # Apply DDL only
+make eoq-compute     # Compute + upsert only
+```
+
+**Replenishment policies** (IPfeature5):
+```bash
+make policy-all      # Apply schema + upsert policies + auto-assign DFUs
+make policy-schema   # Apply DDL only
+make policy-assign   # Upsert policies + auto-assign DFUs from config
+```
+
+**Inventory Health Score** (IPfeature6 — requires inventory loaded):
+```bash
+make health-all      # Apply schema + refresh health score view
+make health-schema   # Apply DDL + create materialized view
+make health-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_health_score
+```
+
+**Exception Queue** (IPfeature7 — requires inventory + EOQ computed):
+```bash
+make exceptions-schema        # Apply DDL for fact_replenishment_exceptions (one-time)
+make exceptions-generate      # Detect exceptions + write to DB
+make exceptions-generate-dry  # Preview exceptions without writing to DB
+```
+
+**Fill Rate Analytics** (IPfeature8 — requires inventory loaded):
+```bash
+make fill-rate-all      # Apply schema + refresh fill rate view
+make fill-rate-schema   # Apply DDL only
+make fill-rate-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_fill_rate_monthly
+```
+
+**Demand Signals** (IPfeature9 — requires inventory loaded):
+```bash
+make demand-signals-all      # Apply schema + compute demand signals
+make demand-signals-schema   # Apply DDL only
+make demand-signals-compute  # Compute demand signals → fact_demand_signals
+```
+
+**Safety Stock Simulation** (IPfeature10 — requires inventory loaded):
+```bash
+make sim-schema  # Apply DDL for fact_ss_simulation_results (one-time)
+make sim-run     # Run Monte Carlo safety stock simulation (reads config/inventory/inventory_planning_config.yaml simulation section)
+```
+
+**ABC-XYZ Classification** (IPfeature11 — requires sales + inventory loaded):
+```bash
+make abc-xyz-all      # Apply schema + run classification
+make abc-xyz-schema   # Apply DDL only
+make abc-xyz-classify # Run ABC-XYZ classification + write to dim_sku
+```
+
+**Supplier Performance** (IPfeature12 — requires inventory loaded):
+```bash
+make supplier-perf-all      # Apply schema + refresh supplier performance view
+make supplier-perf-schema   # Apply DDL only
+make supplier-perf-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_supplier_performance
+```
+
+**Investment Plan** (IPfeature13 — requires EOQ + policy data):
+```bash
+make investment-all    # Apply schema + compute investment plan
+make investment-schema # Apply DDL only
+make investment-plan   # Compute investment plan + efficient frontier → fact tables
+```
+
+**Intramonth Stockout** (IPfeature14 — requires inventory loaded):
+```bash
+make intramonth-all      # Apply schema + refresh intramonth stockout view
+make intramonth-schema   # Apply DDL only
+make intramonth-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_intramonth_stockout
+```
+
+**Control Tower** (IPfeature15 — requires all inv planning data):
+```bash
+make control-tower-all      # Apply schema + refresh control tower KPIs view
+make control-tower-schema   # Apply DDL only
+make control-tower-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_control_tower_kpis
+```
+
+**Inventory Rebalancing** (requires inventory + safety stock data loaded):
+```bash
+make rebalancing-all           # Apply schema + compute rebalancing plan (full pipeline)
+make rebalancing-schema        # Apply DDL: dim_transfer_lane, fact_rebalancing_plan, fact_rebalancing_transfer, mv_network_balance (one-time)
+make rebalancing-compute       # Compute rebalancing plan from inventory positions + safety stock targets
+make rebalancing-compute-dry   # Preview rebalancing computation without writing to DB (--dry-run)
+make rebalancing-refresh       # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_network_balance
+```
+
+Rebalancing tables:
+- `dim_transfer_lane` — valid transfer lanes between locations (source -> destination, lead time, cost)
+- `fact_rebalancing_plan` — computed rebalancing recommendations (item, source/dest, qty, priority)
+- `fact_rebalancing_transfer` — executed/planned transfer records with status tracking
+- `mv_network_balance` — materialized view aggregating network-wide inventory balance metrics
+
+Rebalancing SQL files: `sql/071_create_transfer_network.sql` (dim_transfer_lane), `sql/072_create_rebalancing_plan.sql` (fact_rebalancing_plan + fact_rebalancing_transfer), `sql/073_create_rebalancing_views.sql` (mv_network_balance)
+
+Rebalancing config: `config/inventory/rebalancing_config.yaml` — transfer cost thresholds, minimum transfer qty, priority scoring weights, network constraints.
 
 ---
 
@@ -240,7 +408,7 @@ UI sanity: open `InvPlanningTab` → confirm `ActionFeedPanel` loads with non-em
 | Forecast promoted (Section 6) | `make setup-demand-planning` + `make ss-all` + `make exceptions-generate` |
 | Cluster experiment promoted (Section 3) | `make policy-all` (re-assigns policies by new ABC×XYZ class) |
 | Lead-time data refresh (weekly) | `make lead-time-all` + `make ss-all` |
-| Quarterly policy review | `make ip-backtest` + `make ip-compare` → review → update `replenishment_policy_config.yaml` → `make policy-all` |
+| Quarterly policy review | run the `inventory_backtest` job (or `uv run python scripts/inventory/run_inventory_backtest.py`) + `make algo-comparison` → review → update `replenishment_policy_config.yaml` → `make policy-all` |
 
 ---
 

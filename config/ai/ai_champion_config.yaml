@@ -1,0 +1,66 @@
+# AI Champion forward adjuster configuration
+# Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
+# Loaded via: load_config("ai_champion_config")
+#
+# The AI Champion adjuster reads the promoted champion production forecast and,
+# on demand for ONE DFU (the "AI Adjust" button on the Item Analysis tab),
+# applies an LLM adjustment and writes a NEW forward forecast with
+# model_id='ai_champion'. Interactive-only — no batch pipeline, no backtest.
+
+_includes: [shared_constants]
+
+# ═══ Run defaults ════════════════════════════════════════════════════════════
+defaults:
+  source_model_id: champion            # model_id in fact_production_forecast to adjust
+  target_model_id: ai_champion         # model_id written to fact_ai_champion_forecast
+  horizon_months: 12                   # Max forward months an adjustment may touch (1..12; capped by forecast_window_months and the apply_horizon_months schema bound)
+  forecast_window_months: 12           # Forward months materialized as the ai_champion forecast (upper bound on horizon_months)
+  actuals_lookback_months: 24          # Months of own sales history shown to the LLM
+  top_customers: 5                     # Top-K customers (by 12mo sales) shown to the LLM (0 disables)
+
+# ═══ Provider abstraction ════════════════════════════════════════════════════
+# Drives where the LLM call goes. common/ai/llm_client.py routes all providers.
+#
+#   ollama (default):  local, $0, no network. Pull the model first via `ollama pull`.
+#   google:            Gemini via its OpenAI-compatible endpoint. Requires GOOGLE_API_KEY.
+#   anthropic:         paid API (Opus). Requires ANTHROPIC_API_KEY env var.
+#   openai:            paid API. Requires OPENAI_API_KEY env var.
+#   openai_compat:     any OpenAI-compatible endpoint. Requires LLM_BASE_URL + LLM_API_KEY.
+#
+# The default provider; the per-DFU "AI Adjust" button can override it per call.
+# NOTE: anthropic/google/openai bill their respective APIs per token — a Claude
+# Code subscription does NOT cover programmatic calls. Use `ollama` for $0 runs.
+provider: ollama
+
+# Per-provider model identifiers — only the entry matching the active provider is used.
+models:
+  ollama: llama3.1:8b                  # Local default on an M-series Mac
+  google: gemini-2.0-flash             # Gemini via OpenAI-compatible endpoint
+  anthropic: claude-opus-4-7           # Quality benchmark (metered API)
+  openai: gpt-4o
+  openai_compat: meta-llama/Llama-3.3-70B-Instruct-Turbo
+
+# Per-provider endpoints. Ollama is loopback by default; google has a fixed default.
+endpoints:
+  ollama: http://localhost:11434/v1    # OpenAI-compatible Ollama API
+  openai_compat: ${LLM_BASE_URL}       # e.g. https://api.together.xyz/v1
+
+# ═══ Apply guardrails ════════════════════════════════════════════════════════
+# Clip / downgrade AI recommendations before they touch the forecast.
+apply_guardrails:
+  max_abs_pct_change: 50               # Clip SCALE_* outside [-50%, +50%]
+  min_confidence: 0.60                 # Below this → OVERRIDE_TO_BASELINE (keep champion)
+  require_evidence: true               # No evidence_keys → OVERRIDE_TO_BASELINE
+  reject_on_horizon_overflow: true     # Clip apply_horizon to the configured horizon
+
+# ═══ Cost controls ═══════════════════════════════════════════════════════════
+# Interactive (one call per click), so no batch concurrency / per-run cap.
+cost_controls:
+  per_call_timeout_seconds: 60         # Per-call wall-clock timeout (read by build_from_config)
+
+# ═══ Ollama-specific runtime knobs ═══════════════════════════════════════════
+ollama:
+  keep_alive: 24h                      # Keep the model loaded across the run (default 5min)
+  request_timeout_seconds: 120         # Per-request timeout for slow local inference
+  num_ctx: 8192                        # Context window — fits ~5K input + headroom
+  temperature: 0.0                     # Deterministic

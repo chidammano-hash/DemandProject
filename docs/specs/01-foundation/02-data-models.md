@@ -55,11 +55,11 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 |---|---|---|
 | `ml_cluster` | Clustering pipeline | KMeans-assigned cluster label |
 | `cluster_assignment` | Cluster labeling | Business-readable cluster name |
-| `seasonality_profile` | [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md) | Seasonal pattern label (e.g., "yearly_strong") |
-| `seasonality_strength` | [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md) | ACF-based strength metric (0-1) |
-| `peak_month`, `trough_month` | [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md) | Month numbers for seasonal peaks/troughs |
+| `seasonality_profile` | [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) | Seasonal pattern label (e.g., "yearly_strong") |
+| `seasonality_strength` | [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) | ACF-based strength metric (0-1) |
+| `peak_month`, `trough_month` | [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) | Month numbers for seasonal peaks/troughs |
 | `abc_vol` | Source data | Volume classification (A/B/C) |
-| `xyz_class` | [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md) / ABC-XYZ pipeline | Variability classification (X/Y/Z) |
+| `xyz_class` | [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) / ABC-XYZ pipeline | Variability classification (X/Y/Z) |
 | `execution_lag` | Source data | Planning horizon (0-4) based on lead time; determines which forecast lag is production-relevant. See [Execution Lag spec](06-execution-lag.md) |
 
 ### Fact Tables
