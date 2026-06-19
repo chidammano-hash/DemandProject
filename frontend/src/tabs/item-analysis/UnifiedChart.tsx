@@ -116,7 +116,7 @@ export function UnifiedChart({
                 backgroundColor: chartColors.tooltip_bg,
                 borderColor: chartColors.tooltip_border,
               }}
-              formatter={(value: number, name: string, entry?: { payload?: Record<string, unknown> }) => {
+              formatter={(value: number, name: string, entry?: { dataKey?: string | number; payload?: Record<string, unknown> }) => {
                 let label = TOOLTIP_LABELS[name] ?? name;
                 // Resolve staging/backtest model names to readable labels
                 if (name.startsWith("staging_")) {
@@ -125,10 +125,11 @@ export function UnifiedChart({
                 } else if (name.startsWith("backtest_")) {
                   const mid = name.slice("backtest_".length);
                   label = `${modelLabel(mid)} (backtest)`;
-                } else if (name === "champion") {
+                } else if (entry?.dataKey === "forecast_champion") {
                   // Show that month's blend mix on the champion row, e.g.
                   // "champion (40% NBEATS, 35% LGBM, 25% Chronos)"; falls back to
-                  // the single source model, then a bare "champion".
+                  // the single source model, then a bare "champion". Keyed off
+                  // dataKey (not name) because the line's name is relabelled.
                   label = formatChampionLabel(
                     entry?.payload?.champion_mix as { model: string; weight: number }[] | undefined,
                     entry?.payload?.champion_source as string | undefined,
