@@ -90,6 +90,62 @@ export type LagCurvePayload = {
   by_lag: LagPoint[];
 };
 
+// --- Per-DFU accuracy decomposition (diagnostic layer, /forecast/accuracy/decomposition) ---
+export type UnweightedAccuracy = {
+  n_dfus: number;
+  n_undefined: number;
+  mean_accuracy_pct: number | null;
+  median_accuracy_pct: number | null;
+};
+
+export type DecompositionModelEntry = {
+  volume_weighted: AccuracyKpis;
+  unweighted: UnweightedAccuracy;
+  error_contribution_pct: number | null;
+  n_dfus: number;
+};
+
+export type DecompositionRow = {
+  bucket: string;
+  by_model: Record<string, DecompositionModelEntry>;
+};
+
+export type AccuracyDecompositionPayload = {
+  group_by: string;
+  lag_filter: number;
+  models: string[] | null;
+  rows: DecompositionRow[];
+  source: string;
+};
+
+export type ErrorContributor = {
+  item_id: string;
+  customer_group: string;
+  loc: string;
+  cluster_assignment: string;
+  region: string;
+  abc_vol: string;
+  seasonality_profile: string;
+  sum_actual: number;
+  sum_abs_error: number;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  bias_direction: string;
+  error_contribution_pct: number | null;
+  cumulative_contribution_pct: number | null;
+};
+
+export type ErrorContributorsPayload = {
+  models: string[] | null;
+  lag_filter: number;
+  limit: number;
+  total_abs_error: number;
+  total_dfus: number;
+  contributors: ErrorContributor[];
+  source: string;
+};
+
 export type MarketIntelPayload = {
   item_id: string;
   location_id: string;

@@ -309,6 +309,35 @@ algorithms:
       max_customers_per_item_loc: 100
       reconciliation_method: weighted_average
       bu_weight: 0.6
+  chronos_bolt_ft:                          # ═══ Fine-tuned Chronos-Bolt (spec 32) ═══
+    type: foundation                        # same inference type as chronos_bolt; FT is only a weights source
+    enabled: true                           # include in pipeline
+    tune: false                             # FT is NOT Optuna hyperparameter tuning
+    backtest: true                          # eligible for backtest evaluation
+    compete: false                          # flip to true once it beats zero-shot chronos_bolt + clears the promote gate
+    forecast: false                         # flip to true on promotion; real-model production path is wired (spec 32 §5)
+    expert: false
+    output_dir: data/backtest/chronos_bolt_ft
+    notes: Fine-tuned Chronos-Bolt. Checkpoint built by scripts/ml/finetune_chronos_bolt.py (spec 32).
+    params:
+      base_model: amazon/chronos-bolt-base  # parent checkpoint (HF hub id or local dir)
+      checkpoint_dir: data/models/chronos_bolt_ft  # versioned FT weights; latest v* resolved at load; base fallback if absent
+      model_size: base                      # used only to build the base fallback id (amazon/chronos-bolt-<size>)
+      device: auto                          # auto -> mps/cuda/cpu (DEMAND_GPU honoured)
+      batch_size: 512                       # inference batch size
+      num_samples: 12                       # unused by Bolt (quantile output); kept for roster parity
+      prediction_length: 6                  # forecast horizon (months)
+      fine_tune:                            # ── training hyperparameters (scripts/ml/finetune_chronos_bolt.py) ──
+        context_length: 36                  # months of history fed per training window
+        prediction_length: 6                # target horizon per window (must equal params.prediction_length)
+        learning_rate: 1.0e-4               # AdamW learning rate
+        num_steps: 2000                     # training steps (override with --max-steps for smoke runs)
+        batch_size: 32                      # training batch size
+        warmup_ratio: 0.1                   # LR warmup fraction of total steps
+        min_series_months: 12               # exclude series shorter than this from training
+        window_stride: 1                    # months between successive training windows of a series
+        max_windows_per_series: 24          # cap windows per series (bounds dataset size + memory)
+        seed: 42                            # reproducibility
   mstl:
     type: statistical
     enabled: true
@@ -408,10 +437,9 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: dfu_strategy_router
+  strategy: rolling
   strategy_params:
-    eval_months: 3
-    min_prior_months: 3
+    window_months: 6
   fallback_model_id: seasonal_naive
   metric: wape
   lag: execution

@@ -472,6 +472,7 @@ def _run_backtest(
     foundation_modules = {
         "chronos": "scripts.ml.run_backtest_chronos",
         "chronos_bolt": "scripts.ml.run_backtest_chronos_bolt",
+        "chronos_bolt_ft": "scripts.ml.run_backtest_chronos_bolt_ft",
         "chronos2": "scripts.ml.run_backtest_chronos2",
         "chronos2_enriched": "scripts.ml.run_backtest_chronos2_enriched",
     }
@@ -482,6 +483,7 @@ def _run_backtest(
     _MODEL_EXTRAS = {
         "chronos": "foundation",
         "chronos_bolt": "foundation",
+        "chronos_bolt_ft": "foundation",
         "chronos2": "foundation",
         "chronos2_enriched": "foundation",
         "bolt_hierarchical": "foundation",
@@ -592,6 +594,7 @@ _run_backtest_catboost = _make_backtest_runner("catboost")
 _run_backtest_xgboost = _make_backtest_runner("xgboost")
 _run_backtest_chronos = _make_backtest_runner("chronos")
 _run_backtest_chronos_bolt = _make_backtest_runner("chronos_bolt")
+_run_backtest_chronos_bolt_ft = _make_backtest_runner("chronos_bolt_ft")
 _run_backtest_chronos2 = _make_backtest_runner("chronos2")
 _run_backtest_chronos2_enriched = _make_backtest_runner("chronos2_enriched")
 _run_backtest_bolt_hierarchical = _make_backtest_runner("bolt_hierarchical")

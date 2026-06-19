@@ -9,6 +9,7 @@ import gc
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -262,7 +263,9 @@ def _run_chronos_bolt(
     import torch
 
     model_size = params.get("model_size", "base")
-    model_name = f"amazon/chronos-bolt-{model_size}"
+    # model_name may be overridden with a local fine-tuned checkpoint dir (spec 32).
+    model_name = params.get("model_name") or f"amazon/chronos-bolt-{model_size}"
+    algorithm_id = params.get("algorithm_id", "chronos_bolt")
     device_setting = params.get("device", "auto")
     prediction_length = len(predict_months)
 
@@ -333,7 +336,7 @@ def _run_chronos_bolt(
                 "sku_ck": np.repeat(batch_skus, n_months),
                 "startdate": np.tile(month_arr, n_batch),
                 FORECAST_QTY_COL: median_forecasts.ravel(),
-                "algorithm_id": "chronos_bolt",
+                "algorithm_id": algorithm_id,
             }))
         except (RuntimeError, ValueError) as exc:
             if "out of memory" in str(exc).lower():
@@ -355,6 +358,60 @@ def _run_chronos_bolt(
     logger.info("Chronos Bolt: %d predictions for %d DFUs", len(result),
                 result["sku_ck"].nunique() if not result.empty else 0)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Chronos Bolt — fine-tuned variant (spec 32)
+# ---------------------------------------------------------------------------
+
+def _resolve_ft_checkpoint(checkpoint_dir: str | None, base_fallback: str) -> tuple[str, bool]:
+    """Resolve a fine-tuned checkpoint path. Returns ``(path, is_finetuned)``.
+
+    Picks the highest-numbered ``v*`` subdirectory under ``checkpoint_dir`` that
+    contains a ``config.json``; supports a flat (unversioned) checkpoint too.
+    Falls back to ``base_fallback`` (the zero-shot parent) when no checkpoint
+    exists, so the roster never hard-fails before a fine-tune has been run.
+    """
+    if checkpoint_dir:
+        root = Path(checkpoint_dir)
+        if root.is_dir():
+            # Numeric version sort so v10 > v2 (lexicographic would pick v2).
+            versions = sorted(
+                (d for d in root.glob("v*")
+                 if d.name[1:].isdigit() and (d / "config.json").exists()),
+                key=lambda d: int(d.name[1:]),
+            )
+            if versions:
+                return str(versions[-1]), True
+            if (root / "config.json").exists():
+                return str(root), True
+    return base_fallback, False
+
+
+def _run_chronos_bolt_ft(
+    sales_df: pd.DataFrame,
+    predict_months: list[pd.Timestamp],
+    params: dict[str, Any],
+) -> pd.DataFrame:
+    """Run a FINE-TUNED Chronos-Bolt (spec 32).
+
+    Inference is identical to :func:`_run_chronos_bolt`; only the weights differ —
+    loaded from the local fine-tuned checkpoint (``params['checkpoint_dir']``)
+    instead of the HF hub. Falls back to the zero-shot base when no checkpoint is
+    present. Output is labelled ``algorithm_id='chronos_bolt_ft'``.
+    """
+    model_size = params.get("model_size", "base")
+    base = params.get("base_model") or f"amazon/chronos-bolt-{model_size}"
+    ckpt, is_ft = _resolve_ft_checkpoint(params.get("checkpoint_dir"), base)
+    if is_ft:
+        logger.info("chronos_bolt_ft: loading fine-tuned checkpoint %s", ckpt)
+    else:
+        logger.warning(
+            "chronos_bolt_ft: no fine-tuned checkpoint at %s; falling back to base %s",
+            params.get("checkpoint_dir"), base,
+        )
+    bolt_params = {**params, "model_name": ckpt, "algorithm_id": "chronos_bolt_ft"}
+    return _run_chronos_bolt(sales_df, predict_months, bolt_params)
 
 
 # ---------------------------------------------------------------------------
@@ -1126,6 +1183,7 @@ def _run_lag_llama(
 _FOUNDATION_DISPATCH: dict[str, Any] = {
     "chronos": _run_chronos,
     "chronos_bolt": _run_chronos_bolt,
+    "chronos_bolt_ft": _run_chronos_bolt_ft,
     "chronos2": _run_chronos2,
     "chronos2_enriched": _run_chronos2_enriched,
     "timesfm": _run_timesfm,

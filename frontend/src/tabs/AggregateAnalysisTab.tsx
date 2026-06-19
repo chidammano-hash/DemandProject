@@ -57,6 +57,7 @@ import { LagLeaderboardPanel } from "./aggregate-analysis/LagLeaderboardPanel";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
+import { ErrorDecompositionPanel } from "./accuracy/ErrorDecompositionPanel";
 
 // Extracted sub-components
 import {
@@ -485,6 +486,22 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
               </>
             )}
           </div>
+        </CollapsibleSection>
+      )}
+
+      {/* ================================================================ */}
+      {/* Error Decomposition (diagnostic: where the accuracy gap lives)  */}
+      {/* ================================================================ */}
+      {visible.decomposition && (
+        <CollapsibleSection title="Error Decomposition" defaultOpen={false}>
+          <ErrorDecompositionPanel
+            models={sliceModels}
+            lag={sliceLag}
+            monthFrom={monthFrom}
+            clusterAssignment={clusterParam}
+            seasonalityProfile={seasonalityProfile || undefined}
+            enabled={visible.decomposition}
+          />
         </CollapsibleSection>
       )}
 

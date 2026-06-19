@@ -788,3 +788,244 @@ def forecast_accuracy_lag_leaderboard(
         "limit": limit,
         "source": "agg_accuracy_lag_archive",
     }
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Per-DFU accuracy decomposition (diagnostic layer)
+#
+# The endpoints above all return the VOLUME-WEIGHTED aggregate WAPE — the headline
+# ~72%. They cannot answer "where is the error concentrated?" because they sum
+# error across every DFU before dividing, so big SKUs dominate and the long tail
+# is invisible. The two endpoints below read agg_accuracy_by_dfu (sql/193), which
+# preserves the individual DFU, and expose BOTH the volume-weighted metric and the
+# unweighted per-DFU mean/median, plus a Pareto view of error contribution.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def _build_accuracy_by_dfu_where(
+    *,
+    model_list: list[str],
+    lag: int,
+    month_from: str,
+    month_to: str,
+    cluster_assignment: str,
+    supplier_desc: str,
+    abc_vol: str,
+    region: str,
+    seasonality_profile: str,
+) -> tuple[str, list[Any]]:
+    """Build the WHERE clause for agg_accuracy_by_dfu (single MV, no table alias).
+
+    ``month_from``/``month_to`` apply a *coarse* overlap on each DFU's active
+    month range (min_month/max_month), matching agg_dfu_coverage semantics — the
+    per-DFU sums are over the DFU's full active period, not an exact month slice.
+    """
+    where_parts: list[str] = []
+    params: list[Any] = []
+    if model_list:
+        placeholders = ",".join(["%s"] * len(model_list))
+        where_parts.append(f"model_id IN ({placeholders})")
+        params.extend(model_list)
+    if lag == -1:
+        where_parts.append("lag::text = dfu_execution_lag")
+    elif lag >= 0:
+        where_parts.append("lag = %s")
+        params.append(lag)
+    if month_from.strip():
+        where_parts.append("max_month >= %s::date")
+        params.append(month_from.strip())
+    if month_to.strip():
+        where_parts.append("min_month <= %s::date")
+        params.append(month_to.strip())
+    _add_dim_filters(where_parts, params,
+                     cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+                     abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    return where_sql, params
+
+
+@router.get("/forecast/accuracy/decomposition")
+def forecast_accuracy_decomposition(
+    response: FastAPIResponse,
+    group_by: str = Query(default="seasonality_profile", max_length=64),
+    models: str = Query(default="", max_length=500),
+    lag: int = Query(default=-1, ge=-1, le=4),
+    month_from: str = Query(default="", max_length=20),
+    month_to: str = Query(default="", max_length=20),
+    cluster_assignment: str = Query(default="", max_length=120),
+    supplier_desc: str = Query(default="", max_length=120),
+    abc_vol: str = Query(default="", max_length=40),
+    region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
+):
+    set_cache(response, max_age=120, stale_while_revalidate=300)
+    """Per-bucket accuracy with BOTH weightings plus error-contribution share.
+
+    For each bucket x model returns:
+      • ``volume_weighted`` — the headline KPIs (compute_kpis), big SKUs dominate.
+      • ``unweighted`` — per-DFU WAPE then mean/median (compute_unweighted_accuracy),
+        every DFU equal, with ``n_undefined`` for zero-actual DFUs.
+      • ``error_contribution_pct`` — bucket's share of the model's total absolute
+        error (Pareto): the buckets that own the error.
+    Data: agg_accuracy_by_dfu (sql/193), one row per DFU x model x lag.
+    """
+    if group_by not in _DECOMP_GROUP_DIMS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid group_by '{group_by}'. Valid: {sorted(_DECOMP_GROUP_DIMS)}",
+        )
+    model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+    if len(model_list) > 20:
+        raise HTTPException(status_code=422, detail="models: max 20 values allowed")
+
+    where_sql, params = _build_accuracy_by_dfu_where(
+        model_list=model_list, lag=lag, month_from=month_from, month_to=month_to,
+        cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+        abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
+
+    # One row per DFU (after the lag filter); group_by is whitelisted above.
+    sql = f"""
+        SELECT {group_by} AS bucket, model_id, sum_forecast, sum_actual, sum_abs_error
+        FROM agg_accuracy_by_dfu
+        {where_sql}
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        db_rows = cur.fetchall()
+
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    model_total_err: dict[str, float] = {}
+    for bucket, model_id, sf, sa, sae in db_rows:
+        b = str(bucket) if bucket is not None else "(unknown)"
+        g = groups.setdefault((b, model_id), {
+            "sum_forecast": 0.0, "sum_actual": 0.0, "sum_abs_error": 0.0, "per_dfu": []})
+        sf_f, sa_f, sae_f = float(sf or 0), float(sa or 0), float(sae or 0)
+        g["sum_forecast"] += sf_f
+        g["sum_actual"] += sa_f
+        g["sum_abs_error"] += sae_f
+        g["per_dfu"].append((sa_f, sae_f))
+        model_total_err[model_id] = model_total_err.get(model_id, 0.0) + sae_f
+
+    pivot: dict[str, dict[str, Any]] = {}
+    for (b, model_id), g in groups.items():
+        row = pivot.setdefault(b, {"bucket": b, "by_model": {}})
+        total_err = model_total_err.get(model_id, 0.0)
+        row["by_model"][model_id] = {
+            "volume_weighted": compute_kpis(
+                g["sum_forecast"], g["sum_actual"], g["sum_abs_error"], len(g["per_dfu"])),
+            "unweighted": compute_unweighted_accuracy(g["per_dfu"]),
+            "error_contribution_pct": (
+                round(100.0 * g["sum_abs_error"] / total_err, 4) if total_err > 0 else None),
+            "n_dfus": len(g["per_dfu"]),
+        }
+
+    return {
+        "group_by": group_by,
+        "lag_filter": lag,
+        "models": model_list or None,
+        "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
+        "source": "agg_accuracy_by_dfu",
+    }
+
+
+@router.get("/forecast/accuracy/error-contributors")
+def forecast_accuracy_error_contributors(
+    response: FastAPIResponse,
+    models: str = Query(default="", max_length=500),
+    lag: int = Query(default=-1, ge=-1, le=4),
+    limit: int = Query(default=20, ge=1, le=200),
+    month_from: str = Query(default="", max_length=20),
+    month_to: str = Query(default="", max_length=20),
+    cluster_assignment: str = Query(default="", max_length=120),
+    supplier_desc: str = Query(default="", max_length=120),
+    abc_vol: str = Query(default="", max_length=40),
+    region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
+):
+    set_cache(response, max_age=120, stale_while_revalidate=300)
+    """Pareto ranking of the DFUs that own the most absolute error ("fix these first").
+
+    Returns the top-``limit`` DFUs by share of total absolute error, each with its
+    actual volume, WAPE/accuracy, bias direction (over/under-forecast), and the
+    running cumulative error share. Pin a single model (e.g. ``models=champion``)
+    for a coherent list; multiple models are summed per DFU. Data: agg_accuracy_by_dfu.
+    """
+    model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+    if len(model_list) > 20:
+        raise HTTPException(status_code=422, detail="models: max 20 values allowed")
+
+    where_sql, params = _build_accuracy_by_dfu_where(
+        model_list=model_list, lag=lag, month_from=month_from, month_to=month_to,
+        cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+        abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
+
+    # Dim columns are DFU-constant, so MAX() just picks the single value per DFU.
+    top_sql = f"""
+        SELECT
+            item_id, customer_group, loc,
+            MAX(cluster_assignment) AS cluster_assignment,
+            MAX(region)             AS region,
+            MAX(abc_vol)            AS abc_vol,
+            MAX(seasonality_profile) AS seasonality_profile,
+            SUM(sum_forecast)       AS sum_forecast,
+            SUM(sum_actual)         AS sum_actual,
+            SUM(sum_abs_error)      AS sum_abs_error
+        FROM agg_accuracy_by_dfu
+        {where_sql}
+        GROUP BY item_id, customer_group, loc
+        ORDER BY SUM(sum_abs_error) DESC
+        LIMIT %s
+    """
+    total_sql = f"""
+        SELECT COALESCE(SUM(sum_abs_error), 0)::double precision,
+               COUNT(DISTINCT (item_id, customer_group, loc))::bigint
+        FROM agg_accuracy_by_dfu
+        {where_sql}
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(top_sql, [*params, limit])
+        top_rows = cur.fetchall()
+        cur.execute(total_sql, params)
+        total_abs_error, total_dfus = cur.fetchone()
+
+    total_err = float(total_abs_error or 0)
+    contributors: list[dict[str, Any]] = []
+    cumulative = 0.0
+    for (item_id, customer_group, loc, cluster, region_v, abc, season,
+         sf, sa, sae) in top_rows:
+        sae_f = float(sae or 0)
+        share = (100.0 * sae_f / total_err) if total_err > 0 else None
+        if share is not None:
+            cumulative += share
+        kpis = compute_kpis(float(sf or 0), float(sa or 0), sae_f, 1)
+        bias = kpis["bias"]
+        bias_direction = "over" if (bias or 0) > 0 else "under" if (bias or 0) < 0 else "even"
+        contributors.append({
+            "item_id": item_id,
+            "customer_group": customer_group,
+            "loc": loc,
+            "cluster_assignment": cluster,
+            "region": region_v,
+            "abc_vol": abc,
+            "seasonality_profile": season,
+            "sum_actual": kpis["sum_actual"],
+            "sum_abs_error": round(sae_f, 2),
+            "accuracy_pct": kpis["accuracy_pct"],
+            "wape": kpis["wape"],
+            "bias": bias,
+            "bias_direction": bias_direction if sa else "n/a",
+            "error_contribution_pct": round(share, 4) if share is not None else None,
+            "cumulative_contribution_pct": round(cumulative, 4) if share is not None else None,
+        })
+
+    return {
+        "models": model_list or None,
+        "lag_filter": lag,
+        "limit": limit,
+        "total_abs_error": round(total_err, 2),
+        "total_dfus": int(total_dfus or 0),
+        "contributors": contributors,
+        "source": "agg_accuracy_by_dfu",
+    }

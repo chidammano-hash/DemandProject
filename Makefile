@@ -695,6 +695,18 @@ backtest-load-bolt:
 
 backtest-bolt-full: backtest-bolt backtest-load-bolt
 
+# Fine-tuned Chronos-Bolt (spec 32): fine-tune first, then backtest the post-cutoff holdout.
+finetune-chronos-bolt:
+	$(UV) python scripts/ml/finetune_chronos_bolt.py $(ARGS)
+
+backtest-bolt-ft:
+	$(UV) python -m scripts.ml.run_backtest_chronos_bolt_ft
+
+backtest-load-bolt-ft:
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos_bolt_ft --replace
+
+backtest-bolt-ft-full: backtest-bolt-ft backtest-load-bolt-ft
+
 backtest-bolt-hier:
 	$(UV) python -m scripts.ml.run_backtest_bolt_hierarchical
 

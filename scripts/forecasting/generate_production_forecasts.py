@@ -968,6 +968,102 @@ def generate_forecasts_batch(
 # ---------------------------------------------------------------------------
 
 
+def _generate_finetuned_bolt_production(
+    model_id: str,
+    sales_index: dict,
+    champion_df: pd.DataFrame,
+    horizon: int,
+    forecast_month_generated,
+    run_id: str,
+) -> list[dict] | None:
+    """Forward production forecast for fine-tuned Chronos-Bolt using the REAL model (spec 32).
+
+    Closes the foundation production gap: the generic statistical path uses a
+    seasonal+recency *formula*, not the model. Returns ``None`` when no fine-tuned
+    checkpoint exists yet (caller falls through to the formula). Forecasts H steps
+    after each series' last month — matching the per-DFU ``last_month + h`` convention
+    — by grouping series by last month so the dispatcher's uniform month labels are
+    correct within each cohort.
+    """
+    from common.core.constants import FORECAST_QTY_COL
+    from common.core.utils import get_algorithm_params
+    from common.ml.expert_panel.foundation_models import (
+        _resolve_ft_checkpoint,
+        _run_chronos_bolt_ft,
+    )
+
+    params = get_algorithm_params(model_id)
+    base = params.get("base_model") or f"amazon/chronos-bolt-{params.get('model_size', 'base')}"
+    _ckpt, is_ft = _resolve_ft_checkpoint(params.get("checkpoint_dir"), base)
+    if not is_ft:
+        logger.warning(
+            "%s: no fine-tuned checkpoint at %s — falling back to formula path",
+            model_id, params.get("checkpoint_dir"),
+        )
+        return None
+
+    ts_now = datetime.now(timezone.utc)
+    by_last: dict = defaultdict(list)
+    for champ in champion_df.itertuples(index=False):
+        item_id, loc = champ.item_id, champ.loc
+        entry = sales_index.get((item_id, loc))
+        if entry is None:
+            continue
+        dates_arr, qty_arr = entry
+        if len(qty_arr) < 3:
+            continue
+        last_month = pd.Timestamp(dates_arr[-1]).to_period("M").to_timestamp()
+        key = f"{item_id}\x1f{loc}"  # unit-separator -> unique, decodable sku_ck
+        cid = _to_cluster_id(getattr(champ, "cluster_id", None))
+        by_last[last_month].append((key, item_id, loc, cid, dates_arr, qty_arr))
+
+    all_rows: list[dict] = []
+    for last_month, members in by_last.items():
+        frames = [
+            pd.DataFrame({
+                "sku_ck": key,
+                "startdate": pd.to_datetime(dates_arr),
+                "qty": np.asarray(qty_arr, dtype=np.float64),
+            })
+            for key, _it, _lo, _cid, dates_arr, qty_arr in members
+        ]
+        sdf = pd.concat(frames, ignore_index=True)
+        predict_months = [last_month + pd.DateOffset(months=h) for h in range(1, horizon + 1)]
+        preds = _run_chronos_bolt_ft(sdf, predict_months, params)
+        if preds.empty:
+            continue
+        pmap = {
+            (r.sku_ck, pd.Timestamp(r.startdate)): float(getattr(r, FORECAST_QTY_COL))
+            for r in preds.itertuples(index=False)
+        }
+        meta = {key: (it, lo, cid) for key, it, lo, cid, _d, _q in members}
+        for h, pm in enumerate(predict_months, start=1):
+            fmonth_date = pm.date().replace(day=1)
+            for key, (item_id, loc, cid) in meta.items():
+                pred = pmap.get((key, pd.Timestamp(pm)))
+                if pred is None:
+                    continue
+                all_rows.append({
+                    "forecast_month_generated": forecast_month_generated,
+                    "item_id": item_id,
+                    "loc": loc,
+                    "forecast_month": fmonth_date,
+                    "forecast_qty": max(0.0, round(pred, 2)),
+                    "forecast_qty_lower": None,
+                    "forecast_qty_upper": None,
+                    "model_id": model_id,
+                    "cluster_id": cid,
+                    "horizon_months": h,
+                    "is_recursive": h > 1,
+                    "lag_source": "actual" if h == 1 else "predicted",
+                    "run_id": run_id,
+                    "generated_at": ts_now,
+                })
+    logger.info("%s: real-model production forecast — %s rows for %s DFUs",
+                model_id, f"{len(all_rows):,}", champion_df.shape[0])
+    return all_rows
+
+
 def generate_forecasts_statistical(
     model_id: str,
     sales_index: dict,
@@ -988,6 +1084,15 @@ def generate_forecasts_statistical(
     - mstl / foundation / DL: seasonal decomposition (monthly profile +
       level scaling + damped linear trend)
     """
+    # Fine-tuned Chronos-Bolt: use the REAL model (spec 32), not the formula fallback.
+    if model_id == "chronos_bolt_ft":
+        ft_rows = _generate_finetuned_bolt_production(
+            model_id, sales_index, champion_df, horizon, forecast_month_generated, run_id,
+        )
+        if ft_rows is not None:
+            return ft_rows
+        # No checkpoint yet -> fall through to the generic formula path below.
+
     ts_now = datetime.now(timezone.utc)
     all_rows: list[dict] = []
     skipped = 0

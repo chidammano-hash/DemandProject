@@ -45,6 +45,7 @@ from common.services.job_state import (
     _run_backtest_chronos2,
     _run_backtest_chronos2_enriched,
     _run_backtest_chronos_bolt,
+    _run_backtest_chronos_bolt_ft,
     _run_backtest_lgbm,
     _run_backtest_mstl,
     _run_backtest_nbeats,
@@ -177,6 +178,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         description="Run Chronos Bolt foundation model backtest (~12 min)",
         group="backtest",
         callable=_run_backtest_chronos_bolt,
+        params_schema={},
+    ),
+    "backtest_chronos_bolt_ft": JobTypeDef(
+        type_id="backtest_chronos_bolt_ft",
+        label="Chronos Bolt (fine-tuned) Backtest",
+        description="Run fine-tuned Chronos-Bolt backtest (spec 32; needs a checkpoint, else falls back to base)",
+        group="backtest",
+        callable=_run_backtest_chronos_bolt_ft,
         params_schema={},
     ),
     "backtest_chronos2": JobTypeDef(
