@@ -21,6 +21,8 @@ from common.ml.champion.helpers import (
     _expanding_stats,
     _get_exec_lag,
     make_blend_row,
+    mix_from,
+    select_output_cols,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -100,7 +102,7 @@ def strategy_meta_learner(
 
     if merged.empty:
         return strategy_expanding(df, min_prior_months=min_prior_months)
-    return merged[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(merged)
 
 
 def _build_meta_features(
@@ -322,7 +324,7 @@ def strategy_hybrid_meta_router(
         )
         high_merged["prior_wape"] = 0.0
         if not high_merged.empty:
-            parts.append(high_merged[_OUTPUT_COLS])
+            parts.append(select_output_cols(high_merged))
 
     # ── LOW confidence: blend top-K models by inverse-WAPE ────────────────
     if not low_conf.empty:
@@ -351,6 +353,7 @@ def strategy_hybrid_meta_router(
             blend_results.append(make_blend_row(
                 item_id, customer_group, loc, startdate,
                 "hybrid_meta_router", avg_wape, blended_fcst, actual,
+                source_mix=mix_from(top, weights),
             ))
 
         if blend_results:

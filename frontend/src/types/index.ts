@@ -120,12 +120,21 @@ export type SkuAnalysisPayload = {
   location: string;
   points: number;
   models: string[];
-  series: Record<string, number | string>[];
+  // Values are numbers/strings, except champion_mix which is a {model,weight}[] array.
+  series: Record<string, number | string | { model: string; weight: number }[]>[];
   model_monthly: Record<string, SkuModelMonthly[]>;
   dfu_attributes: Record<string, string | null>[];
   // Human-readable item description (dim_item.item_desc) for the breadcrumb (U3.5).
   item_desc?: string | null;
   scope_count?: number;
+  // The champion's winning source model per month (item_location mode only) and
+  // the dominant one across months — lets the chart label the champion line
+  // "champion (N-BEATS)". Empty/null when source_model_id isn't populated.
+  champion_source_by_month?: Record<string, string>;
+  champion_dominant_source?: string | null;
+  // Per-month blend composition for blended champions, e.g.
+  // {"2025-01-01": [{model, weight}, ...]}. Drives the champion tooltip mix.
+  champion_mix_by_month?: Record<string, { model: string; weight: number }[]>;
 };
 
 export type InventoryPosition = {

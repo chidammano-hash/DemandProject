@@ -15,6 +15,8 @@ from common.ml.champion.helpers import (
     _get_exec_lag,
     _rolling_stats,
     make_blend_row,
+    mix_from,
+    select_output_cols,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -55,7 +57,7 @@ def strategy_expanding(
     qualified = qualified.sort_values("prior_wape")
     winners = qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
 
-    return winners[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(winners)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +89,7 @@ def strategy_rolling(
     qualified = qualified.sort_values("prior_wape")
     winners = qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
 
-    return winners[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(winners)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +217,7 @@ def strategy_ensemble(
         results.append(make_blend_row(
             item_id, customer_group, loc, startdate,
             "ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
         ))
 
     if not results:
@@ -263,6 +266,7 @@ def strategy_ensemble_rolling(
         results.append(make_blend_row(
             item_id, customer_group, loc, startdate,
             "ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
         ))
 
     if not results:

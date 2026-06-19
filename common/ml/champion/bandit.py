@@ -467,10 +467,16 @@ def strategy_thompson_ensemble(
                     actual = float(m_row["tothist_dmd"])
 
             if actual is not None:
+                source_mix = [
+                    {"model": m, "weight": round(float(w), 4)}
+                    for m, w in zip(top_models, weights, strict=False)
+                    if w >= 0.005
+                ]
                 results.append(make_blend_row(
                     item_id, customer_group, loc, current_month,
                     "thompson_ensemble", float(top_scores[0]),
                     blended, actual,
+                    source_mix=source_mix,
                 ))
 
             # Update posteriors

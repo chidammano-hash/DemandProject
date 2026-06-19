@@ -372,3 +372,71 @@ async def test_sku_analysis_model_monthly_structure():
     entry = mm["lgbm_cluster"][0]
     for key in ("month", "forecast", "actual"):
         assert key in entry
+
+
+# ---------------------------------------------------------------------------
+# Champion source-model labelling (item_location): champion (<model>)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_sku_analysis_champion_source_model():
+    """When champion rows exist, /sku/analysis exposes the per-month winning
+    source model + the dominant one so the UI can label 'champion (N-BEATS)'."""
+    import datetime
+    # forecast_sql must include 'champion' so the champion-source query fires.
+    forecast_rows = [
+        (datetime.date(2024, 1, 1), "champion", 100.0, 95.0),
+        (datetime.date(2024, 2, 1), "champion", 110.0, 105.0),
+    ]
+    actual_rows = [(datetime.date(2024, 1, 1), 95.0), (datetime.date(2024, 2, 1), 105.0)]
+    # champion-source query: (month, source_model_id, source_mix).
+    # nbeats wins Jan/Feb (single-model, no mix); Dec is a blend with a mix.
+    champ_source_rows = [
+        ("2024-01-01", "nbeats", None),
+        ("2024-02-01", "nbeats", None),
+        ("2023-12-01", "ensemble", [{"model": "nbeats", "weight": 0.6}, {"model": "lgbm_cluster", "weight": 0.4}]),
+    ]
+    pool, conn, cursor = make_pool(
+        fetchall_returns=[[], forecast_rows, actual_rows, champ_source_rows, []]
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/sku/analysis",
+                params={"item": "X", "location": "Y", "mode": "item_location"},
+            )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["champion_dominant_source"] == "nbeats"
+    by_month = data["champion_source_by_month"]
+    assert by_month["2024-01-01"] == "nbeats"
+    assert by_month["2023-12-01"] == "ensemble"
+    # Blend mix is exposed per month + on the series point for the blended month.
+    assert data["champion_mix_by_month"]["2023-12-01"][0]["model"] == "nbeats"
+    # The Jan/Feb series points carry the per-month champion source.
+    jan = next(p for p in data["series"] if p["month"] == "2024-01-01")
+    assert jan["champion_source"] == "nbeats"
+
+
+@pytest.mark.asyncio
+async def test_sku_analysis_no_champion_source_when_absent():
+    """No champion rows → champion_dominant_source is null, no extra query needed."""
+    import datetime
+    forecast_rows = [(datetime.date(2024, 1, 1), "lgbm_cluster", 100.0, 95.0)]
+    pool, conn, cursor = make_pool(
+        fetchall_returns=[[], forecast_rows, [(datetime.date(2024, 1, 1), 95.0)], []]
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/sku/analysis",
+                params={"item": "X", "location": "Y", "mode": "item_location"},
+            )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["champion_dominant_source"] is None
+    assert data["champion_source_by_month"] == {}

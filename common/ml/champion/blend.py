@@ -31,6 +31,8 @@ from common.ml.champion.helpers import (
     _MODEL_FAMILIES,
     _resolve_fallback_rows,
     make_blend_row,
+    mix_from,
+    select_output_cols,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -153,9 +155,15 @@ def strategy_learned_blend(
 
             actual = float(current_rows["tothist_dmd"].iloc[0])
 
+            source_mix = [
+                {"model": m, "weight": round(float(w), 4)}
+                for m, w in zip(model_cols, raw_weights, strict=False)
+                if w >= 0.005
+            ]
             results.append(make_blend_row(
                 item_id, customer_group, loc, current_month,
                 "learned_blend", 0.0, blended_fcst, actual,
+                source_mix=source_mix,
             ))
 
     # ── Fallback: expanding strategy for DFUs with insufficient history ──
@@ -314,9 +322,15 @@ def strategy_ridge_blend(
 
             actual = float(current_rows["tothist_dmd"].iloc[0])
 
+            source_mix = [
+                {"model": m, "weight": round(float(w), 4)}
+                for m, w in zip(model_cols, full_weights, strict=False)
+                if w >= 0.005
+            ]
             results.append(make_blend_row(
                 item_id, customer_group, loc, current_month,
                 "ridge_blend", 0.0, blended_fcst, actual,
+                source_mix=source_mix,
             ))
 
     # ── Fallback: expanding strategy for DFU-months with insufficient data ──
@@ -394,6 +408,7 @@ def strategy_shrinkage_blend(
         results.append(make_blend_row(
             item_id, customer_group, loc, startdate,
             "shrinkage_blend", avg_wape, blended, actual,
+            source_mix=mix_from(month_df, weights),
         ))
 
     if not results:
@@ -504,10 +519,15 @@ def strategy_bayesian_model_avg(
 
             if actual is not None:
                 best_model = max(weights, key=weights.get)
+                source_mix = [
+                    {"model": k, "weight": round(float(v), 4)}
+                    for k, v in weights.items() if v >= 0.005
+                ]
                 results.append(make_blend_row(
                     item_id, customer_group, loc, current_month,
                     "bayesian_avg", weights.get(best_model, 0.0),
                     blended, actual,
+                    source_mix=source_mix,
                 ))
 
     if not results:
@@ -668,6 +688,7 @@ def strategy_adaptive_ensemble(
         results.append(make_blend_row(
             item_id, customer_group, loc, startdate,
             "ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
         ))
 
     if not results:
@@ -751,7 +772,7 @@ def strategy_uncertainty_aware(
         # -- Single-model selection: lowest risk-adjusted score --------
         qualified = qualified.sort_values("_risk_score")
         winners = qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
-        return winners[_OUTPUT_COLS].reset_index(drop=True)
+        return select_output_cols(winners)
 
     # -- Ensemble mode: blend top-K by inverse risk-adjusted score -----
     results: list[dict[str, Any]] = []
@@ -772,6 +793,7 @@ def strategy_uncertainty_aware(
         results.append(make_blend_row(
             item_id, customer_group, loc, startdate,
             "uncertainty_ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
         ))
 
     if not results:
@@ -862,6 +884,7 @@ def strategy_diverse_ensemble(
         results.append(make_blend_row(
             item_id, customer_group, loc, startdate,
             "diverse_ensemble", avg_wape, blended_fcst, actual,
+            source_mix=mix_from(top, weights),
         ))
 
     if not results:
@@ -934,6 +957,7 @@ def strategy_cascade_ensemble(
             results.append(make_blend_row(
                 item_id, customer_group, loc, startdate,
                 "cascade_ensemble", best_wape, blended, actual,
+                source_mix=mix_from(top, weights),
             ))
 
     if not results:
@@ -1018,6 +1042,7 @@ def strategy_adversarial_filter(
             results.append(make_blend_row(
                 item_id, customer_group, loc, startdate,
                 "adversarial_filter", avg_wape, blended, actual,
+                source_mix=mix_from(top, weights),
             ))
 
     if not results:

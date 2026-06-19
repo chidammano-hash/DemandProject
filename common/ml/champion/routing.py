@@ -25,6 +25,7 @@ from common.ml.champion.helpers import (
     _get_exec_lag,
     compute_strategy_accuracy,
     make_blend_row,
+    select_output_cols,
 )
 from common.ml.champion.registry import (
     _DFU_COLS,
@@ -292,9 +293,9 @@ def strategy_seasonal(
     qualified = qualified[qualified["prior_wape"].notna()]
 
     qualified = qualified.sort_values("prior_wape")
-    seasonal_winners = qualified.drop_duplicates(
-        subset=_DFU_MONTH_COLS, keep="first",
-    )[_OUTPUT_COLS].copy()
+    seasonal_winners = select_output_cols(
+        qualified.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first"),
+    )
 
     # ── Phase 3: fallback for DFU-months with insufficient quarter history ─
     if len(seasonal_winners) > 0:
@@ -541,10 +542,17 @@ def strategy_stacked_strategies(
 
         if total_weight > 0 and actual is not None:
             blended /= total_weight
+            source_mix = [
+                {"model": sname, "weight": round(float(strat_weights.get(sname, 0)), 4)}
+                for sname in strat_lookups
+                if strat_lookups[sname].get(dfu_month_key) is not None
+                and strat_weights.get(sname, 0) >= 0.005
+            ]
             results.append(make_blend_row(
                 dfu_month_key[0], dfu_month_key[1],
                 dfu_month_key[2], dfu_month_key[3],
                 "stacked_strategies", 0.0, blended, actual,
+                source_mix=source_mix,
             ))
 
     if not results:

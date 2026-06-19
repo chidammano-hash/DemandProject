@@ -7,7 +7,7 @@ import type {
   InventoryTrendParams,
 } from "@/types";
 import type { ProductionForecastPayload, StagingForecastsPayload, CandidateForecastsPayload } from "@/api/queries/production-forecast";
-import { modelLabel } from "@/lib/model-labels";
+import { modelLabel, formatChampionLabel } from "@/lib/model-labels";
 import type { DQCorrection } from "@/api/queries/platform";
 import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
 import {
@@ -339,10 +339,14 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             const isEnabled = skuVisibleSeries.has(key);
             if (!isEnabled) return null;
             const isShapSelected = selectedModel === model;
+            const pillLabel =
+              model === "champion" && skuData.champion_dominant_source
+                ? formatChampionLabel(null, skuData.champion_dominant_source)
+                : model;
             return (
               <span key={key} className="inline-flex items-center gap-0.5">
                 <TogglePill
-                  label={model}
+                  label={pillLabel}
                   color={color}
                   active={!hiddenDemand.has(key)}
                   onClick={() => toggleDemandLineVisibility(key)}
@@ -588,6 +592,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
         hasProdForecast={hasProdForecast}
         hasAiChampion={hasAiChampion}
         aiChampionLineHidden={hiddenDemand.has("ai_champion")}
+        championDominantSource={skuData.champion_dominant_source}
         stagingModelIds={stagingModelIds}
         hiddenStaging={hiddenStaging}
         hiddenStagingPills={hiddenStagingPills}

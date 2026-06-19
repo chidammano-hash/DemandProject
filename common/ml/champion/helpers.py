@@ -31,6 +31,7 @@ def make_blend_row(
     prior_wape: float,
     forecast: float,
     actual: float,
+    source_mix: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build one champion output row keyed off ``_OUTPUT_COLS``.
 
@@ -41,6 +42,10 @@ def make_blend_row(
     Centralising the dict here keeps the forecast-quantity key in one place
     (never the ``"basefcst_pref"`` literal) and guarantees column parity with
     ``_OUTPUT_COLS`` across all ~20 emit sites.
+
+    ``source_mix`` is the blend composition for blended champions — a list of
+    ``{"model": <id>, "weight": <float>}`` dicts summing to ~1.0. Leave it
+    ``None`` for single-model picks (implies 100% of ``model_id``).
     """
     return {
         "item_id": item_id,
@@ -51,7 +56,21 @@ def make_blend_row(
         "prior_wape": prior_wape,
         FORECAST_QTY_COL: forecast,
         "tothist_dmd": actual,
+        "source_mix": source_mix,
     }
+
+
+def mix_from(top: "pd.DataFrame", weights: "pd.Series") -> list[dict[str, Any]]:
+    """Build a ``source_mix`` list from a top-K frame + aligned weight Series.
+
+    ``top`` must have a ``model_id`` column; ``weights`` is index-aligned to
+    ``top``. Tiny weights (< 0.5%) are dropped to keep the mix readable.
+    """
+    mix: list[dict[str, Any]] = []
+    for mid, w in zip(top["model_id"].to_numpy(), [float(x) for x in weights], strict=False):
+        if w >= 0.005:
+            mix.append({"model": str(mid), "weight": round(w, 4)})
+    return mix
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +189,20 @@ def compute_strategy_accuracy(winners_df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def select_output_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Return ``df[_OUTPUT_COLS]``, injecting ``source_mix=None`` if absent.
+
+    Single-model strategies select winner rows straight from the source/error
+    frame (which has no ``source_mix`` column). This keeps every strategy's
+    output schema uniform — required because router/segment strategies
+    ``pd.concat`` sub-strategy outputs and then slice ``[_OUTPUT_COLS]``.
+    """
+    if "source_mix" not in df.columns:
+        df = df.copy()
+        df["source_mix"] = None
+    return df[_OUTPUT_COLS].reset_index(drop=True)
+
+
 def compute_ceiling(df: pd.DataFrame) -> pd.DataFrame:
     """Compute oracle (ceiling) winners — lowest absolute error per DFU-month.
 
@@ -181,7 +214,7 @@ def compute_ceiling(df: pd.DataFrame) -> pd.DataFrame:
     )
     winners = ranked[ranked["_rank"] == 1].drop(columns=["_rank"])
     winners["prior_wape"] = 0.0  # ceiling has no prior WAPE concept
-    return winners[_OUTPUT_COLS].reset_index(drop=True)
+    return select_output_cols(winners)
 
 
 # ---------------------------------------------------------------------------

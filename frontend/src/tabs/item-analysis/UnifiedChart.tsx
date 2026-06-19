@@ -13,7 +13,7 @@ import { useChartColors } from "@/hooks/useChartColors";
 import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import type { SkuAnalysisPayload } from "@/types";
-import { modelLabel } from "@/lib/model-labels";
+import { modelLabel, formatChampionLabel } from "@/lib/model-labels";
 import {
   PROD_FORECAST_COLOR,
   AI_CHAMPION_COLOR,
@@ -36,6 +36,8 @@ export interface UnifiedChartProps {
   hasProdForecast: boolean;
   hasAiChampion: boolean;
   aiChampionLineHidden: boolean;
+  /** Dominant champion source model (e.g. "nbeats") — labels the champion line. */
+  championDominantSource?: string | null;
   stagingModelIds: string[];
   hiddenStaging: Set<string>;
   hiddenStagingPills: Set<string>;
@@ -66,6 +68,7 @@ export function UnifiedChart({
   hasProdForecast,
   hasAiChampion,
   aiChampionLineHidden,
+  championDominantSource,
   stagingModelIds,
   hiddenStaging,
   hiddenStagingPills,
@@ -113,7 +116,7 @@ export function UnifiedChart({
                 backgroundColor: chartColors.tooltip_bg,
                 borderColor: chartColors.tooltip_border,
               }}
-              formatter={(value: number, name: string) => {
+              formatter={(value: number, name: string, entry?: { payload?: Record<string, unknown> }) => {
                 let label = TOOLTIP_LABELS[name] ?? name;
                 // Resolve staging/backtest model names to readable labels
                 if (name.startsWith("staging_")) {
@@ -122,6 +125,14 @@ export function UnifiedChart({
                 } else if (name.startsWith("backtest_")) {
                   const mid = name.slice("backtest_".length);
                   label = `${modelLabel(mid)} (backtest)`;
+                } else if (name === "champion") {
+                  // Show that month's blend mix on the champion row, e.g.
+                  // "champion (40% NBEATS, 35% LGBM, 25% Chronos)"; falls back to
+                  // the single source model, then a bare "champion".
+                  label = formatChampionLabel(
+                    entry?.payload?.champion_mix as { model: string; weight: number }[] | undefined,
+                    entry?.payload?.champion_source as string | undefined,
+                  );
                 }
                 if (name === "dos" || name === "avg_lead_time")
                   return [`${Number(value).toFixed(1)} days`, label];
@@ -186,13 +197,19 @@ export function UnifiedChart({
               .map((model, idx) => {
                 const isSelected = selectedModel === model;
                 const isOtherSelected = selectedModel !== null && selectedModel !== model;
+                // Label the champion line with its dominant source model, e.g.
+                // "champion (N-BEATS)" (per-month mix shown in the tooltip).
+                const seriesName =
+                  model === "champion" && championDominantSource
+                    ? formatChampionLabel(null, championDominantSource)
+                    : model;
                 return (
                   <Line
                     key={model}
                     type="monotone"
                     dataKey={`forecast_${model}`}
                     yAxisId="left"
-                    name={model}
+                    name={seriesName}
                     stroke={skuModelColor(model, idx)}
                     strokeWidth={isSelected ? 3 : model === "champion" ? 2.5 : 1.5}
                     strokeDasharray={model === "champion" ? undefined : "5 3"}
