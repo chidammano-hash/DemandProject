@@ -311,7 +311,7 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 
 1. **Tier 1**: `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`
 2. **Tier 2**: `mv_inventory_forecast_monthly`, `mv_fill_rate_monthly`, `mv_intramonth_stockout`
-3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_dfu_coverage`
+3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`
 4. **Tier 4**: `mv_inventory_health_score`, `mv_control_tower_kpis`
 
 ### Data Retention Policies
@@ -785,6 +785,7 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
   REFRESH MATERIALIZED VIEW mv_supplier_po_performance;
   REFRESH MATERIALIZED VIEW mv_po_lead_time_analysis;
   REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;
+  REFRESH MATERIALIZED VIEW agg_accuracy_by_dfu;
   REFRESH MATERIALIZED VIEW agg_dfu_coverage;
 
   -- Tier 3: Depend on tier 2 (mv_inventory_forecast_monthly)
@@ -863,6 +864,7 @@ These MVs depend on backtest data loaded in Step 10:
 ```bash
 docker compose exec -T postgres psql -U demand -d demand_mvp -c "
   REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;
+  REFRESH MATERIALIZED VIEW agg_accuracy_by_dfu;
   REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive;
   REFRESH MATERIALIZED VIEW agg_dfu_coverage;
   REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive;
@@ -924,7 +926,7 @@ make backtest-clean MODELS="nhits nbeats"          # Delete deep learning models
 make backtest-clean MODELS="--all-backtest"        # Delete all non-external backtest models
 ```
 
-Removes rows from `fact_external_forecast_monthly` and `backtest_lag_archive`, then refreshes all 5 dependent materialized views. `--all-backtest` never deletes `model_id='external'`.
+Removes rows from `fact_external_forecast_monthly` and `backtest_lag_archive`, then refreshes all 6 dependent materialized views. `--all-backtest` never deletes `model_id='external'`.
 
 ### Remove Forecasts by Date Range
 

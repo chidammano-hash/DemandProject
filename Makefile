@@ -845,10 +845,10 @@ forecast-clean-list:
 
 accuracy-slice-refresh:
 	# CONCURRENTLY safe: uq_agg_accuracy_dim, uq_agg_accuracy_lag_archive,
-	# uq_dfu_coverage_model_lag_dfu, and uq_dfu_coverage_lag_archive (sql/119)
-	# back the four MVs respectively.
+	# uq_dfu_coverage_model_lag_dfu, uq_dfu_coverage_lag_archive (sql/119) and
+	# uq_agg_accuracy_by_dfu (sql/193) back the five MVs respectively.
 	$(PSQL) -v ON_ERROR_STOP=1 \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive;"
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive;"
 
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
@@ -1661,7 +1661,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	  agg_sales_monthly agg_forecast_monthly agg_inventory_monthly \
 	  mv_inventory_forecast_monthly mv_fill_rate_monthly mv_intramonth_stockout \
 	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
-	  agg_accuracy_by_dim agg_dfu_coverage \
+	  agg_accuracy_by_dim agg_accuracy_by_dfu agg_dfu_coverage \
 	  mv_inventory_health_score mv_control_tower_kpis \
 	  mv_integrated_planning_targets \
 	  mv_customer_activity_monthly \
@@ -1676,6 +1676,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest load)
 	$(PSQL) -v ON_ERROR_STOP=1 -c " \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; \
+	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive; \

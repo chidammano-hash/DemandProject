@@ -7,8 +7,23 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import add_cross_dim_filters, compute_kpis, get_conn, set_cache
+from common.services.metrics import compute_unweighted_accuracy
 
 router = APIRouter(tags=["accuracy"])
+
+# Dimensions that the per-DFU decomposition can group by. These are exactly the
+# DFU-constant attribute columns carried in agg_accuracy_by_dfu (sql/193);
+# month_start/lag/model_id are filters, not group keys, so they are excluded.
+_DECOMP_GROUP_DIMS = {
+    "cluster_assignment",
+    "ml_cluster",
+    "supplier_desc",
+    "abc_vol",
+    "region",
+    "brand_desc",
+    "seasonality_profile",
+    "dfu_execution_lag",
+}
 
 
 def _add_dim_filters(
