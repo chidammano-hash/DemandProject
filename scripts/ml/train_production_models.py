@@ -159,6 +159,11 @@ _MODEL_LIBRARY: dict[str, dict[str, Any]] = {
         "default_params_fn": lambda algo, seed=42: {
             k: v
             for k, v in {
+                # Default to MAE (reg:absoluteerror) like LGBM's regression_l1.
+                # Without this XGBoost falls back to reg:squarederror (MSE), which
+                # chases demand spikes and over-predicts on skewed low-volume DFUs
+                # (e.g. tiny SKUs where MAE/CatBoost shrink to the true low level).
+                "objective": algo.get("objective", "reg:absoluteerror"),
                 "n_estimators": algo.get("n_estimators", 500),
                 "learning_rate": algo.get("learning_rate", 0.05),
                 "max_depth": algo.get("max_depth", 6),
