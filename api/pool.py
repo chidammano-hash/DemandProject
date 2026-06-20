@@ -88,15 +88,23 @@ def _create_pool() -> ConnectionPool:
     # - max_lifetime=3600: recycle connections every hour to avoid stale/leaked server-side state
     # - reconnect_timeout=5: retry failed backend connections every 5s to recover from transient DB restarts
     # - configure: applies SET statement_timeout once per new backend connection
-    # max_size sized for the Customer Analytics tab: 13 concurrent endpoints
-    # × ~3 simultaneous planners + headroom. Below that, the 14th request
-    # waits up to `timeout` seconds before erroring. Note that with N gunicorn
-    # workers, total backend connections = N × max_size — keep that under
-    # Postgres `max_connections` (default 100).
+    #
+    # max_size default = 12 (env-override POOL_MAX_SIZE). This is the SYNC
+    # primary pool. The async primary pool (default 20) and the read-replica
+    # pool (default 12, only created when READ_REPLICA_URL is set) are sized
+    # INDEPENDENTLY below — they are NOT the same knob.
+    #
+    # Multi-pool invariant (per gunicorn worker, against the PRIMARY ceiling):
+    #   GUNICORN_WORKERS x (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead
+    #       ≤ postgres max_connections
+    # and (against the REPLICA ceiling): GUNICORN_WORKERS x READ_POOL_MAX_SIZE.
+    # With the defaults (4 workers x (12 + 20) = 128) this fits under the dev
+    # max_connections=200 in docker-compose.yml. The Makefile `deploy-check`
+    # preflight gate enforces this formula — keep the two in sync.
     return ConnectionPool(
         _build_conninfo(),
         min_size=int(os.getenv("POOL_MIN_SIZE", "5")),
-        max_size=int(os.getenv("POOL_MAX_SIZE", "50")),
+        max_size=int(os.getenv("POOL_MAX_SIZE", "12")),
         open=True,
         timeout=10,
         max_lifetime=3600,
@@ -155,9 +163,12 @@ def _create_read_pool() -> ConnectionPool:
     """Create a ConnectionPool for the read replica.
 
     Sized independently of the primary pool via ``READ_POOL_MIN_SIZE`` /
-    ``READ_POOL_MAX_SIZE``; falls back to the primary pool sizing knobs
+    ``READ_POOL_MAX_SIZE``; falls back to the primary sync pool sizing knobs
     so a default deployment that just sets ``READ_REPLICA_URL`` gets
-    sensible defaults without extra tuning.
+    sensible defaults without extra tuning. Final default max_size = 12
+    (only ever created when READ_REPLICA_URL is set). Its backend
+    connections count against the REPLICA's max_connections, not the
+    primary's — see the multi-pool invariant in ``_create_pool``.
     """
     conninfo = _build_read_replica_conninfo()
     if conninfo is None:
@@ -168,7 +179,7 @@ def _create_read_pool() -> ConnectionPool:
     return ConnectionPool(
         conninfo,
         min_size=int(os.getenv("READ_POOL_MIN_SIZE", os.getenv("POOL_MIN_SIZE", "5"))),
-        max_size=int(os.getenv("READ_POOL_MAX_SIZE", os.getenv("POOL_MAX_SIZE", "50"))),
+        max_size=int(os.getenv("READ_POOL_MAX_SIZE", os.getenv("POOL_MAX_SIZE", "12"))),
         open=True,
         timeout=10,
         max_lifetime=3600,
@@ -210,7 +221,7 @@ def _create_async_read_pool() -> AsyncConnectionPool:
     return AsyncConnectionPool(
         conninfo,
         min_size=int(os.getenv("READ_POOL_MIN_SIZE", os.getenv("ASYNC_POOL_MIN_SIZE", os.getenv("POOL_MIN_SIZE", "5")))),
-        max_size=int(os.getenv("READ_POOL_MAX_SIZE", os.getenv("ASYNC_POOL_MAX_SIZE", os.getenv("POOL_MAX_SIZE", "50")))),
+        max_size=int(os.getenv("READ_POOL_MAX_SIZE", os.getenv("ASYNC_POOL_MAX_SIZE", os.getenv("POOL_MAX_SIZE", "12")))),
         open=False,
         timeout=10,
         max_lifetime=3600,
@@ -262,11 +273,16 @@ async def close_async_read_pool() -> None:
 # ---------------------------------------------------------------------------
 # Async connection pool (Item 19 pilot)
 #
-# Sized identically to the sync pool. Async handlers do NOT consume an anyio
-# threadpool token, so the threadpool ceiling no longer caps Customer
-# Analytics fan-out. Total backend connections = N gunicorn workers ×
-# (sync max_size + async max_size); keep the sum under Postgres
-# ``max_connections`` (default 100).
+# Sized INDEPENDENTLY of the sync pool: default max_size = 20 (env-override
+# ASYNC_POOL_MAX_SIZE), larger than the sync default (12) because the async
+# pilot routers carry the Customer-Analytics fan-out (13 concurrent endpoints).
+# Async handlers do NOT consume an anyio threadpool token, so the threadpool
+# ceiling no longer caps that fan-out — the async pool size does.
+#
+# Per the multi-pool invariant (see ``_create_pool``): total PRIMARY backend
+# connections = GUNICORN_WORKERS x (sync POOL_MAX_SIZE + async
+# ASYNC_POOL_MAX_SIZE); keep that under Postgres ``max_connections`` (dev
+# default 200 in docker-compose.yml). The Makefile preflight gate enforces it.
 # ---------------------------------------------------------------------------
 
 async def _configure_async_connection(conn: AsyncConnection) -> None:
@@ -289,7 +305,7 @@ def _create_async_pool() -> AsyncConnectionPool:
     return AsyncConnectionPool(
         _build_conninfo(),
         min_size=int(os.getenv("ASYNC_POOL_MIN_SIZE", os.getenv("POOL_MIN_SIZE", "5"))),
-        max_size=int(os.getenv("ASYNC_POOL_MAX_SIZE", os.getenv("POOL_MAX_SIZE", "50"))),
+        max_size=int(os.getenv("ASYNC_POOL_MAX_SIZE", "20")),
         open=False,
         timeout=10,
         max_lifetime=3600,

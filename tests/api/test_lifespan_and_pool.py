@@ -80,6 +80,93 @@ async def test_app_boots_with_lifespan(monkeypatch):
             assert resp.status_code in (200, 404)
 
 
+@pytest.mark.parametrize(
+    ("factory_name", "pool_symbol", "expected_max", "env_override"),
+    [
+        # Sync primary pool — default 12, env-override POOL_MAX_SIZE.
+        ("_create_pool", "ConnectionPool", 12, ("POOL_MAX_SIZE", "37")),
+        # Async primary pool — independent default 20 (NOT inherited from
+        # POOL_MAX_SIZE), env-override ASYNC_POOL_MAX_SIZE.
+        ("_create_async_pool", "AsyncConnectionPool", 20, ("ASYNC_POOL_MAX_SIZE", "41")),
+    ],
+)
+def test_primary_pool_independent_max_size_defaults(
+    monkeypatch, factory_name, pool_symbol, expected_max, env_override
+):
+    """Each primary pool must default to its OWN independent max_size and honour
+    its dedicated env override. The async pool default (20) must NOT track the
+    sync POOL_MAX_SIZE default (12) — they are sized independently (P0-1 fix).
+    """
+    from api import pool as pool_mod
+
+    monkeypatch.setenv("POSTGRES_PASSWORD", "sentinel_pw")
+    # Clear all sizing knobs so the code-level defaults are exercised.
+    for var in ("POOL_MAX_SIZE", "ASYNC_POOL_MAX_SIZE", "READ_POOL_MAX_SIZE", "POOL_MIN_SIZE"):
+        monkeypatch.delenv(var, raising=False)
+
+    captured: dict[str, int] = {}
+
+    def _capture(*_args, **kwargs):
+        captured["max_size"] = kwargs["max_size"]
+        return object()  # don't build a real pool
+
+    monkeypatch.setattr(pool_mod, pool_symbol, _capture)
+
+    # Default path: the pool's own code-level default.
+    getattr(pool_mod, factory_name)()
+    assert captured["max_size"] == expected_max
+
+    # Override path: the pool's dedicated env var wins.
+    env_var, env_val = env_override
+    monkeypatch.setenv(env_var, env_val)
+    getattr(pool_mod, factory_name)()
+    assert captured["max_size"] == int(env_val)
+
+
+def test_async_pool_default_does_not_inherit_sync_pool_size(monkeypatch):
+    """Setting POOL_MAX_SIZE must NOT change the async primary pool size — the
+    two pools are independent. Regression guard for the old coupled default
+    (async fell back to POOL_MAX_SIZE)."""
+    from api import pool as pool_mod
+
+    monkeypatch.setenv("POSTGRES_PASSWORD", "sentinel_pw")
+    monkeypatch.delenv("ASYNC_POOL_MAX_SIZE", raising=False)
+    monkeypatch.delenv("POOL_MIN_SIZE", raising=False)
+    # Crank the SYNC knob; the async default must stay at 20.
+    monkeypatch.setenv("POOL_MAX_SIZE", "99")
+
+    captured: dict[str, int] = {}
+
+    def _capture(*_args, **kwargs):
+        captured["max_size"] = kwargs["max_size"]
+        return object()
+
+    monkeypatch.setattr(pool_mod, "AsyncConnectionPool", _capture)
+    pool_mod._create_async_pool()
+    assert captured["max_size"] == 20
+
+
+def test_read_pool_default_max_size_is_twelve(monkeypatch):
+    """The read-replica pool must default to max_size=12 (independent ceiling
+    against the replica's own max_connections)."""
+    from api import pool as pool_mod
+
+    monkeypatch.setenv("POSTGRES_PASSWORD", "sentinel_pw")
+    monkeypatch.setenv("READ_REPLICA_URL", "postgresql://demand:pw@replica:5432/demand_mvp")
+    for var in ("READ_POOL_MAX_SIZE", "ASYNC_POOL_MAX_SIZE", "POOL_MAX_SIZE", "POOL_MIN_SIZE"):
+        monkeypatch.delenv(var, raising=False)
+
+    captured: dict[str, int] = {}
+
+    def _capture(*_args, **kwargs):
+        captured["max_size"] = kwargs["max_size"]
+        return object()
+
+    monkeypatch.setattr(pool_mod, "ConnectionPool", _capture)
+    pool_mod._create_read_pool()
+    assert captured["max_size"] == 12
+
+
 def test_api_pool_and_common_db_are_consistent():
     """api.pool._build_conninfo() fields must match common.core.db.get_db_params()."""
     from api import pool as pool_mod

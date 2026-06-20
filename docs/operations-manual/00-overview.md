@@ -122,7 +122,7 @@ These are honest gaps where docs/CLAUDE.md and code disagree. Each is flagged in
 
 | Item | Where | Status |
 |---|---|---|
-| `POOL_MAX_SIZE` default is 50 in `api/pool.py`, CLAUDE.md says 20 | §1 | Update CLAUDE.md |
+| Pool sizing drift (`POOL_MAX_SIZE` code vs docs) | §1 | RECONCILED (P0-1): independent defaults — sync `POOL_MAX_SIZE=12`, async `ASYNC_POOL_MAX_SIZE=20`, read `READ_POOL_MAX_SIZE=12`; `max_connections=200`; `make deploy-check` enforces the multi-pool invariant. |
 | `make seasonality-all` / `variability-all` referenced in CLAUDE.md but not in Makefile | §3 | Aliases unimplemented; use `make features-compute` |
 | `make tune-cust-enriched-all` referenced in CLAUDE.md but not in Makefile | §5 | Use direct script invocation |
 | `scripts/inventory/`, `scripts/forecasting/`, `scripts/ops/` don't exist on this branch — most scripts at `scripts/` root | §6, §7, §8 | Per CLAUDE.md, NEW scripts must go in subdirectories |

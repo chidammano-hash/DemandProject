@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -24,8 +24,15 @@ import {
   Scatter,
   ZAxis,
 } from "recharts";
+import { ModularReactECharts } from "@/components/echarts-modular";
+import { useChartColors } from "@/hooks/useChartColors";
 import type { ClusteringScenarioResult, PCAScatterData } from "@/api/queries";
 import { formatNumber, formatCompactNumber, formatClusterLabel } from "@/lib/formatters";
+
+// Maximum number of PCA scatter points rendered on the canvas.
+// Beyond this the tooltip hit-test degrades and first-paint stalls.
+// TODO(P0-3): push topN/point-cap server-side so the payload itself is bounded.
+const PCA_RENDER_CAP = 5_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,6 +73,8 @@ interface ScenarioChartsProps {
 }
 
 export const ScenarioCharts = memo(function ScenarioCharts({ result, pcaScatter }: ScenarioChartsProps) {
+  const { okabeIto, chartColors } = useChartColors();
+
   const kSel = result.k_selection_results;
   const kData = kSel.k_values.map((k, i) => ({
     k,
@@ -100,15 +109,88 @@ export const ScenarioCharts = memo(function ScenarioCharts({ result, pcaScatter 
 
   const hasCH = kData.some((d) => d.ch != null);
 
-  // Group PCA scatter points by cluster for coloring
-  const pcaByCluster = new Map<number, { pc1: number; pc2: number }[]>();
-  if (pcaScatter) {
-    for (const pt of pcaScatter.points) {
-      const arr = pcaByCluster.get(pt.cluster) ?? [];
-      arr.push({ pc1: pt.pc1, pc2: pt.pc2 });
-      pcaByCluster.set(pt.cluster, arr);
+  // ── PCA scatter: canvas ECharts series (one series per cluster) ──────────
+  // Points are capped at PCA_RENDER_CAP before building series; excess points
+  // are sampled uniformly to keep the distribution representative.
+  const { pcaEChartsOption, pcaRenderedCount, pcaTotalCount } = useMemo(() => {
+    if (!pcaScatter || pcaScatter.points.length === 0) {
+      return { pcaEChartsOption: null, pcaRenderedCount: 0, pcaTotalCount: 0 };
     }
-  }
+
+    const allPoints = pcaScatter.points;
+    const totalCount = allPoints.length;
+
+    // Uniform sampling when over cap: pick every Nth point.
+    const points =
+      totalCount <= PCA_RENDER_CAP
+        ? allPoints
+        : allPoints.filter((_, i) => i % Math.ceil(totalCount / PCA_RENDER_CAP) === 0).slice(0, PCA_RENDER_CAP);
+
+    const renderedCount = points.length;
+
+    // Group by cluster id for separate series (preserves legend + per-cluster color).
+    const byCluster = new Map<number, Array<[number, number]>>();
+    for (const pt of points) {
+      const arr = byCluster.get(pt.cluster) ?? [];
+      arr.push([pt.pc1, pt.pc2]);
+      byCluster.set(pt.cluster, arr);
+    }
+
+    const series = Array.from(byCluster.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([cluster, pts]) => ({
+        name: `Cluster ${cluster}`,
+        type: "scatter" as const,
+        // Canvas scatter: O(1) hit-test via ECharts spatial index, not O(n) SVG.
+        large: true,
+        largeThreshold: 2000,
+        data: pts,
+        symbolSize: 5,
+        itemStyle: {
+          // Per-cluster color from the Okabe-Ito palette (color-blind safe).
+          // okabeIto comes from useChartColors() — no inline hex.
+          color: okabeIto[cluster % okabeIto.length],
+          opacity: 0.65,
+        },
+      }));
+
+    const option = {
+      tooltip: {
+        trigger: "item" as const,
+        formatter: (p: { seriesName: string; value: [number, number] }) =>
+          `<b>${p.seriesName}</b><br/>PC1: ${p.value[0].toFixed(3)}<br/>PC2: ${p.value[1].toFixed(3)}`,
+      },
+      legend: {
+        type: "scroll" as const,
+        right: 10,
+        top: 0,
+        orient: "vertical" as const,
+        textStyle: { fontSize: 10 },
+      },
+      grid: { left: 60, right: 120, top: 20, bottom: 50 },
+      xAxis: {
+        type: "value" as const,
+        name: `PC1 (${pcaScatter.pc1_variance}% variance)`,
+        nameLocation: "center" as const,
+        nameGap: 30,
+        axisLabel: { fontSize: 10 },
+        splitLine: { lineStyle: { color: chartColors.grid } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+      },
+      yAxis: {
+        type: "value" as const,
+        name: `PC2 (${pcaScatter.pc2_variance}% variance)`,
+        nameLocation: "center" as const,
+        nameGap: 40,
+        axisLabel: { fontSize: 10 },
+        splitLine: { lineStyle: { color: chartColors.grid } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+      },
+      series,
+    };
+
+    return { pcaEChartsOption: option, pcaRenderedCount: renderedCount, pcaTotalCount: totalCount };
+  }, [pcaScatter, okabeIto, chartColors]);
 
   return (
     <div className="mt-4 space-y-6">
@@ -217,47 +299,23 @@ export const ScenarioCharts = memo(function ScenarioCharts({ result, pcaScatter 
         </div>
       </div>
 
-      {/* ── PCA 2D Scatter ── */}
-      {pcaScatter && pcaScatter.points.length > 0 && (
+      {/* ── PCA 2D Scatter — canvas ECharts (replaces recharts SVG, P0-4) ── */}
+      {pcaEChartsOption && (
         <div>
-          <p className="mb-2 text-sm font-semibold text-foreground">Cluster Visualization (2D PCA)</p>
-          <div className="rounded-md border border-input bg-background p-3">
-            <ResponsiveContainer width="100%" height={400}>
-              <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  type="number"
-                  dataKey="pc1"
-                  name="PC1"
-                  tick={{ fontSize: 10 }}
-                  label={{ value: `PC1 (${pcaScatter.pc1_variance}% variance)`, position: "insideBottom", offset: -10, fontSize: 11 }}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="pc2"
-                  name="PC2"
-                  tick={{ fontSize: 10 }}
-                  label={{ value: `PC2 (${pcaScatter.pc2_variance}% variance)`, angle: -90, position: "insideLeft", offset: -5, fontSize: 11 }}
-                />
-                <Tooltip
-                  cursor={{ strokeDasharray: "3 3" }}
-                  formatter={(value: number, name: string) => [value.toFixed(2), name]}
-                />
-                {Array.from(pcaByCluster.entries())
-                  .sort(([a], [b]) => a - b)
-                  .map(([cluster, points]) => (
-                    <Scatter
-                      key={cluster}
-                      name={`Cluster ${cluster}`}
-                      data={points}
-                      fill={PIE_COLORS[cluster % PIE_COLORS.length]}
-                      fillOpacity={0.6}
-                      r={3}
-                    />
-                  ))}
-                <Legend verticalAlign="top" align="right" layout="vertical" wrapperStyle={{ fontSize: 10, paddingLeft: 12 }} />
-              </ScatterChart>
-            </ResponsiveContainer>
+          <div className="mb-2 flex items-baseline gap-2">
+            <p className="text-sm font-semibold text-foreground">Cluster Visualization (2D PCA)</p>
+            {pcaTotalCount > pcaRenderedCount && (
+              <span className="text-[10px] text-muted-foreground">
+                showing {pcaRenderedCount.toLocaleString()} of {pcaTotalCount.toLocaleString()} points
+              </span>
+            )}
+          </div>
+          <div className="rounded-md border border-input bg-background p-3" role="img" aria-label="PCA cluster scatter chart">
+            <ModularReactECharts
+              option={pcaEChartsOption}
+              style={{ height: 400 }}
+              notMerge
+            />
           </div>
         </div>
       )}

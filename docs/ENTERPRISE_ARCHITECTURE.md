@@ -181,7 +181,7 @@ graph TB
 |---|---|---|
 | Deployment Model | Single-machine Docker Compose | Simplicity; no Kubernetes overhead for current scale |
 | Query Latency (KPIs) | Sub-second on 198M rows | Achieved via materialized views and monthly range partitioning |
-| Connection Pool | max=20, timeout=10s, recycling=3600s | Balance throughput with PostgreSQL max_connections=50 |
+| Connection Pool | 3 independent per-worker pools — sync `POOL_MAX_SIZE=12`, async `ASYNC_POOL_MAX_SIZE=20`, read `READ_POOL_MAX_SIZE=12` (replica only); timeout=10s, recycling=3600s | Invariant `GUNICORN_WORKERS × (sync+async) ≤ PostgreSQL max_connections=200`; `make deploy-check` enforces it |
 | Rate Limiting | Sliding window, 100 req/min standard tier | Protect API from abuse without impacting interactive use |
 | JWT Token Expiry | Access: 30 min, Refresh: 7 days | Balance security with user convenience |
 | AI Circuit Breakers | 40 turns, 100K tokens, $10M financial cap | Prevent runaway AI agent cost/latency |
@@ -1007,7 +1007,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 
 | Service | Image | Port | Health Check | Volumes | Key Config |
 |---|---|---|---|---|---|
-| `postgres` | pgvector/pgvector:pg16 | `${POSTGRES_HOST_PORT:-5440}:5432` | `pg_isready` every 10s | `pg_data` | shared_buffers=512MB, work_mem=64MB, max_connections=50 |
+| `postgres` | pgvector/pgvector:pg16 | `${POSTGRES_HOST_PORT:-5440}:5432` | `pg_isready` every 10s | `pg_data` | shared_buffers=4GB, work_mem=128MB, max_connections=200 |
 | `mlflow` | ghcr.io/mlflow/mlflow:v3.0.0 | `${MLFLOW_HOST_PORT:-5003}:5000` | - | `mlflow_data` | Backend: postgresql, Artifacts: mlflow-artifacts:/ |
 | `redis` | redis:7-alpine | `${REDIS_HOST_PORT:-6379}:6379` | `redis-cli ping` every 10s | `redis_data` | maxmemory=256mb, maxmemory-policy=allkeys-lru |
 

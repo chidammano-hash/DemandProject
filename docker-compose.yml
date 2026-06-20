@@ -11,7 +11,14 @@ services:
       -c work_mem=128MB
       -c maintenance_work_mem=1GB
       -c effective_cache_size=12GB
-      -c max_connections=100
+      # max_connections=200 (dev headroom). Multi-pool invariant the API must
+      # satisfy against THIS (primary) ceiling:
+      #   GUNICORN_WORKERS × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead
+      #       ≤ max_connections
+      # Defaults: 4 × (12 + 20) = 128 ≤ 200. The read-replica pool
+      # (GUNICORN_WORKERS × READ_POOL_MAX_SIZE) counts against the REPLICA's
+      # own max_connections, not this one. Enforced by `make deploy-check`.
+      -c max_connections=200
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
       -c effective_io_concurrency=200

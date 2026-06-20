@@ -974,10 +974,10 @@ Set `READ_REPLICA_URL` in the API process environment:
 READ_REPLICA_URL=postgres://reader:secret@replica.example.com:5433/demand_mvp
 ```
 
-Optional sizing knobs (default to the primary pool's values):
+Optional sizing knobs (chain down to the primary pool's values):
 
-- `READ_POOL_MIN_SIZE` (default `POOL_MIN_SIZE`, fallback `5`)
-- `READ_POOL_MAX_SIZE` (default `POOL_MAX_SIZE`, fallback `50`)
+- `READ_POOL_MIN_SIZE` (chain: `READ_POOL_MIN_SIZE` → `POOL_MIN_SIZE`, fallback `5`)
+- `READ_POOL_MAX_SIZE` (chain: `READ_POOL_MAX_SIZE` → `ASYNC_POOL_MAX_SIZE` → `POOL_MAX_SIZE`, final fallback `12`). These connections count against the REPLICA's `max_connections`, separate from the primary multi-pool invariant.
 
 When `READ_REPLICA_URL` is unset (the default), every endpoint falls through to
 the primary pool — i.e. the configured-off code path is bit-for-bit identical

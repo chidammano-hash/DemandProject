@@ -101,11 +101,13 @@ Edit `/Users/manoharchidambaram/projects/DemandProject/.env` (created by `make i
 | `USE_SYSTEM_DATE` | unset (`false`) | `common/core/planning_date.py` | When `true`, ignore `config/planning_config.yaml` and use the OS clock. |
 | `DEMAND_GPU` | `auto` | backtest scripts in `scripts/ml/` | GPU acceleration mode: `on` / `off` / `auto`. Falls back gracefully if `cupy` / `numba` are not installed. |
 | `POOL_MIN_SIZE` | `5` | `api/pool.py` | psycopg3 connection pool floor. |
-| `POOL_MAX_SIZE` | `50` | `api/pool.py` | psycopg3 connection pool ceiling. With N gunicorn workers, total backend connections = `N × POOL_MAX_SIZE` — keep under Postgres `max_connections` (100). |
+| `POOL_MAX_SIZE` | `12` | `api/pool.py` | Sync primary pool ceiling. The API runs THREE independent pools per worker (sync / async / read) — see the multi-pool invariant below. |
 | `ASYNC_POOL_MIN_SIZE` | falls back to `POOL_MIN_SIZE` (`5`) | `api/pool.py` | Floor for the async pool used by the async pilot routers (`customer_analytics`, `inv_planning_insights`). |
-| `ASYNC_POOL_MAX_SIZE` | falls back to `POOL_MAX_SIZE` (`50`) | `api/pool.py` | Ceiling for the async pool. Apply the same `workers × max_size < max_connections` rule as the sync pool. |
+| `ASYNC_POOL_MAX_SIZE` | `20` (independent default) | `api/pool.py` | Async primary pool ceiling — sized larger than the sync pool because it carries the Customer-Analytics fan-out. Independent of `POOL_MAX_SIZE`. |
 | `READ_REPLICA_URL` | unset (replica disabled — fall back to primary) | `common/core/db.py`, `api/pool.py` | Optional Postgres replica URL (`postgres://user:pass@host:port/dbname`). When set, `get_read_only_conn()` / `get_async_read_only_conn()` route to the replica; `_read_replica_configured()` is the gate. Caller must be lag-tolerant. |
-| `READ_POOL_MIN_SIZE` / `READ_POOL_MAX_SIZE` | fall back to `ASYNC_POOL_*` then `POOL_*` | `api/pool.py` | Per-pool overrides for the read-replica pool. |
+| `READ_POOL_MIN_SIZE` / `READ_POOL_MAX_SIZE` | `READ_POOL_MAX_SIZE` final default `12` (chain: `READ_POOL_*` → `ASYNC_POOL_*` → `POOL_*`) | `api/pool.py` | Per-pool overrides for the read-replica pool (only created when `READ_REPLICA_URL` is set). Counts against the REPLICA's `max_connections`, not the primary's. |
+
+**Multi-pool connection invariant.** Total backend connections against the PRIMARY are `GUNICORN_WORKERS × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead`; keep that `≤` Postgres `max_connections` (dev `max_connections=200` in `docker-compose.yml`). The read-replica pool (`GUNICORN_WORKERS × READ_POOL_MAX_SIZE`) is bounded by the replica's own ceiling. With the defaults: `4 × (12 + 20) = 128 ≤ 200`. The `make deploy-check` preflight gate computes this exact formula (adding the read pool only when `READ_REPLICA_URL` is set) and fails if the total exceeds 85% of `max_connections`. Override `POSTGRES_MAX_CONNECTIONS` in `.env` if you raise the DB ceiling so the gate stays accurate.
 | `PG_STATEMENT_TIMEOUT_MS` | `30000` | `api/pool.py` | `statement_timeout` applied per backend connection. |
 | `REDIS_URL` | `redis://localhost:6379/0` (host) / `redis://redis:6379/0` (container) | `common/services/cache.py` | Redis connection string. Backs `cached_async` (single-flight de-dup); `reset_cache` flushes the live backend. |
 
@@ -304,12 +306,12 @@ docker compose logs postgres | tail -50
 If RAM is the issue, raise Docker Desktop's memory allocation to >= 8 GB.
 
 ### 7.4 Pool exhaustion (`pool timeout` / 503s under load)
-`POOL_MAX_SIZE` defaults to 50 (`api/pool.py:85`). Symptoms: API requests time out after ~10 s with `pool timeout exceeded`. Increase the cap and restart the API:
+`POOL_MAX_SIZE` defaults to 12 (sync primary pool, `api/pool.py`). Symptoms: API requests time out after ~10 s with `pool timeout exceeded`. Increase the cap and restart the API:
 ```bash
-echo 'POOL_MAX_SIZE=80' >> .env
+echo 'POOL_MAX_SIZE=18' >> .env
 # Restart make api / containerized api
 ```
-Keep `gunicorn_workers × POOL_MAX_SIZE < 100` (Postgres `max_connections`).
+Stay within the multi-pool invariant: `gunicorn_workers × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) ≤ max_connections` (dev `max_connections=200`). `make deploy-check` enforces it (fails at >85% of the ceiling), so raise `POSTGRES_MAX_CONNECTIONS` in `.env` and `max_connections` in `docker-compose.yml` together if you need more headroom.
 
 ### 7.5 Frontend gets HTML instead of JSON
 A new API prefix was added without a Vite proxy entry. The dev server falls back to `index.html`.

@@ -48,16 +48,29 @@ deploy-check:
 	@echo "[0/7] Pre-flight checks..."
 	@test -f .env || { echo "FAIL: .env not found. Create it with REDIS_URL and POOL_MAX_SIZE — see runbook step 4."; exit 1; }
 	@grep -q '^REDIS_URL=' .env || { echo "FAIL: REDIS_URL not set in .env. Add: REDIS_URL=redis://redis:6379/0"; exit 1; }
-	@grep -q '^POOL_MAX_SIZE=' .env || { echo "FAIL: POOL_MAX_SIZE not set in .env. Add: POOL_MAX_SIZE=20  (4 workers x 20 = 80 conn, fits under PG max=100)"; exit 1; }
-	@WORKERS=$$(grep '^GUNICORN_WORKERS=' .env | cut -d= -f2 || echo 4); \
-	 POOL=$$(grep '^POOL_MAX_SIZE=' .env | cut -d= -f2); \
-	 TOTAL=$$(( $${WORKERS:-4} * $$POOL )); \
-	 if [ $$TOTAL -gt 90 ]; then \
-	   echo "FAIL: GUNICORN_WORKERS ($${WORKERS:-4}) x POOL_MAX_SIZE ($$POOL) = $$TOTAL connections, exceeds Postgres max_connections=100 (with headroom)."; \
-	   echo "  Fix: lower POOL_MAX_SIZE in .env, or raise max_connections in docker-compose.yml."; \
+	@grep -q '^POOL_MAX_SIZE=' .env || { echo "FAIL: POOL_MAX_SIZE not set in .env. Add: POOL_MAX_SIZE=12  (see api/pool.py default)"; exit 1; }
+	@# Multi-pool preflight: enforce the REAL invariant from api/pool.py —
+	@# per-worker backend connections = POOL_MAX_SIZE (sync) + ASYNC_POOL_MAX_SIZE
+	@# (async). The read-replica pool is added ONLY when READ_REPLICA_URL is set
+	@# (it counts against the PRIMARY ceiling here only as a conservative bound;
+	@# in a real split deployment it hits the replica's own max_connections).
+	@# Defaults mirror api/pool.py (12 / 20 / 12) and docker-compose.yml (200).
+	@# Gate trips when total > 85% of max_connections.
+	@WORKERS=$$(grep '^GUNICORN_WORKERS=' .env | cut -d= -f2); WORKERS=$${WORKERS:-4}; \
+	 POOL=$$(grep '^POOL_MAX_SIZE=' .env | cut -d= -f2); POOL=$${POOL:-12}; \
+	 APOOL=$$(grep '^ASYNC_POOL_MAX_SIZE=' .env | cut -d= -f2); APOOL=$${APOOL:-20}; \
+	 RPOOL=$$(grep '^READ_POOL_MAX_SIZE=' .env | cut -d= -f2); RPOOL=$${RPOOL:-12}; \
+	 MAXCONN=$$(grep '^POSTGRES_MAX_CONNECTIONS=' .env | cut -d= -f2); MAXCONN=$${MAXCONN:-200}; \
+	 PER_WORKER=$$(( POOL + APOOL )); \
+	 if grep -q '^READ_REPLICA_URL=.' .env; then PER_WORKER=$$(( PER_WORKER + RPOOL )); HAS_REPLICA=1; else HAS_REPLICA=0; fi; \
+	 TOTAL=$$(( WORKERS * PER_WORKER )); \
+	 CEILING=$$(( MAXCONN * 85 / 100 )); \
+	 if [ $$TOTAL -gt $$CEILING ]; then \
+	   echo "FAIL: $$WORKERS workers x (sync $$POOL + async $$APOOL$$( [ $$HAS_REPLICA -eq 1 ] && echo \" + read $$RPOOL\" )) = $$TOTAL backend connections > 85% of max_connections=$$MAXCONN (ceiling $$CEILING)."; \
+	   echo "  Fix: lower POOL_MAX_SIZE / ASYNC_POOL_MAX_SIZE / READ_POOL_MAX_SIZE in .env, reduce GUNICORN_WORKERS, or raise max_connections in docker-compose.yml."; \
 	   exit 1; \
 	 fi; \
-	 echo "  OK: $${WORKERS:-4} workers x $$POOL pool = $$TOTAL connections (under PG ceiling)"
+	 echo "  OK: $$WORKERS workers x (sync $$POOL + async $$APOOL$$( [ $$HAS_REPLICA -eq 1 ] && echo \" + read $$RPOOL\" )) = $$TOTAL conn <= 85% of PG max=$$MAXCONN (ceiling $$CEILING)"
 	@command -v uv >/dev/null 2>&1 || { echo "FAIL: uv not on PATH. Install: brew install uv"; exit 1; }
 	@command -v node >/dev/null 2>&1 || { echo "FAIL: node not on PATH."; exit 1; }
 	@docker info >/dev/null 2>&1 || { echo "FAIL: Docker daemon not running."; exit 1; }
