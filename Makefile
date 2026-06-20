@@ -1228,6 +1228,11 @@ VERSION ?= $(shell date +%Y-%m-%d)_production
 quantile-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/047_create_demand_plan.sql').read()); conn.commit(); conn.close(); print('quantile schema applied')"
 
+# NOTE: generate_quantile_forecasts is an MVP stub — its quantile models train on
+# synthetic random data, so it now REFUSES to write to fact_demand_plan by default
+# (the consensus plan + safety stock consume that table). Use `quantile-dry` to
+# preview. Pass --allow-synthetic only for dev. Wire it to the real feature pipeline
+# (backtest_framework) before production use.
 quantile-train:
 	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION)
 

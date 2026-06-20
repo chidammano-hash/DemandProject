@@ -390,6 +390,7 @@ def run(
     dfu_filter: tuple[str, str] | None = None,
     dry_run: bool = False,
     weekly: bool = True,
+    allow_synthetic: bool = False,
 ) -> None:
     """
     Main entry point: generate multi-horizon quantile demand plan.
@@ -404,6 +405,22 @@ def run(
     """
     import pandas as pd
     import numpy as np
+
+    # GUARD: this MVP stub trains its quantile models on synthetic random data
+    # (rng.uniform) with constant dummy features (see build_dummy_features /
+    # the X_train/y_train construction below), so the P10/P50/P90 it writes to
+    # fact_demand_plan are statistically meaningless — and that table feeds the
+    # consensus plan and quantile-based safety stock. Refuse to write synthetic
+    # quantiles to production rather than silently corrupting the plan.
+    if not dry_run and not allow_synthetic:
+        raise NotImplementedError(
+            "generate_quantile_forecasts is an MVP stub: its quantile models are "
+            "trained on synthetic random data, not real demand history, so writing "
+            "its output to fact_demand_plan would corrupt the demand plan (consensus "
+            "plan + safety stock consume it). Wire it to the real feature pipeline "
+            "(backtest_framework) before production use. Re-run with --dry-run to "
+            "preview, or --allow-synthetic to override for dev/testing only."
+        )
 
     cfg = yaml.safe_load(open("config/forecasting/forecast_domain_config.yaml"))
     model_cfg = cfg["quantile_forecast"]["model"]
@@ -551,6 +568,12 @@ def main() -> None:
     parser.add_argument("--dfu", nargs=2, metavar=("ITEM_NO", "LOC"), help="Single DFU mode: ITEM_NO LOC")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
     parser.add_argument("--no-weekly", action="store_true", help="Skip weekly disaggregation")
+    parser.add_argument(
+        "--allow-synthetic",
+        action="store_true",
+        help="DEV ONLY: permit writing synthetic (random-data) quantiles to the DB. "
+             "This MVP stub trains on random data; the default refuses to write it.",
+    )
     args = parser.parse_args()
 
     run(
@@ -560,6 +583,7 @@ def main() -> None:
         dfu_filter=tuple(args.dfu) if args.dfu else None,
         dry_run=args.dry_run,
         weekly=not args.no_weekly,
+        allow_synthetic=args.allow_synthetic,
     )
 
 
