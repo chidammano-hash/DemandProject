@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from api.core import get_conn
+from common.core.planning_date import get_planning_date
 
 router = APIRouter(tags=["blended-forecast"])
 
@@ -80,15 +81,20 @@ async def get_blended_summary():
     """Portfolio-level blended forecast status: active overrides, top spikes."""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Anchor on the planning date, not the DB wall-clock: the demo forecast
+            # horizon trails the system clock, so CURRENT_DATE matches zero rows and
+            # blanks the summary. Matches the sibling routers' get_planning_date()
+            # convention (CURRENT_DATE is the SQL equivalent of the forbidden
+            # date.today()).
             cur.execute("""
                 SELECT
-                    COUNT(DISTINCT item_id || '@' || loc)          AS total_dfus,
+                    COUNT(DISTINCT (item_id, loc))                 AS total_dfus,
                     SUM(CASE WHEN alpha_weight > 0.3 THEN 1 ELSE 0 END) AS sensing_active_count,
                     AVG(velocity_spike_ratio)                      AS avg_spike_ratio,
                     COUNT(CASE WHEN is_outlier_capped THEN 1 END)  AS capped_count
                 FROM fact_blended_demand_plan
-                WHERE week_start >= CURRENT_DATE
-            """)
+                WHERE week_start >= %s::date
+            """, [get_planning_date()])
             row = cur.fetchone()
 
     if not row:

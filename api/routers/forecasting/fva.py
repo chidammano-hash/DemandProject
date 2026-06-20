@@ -74,9 +74,15 @@ async def fva_waterfall(
     # ladder. The planning date is bound as a parameter (``%s::date``), in line
     # with sibling forecasting routers (production_forecast.py, consensus_plan.py).
     planning_dt = get_planning_date()
+    # dim_sku is keyed by (item_id, customer_group, loc); customer_group is
+    # non-unique per (item_id, loc), so omitting it from the join fans out every
+    # forecast row across customer_groups and corrupts the volume-weighted
+    # WAPE/FVA numbers. Join on the full DFU grain (matches accuracy.py /
+    # accuracy_budget.py); fact_external_forecast_monthly.customer_group is NOT NULL.
     dfu_filter = (
         "FROM fact_external_forecast_monthly f "
-        "JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc "
+        "JOIN dim_sku d ON d.item_id = f.item_id "
+        "AND d.customer_group = f.customer_group AND d.loc = f.loc "
         "WHERE f.startdate >= %s::date - (%s * interval '1 month') "
         "AND f.lag = COALESCE(d.execution_lag, 0) "
         "AND f.tothist_dmd IS NOT NULL"
