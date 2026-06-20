@@ -297,8 +297,15 @@ def read_metadata(model: str = "lgbm") -> dict[str, Any] | None:
         return json.load(f)
 
 
-def get_baseline_accuracy() -> tuple[int | None, float | None]:
-    """Get the baseline (run 1) accuracy from DB. Returns (run_id, accuracy_pct)."""
+def get_baseline_accuracy(model: str = "lgbm") -> tuple[int | None, float | None]:
+    """Get the baseline (oldest completed run for THIS model) accuracy from DB.
+
+    lgbm_tuning_run is shared across lgbm/catboost/xgboost (model_id column), so the
+    baseline MUST be filtered by model_id — otherwise a catboost/xgboost candidate is
+    compared against an lgbm baseline and the promotion guard lets a worse model
+    through or blocks a better one.
+    """
+    model_id = _MODEL_DEFAULTS[model]["model_id"]
     try:
         import psycopg
         from common.core.db import get_db_params
@@ -306,7 +313,9 @@ def get_baseline_accuracy() -> tuple[int | None, float | None]:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT run_id, accuracy_pct FROM lgbm_tuning_run "
-                    "WHERE status = 'completed' ORDER BY run_id ASC LIMIT 1",
+                    "WHERE status = 'completed' AND model_id = %s "
+                    "ORDER BY run_id ASC LIMIT 1",
+                    (model_id,),
                 )
                 row = cur.fetchone()
                 if row:
@@ -461,7 +470,7 @@ def main() -> None:
 
     load_dotenv(ROOT / ".env")
     base_config = load_algo_config()
-    baseline_id, baseline_accuracy = get_baseline_accuracy()
+    baseline_id, baseline_accuracy = get_baseline_accuracy(model=model)
     if baseline_accuracy is not None:
         print(f"  Baseline accuracy: {baseline_accuracy:.2f}% (run #{baseline_id})\n")
 
@@ -500,6 +509,14 @@ def main() -> None:
         # Read metrics from metadata
         meta = read_metadata(model=model)
         acc_block = meta.get("accuracy_at_execution_lag", {}) if meta else {}
+        # With n_seeds > 1, accuracy_at_execution_lag reflects only the LAST seed
+        # (run_backtest overwrites the metadata file per seed); the averaged figure
+        # is in multi_seed_summary.mean_accuracy_pct. Rank/promote on the multi-seed
+        # mean so a lucky last seed can't win the leaderboard or trip the promote gate.
+        ms = meta.get("multi_seed_summary", {}) if meta else {}
+        accuracy_pct = ms.get("mean_accuracy_pct")
+        if accuracy_pct is None:
+            accuracy_pct = acc_block.get("accuracy_pct")
 
         # Register the run
         notes = f"Auto-tune strategy: {description}. Overrides: {json.dumps(overrides)}"
@@ -509,7 +526,7 @@ def main() -> None:
             "run_id": run_id,
             "label": label,
             "status": "completed",
-            "accuracy_pct": acc_block.get("accuracy_pct"),
+            "accuracy_pct": accuracy_pct,
             "wape": acc_block.get("wape"),
             "bias": acc_block.get("bias"),
             "duration": duration,
