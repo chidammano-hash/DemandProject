@@ -457,14 +457,27 @@ champion:
     max_depth: 15
     test_months: 3
     performance_window: 6
+  # ═══ Candidate roster (documentation + sweep fallback default) ═══
+  # The LIVE champion selection path (competition.py, run_champion_selection.py,
+  # simulate_champion_strategies.py) derives candidates from get_competing_model_ids()
+  # — i.e. every algorithm with `compete: true` in the `algorithms` section above —
+  # NOT from this list. This list is consumed only by run_champion_sweep.py as the
+  # `default_models` fallback when a sweep grid does not override `models`. Keep it in
+  # sync with the `compete: true` roster so sweep defaults match production reality.
+  # rolling_mean added 2026-06-20: it already competes (compete: true) and a causal
+  # rolling-6mo what-if over the execution-lag archive showed including it improves the
+  # volume-weighted headline +0.26 acc pp (no regression) and lifts the non_seasonal
+  # tail median per-DFU WAPE 61%→41%; harm is confined to micro-volume DFUs (~0.03% of
+  # total volume, a percentage artifact). It is the production cold_start_model_id.
   models:
-  - lgbm_cluster
-  - nhits
-  - nbeats
-  - mstl
-  - chronos2
-  - chronos2_enriched
-  - seasonal_naive
+  - lgbm_cluster        # tree, per-cluster (primary tree learner)
+  - nhits               # deep learning, global
+  - nbeats              # deep learning, global
+  - mstl                # statistical seasonal decomposition
+  - chronos2            # foundation model (zero-shot)
+  - chronos2_enriched   # foundation model (covariate-enriched)
+  - seasonal_naive      # statistical baseline (current fallback_model_id)
+  - rolling_mean        # statistical rolling mean — wins the stable low-CV non-seasonal tail
 sweep:
   max_candidates: 24
   default_objective: robust

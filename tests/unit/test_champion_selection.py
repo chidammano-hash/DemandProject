@@ -555,3 +555,43 @@ class TestRunChampionResultsLoadCaching:
         cmd = m_sub.call_args[0][0]
         assert "--load-winners-from" not in cmd
         assert result["experiment_id"] == 99999
+
+
+class TestChampionCandidateRoster:
+    """Invariants on the champion candidate roster (forecast_pipeline_config.yaml).
+
+    The LIVE champion selection path (competition.py, run_champion_selection.py)
+    derives its candidate pool from ``get_competing_model_ids()`` — every algorithm
+    with ``compete: true`` — NOT from the ``champion.models`` list, which is a
+    documentation + sweep-default fallback. rolling_mean must be a candidate so the
+    stable low-CV non-seasonal tail can route to it (validated 2026-06-20 to lift the
+    tail without regressing the volume-weighted headline).
+    """
+
+    def test_rolling_mean_is_a_competing_candidate(self):
+        from common.core.utils import get_competing_model_ids
+
+        assert "rolling_mean" in get_competing_model_ids(), (
+            "rolling_mean must have compete: true so the champion can route the "
+            "non-seasonal tail to it"
+        )
+
+    def test_champion_models_list_includes_rolling_mean(self):
+        from common.core.utils import load_forecast_pipeline_config
+
+        champion_models = load_forecast_pipeline_config()["champion"]["models"]
+        assert "rolling_mean" in champion_models
+
+    def test_champion_models_list_is_subset_of_competing_roster(self):
+        # The documented list must never reference a non-competing model, or
+        # run_champion_sweep.py's default_models fallback would seed an invalid pool.
+        from common.core.utils import (
+            get_competing_model_ids,
+            load_forecast_pipeline_config,
+        )
+
+        champion_models = set(load_forecast_pipeline_config()["champion"]["models"])
+        competing = set(get_competing_model_ids())
+        assert champion_models <= competing, (
+            f"champion.models references non-competing models: {champion_models - competing}"
+        )
