@@ -165,6 +165,50 @@ class TestGenerateSummaryFallback:
         assert summary["config"]["fallback_model_id"] is None
 
 
+class TestInsertFallbackChampions:
+    """Pin that warm-up fallback rows record source_model_id = fallback model.
+
+    Regression: fallback rows were inserted with source_model_id NULL, so the
+    production consumer (generate_production_forecasts.get_champion_assignments)
+    could not tell which model produced the forecast and silently substituted its
+    own model_selection.fallback_model_id (lgbm_cluster) when loading the .pkl —
+    even though the champion forecast value was actually the champion-config
+    fallback (seasonal_naive). NULL must mean only "legacy pre-column", never a
+    row this script wrote with a known source.
+    """
+
+    def _capture(self, lag_mode: str):
+        from scripts.ml.run_champion_selection import insert_fallback_champions
+
+        cur = MagicMock()
+        cur.rowcount = 7
+        insert_fallback_champions(
+            cur,
+            lag_mode=lag_mode,
+            champion_model_id="champion",
+            fallback_model_id="seasonal_naive",
+        )
+        sql, params = cur.execute.call_args[0]
+        return sql, params
+
+    def test_fallback_insert_records_source_model_id_column(self):
+        sql, _ = self._capture("execution")
+        # The INSERT column list must name source_model_id so the written rows
+        # carry the producing model — not NULL.
+        insert_cols = sql.split("SELECT")[0]
+        assert "source_model_id" in insert_cols
+
+    def test_fallback_insert_binds_fallback_model_to_source(self):
+        # The fallback model id must be bound as a parameter so source_model_id
+        # is populated with the model whose forecast was copied (seasonal_naive).
+        _, params = self._capture("execution")
+        assert "seasonal_naive" in params
+
+    def test_fallback_insert_binds_fallback_for_fixed_lag(self):
+        _, params = self._capture("1")
+        assert "seasonal_naive" in params
+
+
 class TestLoadConfig:
     """Test config loading and validation via forecast_pipeline_config.yaml."""
 

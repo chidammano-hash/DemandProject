@@ -181,8 +181,11 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
     Returns `source_model_id` — the underlying algorithm (e.g. lgbm_cluster) whose
     artifacts are used for production inference.  Populated by champion selection
     via the source_model_id column (added in F1.1 via sql/007_create_fact_external_forecast_monthly.sql).
-    When NULL (champion rows from before this column was added), the caller falls
-    back to `fallback_model_id` from config.
+    Every champion row written by run_champion_selection now carries a source —
+    single-model winners (the winning model), ensemble winners (the literal
+    "ensemble"), and warm-up/uncovered-month fallback rows (the champion-config
+    fallback model). NULL therefore means only a legacy row written before that
+    column existed; the caller falls back to `fallback_model_id` from config.
 
     Returns DataFrame with columns: item_id, loc, source_model_id, cluster_id, customer_group.
     """

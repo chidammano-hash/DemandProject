@@ -612,21 +612,36 @@ def insert_fallback_champions(
 
     Returns the number of fallback rows inserted.
     """
+    # source_model_id records which model actually produced the value. Fallback
+    # rows copy the fallback model's forecast verbatim, so they carry
+    # source_model_id = fallback_model_id — NOT NULL. Leaving it NULL made
+    # get_champion_assignments treat these as "legacy pre-column" rows and the
+    # Item-Analysis UI mislabel them, masking the true source. NOTE: this corrects
+    # the source ATTRIBUTION only — it does not by itself change which model
+    # generates the go-forward production forecast, because the consumer's
+    # _resolve_artifact still substitutes the production fallback for pkl-less
+    # statistical sources (seasonal_naive/rolling_mean). That production-routing
+    # gap is tracked separately (BACKLOG F-11).
     if lag_mode == "execution":
         lag_cond = "lag::text = execution_lag::text"
-        params: list[Any] = [champion_model_id, fallback_model_id, champion_model_id]
+        params: list[Any] = [
+            champion_model_id, fallback_model_id, fallback_model_id, champion_model_id,
+        ]
     else:
         lag_cond = "lag = %s"
-        params = [champion_model_id, fallback_model_id, int(lag_mode), champion_model_id]
+        params = [
+            champion_model_id, fallback_model_id, fallback_model_id,
+            int(lag_mode), champion_model_id,
+        ]
 
     sql = f"""
     INSERT INTO fact_external_forecast_monthly
         (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-         lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+         lag, execution_lag, basefcst_pref, tothist_dmd, model_id, source_model_id)
     SELECT
         f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
         f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
-        %s
+        %s, %s
     FROM fact_external_forecast_monthly f
     WHERE f.model_id = %s
       AND {lag_cond}
