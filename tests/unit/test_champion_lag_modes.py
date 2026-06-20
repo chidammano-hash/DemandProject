@@ -12,8 +12,12 @@ import pytest
 
 
 def _mock_read_sql(expected_table: str):
-    """Return a mock pd.read_sql that asserts the correct table is queried."""
-    def _read_sql(sql, conn, params=None):
+    """Return a mock read_sql_chunked that asserts the correct table is queried.
+
+    read_sql_chunked's signature is (conn, sql, params=None, ...) — conn first,
+    sql second — unlike pd.read_sql(sql, conn, ...).
+    """
+    def _read_sql(conn, sql, params=None, chunk_size=None):
         assert expected_table in sql, (
             f"Expected query against '{expected_table}' but got:\n{sql}"
         )
@@ -37,7 +41,7 @@ class TestLoadMonthlyErrorsLagMode:
     """Verify load_monthly_errors_df routes to the correct table per lag_mode."""
 
     @patch("psycopg.connect")
-    @patch("pandas.read_sql")
+    @patch("scripts.ml.run_champion_selection.read_sql_chunked")
     def test_lag_mode_all_queries_archive(self, mock_rsql, mock_connect):
         mock_rsql.side_effect = _mock_read_sql("backtest_lag_archive")
         mock_connect.return_value.__enter__ = MagicMock()
@@ -53,7 +57,7 @@ class TestLoadMonthlyErrorsLagMode:
         assert "lag" in df.columns
 
     @patch("psycopg.connect")
-    @patch("pandas.read_sql")
+    @patch("scripts.ml.run_champion_selection.read_sql_chunked")
     def test_lag_mode_execution_queries_main_table(self, mock_rsql, mock_connect):
         mock_rsql.side_effect = _mock_read_sql("fact_external_forecast_monthly")
         mock_connect.return_value.__enter__ = MagicMock()
@@ -68,7 +72,7 @@ class TestLoadMonthlyErrorsLagMode:
         assert not df.empty
 
     @patch("psycopg.connect")
-    @patch("pandas.read_sql")
+    @patch("scripts.ml.run_champion_selection.read_sql_chunked")
     def test_lag_mode_specific_queries_main_table(self, mock_rsql, mock_connect):
         mock_rsql.side_effect = _mock_read_sql("fact_external_forecast_monthly")
         mock_connect.return_value.__enter__ = MagicMock()
@@ -83,12 +87,12 @@ class TestLoadMonthlyErrorsLagMode:
         assert not df.empty
 
     @patch("psycopg.connect")
-    @patch("pandas.read_sql")
+    @patch("scripts.ml.run_champion_selection.read_sql_chunked")
     def test_lag_mode_all_sql_has_no_lag_filter(self, mock_rsql, mock_connect):
         """lag_mode='all' should NOT have a WHERE lag = ... condition."""
         captured_sql = []
 
-        def _capture(sql, conn, params=None):
+        def _capture(conn, sql, params=None, chunk_size=None):
             captured_sql.append(sql)
             return pd.DataFrame({
                 "item_id": [], "customer_group": [], "loc": [],
@@ -113,11 +117,11 @@ class TestLoadMonthlyErrorsLagMode:
         assert "lag = %s" not in sql
 
     @patch("psycopg.connect")
-    @patch("pandas.read_sql")
+    @patch("scripts.ml.run_champion_selection.read_sql_chunked")
     def test_lag_mode_execution_sql_has_exec_lag_filter(self, mock_rsql, mock_connect):
         captured_sql = []
 
-        def _capture(sql, conn, params=None):
+        def _capture(conn, sql, params=None, chunk_size=None):
             captured_sql.append(sql)
             return pd.DataFrame({
                 "item_id": [], "customer_group": [], "loc": [],

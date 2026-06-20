@@ -41,6 +41,7 @@ from common.ml.champion import (
 )
 from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
+from common.core.sql_helpers import read_sql_chunked  # noqa: E402 — after sys.path bootstrap
 from common.services.perf_profiler import profiled_section
 from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
 
@@ -200,7 +201,9 @@ def load_monthly_errors_df(
         """
 
     with psycopg.connect(**db) as conn:
-        df = pd.read_sql(sql, conn, params=params)
+        # Fact-table scan (fact_external_forecast_monthly / backtest_lag_archive) —
+        # stream in chunks to bound peak memory at scale (drop-in for pd.read_sql).
+        df = read_sql_chunked(conn, sql, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["fcstdate"] = pd.to_datetime(df["fcstdate"])
     for col in [FORECAST_QTY_COL, "tothist_dmd", "abs_err"]:
