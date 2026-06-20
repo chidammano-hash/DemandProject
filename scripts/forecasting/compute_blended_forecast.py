@@ -168,7 +168,10 @@ def fetch_sensing_data(
         {
             "item_id": r[0], "loc": r[1],
             "mtd_sales": float(r[2]) if r[2] else 0,
-            "daily_avg": float(r[3]) if r[3] else 0,
+            # historical_avg_monthly is a MONTHLY figure (named accordingly so the
+            # consumer converts it to a daily baseline rather than mistaking it for
+            # a daily average).
+            "hist_monthly_avg": float(r[3]) if r[3] else 0,
         }
         for r in rows
     ]
@@ -268,10 +271,17 @@ def run(
                 if not stat_months:
                     continue
 
-                stat_weekly = sum(f["stat_qty"] for f in stat_months) / max(len(stat_months), 1)
-                stat_weekly_wk = monthly_to_weekly(stat_weekly)
+                stat_monthly = sum(f["stat_qty"] for f in stat_months) / max(len(stat_months), 1)
+                stat_weekly_wk = monthly_to_weekly(stat_monthly)
 
-                daily_avg = signal.get("daily_avg", stat_weekly / 7)
+                # Both the signal value (historical_avg_monthly) and the stat
+                # fallback are MONTHLY figures; compute_velocity_signal needs a
+                # DAILY baseline. Divide by days_in_month — the old "/7" left the
+                # baseline ~4.3x too high and silently disabled the velocity outlier
+                # cap, so a single large in-month order could blow up the near-term
+                # blended plan unchecked.
+                hist_monthly_avg = signal.get("hist_monthly_avg", stat_monthly)
+                daily_avg = hist_monthly_avg / max(days_in_month, 1)
                 mtd_sales = signal.get("mtd_sales", 0)
 
                 proj_monthly, _, spike_ratio, is_capped = compute_velocity_signal(
