@@ -937,11 +937,22 @@ def _inject_recursive_noise(
     """
     if noise_pct <= 0.0 or len(qty_values) == 0:
         return qty_values.copy()
-    scale = noise_pct * np.abs(qty_values).mean()
-    if scale <= 0.0:
+    # Lag columns 2..N carry NaN for short-history DFUs (only qty_lag_1 is
+    # guaranteed non-NaN at train time). np.abs(...).mean() over an array with
+    # any NaN is NaN, and `scale <= 0.0` does NOT catch NaN (NaN <= 0 is False),
+    # so the old code drew np.random.normal(0, NaN) and overwrote the ENTIRE
+    # column with NaN — silently wiping all lag-2..N signal from recursive tree
+    # training. Compute the scale over finite values only and perturb only the
+    # finite entries, leaving missing lags as NaN (correctly "missing").
+    finite = np.isfinite(qty_values)
+    if not finite.any():
         return qty_values.copy()
-    noise = np.random.normal(0, scale, size=qty_values.shape)
-    return qty_values + noise
+    scale = noise_pct * np.abs(qty_values[finite]).mean()
+    if not np.isfinite(scale) or scale <= 0.0:
+        return qty_values.copy()
+    out = qty_values.copy()
+    out[finite] = out[finite] + np.random.normal(0, scale, size=int(finite.sum()))
+    return out
 
 
 def _compute_step_wape(

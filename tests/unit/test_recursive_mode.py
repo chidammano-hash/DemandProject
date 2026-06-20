@@ -131,6 +131,28 @@ class TestInjectRecursiveNoise:
         result = _inject_recursive_noise(values, noise_pct=0.1)
         assert result.shape == values.shape
 
+    def test_nan_entries_do_not_corrupt_whole_column(self):
+        """Regression: a NaN in the lag column must not NaN-out the finite entries.
+
+        Lag columns 2..N carry NaN for short-history DFUs. The old code computed
+        scale = noise_pct * mean(|values|) (= NaN with any NaN) and the
+        `scale <= 0` guard did not catch NaN, so np.random.normal(0, NaN)
+        overwrote the entire column with NaN — silently wiping all lag signal
+        from recursive tree training.
+        """
+        values = np.array([100.0, np.nan, 200.0, np.nan, 300.0])
+        result = _inject_recursive_noise(values, noise_pct=0.05)
+        # Finite entries stay finite (perturbed), NaN entries stay NaN.
+        finite_mask = np.isfinite(values)
+        assert np.isfinite(result[finite_mask]).all(), "finite entries were NaN-corrupted"
+        assert np.isnan(result[~finite_mask]).all(), "missing lags should remain NaN"
+
+    def test_all_nan_returns_original(self):
+        """An all-NaN column returns unchanged (no spurious noise)."""
+        values = np.array([np.nan, np.nan, np.nan])
+        result = _inject_recursive_noise(values, noise_pct=0.05)
+        assert np.isnan(result).all()
+
 
 # ---------------------------------------------------------------------------
 # _compute_step_wape
