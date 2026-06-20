@@ -259,6 +259,26 @@ def generate_timeframes(
     return timeframes
 
 
+def _last_persistable_timeframe(timeframes: list[dict], all_months: list) -> int:
+    """Index of the last timeframe with a non-empty predict window.
+
+    Under ``embargo_months >= 1`` the final timeframe's predict window starts past
+    the data end, so the backtest loop skips it (``if not predict_months:
+    continue``). Production-model persistence must therefore target the last
+    timeframe that actually trains/predicts, not ``len(timeframes) - 1`` — else
+    no ``.pkl`` artifacts get written. At ``embargo_months == 0`` this returns the
+    last index (unchanged behaviour).
+    """
+    return max(
+        (
+            ti
+            for ti, tf in enumerate(timeframes)
+            if any(tf["predict_start"] <= m <= tf["predict_end"] for m in all_months)
+        ),
+        default=len(timeframes) - 1,
+    )
+
+
 # ── Data loading ─────────────────────────────────────────────────────────────
 
 
@@ -1243,6 +1263,10 @@ def run_tree_backtest(
     # Resume from any existing checkpoints
     all_predictions.extend(ckpt.load_all_existing())
 
+    # Persist production models from the last timeframe that actually has a
+    # predict window (the final one is skipped under embargo — see helper).
+    persist_ti = _last_persistable_timeframe(timeframes, all_months)
+
     for ti, tf in enumerate(timeframes):
         if ckpt.exists(tf["index"]):
             logger.info("Timeframe %s (%d/%d) — checkpoint exists, skipping",
@@ -1693,8 +1717,10 @@ def run_tree_backtest(
         ckpt.save(preds, tf["index"])
         all_predictions.append(preds)
 
-        # Persist the most recent timeframe's models for production inference (F1.1)
-        if model_persistence_fn is not None and ti == len(timeframes) - 1:
+        # Persist the most-recent trainable timeframe's models for production
+        # inference (F1.1). Under embargo the final timeframe has no predict
+        # window and is skipped, so target the last persistable timeframe.
+        if model_persistence_fn is not None and ti == persist_ti:
             try:
                 model_persistence_fn(
                     models,

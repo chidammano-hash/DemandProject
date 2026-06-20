@@ -7,7 +7,10 @@ predict_start is consistent with the gap_months used in tuning CV splits.
 import pandas as pd
 import pytest
 
-from common.ml.backtest_framework import generate_timeframes
+from common.ml.backtest_framework import (
+    _last_persistable_timeframe,
+    generate_timeframes,
+)
 
 
 class TestEmbargoMonthsZero:
@@ -215,3 +218,29 @@ class TestEmbargoPreservesStructure:
         train_ends = [tf["train_end"] for tf in tfs]
         for i in range(1, len(train_ends)):
             assert train_ends[i] > train_ends[i - 1]
+
+
+class TestPersistableTimeframe:
+    """Model persistence must target the last timeframe with a real predict window.
+
+    Under embargo the final timeframe's predict_start is past the data end, so
+    guarding persistence on the last index would write no .pkl artifacts.
+    """
+
+    earliest = pd.Timestamp("2021-01-01")
+    latest = pd.Timestamp("2024-12-01")
+    all_months = list(pd.date_range("2021-01-01", "2024-12-01", freq="MS"))
+
+    def test_embargo_zero_persists_last_index(self):
+        tfs = generate_timeframes(self.earliest, self.latest, n=10, embargo_months=0)
+        # Last timeframe predicts the final month -> persist the last index.
+        assert _last_persistable_timeframe(tfs, self.all_months) == len(tfs) - 1
+
+    def test_embargo_one_skips_invalid_final_timeframe(self):
+        tfs = generate_timeframes(self.earliest, self.latest, n=10, embargo_months=1)
+        # Final timeframe has no predict window -> persist the previous one.
+        persist_ti = _last_persistable_timeframe(tfs, self.all_months)
+        assert persist_ti == len(tfs) - 2
+        # And that target genuinely has a non-empty predict window.
+        tf = tfs[persist_ti]
+        assert any(tf["predict_start"] <= m <= tf["predict_end"] for m in self.all_months)
