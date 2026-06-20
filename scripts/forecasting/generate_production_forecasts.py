@@ -38,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
@@ -1386,6 +1386,40 @@ def purge_old_versions(conn, keep_n: int, dry_run: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Observability — Gap-10 displayed-vs-shipped model divergence
+# ---------------------------------------------------------------------------
+
+
+def _is_model_fallback_substitution(
+    model_id: str,
+    fallback_model_id: str,
+    loaded_models: dict[str, dict],
+) -> bool:
+    """Return True when a DFU's intended producer (``model_id``) has no loaded
+    ``.pkl`` artifact and the tree-batch path silently substitutes the production
+    ``fallback_model_id`` instead.
+
+    This is the codebase's Gap-10 "displayed-vs-shipped model" divergence: a
+    champion ``source_model_id`` (or cold-start model) that resolves to a
+    STATISTICAL baseline (seasonal_naive / rolling_mean / mstl / rolling_median)
+    has no persisted weights, so ``load_active_models`` raised FileNotFoundError
+    and it is absent from ``loaded_models`` — the requested producer is then
+    silently replaced by ``lgbm_cluster``. This predicate makes that observable;
+    it does NOT change routing.
+
+    Returns False when the requested producer IS loaded (genuine champion
+    artifact), when ``model_id`` already equals ``fallback_model_id`` (no
+    divergence), or when the fallback is also unavailable (the DFU is skipped,
+    not substituted).
+    """
+    if model_id == fallback_model_id:
+        return False
+    if loaded_models.get(model_id) is not None:
+        return False
+    return loaded_models.get(fallback_model_id) is not None
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1550,9 +1584,20 @@ def main() -> None:
             with profiled_section("build_cluster_groups"):
                 cluster_groups: dict[tuple, list] = defaultdict(list)
                 cluster_fallback_count = 0
+                # Gap-10 instrumentation: count DFUs whose intended producer
+                # (champion source_model_id / cold-start model) has no loaded
+                # artifact and is silently replaced by the production fallback.
+                # DISTINCT from cluster_fallback_count, which counts a missing
+                # CLUSTER label within an already-loaded model.
+                model_substitution_count = 0
+                model_substitution_sources: Counter = Counter()
 
                 def _resolve_artifact(model_id: str, cluster_id) -> dict | None:
                     nonlocal cluster_fallback_count
+                    nonlocal model_substitution_count
+                    if _is_model_fallback_substitution(model_id, fallback_model_id, loaded_models):
+                        model_substitution_count += 1
+                        model_substitution_sources[model_id] += 1
                     cluster_models = loaded_models.get(model_id) or loaded_models.get(fallback_model_id)
                     if cluster_models is None:
                         return None
@@ -1629,6 +1674,29 @@ def main() -> None:
                     "to a fallback cluster model — likely a re-cluster without a backtest "
                     "re-run. Re-run the backtest to persist models for the current labels.",
                     f"{cluster_fallback_count:,}",
+                )
+            if model_substitution_count:
+                # Gap-10 data-integrity warning: the displayed champion model is
+                # NOT the model that generated these forecasts. The champion
+                # source_model_id (or cold-start model) had no loaded artifact —
+                # typically a STATISTICAL baseline (no .pkl) — so it was silently
+                # replaced by the production fallback. Route statistical champion
+                # sources through the statistical path (F-11b) or confirm the
+                # fallback is intended.
+                breakdown = ", ".join(
+                    f"{src}={cnt:,}"
+                    for src, cnt in model_substitution_sources.most_common()
+                )
+                logger.warning(
+                    "DATA INTEGRITY (Gap-10): %s DFU(s) had their champion source model "
+                    "silently substituted by the production fallback '%s' because the "
+                    "intended producer has no loaded artifact — the displayed champion "
+                    "model does NOT match the model that generated these forecasts. "
+                    "Per-source breakdown: %s. Route statistical champion sources through "
+                    "the statistical path (F-11b) or confirm this fallback is intended.",
+                    f"{model_substitution_count:,}",
+                    fallback_model_id,
+                    breakdown,
                 )
 
             # Batch-predict per cluster group — parallelise across independent groups

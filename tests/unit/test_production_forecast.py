@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 
 from scripts.forecasting.generate_production_forecasts import (
+    _is_model_fallback_substitution,
     build_inference_grid,
     build_sales_index,
     build_attrs_index,
@@ -758,3 +759,75 @@ def test_statistical_multi_dfu():
         run_id="test-run-id",
     )
     assert len(rows) == 6  # 2 DFUs x 3 months
+
+
+# ---------------------------------------------------------------------------
+# Gap-10 observability: champion-source → production-fallback substitution
+#
+# When a DFU's champion source_model_id is a STATISTICAL baseline (no .pkl),
+# the tree-batch path silently substitutes the production fallback (lgbm_cluster)
+# in _resolve_artifact. _is_model_fallback_substitution() detects exactly that
+# case so the divergence is counted/logged. These tests pin both the detection
+# predicate AND the unchanged routing return value.
+# ---------------------------------------------------------------------------
+
+
+def test_substitution_detected_when_source_model_absent():
+    """Statistical champion source absent from loaded_models, tree fallback present
+    → substitution detected (Gap-10 divergence)."""
+    loaded_models = {"lgbm_cluster": {0: {"model": MagicMock()}}}
+    assert _is_model_fallback_substitution(
+        model_id="seasonal_naive",
+        fallback_model_id="lgbm_cluster",
+        loaded_models=loaded_models,
+    ) is True
+
+
+def test_no_substitution_when_requested_model_loaded():
+    """Requested producer IS loaded → no substitution (genuine champion artifact)."""
+    loaded_models = {
+        "seasonal_naive": {0: {"model": MagicMock()}},
+        "lgbm_cluster": {0: {"model": MagicMock()}},
+    }
+    assert _is_model_fallback_substitution(
+        model_id="seasonal_naive",
+        fallback_model_id="lgbm_cluster",
+        loaded_models=loaded_models,
+    ) is False
+
+
+def test_no_substitution_when_requested_is_the_fallback():
+    """Requested model_id IS the fallback itself → not a divergence even if absent."""
+    assert _is_model_fallback_substitution(
+        model_id="lgbm_cluster",
+        fallback_model_id="lgbm_cluster",
+        loaded_models={},
+    ) is False
+
+
+def test_no_substitution_when_fallback_also_absent():
+    """Neither requested nor fallback loaded → DFU is skipped, not substituted."""
+    loaded_models = {"catboost_cluster": {0: {"model": MagicMock()}}}
+    assert _is_model_fallback_substitution(
+        model_id="seasonal_naive",
+        fallback_model_id="lgbm_cluster",
+        loaded_models=loaded_models,
+    ) is False
+
+
+def test_resolve_artifact_routing_unchanged_under_substitution():
+    """Instrumentation must NOT alter routing: when the source model is absent,
+    _resolve_artifact still returns the production fallback artifact (byte-identical
+    to pre-instrumentation behavior)."""
+    fallback_art = {"model": MagicMock(), "feature_cols": ["a"]}
+    loaded_models = {"lgbm_cluster": {0: fallback_art}}
+
+    # Mirror the closure's resolution: requested producer absent → fallback model used,
+    # then look up the cluster artifact. The detection predicate is True, but the
+    # returned artifact is the fallback's cluster-0 model — unchanged.
+    assert _is_model_fallback_substitution(
+        "rolling_mean", "lgbm_cluster", loaded_models
+    ) is True
+    cluster_models = loaded_models.get("rolling_mean") or loaded_models.get("lgbm_cluster")
+    assert cluster_models is loaded_models["lgbm_cluster"]
+    assert cluster_models.get(0) is fallback_art
