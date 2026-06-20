@@ -1080,6 +1080,29 @@ def promote_model(
                  AND c.loc = s.loc
                  AND c.winning_model_id = s.model_id
             """, (plan_version, CHAMPION_MODEL_ID, run_id_str))
+
+            # Coverage check: the inner join above silently drops any champion DFU
+            # whose winning model has no staged rows (that model's Generate wasn't
+            # run, or a model_id spelling mismatch). Surface the gap instead of
+            # letting DFUs disappear from production unnoticed.
+            cur.execute("SELECT COUNT(*) FROM _dfu_champion")
+            expected_dfus = cur.fetchone()[0]
+            cur.execute("""
+                SELECT COUNT(*) FROM _dfu_champion c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM fact_production_forecast_staging s
+                    WHERE s.item_id = c.item_id AND s.loc = c.loc
+                      AND s.model_id = c.winning_model_id
+                )
+            """)
+            unmatched_dfus = cur.fetchone()[0]
+            if unmatched_dfus:
+                logger.warning(
+                    "Champion promote: %d of %d champion DFUs had no staged rows "
+                    "for their winning model and were dropped from production "
+                    "(run Generate for those models or check model_id spelling).",
+                    unmatched_dfus, expected_dfus,
+                )
         else:
             # Single model: copy only that model's staged rows
             cur.execute("""
