@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import yaml
 import psycopg
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Optional
 
 import sys
@@ -138,10 +138,13 @@ def fetch_sensing_data(
     conn: psycopg.Connection,
     item_id: Optional[str],
     loc: Optional[str],
+    today: date,
 ) -> list[dict]:
     """Fetch latest demand signals from fact_demand_signals."""
-    conditions = ["signal_date >= CURRENT_DATE - INTERVAL '7 days'"]
-    params: list = []
+    # Anchor the lookback window on the planning date (PLANNING_DATE-override
+    # aware), not the DB server clock, so it stays in sync with run()'s grid.
+    conditions = ["signal_date >= %s"]
+    params: list = [today - timedelta(days=7)]
     if item_id:
         conditions.append("item_id = %s")
         params.append(item_id)
@@ -175,15 +178,18 @@ def fetch_statistical_forecast(
     conn: psycopg.Connection,
     item_id: Optional[str],
     loc: Optional[str],
+    today: date,
     months_ahead: int = 2,
 ) -> list[dict]:
     """Fetch latest statistical champion forecast."""
+    # Anchor the forecast window on the planning date (PLANNING_DATE-override
+    # aware), not the DB server clock.
     conditions = [
         "model_id = 'champion'",
-        "startdate >= CURRENT_DATE",
-        "startdate <= CURRENT_DATE + INTERVAL '1 month' * %s",
+        "startdate >= %s",
+        "startdate <= %s + INTERVAL '1 month' * %s",
     ]
-    params: list = [months_ahead]
+    params: list = [today, today, months_ahead]
     if item_id:
         conditions.append("item_id = %s")
         params.append(item_id)
@@ -231,10 +237,10 @@ def run(
 
     with psycopg.connect(**get_db_params()) as conn:
         with profiled_section("fetch_demand_signals"):
-            signals = fetch_sensing_data(conn, item_id, loc)
+            signals = fetch_sensing_data(conn, item_id, loc, today)
 
         with profiled_section("fetch_statistical_forecast"):
-            forecasts = fetch_statistical_forecast(conn, item_id, loc)
+            forecasts = fetch_statistical_forecast(conn, item_id, loc, today)
 
         # Build lookup: (item_id, loc) → signal
         signal_lookup = {(s["item_id"], s["loc"]): s for s in signals}
