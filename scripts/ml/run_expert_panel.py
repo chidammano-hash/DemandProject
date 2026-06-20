@@ -107,6 +107,10 @@ def save_all_outputs(
     portfolio_stats: dict[str, Any],
     comparison: dict[str, Any],
     runtime_seconds: float,
+    monthly_accuracy: Any = None,
+    avg_3m: Any = None,
+    avg_6m: Any = None,
+    overall_monthly: Any = None,
 ) -> list[Path]:
     """Save all experiment artifacts to disk.
 
@@ -170,6 +174,17 @@ def save_all_outputs(
     }, indent=2))
     saved.append(meta_path)
 
+    # Monthly accuracy diagnostics (per-month + rolling 3m/6m + overall per-algo)
+    if monthly_accuracy is not None:
+        ma_path = output_dir / "monthly_accuracy.json"
+        ma_path.write_text(json.dumps(_make_serializable({
+            "monthly_accuracy": monthly_accuracy,
+            "avg_3m": avg_3m,
+            "avg_6m": avg_6m,
+            "overall_monthly": overall_monthly,
+        }), indent=2))
+        saved.append(ma_path)
+
     logger.info("Saved %d output files to %s", len(saved), output_dir)
     return saved
 
@@ -200,6 +215,10 @@ def generate_report(
     portfolio_stats: dict[str, Any],
     comparison: dict[str, Any],
     runtime_seconds: float,
+    monthly_accuracy: Any = None,
+    avg_3m: Any = None,
+    avg_6m: Any = None,
+    overall_monthly: Any = None,
 ) -> str:
     """Generate a plain-text experiment summary report."""
     lines: list[str] = []
@@ -259,6 +278,24 @@ def generate_report(
     lines.append(f"  Overall WAPE:       {p_wape:.1f}%")
     lines.append(f"  Algorithms used:    {n_algos}")
     lines.append("")
+
+    # Monthly accuracy (mean per algorithm across months)
+    if overall_monthly:
+        lines.append("-" * 40)
+        lines.append("MONTHLY ACCURACY (mean per algorithm)")
+        lines.append("-" * 40)
+        try:
+            ranked = sorted(
+                overall_monthly.items(),
+                key=lambda kv: kv[1].get("mean_monthly_accuracy", 0),
+                reverse=True,
+            )
+            for algo, stats in ranked:
+                mma = stats.get("mean_monthly_accuracy", 0) if isinstance(stats, dict) else 0
+                lines.append(f"  {algo!s:<30s} {mma:5.1f}%")
+        except (AttributeError, TypeError):
+            lines.append("  (unavailable)")
+        lines.append("")
 
     # Comparison vs baselines
     lines.append("-" * 40)
