@@ -151,7 +151,19 @@ def write_cluster_profiles(
         logger.info("Backed up existing profile to %s", bak_path)
 
     profiles: dict[str, Any] = {}
+    skipped_nonfinite = 0
     for cluster_name, result in sorted(results.items()):
+        # Skip clusters whose tuning produced a non-finite WAPE (e.g. every CV
+        # fold failed or was empty). best_params there were chosen by a degenerate
+        # objective; enshrining them would apply untrusted hyperparameters the
+        # moment the profile file is enabled.
+        if not np.isfinite(result["best_wape"]):
+            logger.warning(
+                "Cluster '%s' tuning produced non-finite WAPE — skipping profile",
+                cluster_name,
+            )
+            skipped_nonfinite += 1
+            continue
         n_rows = result["n_rows"]
         best_wape_pct = round(result["best_wape"] * 100, 2)
         profiles[cluster_name] = {
@@ -159,6 +171,12 @@ def write_cluster_profiles(
             "match_criteria": {"cluster_name": cluster_name},
             "overrides": result["best_params"],
         }
+    if skipped_nonfinite:
+        logger.warning(
+            "%d cluster(s) skipped due to non-finite tuning WAPE — they fall back "
+            "to global params. Investigate empty CV folds before relying on "
+            "per-cluster profiles.", skipped_nonfinite,
+        )
 
     # Default fallback entry
     profiles["default"] = {
