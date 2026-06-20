@@ -628,7 +628,9 @@ def _train_single_cluster(
     # Classify demand pattern and apply Tweedie objective for intermittent clusters
     pcfg = load_forecast_pipeline_config()
     backtest_cfg = pcfg.get("backtest", {})
-    intermittent_threshold = backtest_cfg.get("intermittent_threshold", 0.5)
+    # Fallback matches config default (forecast_pipeline_config.yaml: 0.7) and the
+    # documented ">70% zero-demand → intermittent baseline" routing.
+    intermittent_threshold = backtest_cfg.get("intermittent_threshold", 0.7)
     lumpy_threshold = backtest_cfg.get("lumpy_threshold", 0.3)
     tweedie_vp = backtest_cfg.get("tweedie_variance_power", 1.5)
 

@@ -368,8 +368,10 @@ def _train_cluster(
     valid_keys = set(params.keys())
     fit_params = {k: v for k, v in resolved_params.items() if k in valid_keys}
 
-    # Classify demand pattern and adjust objective if needed
-    intermittent_threshold = backtest_cfg.get("intermittent_threshold", 0.5)
+    # Classify demand pattern and adjust objective if needed.
+    # Fallback matches config default (forecast_pipeline_config.yaml: 0.7) and the
+    # documented ">70% zero-demand → intermittent baseline" routing.
+    intermittent_threshold = backtest_cfg.get("intermittent_threshold", 0.7)
     lumpy_threshold = backtest_cfg.get("lumpy_threshold", 0.3)
     demand_pattern = _classify_cluster_demand(
         train_c,
