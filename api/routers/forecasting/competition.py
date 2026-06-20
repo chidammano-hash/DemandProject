@@ -6,7 +6,6 @@ data from months < T.
 """
 from __future__ import annotations
 
-import io
 import json
 from datetime import UTC
 from pathlib import Path
@@ -163,15 +162,19 @@ def _insert_pick_winners(
             ) ON COMMIT DROP
         """)
 
-        buf = io.StringIO()
-        for _, r in winners_df.iterrows():
-            buf.write(
-                f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
-                f"{r['startdate'].date()}\t{r['model_id']}\n"
-            )
-        buf.seek(0)
-        with cur.copy(f"COPY _{table_suffix} FROM STDIN") as copy:
-            copy.write(buf.read())
+        # write_row lets psycopg3 escape/type-adapt each value. A manual
+        # tab-delimited COPY buffer desyncs the stream (wrong model routed under a
+        # DFU, or rows dropped) if any item_id/customer_group/loc contains a tab,
+        # newline, or backslash.
+        with cur.copy(
+            f"COPY _{table_suffix} "
+            "(item_id, customer_group, loc, startdate, winning_model_id) FROM STDIN"
+        ) as copy:
+            for _, r in winners_df.iterrows():
+                copy.write_row((
+                    r["item_id"], r["customer_group"], r["loc"],
+                    r["startdate"].date(), r["model_id"],
+                ))
 
         cur.execute(
             f"""
@@ -221,16 +224,15 @@ def _insert_ensemble_winners(
             ) ON COMMIT DROP
         """)
 
-        buf = io.StringIO()
-        for _, r in winners_df.iterrows():
-            buf.write(
-                f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
-                f"{r['startdate'].date()}\t{r['basefcst_pref']}\t"
-                f"{r['tothist_dmd']}\n"
-            )
-        buf.seek(0)
-        with cur.copy("COPY _champion_ensemble FROM STDIN") as copy:
-            copy.write(buf.read())
+        with cur.copy(
+            "COPY _champion_ensemble "
+            "(item_id, customer_group, loc, startdate, basefcst_pref, tothist_dmd) FROM STDIN"
+        ) as copy:
+            for _, r in winners_df.iterrows():
+                copy.write_row((
+                    r["item_id"], r["customer_group"], r["loc"],
+                    r["startdate"].date(), r["basefcst_pref"], r["tothist_dmd"],
+                ))
 
         placeholders = ",".join(["%s"] * len(models))
         cur.execute(

@@ -410,13 +410,15 @@ def insert_ceiling_forecasts(
         ) ON COMMIT DROP
     """)
 
-    # 3. COPY ceiling winners into temp table
-    buf = io.StringIO()
-    for item_id, customer_group, loc, startdate, model_id, *_ in ceiling_rows:
-        buf.write(f"{item_id}\t{customer_group}\t{loc}\t{startdate}\t{model_id}\n")
-    buf.seek(0)
-    with cur.copy("COPY _ceiling_winners FROM STDIN") as copy:
-        copy.write(buf.read())
+    # 3. COPY ceiling winners into temp table. write_row lets psycopg3 escape each
+    #    value; a manual tab-delimited buffer desyncs the stream if any
+    #    item_id/customer_group/loc contains a tab/newline/backslash.
+    with cur.copy(
+        "COPY _ceiling_winners "
+        "(item_id, customer_group, loc, startdate, winning_model_id) FROM STDIN"
+    ) as copy:
+        for item_id, customer_group, loc, startdate, model_id, *_ in ceiling_rows:
+            copy.write_row((item_id, customer_group, loc, startdate, model_id))
 
     # 4. Bulk INSERT ... SELECT ceiling rows
     cur.execute(
@@ -475,13 +477,14 @@ def insert_champion_forecasts(
         ) ON COMMIT DROP
     """)
 
-    # 3. COPY champion winners into temp table
-    buf = io.StringIO()
-    for item_id, customer_group, loc, startdate, model_id, *_ in winners:
-        buf.write(f"{item_id}\t{customer_group}\t{loc}\t{startdate}\t{model_id}\n")
-    buf.seek(0)
-    with cur.copy("COPY _champion_winners FROM STDIN") as copy:
-        copy.write(buf.read())
+    # 3. COPY champion winners into temp table (write_row escapes each value;
+    #    see ceiling-winners note above re: tab/newline/backslash desync).
+    with cur.copy(
+        "COPY _champion_winners "
+        "(item_id, customer_group, loc, startdate, winning_model_id) FROM STDIN"
+    ) as copy:
+        for item_id, customer_group, loc, startdate, model_id, *_ in winners:
+            copy.write_row((item_id, customer_group, loc, startdate, model_id))
 
     # 4. Bulk INSERT ... SELECT champion rows
     # source_model_id records which underlying algorithm won (e.g. lgbm_cluster)
