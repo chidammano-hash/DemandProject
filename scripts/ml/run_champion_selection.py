@@ -767,6 +767,13 @@ def refresh_views(db_params: dict[str, Any]) -> None:
         t1 = time.time()
         cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
         print(f"  agg_accuracy_by_dim ({time.time() - t1:.1f}s)")
+        t_dfu = time.time()
+        # agg_accuracy_by_dfu (sql/193) backs the accuracy-decomposition and
+        # error-contributor endpoints and reads fact_external_forecast_monthly —
+        # which this champion run just wrote. Without this refresh those diagnostics
+        # serve pre-run data. Matches the refresh-mvs-tiered ordering in the Makefile.
+        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dfu")
+        print(f"  agg_accuracy_by_dfu ({time.time() - t_dfu:.1f}s)")
         t2 = time.time()
         cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
         print(f"  agg_dfu_coverage ({time.time() - t2:.1f}s)")

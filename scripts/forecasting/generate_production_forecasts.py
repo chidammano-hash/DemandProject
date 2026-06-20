@@ -206,9 +206,11 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
             d.ml_cluster                AS cluster_id,
             d.customer_group
         FROM fact_external_forecast_monthly f
-        JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+        JOIN dim_sku d ON d.item_id = f.item_id
+                      AND d.customer_group = f.customer_group
+                      AND d.loc = f.loc
         WHERE {where_sql}
-        ORDER BY f.item_id, f.loc, f.startdate DESC
+        ORDER BY f.item_id, f.loc, f.startdate DESC, f.customer_group
     """
 
     # Streamed: scans fact_external_forecast_monthly. DISTINCT ON shrinks the
