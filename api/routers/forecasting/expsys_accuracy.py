@@ -61,7 +61,7 @@ def get_lag_accuracy(model_id: str = Query(default="ExpSys")) -> dict[str, Any]:
                                   / NULLIF(ABS(SUM(s.qty)), 0) * 100) AS accuracy_pct,
                            SUM(ABS(b.basefcst_pref - s.qty))
                                   / NULLIF(ABS(SUM(s.qty)), 0) * 100 AS wape,
-                           COUNT(DISTINCT b.item_id || b.customer_group || b.loc) AS n_dfus,
+                           COUNT(DISTINCT (b.item_id, b.customer_group, b.loc)) AS n_dfus,
                            COUNT(*) AS n_dfu_months
                     FROM backtest_lag_archive b
                     JOIN fact_sales_monthly s
