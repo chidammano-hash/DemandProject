@@ -7,9 +7,22 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import add_cross_dim_filters, compute_kpis, get_conn, set_cache
-from common.services.metrics import compute_unweighted_accuracy
+from common.services.metrics import compute_unweighted_accuracy, compute_unweighted_mase
 
 router = APIRouter(tags=["accuracy"])
+
+# Seasonality profiles that take the annual seasonal-naive scale (m=12) when
+# computing per-DFU MASE; every other profile takes the random-walk scale (m=1).
+# Derived from the live distinct seasonality_profile values in agg_accuracy_by_dfu
+# {highly_seasonal, moderate_seasonal, non_seasonal, (unknown)}: a profile is
+# "seasonal" when it denotes seasonality (contains 'seasonal' and is NOT
+# 'non_seasonal'). non_seasonal / (unknown) / intermittent / low-volume -> m=1.
+_MASE_SEASONAL_PROFILES = frozenset({"highly_seasonal", "moderate_seasonal"})
+# Human-readable disclosure of the m-per-segment rule, surfaced in the response.
+_MASE_SEASONAL_PERIOD_RULE = (
+    "m=12 (annual seasonal-naive scale) for "
+    f"{{{', '.join(sorted(_MASE_SEASONAL_PROFILES))}}}; m=1 (random-walk scale) otherwise"
+)
 
 # Dimensions that the per-DFU decomposition can group by. These are exactly the
 # DFU-constant attribute columns carried in agg_accuracy_by_dfu (sql/193);
@@ -865,9 +878,26 @@ def forecast_accuracy_decomposition(
       • ``volume_weighted`` — the headline KPIs (compute_kpis), big SKUs dominate.
       • ``unweighted`` — per-DFU WAPE then mean/median (compute_unweighted_accuracy),
         every DFU equal, with ``n_undefined`` for zero-actual DFUs.
+      • ``mase`` — per-DFU MASE (mean absolute *scaled* error) then mean/median
+        (compute_unweighted_mase). MASE is NAIVE-RELATIVE: it scores each DFU's
+        forecast against its own in-sample seasonal-naive baseline, so it is
+        scale-free and fair to the structurally-hard long tail whose tiny base
+        makes WAPE% brutal. Reported ALONGSIDE WAPE, never replacing it (MASE < 1
+        beats naive, > 1 is worse than naive). The denominator (scale q) is the
+        leakage-safe in-sample naive MAE precomputed in agg_dfu_naive_scale
+        (sql/194); the seasonal period is chosen per segment — see
+        ``mase_seasonal_period_rule`` in the response. ``mase.n_undefined`` counts
+        DFUs with NO usable naive baseline (cold-start / flat history → "no naive
+        baseline", NOT a forecast failure) and excludes them from mean/median.
+
+        SOURCE ASYMMETRY (disclosed): the MASE numerator derives from the forecast
+        fact's actuals (``tothist_dmd``, via sum_abs_error here) while the
+        denominator derives from ``fact_sales_monthly.qty`` (via the scale MV).
+        The two actual sources reconcile to ~0.08%, so the scaling is sound.
       • ``error_contribution_pct`` — bucket's share of the model's total absolute
         error (Pareto): the buckets that own the error.
-    Data: agg_accuracy_by_dfu (sql/193), one row per DFU x model x lag.
+    Data: agg_accuracy_by_dfu (sql/193) LEFT JOIN agg_dfu_naive_scale (sql/194),
+    one row per DFU x model x lag.
     """
     if group_by not in _DECOMP_GROUP_DIMS:
         raise HTTPException(
@@ -884,9 +914,19 @@ def forecast_accuracy_decomposition(
         abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
 
     # One row per DFU (after the lag filter); group_by is whitelisted above.
+    # LEFT JOIN the precomputed naive-scale MV on the FULL 3-key DFU grain
+    # (item_id, customer_group, loc) — the dim_sku fan-out trap. row_count and
+    # seasonality_profile come from the base MV; scale_m1/scale_m12 are NULL for the
+    # cold-start majority that has no scale row (or < 2 / < 13 in-sample months).
     sql = f"""
-        SELECT {group_by} AS bucket, model_id, sum_forecast, sum_actual, sum_abs_error
-        FROM agg_accuracy_by_dfu
+        SELECT a.{group_by} AS bucket, a.model_id, a.sum_forecast, a.sum_actual,
+               a.sum_abs_error, a.row_count, a.seasonality_profile,
+               s.scale_m1, s.scale_m12
+        FROM agg_accuracy_by_dfu a
+        LEFT JOIN agg_dfu_naive_scale s
+          ON a.item_id = s.item_id
+         AND a.customer_group = s.customer_group
+         AND a.loc = s.loc
         {where_sql}
     """
 
@@ -896,15 +936,28 @@ def forecast_accuracy_decomposition(
 
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     model_total_err: dict[str, float] = {}
-    for bucket, model_id, sf, sa, sae in db_rows:
+    for (bucket, model_id, sf, sa, sae, row_count,
+         seas_profile, scale_m1, scale_m12) in db_rows:
         b = str(bucket) if bucket is not None else "(unknown)"
         g = groups.setdefault((b, model_id), {
-            "sum_forecast": 0.0, "sum_actual": 0.0, "sum_abs_error": 0.0, "per_dfu": []})
+            "sum_forecast": 0.0, "sum_actual": 0.0, "sum_abs_error": 0.0,
+            "per_dfu": [], "per_dfu_mase": []})
         sf_f, sa_f, sae_f = float(sf or 0), float(sa or 0), float(sae or 0)
         g["sum_forecast"] += sf_f
         g["sum_actual"] += sa_f
         g["sum_abs_error"] += sae_f
         g["per_dfu"].append((sa_f, sae_f))
+        # Per-DFU MASE inputs: mae_eval = mean |F - A| over the DFU's eval months;
+        # the scale is picked deterministically by seasonality (disclosed below).
+        n = int(row_count or 0)
+        if n > 0:
+            mae_eval = sae_f / n
+            scale = scale_m12 if seas_profile in _MASE_SEASONAL_PROFILES else scale_m1
+            # None-guard: a LEFT-JOIN miss or a < 2-month MV row yields NULL scale, and
+            # ``None <= 0`` raises TypeError in compute_unweighted_mase. Coerce non-
+            # positive / NULL scales to 0.0 so they count as undefined (no naive baseline).
+            scale_q = float(scale) if scale is not None and scale > 0 else 0.0
+            g["per_dfu_mase"].append((mae_eval, scale_q))
         model_total_err[model_id] = model_total_err.get(model_id, 0.0) + sae_f
 
     pivot: dict[str, dict[str, Any]] = {}
@@ -915,6 +968,7 @@ def forecast_accuracy_decomposition(
             "volume_weighted": compute_kpis(
                 g["sum_forecast"], g["sum_actual"], g["sum_abs_error"], len(g["per_dfu"])),
             "unweighted": compute_unweighted_accuracy(g["per_dfu"]),
+            "mase": compute_unweighted_mase(g["per_dfu_mase"]),
             "error_contribution_pct": (
                 round(100.0 * g["sum_abs_error"] / total_err, 4) if total_err > 0 else None),
             "n_dfus": len(g["per_dfu"]),
@@ -926,6 +980,7 @@ def forecast_accuracy_decomposition(
         "models": model_list or None,
         "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
         "source": "agg_accuracy_by_dfu",
+        "mase_seasonal_period_rule": _MASE_SEASONAL_PERIOD_RULE,
     }
 
 
