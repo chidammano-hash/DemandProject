@@ -60,6 +60,67 @@ function biasBadgeVariant(direction: string): "warning" | "info" | "outline" {
   return "outline";
 }
 
+// Map a signed bias ratio to the same over/under/neutral direction language the
+// Pareto table uses, so MASE (which is direction-blind) is never shown alone.
+// A small dead-band keeps near-zero bias from reading as a directional signal.
+const BIAS_DEADBAND = 0.02; // ±2% — below this, treat as balanced
+function biasDirectionLabel(bias: number | null): string {
+  if (bias === null || !Number.isFinite(bias)) return "—";
+  if (bias > BIAS_DEADBAND) return "over";
+  if (bias < -BIAS_DEADBAND) return "under";
+  return "neutral";
+}
+
+// MASE band. Naive-relative: <1 beats the naive baseline, ≈1 on par, >1 worse.
+// The on-par dead-band (0.95–1.05) keeps measurement noise from flipping a
+// model between "beats naive" and "worse" on every refresh.
+const MASE_ON_PAR_LOW = 0.95;
+const MASE_ON_PAR_HIGH = 1.05;
+function maseBandVariant(
+  median: number | null,
+): { variant: "success" | "outline" | "warning"; label: string } | null {
+  if (median === null || !Number.isFinite(median)) return null;
+  if (median < MASE_ON_PAR_LOW) return { variant: "success", label: "beats naive" };
+  if (median > MASE_ON_PAR_HIGH) return { variant: "warning", label: "worse than naive — review" };
+  return { variant: "outline", label: "on par" };
+}
+
+/**
+ * MASE cell for the decomposition table. Leads with the per-DFU MEDIAN (the
+ * mean is heavy-tailed under intermittency), tags the naive-relative band, and
+ * pairs the volume-weighted bias direction so a direction-blind MASE is never
+ * shown alone. The mean rides along as a tooltip for the analyst who wants it.
+ */
+function MaseCell({ entry }: { entry: DecompositionModelEntry }) {
+  const band = maseBandVariant(entry.mase.median_mase);
+  const biasDir = biasDirectionLabel(entry.volume_weighted.bias);
+
+  if (band === null) {
+    return (
+      <span className="text-xs text-muted-foreground" title="No usable naive baseline for this segment.">
+        — no baseline
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className="tabular-nums text-sm font-medium"
+        title={`Mean MASE ${formatNumber(entry.mase.mean_mase)} (heavy-tailed; median shown)`}
+      >
+        {formatNumber(entry.mase.median_mase)}
+      </span>
+      <Badge variant={band.variant}>{band.label}</Badge>
+      {biasDir !== "neutral" && biasDir !== "—" ? (
+        <Badge variant={biasBadgeVariant(biasDir)} title="Forecast bias direction (MASE is direction-blind)">
+          {biasDir}
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 export function ErrorDecompositionPanel({
   models,
   lag,
@@ -116,6 +177,18 @@ export function ErrorDecompositionPanel({
         <strong>Error share</strong> is each segment&apos;s slice of total absolute error — the Pareto of where to fix first.
       </p>
 
+      <p className="text-xs text-muted-foreground">
+        <strong>MASE &lt;1 beats a naive baseline; &gt;1 worse</strong> — naive-relative, fair to the
+        small-base long tail; shown alongside WAPE, not replacing it. The MASE median is
+        per-DFU-equal / unweighted (like the per-DFU mean/median), not the volume-weighted WAPE headline.
+        {decomp?.mase_seasonal_period_rule ? (
+          <>
+            {" "}
+            Naive scale: {decomp.mase_seasonal_period_rule}.
+          </>
+        ) : null}
+      </p>
+
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium">Group by</span>
         <Select value={groupBy} onValueChange={setGroupBy}>
@@ -150,6 +223,8 @@ export function ErrorDecompositionPanel({
               <TableHead className="text-right">Per-DFU mean</TableHead>
               <TableHead className="text-right">Per-DFU median</TableHead>
               <TableHead className="text-right">Undefined</TableHead>
+              <TableHead>MASE (median)</TableHead>
+              <TableHead>No naive baseline</TableHead>
               <TableHead>Error share</TableHead>
             </TableRow>
           </TableHeader>
@@ -163,6 +238,20 @@ export function ErrorDecompositionPanel({
                 <TableCell className="text-right">{formatPercent(entry.unweighted.mean_accuracy_pct)}</TableCell>
                 <TableCell className="text-right">{formatPercent(entry.unweighted.median_accuracy_pct)}</TableCell>
                 <TableCell className="text-right">{formatNumber(entry.unweighted.n_undefined)}</TableCell>
+                {/* MASE (median) — naive-relative band + paired bias direction so the
+                    direction-blind MASE is never read in isolation. */}
+                <TableCell>
+                  <MaseCell entry={entry} />
+                </TableCell>
+                {/* Undefined MASE → a NAMED no-baseline state, never a bare 0. */}
+                <TableCell>
+                  <span
+                    className="text-xs text-muted-foreground"
+                    title="No in-sample naive baseline (cold-start / flat history) — excluded from the MASE median, not counted as a miss."
+                  >
+                    {formatNumber(entry.mase.n_undefined)} no baseline
+                  </span>
+                </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-24 overflow-hidden rounded bg-muted">

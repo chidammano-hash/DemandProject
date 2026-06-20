@@ -18,13 +18,18 @@ vi.mock("@/api/queries/accuracy", () => ({
   errorContributorsKeys: { list: (p: unknown) => ["error-contributors", p] },
 }));
 
+const MASE_RULE =
+  "m=12 (annual seasonal-naive scale) for {seasonal}; m=1 (random-walk scale) otherwise";
+
 const DECOMP_PAYLOAD = {
   group_by: "seasonality_profile",
   lag_filter: -1,
   models: ["champion"],
   source: "agg_accuracy_by_dfu",
+  mase_seasonal_period_rule: MASE_RULE,
   rows: [
     {
+      // median_mase 0.85 → beats the naive baseline.
       bucket: "seasonal",
       by_model: {
         champion: {
@@ -33,8 +38,25 @@ const DECOMP_PAYLOAD = {
             sum_forecast: 210, sum_actual: 200, sku_count: 2,
           },
           unweighted: { n_dfus: 2, n_undefined: 1, mean_accuracy_pct: 70, median_accuracy_pct: 75 },
+          mase: { n_dfus: 2, n_undefined: 1, mean_mase: 0.92, median_mase: 0.85 },
           error_contribution_pct: 100,
           n_dfus: 2,
+        },
+      },
+    },
+    {
+      // median_mase 1.18 → worse than the naive baseline; 3 cold-start DFUs.
+      bucket: "intermittent",
+      by_model: {
+        champion: {
+          volume_weighted: {
+            accuracy_pct: 40, wape: 60, bias: 0.2,
+            sum_forecast: 120, sum_actual: 100, sku_count: 4,
+          },
+          unweighted: { n_dfus: 4, n_undefined: 3, mean_accuracy_pct: 45, median_accuracy_pct: 50 },
+          mase: { n_dfus: 4, n_undefined: 3, mean_mase: 1.30, median_mase: 1.18 },
+          error_contribution_pct: 80,
+          n_dfus: 4,
         },
       },
     },
@@ -75,9 +97,23 @@ describe("ErrorDecompositionPanel", () => {
     expect(screen.getByText("70%")).toBeInTheDocument();   // per-DFU mean
     expect(screen.getByText("75%")).toBeInTheDocument();   // per-DFU median
 
+    // MASE (median) renders for both rows with the correct naive-relative band.
+    expect(screen.getByText("0.85")).toBeInTheDocument();  // <1 → beats naive
+    expect(screen.getByText("beats naive")).toBeInTheDocument();
+    expect(screen.getByText("1.18")).toBeInTheDocument();  // >1 → worse than naive
+    expect(screen.getByText(/worse than naive/i)).toBeInTheDocument();
+
+    // n_undefined renders as a NAMED no-baseline state, not a bare number.
+    expect(screen.getByText(/1 no baseline/)).toBeInTheDocument();
+    expect(screen.getByText(/3 no baseline/)).toBeInTheDocument();
+
+    // The seasonal-period rule disclosure is surfaced verbatim.
+    expect(screen.getByText(/annual seasonal-naive scale/)).toBeInTheDocument();
+
     // Pareto: the top contributor's item id and its under-forecast bias badge.
     await waitFor(() => expect(screen.getByText("SKU-ALPHA")).toBeInTheDocument());
-    expect(screen.getByText("under")).toBeInTheDocument();
+    // "under" appears in the MASE bias pairing AND the Pareto badge → at least one.
+    expect(screen.getAllByText("under").length).toBeGreaterThanOrEqual(1);
     // Contribution share appears in both tables; at least one 48% present.
     expect(screen.getAllByText("48%").length).toBeGreaterThanOrEqual(1);
   });

@@ -98,9 +98,20 @@ export type UnweightedAccuracy = {
   median_accuracy_pct: number | null;
 };
 
+// MASE is naive-relative: <1 beats the naive baseline, ≈1 on par, >1 worse.
+// n_undefined = DFUs with no usable in-sample naive baseline (cold-start / flat
+// history); they are excluded from mean/median rather than counted as a miss.
+export type UnweightedMase = {
+  n_dfus: number;
+  n_undefined: number;
+  mean_mase: number | null;
+  median_mase: number | null;
+};
+
 export type DecompositionModelEntry = {
   volume_weighted: AccuracyKpis;
   unweighted: UnweightedAccuracy;
+  mase: UnweightedMase;
   error_contribution_pct: number | null;
   n_dfus: number;
 };
@@ -116,6 +127,7 @@ export type AccuracyDecompositionPayload = {
   models: string[] | null;
   rows: DecompositionRow[];
   source: string;
+  mase_seasonal_period_rule: string;
 };
 
 export type ErrorContributor = {
