@@ -1546,8 +1546,10 @@ def main() -> None:
             logger.info("Step 3: Building cluster groups for %s DFUs...", f"{len(champion_df):,}")
             with profiled_section("build_cluster_groups"):
                 cluster_groups: dict[tuple, list] = defaultdict(list)
+                cluster_fallback_count = 0
 
                 def _resolve_artifact(model_id: str, cluster_id) -> dict | None:
+                    nonlocal cluster_fallback_count
                     cluster_models = loaded_models.get(model_id) or loaded_models.get(fallback_model_id)
                     if cluster_models is None:
                         return None
@@ -1557,8 +1559,14 @@ def main() -> None:
                             art = cluster_models.get(int(cluster_id))
                         except (ValueError, TypeError):
                             pass
-                    if art is None:
-                        art = next(iter(cluster_models.values()), None)
+                    if art is None and cluster_models:
+                        # No persisted model for this DFU's cluster label (e.g. a
+                        # re-cluster changed the label set without re-running the
+                        # backtest). Fall back DETERMINISTICALLY to the lowest
+                        # cluster id (not an arbitrary dict-order model) and count
+                        # it so the mismatch is observable rather than silent.
+                        art = cluster_models[min(cluster_models, key=str)]
+                        cluster_fallback_count += 1
                     return art
 
                 cold_start_count = 0
@@ -1612,6 +1620,13 @@ def main() -> None:
                         f"{sum(len(v) for v in cluster_groups.values()):,}",
                         len(cluster_groups), f"{skipped:,}",
                         f"{cold_start_count:,}", cold_start_model_id)
+            if cluster_fallback_count:
+                logger.warning(
+                    "%s DFU(s) had no model for their ml_cluster label and were routed "
+                    "to a fallback cluster model — likely a re-cluster without a backtest "
+                    "re-run. Re-run the backtest to persist models for the current labels.",
+                    f"{cluster_fallback_count:,}",
+                )
 
             # Batch-predict per cluster group — parallelise across independent groups
             n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))

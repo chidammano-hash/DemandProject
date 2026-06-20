@@ -114,7 +114,12 @@ PROTECTED_FEATURES = {
     # loses signal and accuracy collapses. Protect the first 3 lags which
     # carry the strongest recency signal.
     "qty_lag_2", "qty_lag_3",
-    "rolling_mean_12m",
+    # qty_lag_12 (same month last year) is the prime year-over-year seasonal
+    # predictor. Protect it alongside rolling_mean_12m (a 12-month *average*,
+    # which smooths away the seasonal peak/trough that qty_lag_12 captures) so
+    # the correlation/SHAP filters cannot prune the strongest annual signal for
+    # seasonal SKUs — the cohort that owns most of the forecast error.
+    "qty_lag_12", "rolling_mean_12m",
 }
 
 # Exact-duplicate feature pairs: alias → canonical name to keep.
