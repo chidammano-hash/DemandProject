@@ -311,8 +311,10 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 
 1. **Tier 1**: `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`
 2. **Tier 2**: `mv_inventory_forecast_monthly`, `mv_fill_rate_monthly`, `mv_intramonth_stockout`
-3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`
+3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`, `agg_dfu_naive_scale`
 4. **Tier 4**: `mv_inventory_health_score`, `mv_control_tower_kpis`
+
+`agg_dfu_naive_scale` (`sql/194`) is the per-DFU **in-sample seasonal-naive MAE** — the MASE denominator. It is refreshed on the same backtest-load cadence as the other accuracy MVs (`make refresh-accuracy-mvs` / `accuracy-slice-refresh` / `refresh-mvs-tiered`), CONCURRENTLY via `uq_agg_dfu_naive_scale`. The in-sample series is leakage-safe (strictly before each DFU's earliest backtested target month) and densified (zero-demand months counted via `COALESCE(qty,0)` over a `generate_series` span). It feeds the future per-DFU MASE surfacing in the accuracy-decomposition endpoint (F-03b).
 
 ### Data Retention Policies
 
@@ -555,6 +557,8 @@ These tables are not explicitly truncated by `db-truncate-data` because they hol
 Run as a single SQL transaction. Ordered by FK dependency (children before parents). This reset clears transactional facts, derived outputs, job/perf history, and experiment history, while leaving configuration masters in place.
 
 > **Note:** `fact_inventory_snapshot` is monthly RANGE-partitioned (2025-01 through 2026-03 + default). TRUNCATE on the parent cascades to all partitions automatically.
+
+> **Note:** Derived materialized views (the accuracy MVs — `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`, **`agg_dfu_naive_scale`** — and the inventory/CA MVs) are **not** in `db-truncate-data`: Postgres rejects `TRUNCATE TABLE` on a materialized view ("is not a table"), which would abort the single-transaction reset. Their stale rows are invalidated when the source facts (`fact_sales_monthly`, `fact_external_forecast_monthly`) are truncated and re-emptied/repopulated on the next refresh (`refresh-mvs-tiered` / `refresh-accuracy-mvs`).
 
 ```bash
 docker compose exec -T postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 <<'EOSQL'

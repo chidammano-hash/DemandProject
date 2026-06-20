@@ -857,10 +857,12 @@ forecast-clean-list:
 
 accuracy-slice-refresh:
 	# CONCURRENTLY safe: uq_agg_accuracy_dim, uq_agg_accuracy_lag_archive,
-	# uq_dfu_coverage_model_lag_dfu, uq_dfu_coverage_lag_archive (sql/119) and
-	# uq_agg_accuracy_by_dfu (sql/193) back the five MVs respectively.
+	# uq_dfu_coverage_model_lag_dfu, uq_dfu_coverage_lag_archive (sql/119),
+	# uq_agg_accuracy_by_dfu (sql/193) and uq_agg_dfu_naive_scale (sql/194) back the
+	# six MVs respectively. agg_dfu_naive_scale = per-DFU in-sample seasonal-naive MAE
+	# (the MASE scale); refreshed on the same backtest-load cadence as the others.
 	$(PSQL) -v ON_ERROR_STOP=1 \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive;"
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_naive_scale;"
 
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
@@ -1678,7 +1680,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	  agg_sales_monthly agg_forecast_monthly agg_inventory_monthly \
 	  mv_inventory_forecast_monthly mv_fill_rate_monthly mv_intramonth_stockout \
 	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
-	  agg_accuracy_by_dim agg_accuracy_by_dfu agg_dfu_coverage \
+	  agg_accuracy_by_dim agg_accuracy_by_dfu agg_dfu_coverage agg_dfu_naive_scale \
 	  mv_inventory_health_score mv_control_tower_kpis \
 	  mv_integrated_planning_targets \
 	  mv_customer_activity_monthly \
@@ -1697,6 +1699,7 @@ refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest l
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; \
 	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive; \
+	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_naive_scale; \
 	"
 	@echo "✓ Accuracy materialized views refreshed."
 

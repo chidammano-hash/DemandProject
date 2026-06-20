@@ -580,9 +580,9 @@ erDiagram
 
 **Archive:** `backtest_lag_archive`
 
-### Core Materialized Views (6)
+### Core Materialized Views (7)
 
-`agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, `agg_dfu_coverage`
+`agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, `agg_dfu_coverage`, `agg_dfu_naive_scale`
 
 ### Customer Analytics Materialized Views (5)
 
@@ -754,6 +754,7 @@ Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-tab
 
 1. `agg_accuracy_by_dim` — joins `fact_external_forecast_monthly` + `dim_sku`, aggregates at (model_id, lag, month, cluster, supplier, abc_vol, region, brand, execution_lag) grain; stores `SUM(F)`, `SUM(A)`, `SUM(ABS(F-A))` for KPI derivation. Refreshed by `backtest-load`.
 2. `agg_accuracy_lag_archive` — same aggregation from `backtest_lag_archive` + `dim_sku`, adds `timeframe` grain; used for lag-horizon accuracy curves. Refreshed by `backtest-load`.
+3. `agg_dfu_naive_scale` (`sql/194`) — per-DFU **in-sample seasonal-naive MAE** = the MASE denominator (scale q in `common/services/metrics.py compute_mase`). One row per `(item_id, customer_group, loc)` with `scale_m1` (m=1 random-walk) and `scale_m12` (m=12 annual). **Leakage-safe:** the in-sample series is strictly `startdate < the DFU's earliest backtested target month` (the per-DFU eval cutoff = `MIN(startdate)` over its `fact_external_forecast_monthly` rows), so the denominator never touches the scored window. **Densified:** zero-demand months in the in-sample span are `generate_series`'d + `COALESCE(qty,0)` so intermittent SKUs count their zeros before the naive diff. `scale_m1` is NULL with < 2 in-sample months, `scale_m12` NULL/sparse with < 13. Refreshed alongside the other accuracy MVs (same `backtest-load` cadence). Feeds the future per-DFU MASE surfacing in the accuracy-decomposition endpoint (F-03b).
 
 Performance impact: aggregate queries (cluster-level, supplier-level) drop from 5-30s → <300ms.
 
@@ -770,6 +771,7 @@ Views must be refreshed in dependency order. Later views depend on earlier ones.
 4. agg_accuracy_by_dim        <- backtest_lag_archive + dim_sku
 5. agg_accuracy_lag_archive   <- backtest_lag_archive
 6. agg_dfu_coverage           <- fact_sales_monthly + dim_sku
+6b. agg_dfu_naive_scale       <- fact_sales_monthly + fact_external_forecast_monthly (leakage-safe in-sample MASE scale)
 |
 +- (parallel, independent of each other)
 +-- 7a. mv_fill_rate_monthly          <- fact_inventory_snapshot
