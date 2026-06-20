@@ -16,6 +16,7 @@ from fastapi.responses import Response as FastAPIResponse
 from api.core import get_conn, set_cache
 from common.core.constants import ABC_CLASSES
 from common.core.sql_helpers import to_float as _safe_float
+from common.core.utils import get_competing_model_ids
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,22 @@ def _bias(sum_forecast: float, sum_actual: float) -> float | None:
 
 def _round_or_none(v: float | None, ndigits: int = 2) -> float | None:
     return round(v, ndigits) if v is not None else None
+
+
+def _competing_in_clause(extra: tuple[str, ...] = ()) -> tuple[str, list[str]]:
+    """Build a parameterized IN-list over the configured competing roster.
+
+    Returns ``("%s, %s, ...", [model_ids])`` so the oracle ceiling / model
+    comparison score over the REAL champion candidate pool (config-driven via
+    ``get_competing_model_ids()``) instead of a hardcoded subset. The old
+    hardcoded set excluded the FM/statistical champions (nhits/nbeats/mstl/
+    chronos2/seasonal_naive) and named a non-existent ``'chronos'``, so the
+    oracle ceiling and the derived addressable gap were computed over the wrong
+    models. ``extra`` appends additional ids (e.g. ``"champion"``).
+    """
+    models = get_competing_model_ids() + list(extra)
+    placeholders = ", ".join(["%s"] * len(models))
+    return placeholders, models
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +189,9 @@ def accuracy_budget_decomposition(
                     intermittent_clusters.append(cl_name)
                     intermittent_accuracy = cl_acc
 
-            # --- d) Oracle ceiling ---
-            cur.execute("""
+            # --- d) Oracle ceiling (over the configured competing roster) ---
+            oracle_in, oracle_models = _competing_in_clause()
+            cur.execute(f"""
                 WITH per_dfu_month AS (
                     SELECT f.item_id, f.customer_group, f.loc, f.startdate, f.model_id,
                            ABS(f.basefcst_pref - f.tothist_dmd) AS abs_err,
@@ -185,7 +203,7 @@ def accuracy_budget_decomposition(
                            ) AS rn
                     FROM fact_external_forecast_monthly f
                     JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
-                    WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos')
+                    WHERE f.model_id IN ({oracle_in})
                       AND f.lag = COALESCE(d.execution_lag, 0)
                       AND f.tothist_dmd IS NOT NULL
                 )
@@ -196,7 +214,7 @@ def accuracy_budget_decomposition(
                        SUM(CASE WHEN model_id != %s THEN 1 ELSE 0 END) AS switched_rows
                 FROM per_dfu_month
                 WHERE rn = 1
-            """, [model_id])
+            """, [*oracle_models, model_id])
             oracle_row = cur.fetchone()
             oracle_abs = _safe_float(oracle_row[0]) or 0.0
             oracle_actual = _safe_float(oracle_row[2]) or 0.0
@@ -430,8 +448,9 @@ def accuracy_budget_model_comparison(
 
     try:
         with get_conn() as conn, conn.cursor() as cur:
-            # Per-model accuracy
-            cur.execute("""
+            # Per-model accuracy (competing roster + the promoted champion)
+            comp_in, comp_models = _competing_in_clause(("champion",))
+            cur.execute(f"""
                 SELECT f.model_id,
                        SUM(ABS(f.basefcst_pref - f.tothist_dmd)),
                        SUM(f.basefcst_pref),
@@ -440,17 +459,15 @@ def accuracy_budget_model_comparison(
                 JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
-                  AND f.model_id IN (
-                      'lgbm_cluster', 'catboost_cluster',
-                      'xgboost_cluster', 'champion'
-                  )
+                  AND f.model_id IN ({comp_in})
                 GROUP BY f.model_id
                 ORDER BY f.model_id
-            """)
+            """, comp_models)
             model_rows = cur.fetchall()
 
-            # Oracle ceiling
-            cur.execute("""
+            # Oracle ceiling (over the configured competing roster)
+            oracle2_in, oracle2_models = _competing_in_clause()
+            cur.execute(f"""
                 WITH per_dfu_month AS (
                     SELECT f.item_id, f.customer_group, f.loc, f.startdate,
                            ABS(f.basefcst_pref - f.tothist_dmd) AS abs_err,
@@ -461,14 +478,14 @@ def accuracy_budget_model_comparison(
                            ) AS rn
                     FROM fact_external_forecast_monthly f
                     JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
-                    WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos')
+                    WHERE f.model_id IN ({oracle2_in})
                       AND f.lag = COALESCE(d.execution_lag, 0)
                       AND f.tothist_dmd IS NOT NULL
                 )
                 SELECT SUM(abs_err), SUM(tothist_dmd)
                 FROM per_dfu_month
                 WHERE rn = 1
-            """)
+            """, oracle2_models)
             oracle_row = cur.fetchone()
     except psycopg.Error:
         logger.exception("accuracy-budget model-comparison query failed")

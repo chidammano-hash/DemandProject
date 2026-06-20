@@ -10,6 +10,62 @@ from httpx import ASGITransport
 from tests.api.conftest import make_pool as _make_pool
 
 
+def _assert_placeholder_param_parity(cursor):
+    """Every parameterized query must bind exactly as many params as it has %s
+    placeholders. The oracle / model-comparison IN-lists are built dynamically
+    from the competing roster, so a count mismatch would raise at execute() time
+    in real psycopg — but the fetch-mocked tests accept any args, so assert it
+    explicitly here."""
+    for call in cursor.execute.call_args_list:
+        sql = call.args[0]
+        params = call.args[1] if len(call.args) > 1 else None
+        n_ph = sql.count("%s")
+        if params is None:
+            assert n_ph == 0, f"{n_ph} %s placeholders but no params: {sql[:90]!r}"
+        else:
+            assert n_ph == len(params), (
+                f"placeholder/param mismatch: {n_ph} %s vs {len(params)} params: {sql[:90]!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_oracle_queries_placeholder_param_parity():
+    """Guard the dynamic competing-roster IN-lists in the oracle/model-comparison
+    queries against placeholder/param count drift (would 500 at runtime)."""
+    # decomposition endpoint (7 queries, one with the dynamic oracle IN-list)
+    pool, _conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [
+        (500000.0, 2800000.0, 3000000.0, 50000),
+        (400000.0, 2900000.0, 3000000.0, 2700000, 135000),
+        (800000.0, 2500000.0, 3000000.0),
+        (900000.0, 1000000.0),
+    ]
+    cursor.fetchall.side_effect = [
+        [("A", 200000.0, 1500000.0, 1600000.0, 10000)],
+        [("0", 100000.0, 700000.0, 750000.0, 12000, 0.05)],
+        [(1, 40000.0, 250000.0)],
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/accuracy-budget/decomposition")
+    assert resp.status_code == 200
+    _assert_placeholder_param_parity(cursor)
+
+    # model-comparison endpoint (per-model IN-list + oracle IN-list)
+    pool, _conn, cursor = _make_pool()
+    cursor.fetchall.side_effect = [[("lgbm_cluster", 100000.0, 700000.0, 750000.0)]]
+    cursor.fetchone.side_effect = [(400000.0, 3000000.0)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/accuracy-budget/model-comparison")
+    assert resp.status_code == 200
+    _assert_placeholder_param_parity(cursor)
+
+
 # ---------------------------------------------------------------------------
 # GET /accuracy-budget/decomposition
 # ---------------------------------------------------------------------------
