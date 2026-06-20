@@ -474,8 +474,17 @@ def _select_features_from_shap(
     elif total_shap == 0:
         n_select = len(eligible)
     else:
-        # Cumulative threshold over eligible features only
-        eligible_shap = [mean_abs_shap[feature_cols.index(f)] for f in eligible]
+        # Cumulative threshold over eligible features only.
+        # Map name -> SHAP column index once. feature_cols MUST have unique names
+        # or list.index() / this lookup silently picks the wrong SHAP mass and
+        # selects the wrong features — fail loud if a duplicate is ever introduced.
+        if len(set(feature_cols)) != len(feature_cols):
+            raise ValueError(
+                "feature_cols contains duplicate names; SHAP selection requires "
+                "unique feature names."
+            )
+        col_idx = {name: i for i, name in enumerate(feature_cols)}
+        eligible_shap = [mean_abs_shap[col_idx[f]] for f in eligible]
         eligible_total = sum(eligible_shap)
         if eligible_total > 0:
             cumsum = np.cumsum(eligible_shap) / eligible_total
