@@ -870,9 +870,15 @@ def generate_forecasts_batch(
                 step_preds = np.maximum(0.0, model.predict(pool))
             else:
                 step_preds = np.maximum(0.0, model.predict(X_np))
-        except Exception as exc:
-            logger.error("Prediction failed for cluster group, substituting zeros: %s", exc)
-            step_preds = np.zeros(len(valid_pairs))
+        except (ValueError, TypeError, ArithmeticError):
+            # Previously this substituted a full column of zeros, which silently
+            # corrupts the forecast (an all-zero forecast reads downstream as
+            # "no demand"). Fail loud instead so a systematic feature/dtype/model
+            # bug surfaces rather than writing zeros to staging.
+            logger.exception(
+                "Prediction failed for cluster group at horizon step %d", h
+            )
+            raise
 
         all_preds[:, h] = step_preds
 
@@ -1623,7 +1629,11 @@ def main() -> None:
                     model_id=mid,
                     cat_encoders=cat_encoders,
                     sigma_lookup=sigma_lookup if sigma_lookup else None,
-                    ci_cfg=ci_cfg if ci_cfg.get("enabled", False) else None,
+                    # Gate CI bands on the RESOLVED ci_enabled (which honors the
+                    # CLI --confidence-intervals override), not the raw config flag —
+                    # otherwise the UI toggle is silently ignored when config has
+                    # confidence_interval.enabled: false.
+                    ci_cfg=ci_cfg if ci_enabled else None,
                 )
                 return (mid, cid, len(dfu_lst), rows)
 
