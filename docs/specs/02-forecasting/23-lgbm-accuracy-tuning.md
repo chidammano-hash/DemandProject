@@ -559,6 +559,22 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 
 - Deleting a promoted champion experiment now cleans up: forecast rows with the experiment's `model_id`, `promotion_log` FK references, then the experiment row itself
 
+### 5c.6 Auto-Tune Ranking & Per-Model Baseline (2026-06-20)
+
+- **File:** `scripts/ml/auto_tune.py`
+- **Multi-seed ranking:** strategies are ranked and promotion is gated on `multi_seed_summary.mean_accuracy_pct` when present (falling back to the single-seed value). It previously used `accuracy_at_execution_lag.accuracy_pct`, which `run_backtest` overwrites once **per seed** — so with `n_seeds > 1` the leaderboard reflected only the **last** seed, letting a strategy win on last-seed luck and defeating the point of multi-seed variance estimation.
+- **Per-model baseline:** `get_baseline_accuracy()` now filters `lgbm_tuning_run` by `AND model_id = %s`. That table is shared across lgbm/catboost/xgboost, so tuning CatBoost/XGBoost had been comparing the candidate against an **lgbm** baseline (different absolute accuracy levels) — which could promote a worse model or block a better one.
+
+### 5c.7 Champion COPY Integrity (2026-06-20)
+
+- **Files:** `api/routers/forecasting/competition.py`, `scripts/ml/run_champion_selection.py`
+- The champion-winner COPY paths built tab-delimited `io.StringIO` buffers with raw f-strings and **no escaping**. Text-format COPY treats tab as the column delimiter, newline as the row terminator, and backslash as the escape char, so any `item_id`/`customer_group`/`loc` (free-text dimension values from external CSVs) containing one of those desynced the stream — shifting columns, routing the **wrong** model under `model_id='champion'` for a DFU, or silently dropping rows. Switched to `copy.write_row((...))` with explicit column lists (psycopg3 escapes + type-adapts each value).
+- **Deferred:** `run_champion_selection.py`'s `_ensemble_winners` COPY (the `source_mix` JSONB column) has the same risk but needs a psycopg `Jsonb` wrapper + a live-DB test, so it is left for a DB-backed PR. **New rule:** never build COPY buffers by hand — always `copy.write_row(...)`.
+
+### 5c.8 Cluster-Tuning Profile Guard (2026-06-20)
+
+- **File:** `scripts/ml/tune_cluster_hyperparams.py` — a tuning run whose `best_wape` is non-finite (all folds errored) no longer persists its hyperparameters to `cluster_tuning_profiles.yaml`. It previously wrote `inf`-WAPE garbage profiles that then drove production training.
+
 ---
 
 ## 6. File Change Summary

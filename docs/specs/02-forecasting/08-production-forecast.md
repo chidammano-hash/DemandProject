@@ -66,6 +66,8 @@ For each DFU:
 6. For T+2 through T+24, use recursive inference: the predicted value for month T becomes `qty_lag_1` for month T+1, and so on
 7. Write all predictions to `fact_production_forecast` with `plan_version`, `model_id`, `horizon_months`, `lag_source` ("actual" for T+1, "predicted" for T+2+), and `run_id`
 
+**Fail loud on prediction failure (no silent zero-fill):** if the recursive predict loop raises (`ValueError` / `TypeError` / `ArithmeticError`), the run logs the full traceback and **re-raises** — it does not substitute a column of zeros. An all-zero forecast reads downstream as "no demand" and silently corrupts the plan and safety stock, so a systematic prediction bug now aborts the generate run (the correct posture for data integrity) rather than writing zeros. (Fixed 2026-06-20; previously a bare `except Exception` zero-filled the cluster group.)
+
 **Streaming reads:** Both `scripts/forecasting/generate_production_forecasts.py`
 and `scripts/ml/train_meta_learner.py` load their large sales / backtest frames
 via `read_sql_chunked()` from `common/core/sql_helpers.py` (chunk size
@@ -225,6 +227,8 @@ single-model generation). A **Generate All** button submits a generate job for
 every ready model (non-tree models plus production-trained tree models) in one
 click. Promote/generate failures (the WAPE/coverage gate's 409, or 400 for no
 staged rows) surface as toasts rather than failing silently.
+
+> **Change note (2026-06-20):** the CI batch call site now gates band generation on the **resolved** `ci_enabled` flag, not the raw `confidence_interval.enabled` config value. Passing `--confidence-intervals` (the UI "Include Confidence Intervals" toggle) had been silently ignored whenever the config had `confidence_interval.enabled: false`, producing point-only forecasts with no error. The CLI flag now reliably wins over the config default.
 
 ## Pipeline Targets
 

@@ -45,6 +45,12 @@ All four views include `seasonality_profile` (added in `sql/016`).
 
 Each view stores `SUM(forecast)`, `SUM(actual)`, `SUM(|forecast - actual|)` so KPIs can be derived at query time without scanning the full fact table.
 
+### dim_sku join grain (required)
+
+`dim_sku.sku_ck = (item_id, customer_group, loc)`, and `customer_group` is **not** unique per `(item_id, loc)`. Any endpoint that joins the forecast fact to `dim_sku` MUST match on all three keys — `item_id AND customer_group AND loc`. Joining on `(item_id, loc)` only fans every fact row out across all customer_groups, inflating `SUM(|F−A|)`, `SUM(A)`, and `COUNT(DISTINCT sku_ck)` and corrupting WAPE / accuracy / bias.
+
+> **Change note (2026-06-20):** `accuracy_budget.py` (all 11 dim_sku joins + both oracle-ceiling `ROW_NUMBER` partitions) and `fva.py` (FVA-waterfall `dfu_filter`) were fixed to join on the full `(item_id, customer_group, loc)` key, matching `accuracy.py`. This shifts the reported numbers on the Accuracy-Budget and FVA panels (they were previously over-counted). The same round also bound the `blended_forecast` summary window to `get_planning_date()` instead of SQL `CURRENT_DATE`.
+
 ## API
 
 | Method | Path | Description |

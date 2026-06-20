@@ -235,6 +235,31 @@ unless **both** of the following hold:
 A `bypass_token` may be configured to override the gate for emergency
 rollouts.
 
+### Auto-tune ranking & baseline (2026-06-20 fixes)
+
+`scripts/ml/auto_tune.py` ranks strategies and gates promotion on
+**`multi_seed_summary.mean_accuracy_pct`** when present (falling back to the
+single-seed value). It previously read `accuracy_at_execution_lag.accuracy_pct`,
+which `run_backtest` overwrites once **per seed** — so with `n_seeds > 1` the
+leaderboard reflected only the last seed and a strategy could win on last-seed
+luck. When tuning CatBoost/XGBoost, `get_baseline_accuracy()` now filters
+`lgbm_tuning_run` by `model_id` (the table is shared across all three families);
+the candidate is no longer compared against an lgbm baseline at a different
+absolute accuracy level. **Operator impact:** re-run `make tune-*` if a prior
+auto-tune promotion looks suspect — earlier rankings may have been seed-lucky or
+cross-model.
+
+### Champion COPY integrity (2026-06-20 fix)
+
+Champion-winner loads (`competition.py` `/competition/run`, and
+`run_champion_selection.py`) now use `copy.write_row(...)` instead of hand-built
+tab-delimited COPY buffers. The old buffers silently routed the **wrong** model
+under `model_id='champion'` (or dropped rows) whenever an `item_id` /
+`customer_group` / `loc` value contained a tab, newline, or backslash. No
+operator action needed; re-running champion selection now produces correct
+routing. (The `_ensemble_winners` JSONB COPY is still on the old path — tracked
+for a DB-backed PR.)
+
 ---
 
 ## 5.7 Expert Panel Testing

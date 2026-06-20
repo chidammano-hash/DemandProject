@@ -119,6 +119,15 @@ algorithm entry) and a per-run summary JSON. Each backtest also trains
 models AND persists `.pkl` artifacts to `data/models/<model_id>/` for
 downstream production forecasting.
 
+> **Persistence under embargo (2026-06-20 fix):** with `embargo_months >= 1`
+> (the default) the final timeframe is skipped because its predict window lands
+> past the data end. Model persistence now targets `_last_persistable_timeframe()`
+> — the last timeframe that actually produced predictions — instead of the raw
+> last timeframe index. Before the fix, the `.pkl`-persisting backtest mode wrote
+> **no** model artifacts at all under the default embargo, so `data/models/<id>/`
+> stayed empty and production generate had nothing to load. If you ran backtests
+> before this fix and `data/models/<id>/` is empty, re-run the backtest.
+
 ### UI run concurrency (Model Tuning → Backtest stage)
 
 `POST /backtest-management/{model_id}/run` (the **Run** button) is concurrency-controlled

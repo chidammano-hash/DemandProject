@@ -1072,6 +1072,9 @@ routed are safe because they aggregate over months of history.
 | Clustering fails | Load sales first: `make load-sales`; verify MLflow: `docker ps \| grep mlflow`; check: `ls -lh data/staged/clustering_features.csv` |
 | Cluster assignments not updating | Preview with `--dry-run`; verify DFU key format matches database; check Postgres connection |
 | Backtest fails | Run clustering first: `make cluster-all`; load sales: `make load-sales`; install deps: `uv sync` |
+| Production generate has no models to load (`data/models/<id>/` empty) | Backtest persistence under embargo was fixed 2026-06-20 — older runs persisted nothing when `embargo_months >= 1`. Re-run the backtest (`make backtest-<model>`) to repopulate `.pkl` artifacts. |
+| `make forecast-generate` now **aborts** instead of producing zeros | Intended (2026-06-20): a failed recursive prediction re-raises rather than zero-filling the cluster (an all-zero forecast silently corrupts the plan). Read the logged traceback and fix the underlying prediction error — do not treat the abort as a regression. |
+| `make quantile-train` fails with `NotImplementedError` | Intended (2026-06-20): the quantile script is an MVP stub that trains on random data; it refuses to write `fact_demand_plan`. Use `--dry-run` to preview, or skip it — production CI bands come from `make forecast-generate`. |
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/forecasting/forecast_pipeline_config.yaml` champion section; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
 | Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; run `make generate-embeddings`; check API logs for rate limit errors |
 | AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |

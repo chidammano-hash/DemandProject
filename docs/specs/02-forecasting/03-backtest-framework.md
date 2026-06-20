@@ -321,7 +321,14 @@ Key backtest-level settings:
 - `recursive_noise_pct: 0.03` — Gaussian noise for recursive training (reduced from 0.08)
 - `recursive_lag_smooth: 0.15` — exponential smoothing for recursive lags from step 3+
 - `baseline_intermittent: true` — route intermittent clusters to rolling mean baseline
-- `intermittent_threshold: 0.7` — zero-demand percentage cutoff for intermittent routing
+- `intermittent_threshold: 0.7` — zero-demand percentage cutoff for intermittent routing (>70% zero rows → rolling-mean baseline)
+- `embargo_months: 1` — gap between each timeframe's train end and its predict window
+
+### Model persistence under embargo
+
+When the `.pkl`-persisting backtest mode runs (`model_persistence_fn` set), production-model artifacts are written for the **last timeframe that has a non-empty predict window**, resolved by `_last_persistable_timeframe()` — not blindly the last timeframe index.
+
+> **Change note (2026-06-20):** with `embargo_months >= 1` (the default), the final timeframe's `predict_start` lands past the data end, so the backtest loop skips it (`if not predict_months: continue`). Persistence had been guarded on `ti == len(timeframes) - 1` — exactly that skipped timeframe — so under the default embargo **no model artifacts were persisted at all**. Persistence now targets `_last_persistable_timeframe()` (equal to the last index when `embargo_months == 0`, so zero-embargo behaviour is unchanged). Separately, `_inject_recursive_noise` is now NaN-safe (it computes the noise scale over finite values only); a `NaN` scale had been wiping the entire `qty_lag_2..N` feature block on every recursive tree fit.
 
 ## Backtest Model Coverage
 

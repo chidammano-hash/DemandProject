@@ -183,13 +183,13 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 | Script | Make target | Purpose | Output table |
 |---|---|---|---|
 | `scripts/generate_production_forecasts.py` | `forecast-generate` | Champion point forecast — the canonical demand signal | `fact_production_forecast_staging` -> `fact_production_forecast` |
-| `scripts/generate_quantile_forecasts.py` | `quantile-train VERSION=<v>` | LightGBM quantile regression for P10/P50/P90; weekly disaggregation | `fact_demand_plan` |
+| `scripts/generate_quantile_forecasts.py` | `quantile-train VERSION=<v>` | LightGBM quantile regression for P10/P50/P90; weekly disaggregation | `fact_demand_plan` (⚠ MVP stub — see note) |
 | `scripts/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Merges P50 baseline with approved planner overrides (`fact_forecast_overrides`) honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
 
 **When to run each:**
 
-- **Quantile** — when downstream planning needs uncertainty bands (safety-stock sizing, service-level optimisation). Uses its own quantile models, independent of the champion point forecast.
+- **Quantile** — when downstream planning needs uncertainty bands (safety-stock sizing, service-level optimisation). Uses its own quantile models, independent of the champion point forecast. **⚠ Stub as of 2026-06-20:** `generate_quantile_forecasts.py` trains on `rng.uniform` random data with constant dummy features, so its output is statistically meaningless. It now **refuses to write `fact_demand_plan`** unless run with `--dry-run` (preview) or `--allow-synthetic` (dev override) — `make quantile-train` will fail loud with a `NotImplementedError` until the script is wired to the real feature pipeline. **Do not run it in a production cycle.** For production CI bands, use the residual-based bands produced by `forecast-generate` (see [Forecast CI Bands](../specs/02-forecasting/10-forecast-ci-bands.md)).
 - **Blended** — short horizon (4 weeks). Run weekly once near-real-time demand-sensing signals are refreshed.
 - **Consensus** — after planners post overrides for the cycle. Always run after `forecast-generate` + planner sign-off.
 
@@ -421,7 +421,7 @@ ORDER BY src, forecast_month;
 | Candidate summary | `curl -s "$BASE/backtest-management/candidate-summary"` |
 | Replenishment plan (CI bands) | `make replplan-compute` |
 | Replenishment plan dry-run | `make replplan-compute-dry` |
-| Quantile forecasts | `make quantile-train VERSION=$(date +%Y-%m)` |
+| Quantile forecasts (⚠ stub — refuses DB write, see §5) | `make quantile-train VERSION=$(date +%Y-%m)` |
 | Blended forecast | `make blended-all` |
 | Consensus plan | `make consensus-generate VERSION=$(date +%Y-%m)` |
 

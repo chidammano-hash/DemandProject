@@ -35,6 +35,8 @@ Residual-based empirical confidence intervals use the model's own backtest histo
 
 Training separate P10/P90 models would triple compute cost. Backtest residuals already exist for free in `backtest_lag_archive` -- they provide historically honest uncertainty with no additional training runs.
 
+> **Quantile-regression path is a stub (do not rely on it).** A separate script, `scripts/forecasting/generate_quantile_forecasts.py` (`make quantile-train`), trains P10/P50/P90 LightGBM models and writes to `fact_demand_plan` (consumed by the consensus plan, bias corrections, and safety stock). It currently trains on `rng.uniform` **random** data with constant dummy features — statistically meaningless output. As of 2026-06-20 it **refuses the DB write** unless `--dry-run` (preview) or `--allow-synthetic` (dev override) is passed, raising a clear `NotImplementedError`. The residual-based bands documented here are the only production CI source until that script is wired to the real feature pipeline.
+
 ### Horizon Scaling
 
 | Mode | Scale Factor | Description |
