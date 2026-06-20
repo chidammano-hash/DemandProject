@@ -2,6 +2,10 @@
 
 import { fetchJson } from "./core";
 
+/** Maximum rows the client requests per query execution.
+ *  The server enforces its own hard cap (5000) regardless of this value. */
+export const SQL_RUNNER_MAX_ROWS = 5000;
+
 export interface SqlResult {
   columns: string[];
   rows: unknown[][];

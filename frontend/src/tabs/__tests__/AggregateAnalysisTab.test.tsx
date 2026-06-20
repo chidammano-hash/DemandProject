@@ -40,6 +40,7 @@ vi.mock("@/api/queries", () => ({
   filterMetaKeys: {
     skuCount: (f: unknown) => ["sku-count", f],
   },
+  SLICE_DEFAULT_LIMIT: 1000,
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDashboardKpis: vi.fn().mockResolvedValue({
     accuracy_pct: 88.5, wape_pct: 11.2, bias_pct: -3.4,

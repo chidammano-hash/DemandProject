@@ -175,9 +175,10 @@ async def test_accuracy_slice_common_dfus_path(mock_pool):
     pool, _, cursor = mock_pool
     # Three DB calls: main query, count query, per-model DFU counts
     cursor.fetchall.side_effect = [
-        # main query: (bucket, model_id, dfu_count, sum_forecast, sum_actual, sum_abs_error)
-        [("ClusterA", "lgbm", 10, 1000.0, 900.0, 100.0),
-         ("ClusterA", "catboost", 10, 1050.0, 900.0, 150.0)],
+        # main query: (bucket, model_id, dfu_count, sum_forecast, sum_actual,
+        #              sum_abs_error, total_buckets)
+        [("ClusterA", "lgbm", 10, 1000.0, 900.0, 100.0, 1),
+         ("ClusterA", "catboost", 10, 1050.0, 900.0, 150.0, 1)],
         # per-model DFU counts
         [("lgbm", 15), ("catboost", 12)],
     ]
@@ -234,10 +235,10 @@ async def test_accuracy_slice_returns_pivoted_data(mock_pool):
     """Verify the standard path correctly pivots by_model within each bucket."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
-        # (bucket, model_id, n_rows, sum_forecast, sum_actual, sum_abs_error)
-        ("ClusterX", "external", 100, 5000.0, 4800.0, 200.0),
-        ("ClusterX", "lgbm", 100, 5100.0, 4800.0, 300.0),
-        ("ClusterY", "external", 50, 2000.0, 2100.0, 100.0),
+        # (bucket, model_id, n_rows, sum_forecast, sum_actual, sum_abs_error, total_buckets)
+        ("ClusterX", "external", 100, 5000.0, 4800.0, 200.0, 2),
+        ("ClusterX", "lgbm", 100, 5100.0, 4800.0, 300.0, 2),
+        ("ClusterY", "external", 50, 2000.0, 2100.0, 100.0, 2),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -367,8 +368,9 @@ async def test_accuracy_slice_include_dfu_count(mock_pool):
     """include_dfu_count=true triggers additional DFU coverage query."""
     pool, _, cursor = mock_pool
     cursor.fetchall.side_effect = [
-        # main query
-        [("ClusterA", "external", 100, 5000.0, 4800.0, 200.0)],
+        # main query: (bucket, model_id, n_rows, sum_forecast, sum_actual,
+        #              sum_abs_error, total_buckets)
+        [("ClusterA", "external", 100, 5000.0, 4800.0, 200.0, 1)],
         # DFU count query
         [("ClusterA", "external", 42)],
     ]

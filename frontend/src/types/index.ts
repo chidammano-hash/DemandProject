@@ -79,6 +79,10 @@ export type AccuracySlicePayload = {
   rows: AccuracySliceRow[];
   common_sku_count?: number;
   sku_counts?: Record<string, number>;
+  // Bucket cap applied server-side (ordered by total actual volume DESC).
+  limit?: number;
+  // True when the result hit the cap, i.e. lower-volume buckets were dropped.
+  truncated?: boolean;
 };
 
 export type LagPoint = {

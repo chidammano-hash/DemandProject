@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { AccuracyKpis, AccuracySliceRow } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,6 +15,15 @@ import { Loader2 } from "lucide-react";
 import { LoadingElement } from "@/components/LoadingElement";
 import { titleCase, formatPercent } from "@/lib/formatters";
 import { formatHeatmapAccuracy } from "@/tabs/aggregate-analysis/aggregateShared";
+
+// Virtualization geometry. The slice table grows to brand x category x cluster
+// buckets at scale; rendering every <tr> locked the main thread. We virtualize
+// the body with the spacer-row technique (top/bottom filler <tr>s + only the
+// in-view rows) so the sticky <thead>, the sticky-left bucket column, and table
+// column alignment all keep working — a plain absolute-positioned grid would
+// lose column auto-sizing across the dynamic model x KPI columns.
+const ROW_HEIGHT = 41; // matches the default shadcn table row height
+const VIEWPORT_HEIGHT = 400; // was the table's max-h-[400px]
 
 // ---------------------------------------------------------------------------
 // Cell formatting
@@ -51,6 +62,148 @@ export const ACCURACY_KPI_OPTIONS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
+// Virtualized table body
+// ---------------------------------------------------------------------------
+
+/** One bucket row — the model x KPI cells plus the sticky-left bucket label. */
+function SliceRow({
+  row,
+  allModels,
+  sliceKpis,
+}: {
+  row: AccuracySliceRow;
+  allModels: string[];
+  sliceKpis: string[];
+}) {
+  const accValues = allModels
+    .filter((m) => m.toLowerCase() !== "ceiling")
+    .map((m) => row.by_model[m]?.accuracy_pct)
+    .filter((v): v is number => v !== null && v !== undefined);
+  const bestAcc = accValues.length > 0 ? Math.max(...accValues) : null;
+  return (
+    <TableRow className="hover:bg-muted/30" style={{ height: ROW_HEIGHT }}>
+      <TableCell className="sticky left-0 bg-background font-medium text-sm">
+        {row.bucket}
+      </TableCell>
+      {allModels.flatMap((m) => {
+        const kpi = row.by_model[m];
+        return ACCURACY_KPI_OPTIONS.filter((k) => sliceKpis.includes(k.key)).map((k) => {
+          const val = kpi?.[k.key as keyof AccuracyKpis] as number | null | undefined;
+          const isBestAcc =
+            k.key === "accuracy_pct" && val !== null && val !== undefined && val === bestAcc;
+          const isBadBias =
+            k.key === "bias" && val !== null && val !== undefined && Math.abs(val) > 0.15;
+          const display = formatSliceCell(k.key, k.format, val);
+          return (
+            <TableCell
+              key={`${m}-${k.key}`}
+              className={cn(
+                "text-right text-sm tabular-nums",
+                isBestAcc ? "font-bold text-blue-700 dark:text-blue-400" : "",
+                isBadBias ? "text-red-600 dark:text-red-400" : "",
+              )}
+            >
+              {isBestAcc && (
+                <span className="mr-0.5" title="Best accuracy">
+                  &#9733;
+                </span>
+              )}
+              {isBadBias && (
+                <span className="mr-0.5" title="High bias (|bias| > 15%)">
+                  &#9888;
+                </span>
+              )}
+              {display}
+            </TableCell>
+          );
+        });
+      })}
+    </TableRow>
+  );
+}
+
+/**
+ * Virtualized comparison table. Only the in-viewport bucket rows mount; top and
+ * bottom spacer <tr>s reserve the scroll height so the native <table> keeps its
+ * column auto-sizing, the sticky <thead>, and the sticky-left bucket column. The
+ * column count (one per KPI), not the row count, sets the spacer colSpan.
+ */
+function VirtualizedSliceTable({
+  sliceData,
+  allModels,
+  sliceKpis,
+  sliceGroupBy,
+}: {
+  sliceData: AccuracySliceRow[];
+  allModels: string[];
+  sliceKpis: string[];
+  sliceGroupBy: string;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: sliceData.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  });
+  const virtualRows = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const paddingBottom =
+    virtualRows.length > 0 ? totalSize - virtualRows[virtualRows.length - 1].end : 0;
+  // +1 for the sticky bucket column.
+  const colSpan = allModels.length * sliceKpis.length + 1;
+
+  return (
+    <div
+      ref={parentRef}
+      className="overflow-auto rounded-md border border-input"
+      style={{ maxHeight: VIEWPORT_HEIGHT }}
+    >
+      <Table>
+        <TableHeader className="sticky top-0 z-20 bg-background">
+          <TableRow className="border-muted bg-muted">
+            <TableHead className="text-xs sticky left-0 z-30 bg-muted">
+              {titleCase(sliceGroupBy)}
+            </TableHead>
+            {allModels.flatMap((m) =>
+              ACCURACY_KPI_OPTIONS.filter((k) => sliceKpis.includes(k.key)).map((k) => (
+                <TableHead key={`${m}-${k.key}`} className="text-xs text-right bg-muted">
+                  {m} {k.label}
+                </TableHead>
+              )),
+            )}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {paddingTop > 0 && (
+            <tr aria-hidden="true">
+              <td colSpan={colSpan} style={{ height: paddingTop, padding: 0, border: 0 }} />
+            </tr>
+          )}
+          {virtualRows.map((vRow) => {
+            const row = sliceData[vRow.index];
+            return (
+              <SliceRow
+                key={row.bucket}
+                row={row}
+                allModels={allModels}
+                sliceKpis={sliceKpis}
+              />
+            );
+          })}
+          {paddingBottom > 0 && (
+            <tr aria-hidden="true">
+              <td colSpan={colSpan} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+            </tr>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -68,6 +221,8 @@ export interface SliceTablePanelProps {
   allModels: string[];
   commonDfuCount: number | null;
   skuCounts: Record<string, number> | null;
+  truncated: boolean;
+  sliceLimit: number;
   onSliceGroupByChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onSliceLagChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onSliceModelsChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -95,6 +250,8 @@ export function SliceTablePanel({
   allModels,
   commonDfuCount,
   skuCounts,
+  truncated,
+  sliceLimit,
   onSliceGroupByChange,
   onSliceLagChange,
   onSliceModelsChange,
@@ -243,79 +400,18 @@ export function SliceTablePanel({
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Model Comparison &mdash; {sliceData.length} {sliceGroupBy.replace(/_/g, " ")} bucket(s)
           </p>
-          <div className="max-h-[400px] overflow-auto rounded-md border border-input">
-            <Table>
-              <TableHeader className="sticky top-0 z-20 bg-background">
-                <TableRow className="border-muted bg-muted">
-                  <TableHead className="text-xs sticky left-0 z-30 bg-muted">
-                    {titleCase(sliceGroupBy)}
-                  </TableHead>
-                  {allModels.flatMap((m) =>
-                    ACCURACY_KPI_OPTIONS.filter((k) => sliceKpis.includes(k.key)).map((k) => (
-                      <TableHead key={`${m}-${k.key}`} className="text-xs text-right bg-muted">
-                        {m} {k.label}
-                      </TableHead>
-                    )),
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sliceData.map((row) => {
-                  const accValues = allModels
-                    .filter((m) => m.toLowerCase() !== "ceiling")
-                    .map((m) => row.by_model[m]?.accuracy_pct)
-                    .filter((v): v is number => v !== null && v !== undefined);
-                  const bestAcc = accValues.length > 0 ? Math.max(...accValues) : null;
-                  return (
-                    <TableRow key={row.bucket} className="hover:bg-muted/30">
-                      <TableCell className="sticky left-0 bg-background font-medium text-sm">
-                        {row.bucket}
-                      </TableCell>
-                      {allModels.flatMap((m) => {
-                        const kpi = row.by_model[m];
-                        return ACCURACY_KPI_OPTIONS.filter((k) => sliceKpis.includes(k.key)).map((k) => {
-                          const val = kpi?.[k.key as keyof AccuracyKpis] as number | null | undefined;
-                          const isBestAcc =
-                            k.key === "accuracy_pct" &&
-                            val !== null &&
-                            val !== undefined &&
-                            val === bestAcc;
-                          const isBadBias =
-                            k.key === "bias" &&
-                            val !== null &&
-                            val !== undefined &&
-                            Math.abs(val) > 0.15;
-                          const display = formatSliceCell(k.key, k.format, val);
-                          return (
-                            <TableCell
-                              key={`${m}-${k.key}`}
-                              className={cn(
-                                "text-right text-sm tabular-nums",
-                                isBestAcc ? "font-bold text-blue-700 dark:text-blue-400" : "",
-                                isBadBias ? "text-red-600 dark:text-red-400" : "",
-                              )}
-                            >
-                              {isBestAcc && (
-                                <span className="mr-0.5" title="Best accuracy">
-                                  &#9733;
-                                </span>
-                              )}
-                              {isBadBias && (
-                                <span className="mr-0.5" title="High bias (|bias| > 15%)">
-                                  &#9888;
-                                </span>
-                              )}
-                              {display}
-                            </TableCell>
-                          );
-                        });
-                      })}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          {truncated ? (
+            <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+              Showing top {sliceLimit.toLocaleString()} {sliceGroupBy.replace(/_/g, " ")} bucket(s) by
+              volume (truncated). Narrow the filters to see lower-volume segments.
+            </p>
+          ) : null}
+          <VirtualizedSliceTable
+            sliceData={sliceData}
+            allModels={allModels}
+            sliceKpis={sliceKpis}
+            sliceGroupBy={sliceGroupBy}
+          />
           <p className="text-xs text-muted-foreground">
             &#9733; = best accuracy for that row. &#9888; = |bias| &gt; 15%.
             Accuracy = 100 &minus; WAPE; <code className="rounded bg-muted px-1">&lt;0%*</code> = tiny actual base (forecast &gt;&gt; actual) &mdash; read WAPE instead.

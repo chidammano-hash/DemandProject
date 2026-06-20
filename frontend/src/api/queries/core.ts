@@ -142,7 +142,7 @@ export type {
   ScenarioEstimate, ScenarioStatusResponse,
 } from "./clustering";
 
-export { fetchAccuracySlice, fetchLagCurve } from "./accuracy";
+export { fetchAccuracySlice, fetchLagCurve, SLICE_DEFAULT_LIMIT } from "./accuracy";
 export type { SliceParams, LagCurveParams } from "./accuracy";
 
 export {

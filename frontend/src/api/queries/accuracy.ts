@@ -10,6 +10,11 @@ import type {
 // ---------------------------------------------------------------------------
 // Accuracy queries
 // ---------------------------------------------------------------------------
+// Default bucket cap; mirrors the backend slice endpoint's `limit` default. The
+// server orders buckets by total actual volume DESC, so a truncated response is
+// the highest-volume (most material) segments.
+export const SLICE_DEFAULT_LIMIT = 1000;
+
 export interface SliceParams {
   group_by: string;
   lag: number;
@@ -25,6 +30,7 @@ export interface SliceParams {
   category?: string;
   market?: string;
   cluster_assignment?: string;
+  limit?: number;
 }
 
 export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracySlicePayload> {
@@ -43,6 +49,7 @@ export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracyS
     category: params.category,
     market: params.market,
     cluster_assignment: params.cluster_assignment,
+    limit: params.limit ?? SLICE_DEFAULT_LIMIT,
   });
   return fetchJson(`/forecast/accuracy/slice?${qs}`);
 }

@@ -25,6 +25,10 @@ router = APIRouter(prefix="/sql-runner", tags=["sql-runner"])
 # ---------------------------------------------------------------------------
 _SQL_RUNNER_CONFIG = {"max_rows": 1000, "statement_timeout_ms": 30000, "enabled": True}
 
+# Hard ceiling enforced server-side regardless of what the client requests.
+# Prevents a caller from fetching unbounded rows even with a crafted payload.
+_HARD_CAP = 5000
+
 
 def _cfg() -> dict:
     return _SQL_RUNNER_CONFIG
@@ -53,7 +57,7 @@ def _is_write_statement(sql: str) -> bool:
 # ---------------------------------------------------------------------------
 class SqlRequest(BaseModel):
     sql: str = Field(..., min_length=1, max_length=10_000)
-    max_rows: int | None = Field(None, ge=1, le=10_000)
+    max_rows: int | None = Field(None, ge=1, le=_HARD_CAP)
 
 
 class SqlResponse(BaseModel):
@@ -110,7 +114,8 @@ async def execute_query(body: SqlRequest):
             detail="Only SELECT / WITH queries are allowed. Write operations are blocked.",
         )
 
-    max_rows = body.max_rows or cfg.get("max_rows", 1000)
+    requested = body.max_rows if body.max_rows is not None else cfg.get("max_rows", 1000)
+    max_rows = min(int(requested), _HARD_CAP)
     timeout_ms = cfg.get("statement_timeout_ms", 30000)
 
     start = time.perf_counter()

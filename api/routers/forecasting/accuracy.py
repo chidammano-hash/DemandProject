@@ -142,9 +142,17 @@ def forecast_accuracy_slice(
     market: Optional[str] = Query(default=None, max_length=500),
     item: Optional[str] = Query(default=None, max_length=500),
     location: Optional[str] = Query(default=None, max_length=500),
+    limit: int = Query(default=1000, ge=1, le=5000),
 ):
     set_cache(response, max_age=120, stale_while_revalidate=300)
-    """Return accuracy KPIs grouped by a chosen DFU-attribute dimension."""
+    """Return accuracy KPIs grouped by a chosen DFU-attribute dimension.
+
+    Buckets are capped at ``limit`` (default 1000, max 5000) and ordered by total
+    actual volume DESC, so a truncated response keeps the highest-volume — i.e.
+    most material — segments. ``truncated`` is true when the cap is hit. Without
+    a cap the brand-x-category-x-cluster grain at scale returns tens of thousands
+    of buckets, which locks the unvirtualised client table.
+    """
     if group_by not in _ACCURACY_SLICE_DIMS:
         raise HTTPException(
             status_code=422,
@@ -206,7 +214,9 @@ def forecast_accuracy_slice(
 
         where_sql = " AND ".join(where_parts)
         cte_params: list[Any] = list(model_list) + [len(model_list)]
-        all_params = cte_params + main_params
+        # Bucket cap params: the `agg` CTE re-runs the (bucket, model) aggregation,
+        # `tb` ranks its buckets and the final LIMIT keeps the top-N.
+        all_params = cte_params + main_params + [limit]
 
         sql = f"""
             WITH cd AS (
@@ -216,22 +226,36 @@ def forecast_accuracy_slice(
                   AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
                 GROUP BY 1, 2, 3
                 HAVING COUNT(DISTINCT model_id) = %s
+            ),
+            agg AS (
+                SELECT
+                    {bucket_expr} AS bucket,
+                    f.model_id,
+                    COUNT(DISTINCT (f.item_id, f.customer_group, f.loc))::bigint AS dfu_count,
+                    SUM(f.basefcst_pref)                     AS sum_forecast,
+                    SUM(f.tothist_dmd)                       AS sum_actual,
+                    SUM(ABS(f.basefcst_pref - f.tothist_dmd)) AS sum_abs_error
+                FROM fact_external_forecast_monthly f
+                JOIN dim_sku d
+                  ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
+                WHERE (f.item_id, f.customer_group, f.loc) IN (SELECT item_id, customer_group, loc FROM cd)
+                  AND f.tothist_dmd IS NOT NULL AND f.basefcst_pref IS NOT NULL
+                  AND {where_sql}
+                GROUP BY 1, 2
+            ),
+            tb AS (
+                SELECT bucket, COUNT(*) OVER ()::bigint AS total_buckets
+                FROM agg
+                GROUP BY bucket
+                ORDER BY SUM(sum_actual) DESC NULLS LAST, bucket ASC
+                LIMIT %s
             )
-            SELECT
-                {bucket_expr} AS bucket,
-                f.model_id,
-                COUNT(DISTINCT (f.item_id, f.customer_group, f.loc))::bigint AS dfu_count,
-                SUM(f.basefcst_pref)                     AS sum_forecast,
-                SUM(f.tothist_dmd)                       AS sum_actual,
-                SUM(ABS(f.basefcst_pref - f.tothist_dmd)) AS sum_abs_error
-            FROM fact_external_forecast_monthly f
-            JOIN dim_sku d
-              ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
-            WHERE (f.item_id, f.customer_group, f.loc) IN (SELECT item_id, customer_group, loc FROM cd)
-              AND f.tothist_dmd IS NOT NULL AND f.basefcst_pref IS NOT NULL
-              AND {where_sql}
-            GROUP BY 1, 2
-            ORDER BY 1 ASC NULLS LAST, 2 ASC
+            SELECT a.bucket, a.model_id, a.dfu_count,
+                   a.sum_forecast, a.sum_actual, a.sum_abs_error,
+                   tb.total_buckets
+            FROM agg a
+            JOIN tb ON a.bucket IS NOT DISTINCT FROM tb.bucket
+            ORDER BY a.bucket ASC NULLS LAST, a.model_id ASC
         """
 
         count_sql = f"""
@@ -260,7 +284,9 @@ def forecast_accuracy_slice(
             dfu_counts = {r[0]: int(r[1]) for r in cur.fetchall()}
 
         pivot: dict[str, dict[str, Any]] = {}
-        for bucket, mid, dfu_cnt, sf, sa, sae in db_rows:
+        total_buckets = 0
+        for bucket, mid, dfu_cnt, sf, sa, sae, tot_b in db_rows:
+            total_buckets = int(tot_b or 0)
             b = str(bucket) if bucket is not None else "(unknown)"
             if b not in pivot:
                 pivot[b] = {"bucket": b, "n_rows": 0, "by_model": {}}
@@ -274,6 +300,8 @@ def forecast_accuracy_slice(
             "common_dfus": True,
             "common_dfu_count": common_count,
             "common_sku_count": common_count,
+            "limit": limit,
+            "truncated": total_buckets > limit,
             "dfu_counts": dfu_counts,
             "sku_counts": dfu_counts,
             "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
@@ -329,27 +357,43 @@ def forecast_accuracy_slice(
         where_sql_raw = " AND ".join(where_parts_raw)
 
         sql_raw = f"""
-            SELECT
-                {bucket_expr} AS bucket,
-                f.model_id,
-                COUNT(DISTINCT (f.item_id, f.customer_group, f.loc))::bigint AS dfu_count,
-                SUM(f.basefcst_pref)                       AS sum_forecast,
-                SUM(f.tothist_dmd)                         AS sum_actual,
-                SUM(ABS(f.basefcst_pref - f.tothist_dmd))  AS sum_abs_error
-            FROM fact_external_forecast_monthly f
-            JOIN dim_sku d
-              ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
-            WHERE {where_sql_raw}
-            GROUP BY 1, 2
-            ORDER BY 1 ASC NULLS LAST, 2 ASC
+            WITH agg AS (
+                SELECT
+                    {bucket_expr} AS bucket,
+                    f.model_id,
+                    COUNT(DISTINCT (f.item_id, f.customer_group, f.loc))::bigint AS dfu_count,
+                    SUM(f.basefcst_pref)                       AS sum_forecast,
+                    SUM(f.tothist_dmd)                         AS sum_actual,
+                    SUM(ABS(f.basefcst_pref - f.tothist_dmd))  AS sum_abs_error
+                FROM fact_external_forecast_monthly f
+                JOIN dim_sku d
+                  ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
+                WHERE {where_sql_raw}
+                GROUP BY 1, 2
+            ),
+            tb AS (
+                SELECT bucket, COUNT(*) OVER ()::bigint AS total_buckets
+                FROM agg
+                GROUP BY bucket
+                ORDER BY SUM(sum_actual) DESC NULLS LAST, bucket ASC
+                LIMIT %s
+            )
+            SELECT a.bucket, a.model_id, a.dfu_count,
+                   a.sum_forecast, a.sum_actual, a.sum_abs_error,
+                   tb.total_buckets
+            FROM agg a
+            JOIN tb ON a.bucket IS NOT DISTINCT FROM tb.bucket
+            ORDER BY a.bucket ASC NULLS LAST, a.model_id ASC
         """
 
         with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(sql_raw, raw_params)
+            cur.execute(sql_raw, [*raw_params, limit])
             db_rows = cur.fetchall()
 
         pivot_raw: dict[str, dict[str, Any]] = {}
-        for bucket, mid, dfu_cnt, sf, sa, sae in db_rows:
+        total_buckets = 0
+        for bucket, mid, dfu_cnt, sf, sa, sae, tot_b in db_rows:
+            total_buckets = int(tot_b or 0)
             b = str(bucket) if bucket is not None else "(unknown)"
             if b not in pivot_raw:
                 pivot_raw[b] = {"bucket": b, "n_rows": 0, "by_model": {}}
@@ -360,6 +404,8 @@ def forecast_accuracy_slice(
             "group_by": group_by,
             "lag_filter": lag,
             "models": model_list or None,
+            "limit": limit,
+            "truncated": total_buckets > limit,
             "rows": sorted(pivot_raw.values(), key=lambda r: r["bucket"]),
             "source": "fact_external_forecast_monthly",
         }
@@ -389,18 +435,34 @@ def forecast_accuracy_slice(
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
+    # group_by is validated against the _ACCURACY_SLICE_DIMS allow-list above, so
+    # interpolating it as the bucket column is safe (no user-controlled identifier).
     sql = f"""
-        SELECT
-            {group_by} AS bucket,
-            model_id,
-            SUM(row_count)::bigint   AS n_rows,
-            SUM(sum_forecast)        AS sum_forecast,
-            SUM(sum_actual)          AS sum_actual,
-            SUM(sum_abs_error)       AS sum_abs_error
-        FROM agg_accuracy_by_dim
-        {where_sql}
-        GROUP BY 1, 2
-        ORDER BY 1 ASC NULLS LAST, 2 ASC
+        WITH agg AS (
+            SELECT
+                {group_by} AS bucket,
+                model_id,
+                SUM(row_count)::bigint   AS n_rows,
+                SUM(sum_forecast)        AS sum_forecast,
+                SUM(sum_actual)          AS sum_actual,
+                SUM(sum_abs_error)       AS sum_abs_error
+            FROM agg_accuracy_by_dim
+            {where_sql}
+            GROUP BY 1, 2
+        ),
+        tb AS (
+            SELECT bucket, COUNT(*) OVER ()::bigint AS total_buckets
+            FROM agg
+            GROUP BY bucket
+            ORDER BY SUM(sum_actual) DESC NULLS LAST, bucket ASC
+            LIMIT %s
+        )
+        SELECT a.bucket, a.model_id, a.n_rows,
+               a.sum_forecast, a.sum_actual, a.sum_abs_error,
+               tb.total_buckets
+        FROM agg a
+        JOIN tb ON a.bucket IS NOT DISTINCT FROM tb.bucket
+        ORDER BY a.bucket ASC NULLS LAST, a.model_id ASC
     """
 
     dfu_map: dict[tuple[str, str], int] = {}
@@ -434,7 +496,7 @@ def forecast_accuracy_slice(
         """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
+        cur.execute(sql, [*params, limit])
         db_rows = cur.fetchall()
         if include_dfu_count:
             cur.execute(dfu_sql, dfu_params)
@@ -442,7 +504,9 @@ def forecast_accuracy_slice(
                 dfu_map[(str(b_raw) if b_raw is not None else "(unknown)", mid)] = int(cnt)
 
     pivot = {}
-    for bucket, model_id, n_rows, sf, sa, sae in db_rows:
+    total_buckets = 0
+    for bucket, model_id, n_rows, sf, sa, sae, tot_b in db_rows:
+        total_buckets = int(tot_b or 0)
         b = str(bucket) if bucket is not None else "(unknown)"
         if b not in pivot:
             pivot[b] = {"bucket": b, "n_rows": 0, "by_model": {}}
@@ -454,6 +518,8 @@ def forecast_accuracy_slice(
         "group_by": group_by,
         "lag_filter": lag,
         "models": model_list or None,
+        "limit": limit,
+        "truncated": total_buckets > limit,
         "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
         "source": "agg_accuracy_by_dim",
     }

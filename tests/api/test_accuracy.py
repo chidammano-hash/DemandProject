@@ -10,8 +10,11 @@ from tests.api.conftest import make_pool as _make_pool
 
 
 def _make_slice_row(bucket="cluster_a", model_id="external", dfu_count=10,
-                    sum_fcst=1000.0, sum_actual=900.0, sum_abs=100.0):
-    return (bucket, model_id, dfu_count, sum_fcst, sum_actual, sum_abs)
+                    sum_fcst=1000.0, sum_actual=900.0, sum_abs=100.0,
+                    total_buckets=1):
+    # 7th column = total distinct bucket count (COUNT(*) OVER ()), carried out of
+    # the top-buckets CTE so the handler can report the `truncated` flag.
+    return (bucket, model_id, dfu_count, sum_fcst, sum_actual, sum_abs, total_buckets)
 
 
 def _make_lag_row(model_id="external", lag=0, dfu_count=10,
@@ -101,7 +104,7 @@ async def test_slice_item_and_location_combined():
 async def test_slice_no_item_location_uses_agg_view():
     """Without item/location/brand/category/market filters, use pre-aggregated view."""
     pool, conn, cursor = _make_pool(fetchall_return=[
-        ("cluster_a", "external", 50, 5000.0, 4500.0, 500.0),
+        ("cluster_a", "external", 50, 5000.0, 4500.0, 500.0, 1),
     ])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -114,6 +117,94 @@ async def test_slice_no_item_location_uses_agg_view():
     assert resp.status_code == 200
     data = resp.json()
     assert data["source"] == "agg_accuracy_by_dim"
+
+
+# ---------------------------------------------------------------------------
+# Slice endpoint — bucket cap (limit / truncated)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_slice_accepts_limit_and_pushes_into_sql():
+    """A `limit` param is accepted and threaded into the bucket-cap SQL as the LIMIT arg."""
+    pool, _conn, cursor = _make_pool(fetchall_return=[
+        ("cluster_a", "external", 50, 5000.0, 4500.0, 500.0, 1),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/forecast/accuracy/slice", params={
+                "group_by": "cluster_assignment",
+                "lag": 0,
+                "limit": 25,
+            })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["limit"] == 25
+    # The LIMIT is parameterised (%s) and `limit` is the trailing bound param.
+    sql_call = cursor.execute.call_args_list[0]
+    sql_text, sql_params = sql_call[0][0], sql_call[0][1]
+    assert "LIMIT %s" in sql_text
+    assert sql_params[-1] == 25
+
+
+@pytest.mark.asyncio
+async def test_slice_reports_truncated_when_cap_hit():
+    """`truncated` is True when total distinct buckets exceeds the requested limit."""
+    # total_buckets (7th col) = 40 while limit = 5 → handler must flag truncation.
+    pool, _conn, _cursor = _make_pool(fetchall_return=[
+        ("cluster_a", "external", 50, 5000.0, 4500.0, 500.0, 40),
+        ("cluster_b", "external", 30, 3000.0, 2800.0, 200.0, 40),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/forecast/accuracy/slice", params={
+                "group_by": "cluster_assignment",
+                "lag": 0,
+                "limit": 5,
+            })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["limit"] == 5
+    assert data["truncated"] is True
+    assert len(data["rows"]) == 2  # the kept buckets
+
+
+@pytest.mark.asyncio
+async def test_slice_not_truncated_when_under_cap():
+    """`truncated` is False when total distinct buckets is within the limit."""
+    pool, _conn, _cursor = _make_pool(fetchall_return=[
+        ("cluster_a", "external", 50, 5000.0, 4500.0, 500.0, 2),
+        ("cluster_b", "external", 30, 3000.0, 2800.0, 200.0, 2),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/forecast/accuracy/slice", params={
+                "group_by": "cluster_assignment",
+                "lag": 0,
+                "limit": 1000,
+            })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_slice_rejects_out_of_range_limit():
+    """`limit` is bounded 1..5000; out-of-range values are 422-rejected by FastAPI."""
+    pool, _conn, _cursor = _make_pool(fetchall_return=[])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            too_big = await client.get("/forecast/accuracy/slice", params={"limit": 99999})
+            too_small = await client.get("/forecast/accuracy/slice", params={"limit": 0})
+    assert too_big.status_code == 422
+    assert too_small.status_code == 422
 
 
 # ---------------------------------------------------------------------------

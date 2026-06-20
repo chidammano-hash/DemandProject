@@ -42,6 +42,7 @@ import {
   fetchPlanningDate,
   fetchSkuCount,
   filterMetaKeys,
+  SLICE_DEFAULT_LIMIT,
   type CompetitionConfig,
   type SliceParams,
   type LagCurveParams,
@@ -466,6 +467,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 loadingSlice={loadingSlice} sliceData={sliceData} allModels={allModels}
                 commonDfuCount={slicePayload?.common_sku_count ?? null}
                 skuCounts={slicePayload?.sku_counts ?? null}
+                truncated={slicePayload?.truncated ?? false}
+                sliceLimit={slicePayload?.limit ?? SLICE_DEFAULT_LIMIT}
                 onSliceGroupByChange={handleSliceGroupByChange}
                 onSliceLagChange={handleSliceLagChange}
                 onSliceModelsChange={handleSliceModelsChange}

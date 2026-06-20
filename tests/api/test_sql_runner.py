@@ -183,6 +183,70 @@ async def test_schema_returns_tables():
 
 
 # ===========================================================================
+# Hard cap clamp — max_rows cannot exceed HARD_CAP
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_execute_hard_cap_rejects_oversized_request():
+    """Requesting more rows than the hard cap (5000) is rejected by Pydantic validation."""
+    pool, conn, cursor = _make_pool()
+    cursor.description = [("n",)]
+    cursor.fetchmany.return_value = []
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/sql-runner/execute",
+                json={"sql": "SELECT 1", "max_rows": 99_999},
+            )
+    # Pydantic le=5000 rejects values above the hard cap with 422
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_execute_hard_cap_clamps_default_via_config():
+    """When max_rows is omitted the config default (1000) is clamped to at most HARD_CAP."""
+    pool, conn, cursor = _make_pool()
+    cursor.description = [("n",)]
+    # Return more rows than the config default to verify clamp works at fetchmany level
+    cursor.fetchmany.return_value = [(i,) for i in range(1001)]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/sql-runner/execute",
+                json={"sql": "SELECT generate_series(1, 2000)"},
+            )
+    assert resp.status_code == 200
+    data = resp.json()
+    # Should be capped at config default (1000), never exceed HARD_CAP
+    assert data["row_count"] <= 5000
+    assert data["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_hard_cap_allows_at_boundary():
+    """Requesting exactly HARD_CAP rows is accepted."""
+    pool, conn, cursor = _make_pool()
+    cursor.description = [("n",)]
+    cursor.fetchmany.return_value = []
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/sql-runner/execute",
+                json={"sql": "SELECT 1", "max_rows": 5000},
+            )
+    assert resp.status_code == 200
+
+
+# ===========================================================================
 # GET /sql-runner/history
 # ===========================================================================
 

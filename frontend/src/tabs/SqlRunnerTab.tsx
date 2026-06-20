@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Play,
   Trash2,
@@ -17,8 +18,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
-  TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -30,6 +29,7 @@ import {
   fetchSchema,
   fetchQueryHistory,
   sqlRunnerKeys,
+  SQL_RUNNER_MAX_ROWS,
 } from "@/api/queries/sql-runner";
 import type { SqlResult, TableInfo, QueryHistoryEntry } from "@/api/queries/sql-runner";
 
@@ -170,37 +170,72 @@ function QueryHistory({
 }
 
 // ---------------------------------------------------------------------------
-// Results Table
+// Results Table (virtualized rows)
 // ---------------------------------------------------------------------------
+const ROW_HEIGHT = 32; // px — must match the `height` style on each data row
+const VIEWPORT_HEIGHT = 400; // px — fixed scroll-container height
+
 function ResultsTable({ result }: { result: SqlResult }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: result.rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  });
+
   return (
-    <div className="overflow-auto border rounded-md">
+    // Outer wrapper handles horizontal scroll; inner handles vertical virtual scroll
+    <div className="overflow-x-auto border rounded-md">
+      {/* Sticky header — rendered outside the virtual scroll container so it
+          stays visible while the body scrolls vertically */}
       <Table>
         <TableHeader>
           <TableRow>
             {result.columns.map((col) => (
-              <TableHead key={col} className="whitespace-nowrap text-xs font-semibold">
+              <TableHead key={col} className="whitespace-nowrap text-xs font-semibold sticky top-0 bg-background z-10">
                 {col}
               </TableHead>
             ))}
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {result.rows.map((row, ri) => (
-            <TableRow key={ri}>
-              {row.map((cell, ci) => (
-                <TableCell key={ci} className="whitespace-nowrap text-xs font-mono">
-                  {cell === null ? (
-                    <span className="text-muted-foreground italic">NULL</span>
-                  ) : (
-                    String(cell)
-                  )}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
       </Table>
+
+      {/* Vertical virtual scroll container */}
+      <div
+        ref={parentRef}
+        className="overflow-y-auto"
+        style={{ height: Math.min(result.rows.length * ROW_HEIGHT, VIEWPORT_HEIGHT) }}
+        data-testid="results-scroll-container"
+      >
+        {/* Spacer div that gives the scrollbar its full height */}
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          {virtualizer.getVirtualItems().map((vRow) => {
+            const row = result.rows[vRow.index];
+            return (
+              <div
+                key={vRow.index}
+                className="flex border-b hover:bg-muted/40 absolute left-0 right-0"
+                style={{ height: ROW_HEIGHT, transform: `translateY(${vRow.start}px)` }}
+              >
+                {row.map((cell, ci) => (
+                  <div
+                    key={ci}
+                    className="flex-none px-4 text-xs font-mono flex items-center whitespace-nowrap"
+                    style={{ minWidth: 120, maxWidth: 320 }}
+                  >
+                    {cell === null ? (
+                      <span className="text-muted-foreground italic">NULL</span>
+                    ) : (
+                      String(cell)
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -245,9 +280,10 @@ export function SqlRunnerTab() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Execute mutation
+  // Execute mutation — always send an explicit max_rows so the client controls
+  // the ceiling; the server still enforces its own hard cap on top.
   const executeMutation = useMutation({
-    mutationFn: (query: string) => fetchExecuteQuery(query),
+    mutationFn: (query: string) => fetchExecuteQuery(query, SQL_RUNNER_MAX_ROWS),
     onSuccess: (_data, query) => {
       const entry: QueryHistoryEntry = {
         sql: query.slice(0, 500),
@@ -423,17 +459,24 @@ export function SqlRunnerTab() {
                   <Badge variant="outline" className="text-[10px]">
                     {executeMutation.data.row_count} rows
                   </Badge>
-                  {executeMutation.data.truncated && (
-                    <Badge variant="destructive" className="text-[10px]">
-                      Truncated
-                    </Badge>
-                  )}
                   <span className="ml-auto text-[10px] text-muted-foreground">
                     {executeMutation.data.elapsed_ms}ms
                   </span>
                 </div>
               </CardHeader>
-              <CardContent className="p-0 overflow-auto max-h-[calc(100vh-480px)]">
+              <CardContent className="p-0">
+                {executeMutation.data.truncated && (
+                  <div
+                    className="flex items-center gap-2 mx-3 mb-2 px-3 py-2 rounded-md border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300 text-xs"
+                    data-testid="truncation-banner"
+                  >
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      Showing first {executeMutation.data.row_count.toLocaleString()} rows
+                      (result truncated) — add a <code className="font-mono font-semibold">LIMIT</code> clause to your query to see specific rows.
+                    </span>
+                  </div>
+                )}
                 <ResultsTable result={executeMutation.data} />
               </CardContent>
             </Card>
