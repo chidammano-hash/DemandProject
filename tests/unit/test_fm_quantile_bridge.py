@@ -83,6 +83,25 @@ def test_load_fm_quantile_forecast_clips_negative():
     assert result.quantile_matrix[0, 1] == 0.0
 
 
+def test_load_fm_quantile_forecast_rearranges_crossed_quantiles():
+    """Regression: a crossed quantile grid (lower > point) must be rearranged to
+    non-decreasing so to_sample_array's inverse-CDF interp stays monotone."""
+    cur = MagicMock()
+    # lower=30 > point=10 < upper=20 — crossed and out of order.
+    cur.fetchall.return_value = [("2026-01-01", 30.0, 10.0, 20.0)]
+    result = load_fm_quantile_forecast(
+        cur, "I1", "L1",
+        fm_config={"model_id": "chronos2_enriched", "quantiles": [0.1, 0.5, 0.9]},
+    )
+    row = result.quantile_matrix[0]
+    assert list(row) == sorted(row), "quantile grid must be non-decreasing"
+    assert np.all(np.diff(row) >= 0)
+    # Sampling must never invert (P10 sample <= P90 sample).
+    samples = result.to_sample_array(n_samples=500, rng=np.random.default_rng(1))
+    assert samples.min() >= row[0] - 1e-9
+    assert samples.max() <= row[-1] + 1e-9
+
+
 def test_fm_demand_pool_returns_flat_array():
     cur = MagicMock()
     cur.fetchall.return_value = _rows(2)

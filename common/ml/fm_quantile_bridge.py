@@ -167,8 +167,13 @@ def load_fm_quantile_forecast(
         lo = float(lower) if lower is not None else p * 0.8
         hi = float(upper) if upper is not None else p * 1.2
         months.append(str(month))
-        # Clip to non-negative — demand cannot be negative.
-        q_rows.append([max(0.0, lo), max(0.0, p), max(0.0, hi)])
+        # Clip to non-negative (demand >= 0) and enforce monotonic non-decreasing
+        # quantiles (P10 <= P50 <= P90). A quantile model can emit crossed
+        # quantiles, and the +/-20% fallback can cross near 0; a non-monotone grid
+        # makes np.interp produce an invalid (non-monotone) inverse CDF in
+        # to_sample_array, distorting the safety-stock demand draws. sorted()
+        # restores monotonicity (Chernozhukov quantile rearrangement).
+        q_rows.append(sorted([max(0.0, lo), max(0.0, p), max(0.0, hi)]))
 
     matrix = np.asarray(q_rows, dtype=float)
     # The stored grid is always (P10, P50, P90) regardless of fm_config —
