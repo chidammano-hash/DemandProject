@@ -1,6 +1,28 @@
 """Tests for competition/champion model endpoints."""
 
+import shutil
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pipeline_config(tmp_path, monkeypatch):
+    """Redirect the competition router's pipeline-config path to a temp copy.
+
+    PUT /competition/config reads then re-dumps forecast_pipeline_config.yaml; run
+    against the real file it would overwrite the production config and strip every
+    inline comment on each test run (a test-isolation defect that pollutes the
+    working tree). Point the module constant at a temp copy so reads still work and
+    writes never touch the real config.
+    """
+    from api.routers.forecasting import competition as _competition
+
+    real = _competition._PIPELINE_CONFIG_PATH
+    tmp_cfg = tmp_path / "forecast_pipeline_config.yaml"
+    if real.exists():
+        shutil.copy(real, tmp_cfg)
+    monkeypatch.setattr(_competition, "_PIPELINE_CONFIG_PATH", tmp_cfg)
+    yield
 
 
 @pytest.mark.asyncio
