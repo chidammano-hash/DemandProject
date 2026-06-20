@@ -78,7 +78,9 @@ def get_lag_accuracy(model_id: str = Query(default="ExpSys")) -> dict[str, Any]:
                 rows = cur.fetchall()
     except psycopg.Error as exc:
         logger.exception("DB query failed for lag accuracy")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to compute lag accuracy"
+        ) from exc
 
     if not rows:
         raise HTTPException(

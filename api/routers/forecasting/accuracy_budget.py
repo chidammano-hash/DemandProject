@@ -79,6 +79,7 @@ def accuracy_budget_decomposition(
                        COUNT(DISTINCT d.sku_ck)
                 FROM fact_external_forecast_monthly f
                 JOIN dim_sku d ON d.item_id = f.item_id
+                                AND d.customer_group = f.customer_group
                                 AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
@@ -103,6 +104,7 @@ def accuracy_budget_decomposition(
                        COUNT(DISTINCT d.sku_ck)
                 FROM fact_external_forecast_monthly f
                 JOIN dim_sku d ON d.item_id = f.item_id
+                                AND d.customer_group = f.customer_group
                                 AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
@@ -138,6 +140,7 @@ def accuracy_budget_decomposition(
                        COALESCE(d.intermittency_ratio, 0)
                 FROM fact_external_forecast_monthly f
                 JOIN dim_sku d ON d.item_id = f.item_id
+                                AND d.customer_group = f.customer_group
                                 AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
@@ -172,16 +175,16 @@ def accuracy_budget_decomposition(
             # --- d) Oracle ceiling ---
             cur.execute("""
                 WITH per_dfu_month AS (
-                    SELECT f.item_id, f.loc, f.startdate, f.model_id,
+                    SELECT f.item_id, f.customer_group, f.loc, f.startdate, f.model_id,
                            ABS(f.basefcst_pref - f.tothist_dmd) AS abs_err,
                            f.basefcst_pref,
                            f.tothist_dmd,
                            ROW_NUMBER() OVER (
-                               PARTITION BY f.item_id, f.loc, f.startdate
+                               PARTITION BY f.item_id, f.customer_group, f.loc, f.startdate
                                ORDER BY ABS(f.basefcst_pref - f.tothist_dmd)
                            ) AS rn
                     FROM fact_external_forecast_monthly f
-                    JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                    JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                     WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos')
                       AND f.lag = COALESCE(d.execution_lag, 0)
                       AND f.tothist_dmd IS NOT NULL
@@ -232,7 +235,7 @@ def accuracy_budget_decomposition(
                        SUM(ABS(f.basefcst_pref - f.tothist_dmd)),
                        SUM(f.tothist_dmd)
                 FROM fact_external_forecast_monthly f
-                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
@@ -255,7 +258,7 @@ def accuracy_budget_decomposition(
             cur.execute("""
                 SELECT SUM(f.basefcst_pref), SUM(f.tothist_dmd)
                 FROM fact_external_forecast_monthly f
-                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
@@ -379,7 +382,7 @@ def accuracy_budget_abc_breakdown(
                        SUM(f.tothist_dmd) AS sum_actual,
                        COUNT(DISTINCT d.sku_ck) AS n_dfus
                 FROM fact_external_forecast_monthly f
-                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
@@ -434,7 +437,7 @@ def accuracy_budget_model_comparison(
                        SUM(f.basefcst_pref),
                        SUM(f.tothist_dmd)
                 FROM fact_external_forecast_monthly f
-                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
                   AND f.model_id IN (
@@ -449,15 +452,15 @@ def accuracy_budget_model_comparison(
             # Oracle ceiling
             cur.execute("""
                 WITH per_dfu_month AS (
-                    SELECT f.item_id, f.loc, f.startdate,
+                    SELECT f.item_id, f.customer_group, f.loc, f.startdate,
                            ABS(f.basefcst_pref - f.tothist_dmd) AS abs_err,
                            f.tothist_dmd,
                            ROW_NUMBER() OVER (
-                               PARTITION BY f.item_id, f.loc, f.startdate
+                               PARTITION BY f.item_id, f.customer_group, f.loc, f.startdate
                                ORDER BY ABS(f.basefcst_pref - f.tothist_dmd)
                            ) AS rn
                     FROM fact_external_forecast_monthly f
-                    JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                    JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                     WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos')
                       AND f.lag = COALESCE(d.execution_lag, 0)
                       AND f.tothist_dmd IS NOT NULL
@@ -513,7 +516,7 @@ def accuracy_budget_monthly_trend(
                        SUM(f.tothist_dmd),
                        COUNT(DISTINCT d.sku_ck)
                 FROM fact_external_forecast_monthly f
-                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
@@ -586,7 +589,7 @@ def accuracy_budget_forecast_value(
                 SELECT SUM(ABS(f.basefcst_pref - f.tothist_dmd)),
                        SUM(f.tothist_dmd)
                 FROM fact_external_forecast_monthly f
-                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.customer_group = f.customer_group AND d.loc = f.loc
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
