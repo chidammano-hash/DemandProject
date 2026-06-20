@@ -318,6 +318,19 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "model_params_key": "rolling_mean_params",
         "model_type_tag": "rolling_mean_backtest",
     },
+    # rolling_median: outlier-robust sibling of rolling_mean (trailing-N MEDIAN).
+    # Added 2026-06-20 Cycle-8 after a Cycle-7 causal what-if showed it beats the
+    # champion on the F-07 level-step / F-01 spike segments; see BACKLOG F-08.
+    "rolling_median": {
+        "baseline": True,
+        "predict_fn": "_predict_rolling_median",
+        "config_key": "rolling_median",
+        "config_section": "rolling_median",
+        "default_params": lambda algo: {"window": algo.get("window", 6)},
+        "cat_dtype": "category",
+        "model_params_key": "rolling_median_params",
+        "model_type_tag": "rolling_median_backtest",
+    },
 }
 
 
@@ -429,10 +442,57 @@ def _predict_rolling_mean(
     return result
 
 
+def _predict_rolling_median(
+    train_df: pd.DataFrame,
+    pred_df: pd.DataFrame,
+    params: dict | None = None,
+) -> pd.DataFrame:
+    """Rolling median: predict each DFU-month using the median of the last N months.
+
+    The outlier-robust sibling of :func:`_predict_rolling_mean`: a single spike
+    month or a stale-high tail moves the median far less than the mean, so this
+    baseline tracks the typical level rather than chasing extremes.
+
+    The window size is controlled by params["window"] (default 6).
+    For each (item_id, customer_group, loc), computes the median of the last
+    window months of actual demand from training data.  If fewer than
+    window months are available, uses whatever history exists.
+    If the DFU has no training data at all, predict 0.
+    """
+    window = (params or {}).get("window", 6)
+    result = pred_df[_BASELINE_META_COLS].copy()
+
+    if len(train_df) == 0 or "qty" not in train_df.columns:
+        result[FORECAST_QTY_COL] = 0.0
+        return result
+
+    dfu_key = ["item_id", "customer_group", "loc"]
+    train = train_df.copy()
+    train["_startdate_ts"] = pd.to_datetime(train["startdate"])
+
+    train_sorted = train.sort_values("_startdate_ts", ascending=False)
+    rolling_medians = (
+        train_sorted
+        .groupby(dfu_key)
+        .apply(lambda g: g.head(window)["qty"].median(), include_groups=False)
+        .reset_index()
+        .rename(columns={0: "_rolling_median"})
+    )
+
+    pred = pred_df[_BASELINE_META_COLS].copy()
+    merged = pred.merge(rolling_medians, on=dfu_key, how="left")
+    merged["_rolling_median"] = merged["_rolling_median"].fillna(0.0)
+    merged[FORECAST_QTY_COL] = np.maximum(merged["_rolling_median"].values, 0.0)
+
+    result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
+    return result
+
+
 # Map string references to actual functions (used by baseline registry entries)
 _BASELINE_PREDICT_FNS: dict[str, Callable] = {
     "_predict_seasonal_naive": _predict_seasonal_naive,
     "_predict_rolling_mean": _predict_rolling_mean,
+    "_predict_rolling_median": _predict_rolling_median,
 }
 
 

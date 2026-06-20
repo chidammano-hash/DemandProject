@@ -576,11 +576,25 @@ class TestChampionCandidateRoster:
             "non-seasonal tail to it"
         )
 
+    def test_rolling_median_is_a_competing_candidate(self):
+        from common.core.utils import get_competing_model_ids
+
+        assert "rolling_median" in get_competing_model_ids(), (
+            "rolling_median must have compete: true so the champion can route the "
+            "outlier-prone segments (F-07 level steps / F-01 spikes) to it"
+        )
+
     def test_champion_models_list_includes_rolling_mean(self):
         from common.core.utils import load_forecast_pipeline_config
 
         champion_models = load_forecast_pipeline_config()["champion"]["models"]
         assert "rolling_mean" in champion_models
+
+    def test_champion_models_list_includes_rolling_median(self):
+        from common.core.utils import load_forecast_pipeline_config
+
+        champion_models = load_forecast_pipeline_config()["champion"]["models"]
+        assert "rolling_median" in champion_models
 
     def test_champion_models_list_is_subset_of_competing_roster(self):
         # The documented list must never reference a non-competing model, or

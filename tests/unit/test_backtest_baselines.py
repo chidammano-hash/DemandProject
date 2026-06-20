@@ -1,4 +1,4 @@
-"""Tests for baseline benchmark models (seasonal naive, rolling mean) in run_backtest.py."""
+"""Tests for baseline benchmark models (seasonal naive, rolling mean, rolling median) in run_backtest.py."""
 
 import pandas as pd
 import numpy as np
@@ -10,6 +10,7 @@ from scripts.ml.run_backtest import (
     _RollingMeanModel,
     _SeasonalNaiveModel,
     _predict_rolling_mean,
+    _predict_rolling_median,
     _predict_seasonal_naive,
 )
 
@@ -319,6 +320,177 @@ class TestRollingMean:
 
 
 # ---------------------------------------------------------------------------
+# Rolling median tests
+# ---------------------------------------------------------------------------
+
+
+class TestRollingMedian:
+    """Tests for _predict_rolling_median (robust trailing-window baseline)."""
+
+    def test_prediction_matches_median_of_last_n_months(self):
+        """With default window=6 and 6 months of data, median of all 6 (not the mean)."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": f"2023-{m:02d}-01", "qty": v, "sku_ck": "ck1"}
+            for m, v in [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)]
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred, params={"window": 6})
+        # Median of [10,20,30,40,50,60] = 35; mean would also be 35 here so use a
+        # skewed window below to distinguish — this case pins the even-count average.
+        assert abs(result["basefcst_pref"].iloc[0] - 35.0) < 0.01
+
+    def test_robust_to_outlier_spike(self):
+        """Single spike month must barely move the median (vs the mean)."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": f"2023-{m:02d}-01", "qty": v, "sku_ck": "ck1"}
+            for m, v in [(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 100)]
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred, params={"window": 6})
+        # Sorted [1,2,3,4,5,100] -> median = (3+4)/2 = 3.5; the mean is 19.166...
+        # The spike is ignored by the median, demonstrating outlier robustness.
+        assert abs(result["basefcst_pref"].iloc[0] - 3.5) < 0.01
+        mean_result = _predict_rolling_mean(train, pred, params={"window": 6})
+        assert mean_result["basefcst_pref"].iloc[0] > 19.0
+        assert result["basefcst_pref"].iloc[0] < mean_result["basefcst_pref"].iloc[0]
+
+    def test_uses_last_n_months_not_first(self):
+        """Window should select the MOST RECENT months."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": f"2023-{m:02d}-01", "qty": v, "sku_ck": "ck1"}
+            for m, v in [(1, 100), (2, 100), (3, 100), (4, 100), (5, 100), (6, 100),
+                         (7, 200), (8, 200), (9, 200)]
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred, params={"window": 3})
+        # Most recent 3 months are all 200 -> median 200
+        assert abs(result["basefcst_pref"].iloc[0] - 200.0) < 0.01
+
+    def test_fewer_months_than_window(self):
+        """When fewer months exist than window, use all available months."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2023-01-01", "qty": 100, "sku_ck": "ck1"},
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2023-02-01", "qty": 300, "sku_ck": "ck1"},
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        # Window=6 but only 2 months available -> median of 2 = (100+300)/2
+        result = _predict_rolling_median(train, pred, params={"window": 6})
+        assert abs(result["basefcst_pref"].iloc[0] - 200.0) < 0.01
+
+    def test_no_training_data_returns_zero(self):
+        """When DFU has zero training rows, predict 0."""
+        train = _make_train_df([])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred)
+        assert result["basefcst_pref"].iloc[0] == 0.0
+
+    def test_unknown_dfu_returns_zero(self):
+        """When prediction DFU does not exist in training, predict 0."""
+        train = _make_train_df([
+            {"item_id": "B", "customer_group": "G2", "loc": "L2",
+             "startdate": "2023-01-01", "qty": 999, "sku_ck": "ck2"},
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred)
+        assert result["basefcst_pref"].iloc[0] == 0.0
+
+    def test_output_has_correct_columns(self):
+        """Output should have all meta columns plus basefcst_pref."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2023-01-01", "qty": 100, "sku_ck": "ck1"},
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred)
+        expected_cols = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "basefcst_pref"}
+        assert set(result.columns) == expected_cols
+
+    def test_default_window_is_6(self):
+        """When no params are passed, window defaults to 6."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": f"2023-{m:02d}-01", "qty": m * 10, "sku_ck": "ck1"}
+            for m in range(1, 13)
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result_default = _predict_rolling_median(train, pred)
+        result_explicit = _predict_rolling_median(train, pred, params={"window": 6})
+        assert result_default["basefcst_pref"].iloc[0] == result_explicit["basefcst_pref"].iloc[0]
+
+    def test_predictions_non_negative(self):
+        """Predictions should never be negative (max(0) clamp)."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2023-01-01", "qty": -50, "sku_ck": "ck1"},
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2023-02-01", "qty": -30, "sku_ck": "ck1"},
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred)
+        assert (result["basefcst_pref"] >= 0).all()
+
+    def test_flat_across_predict_months(self):
+        """The same median value must be emitted for every predict month."""
+        train = _make_train_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": f"2023-{m:02d}-01", "qty": v, "sku_ck": "ck1"}
+            for m, v in [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)]
+        ])
+        pred = _make_pred_df([
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-01-01", "sku_ck": "ck1"},
+            {"item_id": "A", "customer_group": "G1", "loc": "L1",
+             "startdate": "2024-02-01", "sku_ck": "ck1"},
+        ])
+
+        result = _predict_rolling_median(train, pred, params={"window": 6})
+        vals = result["basefcst_pref"].tolist()
+        assert len(vals) == 2
+        assert vals[0] == vals[1]
+
+
+# ---------------------------------------------------------------------------
 # Registry tests
 # ---------------------------------------------------------------------------
 
@@ -334,6 +506,10 @@ class TestBaselineRegistry:
         """rolling_mean should be in MODEL_REGISTRY."""
         assert "rolling_mean" in MODEL_REGISTRY
 
+    def test_rolling_median_registered(self):
+        """rolling_median should be in MODEL_REGISTRY."""
+        assert "rolling_median" in MODEL_REGISTRY
+
     def test_seasonal_naive_baseline_flag(self):
         """seasonal_naive must have baseline=True."""
         assert MODEL_REGISTRY["seasonal_naive"]["baseline"] is True
@@ -342,6 +518,10 @@ class TestBaselineRegistry:
         """rolling_mean must have baseline=True."""
         assert MODEL_REGISTRY["rolling_mean"]["baseline"] is True
 
+    def test_rolling_median_baseline_flag(self):
+        """rolling_median must have baseline=True."""
+        assert MODEL_REGISTRY["rolling_median"]["baseline"] is True
+
     def test_tree_models_not_baseline(self):
         """Tree models (lgbm, catboost, xgboost) should not have baseline flag."""
         for name in ("lgbm", "catboost", "xgboost"):
@@ -349,7 +529,7 @@ class TestBaselineRegistry:
 
     def test_baseline_predict_fns_resolved(self):
         """The predict_fn string references should map to actual callables."""
-        for name in ("seasonal_naive", "rolling_mean"):
+        for name in ("seasonal_naive", "rolling_mean", "rolling_median"):
             fn_ref = MODEL_REGISTRY[name]["predict_fn"]
             assert fn_ref in _BASELINE_PREDICT_FNS
             assert callable(_BASELINE_PREDICT_FNS[fn_ref])
@@ -358,14 +538,15 @@ class TestBaselineRegistry:
         """Baseline registry entries must have all keys needed by run_tree_backtest."""
         required = {"config_key", "default_params", "cat_dtype",
                      "model_params_key", "model_type_tag"}
-        for name in ("seasonal_naive", "rolling_mean"):
+        for name in ("seasonal_naive", "rolling_mean", "rolling_median"):
             entry = MODEL_REGISTRY[name]
             missing = required - set(entry.keys())
             assert not missing, f"{name} missing registry keys: {missing}"
 
     def test_all_models_in_registry(self):
-        """All 5 model types should be registered."""
-        expected = {"lgbm", "catboost", "xgboost", "seasonal_naive", "rolling_mean"}
+        """All 6 model types should be registered."""
+        expected = {"lgbm", "catboost", "xgboost", "seasonal_naive",
+                    "rolling_mean", "rolling_median"}
         assert expected.issubset(set(MODEL_REGISTRY.keys()))
 
 

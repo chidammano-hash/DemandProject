@@ -1,6 +1,6 @@
-"""Baseline forecasting models: Seasonal Naive, Rolling Mean, Ridge Regression.
+"""Baseline forecasting models: Seasonal Naive, Rolling Mean, Rolling Median, Ridge Regression.
 
-Seasonal Naive and Rolling Mean work per-DFU on raw time series.
+Seasonal Naive, Rolling Mean, and Rolling Median work per-DFU on raw time series.
 Ridge Regression uses the feature matrix (same features as tree models).
 """
 
@@ -149,6 +149,76 @@ def predict_rolling_mean(
 
     logger.info(
         "Rolling Mean (window=%d): produced %d predictions for %d months",
+        window,
+        len(result),
+        len(predict_months),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Rolling Median
+# ---------------------------------------------------------------------------
+
+
+def predict_rolling_median(
+    sales_df: pd.DataFrame,
+    predict_months: list[pd.Timestamp],
+    window: int = 6,
+) -> pd.DataFrame:
+    """Rolling Median: forecast = median of last ``window`` months.
+
+    The outlier-robust sibling of :func:`predict_rolling_mean`: a single spike
+    month (F-01) or a stale-high tail (F-07 level step) shifts the median far
+    less than the mean, so this baseline tracks the typical level rather than
+    chasing extremes.
+
+    Args:
+        sales_df: Training data with columns [sku_ck, startdate, qty].
+        predict_months: Months to predict.
+        window: Number of trailing months to take the median over.
+
+    Returns:
+        DataFrame with columns: sku_ck, startdate, basefcst_pref, algorithm_id
+        algorithm_id = 'rolling_median'
+    """
+    if sales_df.empty:
+        out = pd.DataFrame(
+            {"sku_ck": pd.Series(dtype="object"), "startdate": pd.Series(dtype="datetime64[ns]"),
+             FORECAST_QTY_COL: pd.Series(dtype="float64")}
+        )
+        out["algorithm_id"] = "rolling_median"
+        return out
+
+    sales = sales_df.copy()
+    sales["startdate"] = pd.to_datetime(sales["startdate"])
+
+    # Sort descending by date so head(window) grabs the most recent months
+    sales_sorted = sales.sort_values("startdate", ascending=False)
+
+    # For each DFU, take last `window` months and compute median
+    rolling_medians = (
+        sales_sorted
+        .groupby("sku_ck")
+        .apply(lambda g: g.head(window)["qty"].median(), include_groups=False)
+        .reset_index()
+        .rename(columns={0: FORECAST_QTY_COL})
+    )
+    rolling_medians[FORECAST_QTY_COL] = rolling_medians[FORECAST_QTY_COL].fillna(0.0)
+
+    # Flat forecast: same value for every predict month
+    frames: list[pd.DataFrame] = []
+    for m in predict_months:
+        month_df = rolling_medians.copy()
+        month_df["startdate"] = pd.Timestamp(m)
+        frames.append(month_df)
+
+    result = pd.concat(frames, ignore_index=True)
+    result[FORECAST_QTY_COL] = np.maximum(result[FORECAST_QTY_COL].values, 0.0)
+    result["algorithm_id"] = "rolling_median"
+
+    logger.info(
+        "Rolling Median (window=%d): produced %d predictions for %d months",
         window,
         len(result),
         len(predict_months),

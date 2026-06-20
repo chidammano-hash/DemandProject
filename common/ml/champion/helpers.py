@@ -301,6 +301,7 @@ _MODEL_FAMILIES: dict[str, str] = {
     "lgbm_cluster": "tree",
     "seasonal_naive": "baseline",
     "rolling_mean": "baseline",
+    "rolling_median": "baseline",
     "mstl": "statistical",
     "nhits": "dl",
     "nbeats": "dl",

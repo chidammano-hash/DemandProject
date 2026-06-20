@@ -407,6 +407,25 @@ algorithms:
     output_dir: data/backtest/rolling_mean
     params:
       window: 6
+  # ═══ rolling_median ═══════════════════════════════════════════════════════
+  # Added 2026-06-20 Cycle-8: robust trailing-6 MEDIAN baseline (outlier-robust
+  # sibling of rolling_mean). Cycle-7 causal what-if validated it beats the
+  # champion on the F-07 level-step and F-01 spike segments (per-DFU win 47% F-07
+  # / 57% F-01; headline -0.0091 global / -0.078 on F-01 high-CV; smoothest
+  # forecast shape). See BACKLOG F-08. expert: false — this is a competing /
+  # backtest baseline, NOT an expert-panel member (scope-tightened vs rolling_mean).
+  rolling_median:
+    type: statistical        # statistical baseline (no model fit; trailing median)
+    enabled: true            # part of the active roster
+    tune: false              # no hyperparameters to tune (window is fixed config)
+    backtest: true           # eligible for the operator-gated backtest path
+    compete: true            # enters the champion candidate pool (get_competing_model_ids)
+    forecast: true           # eligible to produce production forecasts when selected
+    expert: false            # NOT an expert-panel member — competing/backtest baseline only
+    cluster_strategy: per_cluster  # partition by cluster, like rolling_mean (statistical → per_cluster)
+    output_dir: data/backtest/rolling_median  # backtest artifacts land here
+    params:
+      window: 6              # trailing months over which the median is taken (matches rolling_mean)
 backtest:
   n_timeframes: 10
   embargo_months: 1
@@ -478,6 +497,7 @@ champion:
   - chronos2_enriched   # foundation model (covariate-enriched)
   - seasonal_naive      # statistical baseline (current fallback_model_id)
   - rolling_mean        # statistical rolling mean — wins the stable low-CV non-seasonal tail
+  - rolling_median      # statistical rolling median — robust trailing-6 median; added 2026-06-20 Cycle-8, beats champion on F-07/F-01 outlier-prone segments (BACKLOG F-08)
 sweep:
   max_candidates: 24
   default_objective: robust
