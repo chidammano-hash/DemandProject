@@ -8,6 +8,7 @@ Provides:
 """
 
 import json
+import logging
 import math
 import time
 from pathlib import Path
@@ -17,6 +18,8 @@ import numpy as np
 import pandas as pd
 
 from common.core.utils import _ts
+
+logger = logging.getLogger(__name__)
 
 
 # ── CV splits ─────────────────────────────────────────────────────────────────
@@ -182,7 +185,7 @@ def save_best_params(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(result, f, indent=2)
-    print(f"  [{_ts()}] Saved tuning results to {output_path}")
+    logger.info("[%s] Saved tuning results to %s", _ts(), output_path)
 
 
 def load_best_params(params_file: Path) -> dict[str, Any]:
@@ -443,7 +446,7 @@ def tune_for_timeframe(
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
     except ImportError:
-        print("  [tune_for_timeframe] optuna not installed — returning empty params")  # noqa: T201
+        logger.warning("[tune_for_timeframe] optuna not installed — returning empty params")
         return {}, 500
 
     from common.ml.feature_engineering import mask_future_sales
@@ -495,7 +498,10 @@ def tune_for_timeframe(
                     val_data[feature_cols], val_data["qty"].values,
                     cat_cols, params, n_estimators_max, early_stopping_rounds,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — a single bad fold must degrade to inf, not crash the Optuna study; logged so systematic bugs are visible
+                logger.exception(
+                    "Tuning fold failed (fold %d) — scoring trial as inf", fold_idx
+                )
                 return float("inf")
 
             wape = compute_wape_stabilised(preds, val_data["qty"].values)
