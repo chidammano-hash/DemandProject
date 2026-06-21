@@ -133,6 +133,25 @@ def load_config() -> dict:
     }
 
 
+def load_non_tree_model_ids() -> set[str]:
+    """Champion source models that have NO persisted ``.pkl`` and are generated
+    from history by :func:`generate_forecasts_statistical`.
+
+    These are every algorithm whose config ``type`` is not ``tree`` — the
+    statistical baselines (seasonal_naive, rolling_mean, rolling_median, mstl),
+    the foundation models, and the deep-learning models. Routing a champion whose
+    ``source_model_id`` is one of these through the statistical generator (rather
+    than the tree-batch path) keeps the SHIPPED model equal to the DISPLAYED
+    champion: otherwise the tree path substitutes ``fallback_model_id``
+    (lgbm_cluster) and ships LightGBM under, e.g., a "Seasonal Naive" label
+    (Gap-10 / F-11). Tree champions keep the tree-batch path.
+    """
+    with open(PIPELINE_CONFIG_PATH) as f:
+        pipeline = yaml.safe_load(f) or {}
+    algos = pipeline.get("algorithms", {})
+    return {mid for mid, spec in algos.items() if (spec or {}).get("type") != "tree"}
+
+
 # ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
@@ -1186,6 +1205,16 @@ def generate_forecasts_statistical(
                 pred = float(np.average(window, weights=weights))
                 pred += slope_per_month * h  # trend adjustment
 
+            elif model_id == "rolling_median":
+                # Outlier-robust sibling of rolling_mean: a FLAT forecast equal to
+                # the median of the last `window` months. Mirrors the backtest
+                # baseline common/ml/expert_panel/baselines.py::predict_rolling_median
+                # (window=6, flat) so the shipped production curve reproduces the
+                # champion that won the backtest. The median resists spikes / stale-
+                # high tails that would drag the mean, so no trend term is added.
+                w_len = min(n, 6)
+                pred = float(np.median(qty[-w_len:]))
+
             elif model_id == "mstl":
                 # MSTL: seasonal profile + full trend (no dampening)
                 seasonal = monthly_avg[target_cal_month]
@@ -1396,16 +1425,17 @@ def _is_model_fallback_substitution(
     loaded_models: dict[str, dict],
 ) -> bool:
     """Return True when a DFU's intended producer (``model_id``) has no loaded
-    ``.pkl`` artifact and the tree-batch path silently substitutes the production
+    ``.pkl`` artifact and the tree-batch path substitutes the production
     ``fallback_model_id`` instead.
 
-    This is the codebase's Gap-10 "displayed-vs-shipped model" divergence: a
-    champion ``source_model_id`` (or cold-start model) that resolves to a
-    STATISTICAL baseline (seasonal_naive / rolling_mean / mstl / rolling_median)
-    has no persisted weights, so ``load_active_models`` raised FileNotFoundError
-    and it is absent from ``loaded_models`` — the requested producer is then
-    silently replaced by ``lgbm_cluster``. This predicate makes that observable;
-    it does NOT change routing.
+    Non-tree champion sources (statistical baselines, foundation, deep_learning)
+    are now routed to :func:`generate_forecasts_statistical` BEFORE reaching the
+    tree path (see :func:`load_non_tree_model_ids`), so they no longer trigger
+    this. A True result therefore flags the residual Gap-10 case: a *tree*
+    champion source (e.g. ``catboost_cluster``) whose cluster ``.pkl`` set was
+    never persisted, so it falls back to ``fallback_model_id`` (``lgbm_cluster``).
+    Re-run that model's backtest to persist its weights. This predicate makes the
+    divergence observable; it does NOT change routing.
 
     Returns False when the requested producer IS loaded (genuine champion
     artifact), when ``model_id`` already equals ``fallback_model_id`` (no
@@ -1417,6 +1447,38 @@ def _is_model_fallback_substitution(
     if loaded_models.get(model_id) is not None:
         return False
     return loaded_models.get(fallback_model_id) is not None
+
+
+def _cluster_assignments_wiped(
+    champion_df: pd.DataFrame,
+    loaded_models: dict[str, dict],
+    non_tree_models: set[str],
+) -> bool:
+    """Detect the ``dim_sku.ml_cluster``-wipe failure mode (fail loud, don't ship garbage).
+
+    Per-cluster tree models partition on ``dim_sku.ml_cluster`` (read into
+    ``champion_df.cluster_id``). A dim_sku reload that recreates rows with
+    ``ml_cluster = NULL`` and does NOT re-apply the clustering assignment makes
+    ``cluster_id`` NULL for EVERY DFU. The tree path then silently routes every
+    DFU to a single arbitrary cluster model (``_resolve_artifact``'s ``min()``
+    fallback), so high-volume forecasts collapse to a tiny near-constant value
+    while the statistical baselines (which ignore the cluster) stay correct.
+
+    Returns True only for the catastrophic signature: a MULTI-cluster tree model
+    is loaded (per-cluster partitioning genuinely in effect — not a single global
+    model under ``clustering.enabled = false``) AND ``cluster_id`` is NULL for
+    every champion DFU. Partial NULLs are left to the per-DFU
+    ``cluster_fallback_count`` warning; this guards the all-NULL catastrophe.
+    """
+    if champion_df.empty or "cluster_id" not in champion_df.columns:
+        return False
+    multi_cluster_tree = any(
+        mid not in non_tree_models and isinstance(cmodels, dict) and len(cmodels) > 1
+        for mid, cmodels in loaded_models.items()
+    )
+    if not multi_cluster_tree:
+        return False
+    return bool(champion_df["cluster_id"].isna().all())
 
 
 # ---------------------------------------------------------------------------
@@ -1455,6 +1517,9 @@ def main() -> None:
     min_history_months = pipeline_cfg.get("min_history_months", 12)
     cold_start_model_id = pipeline_cfg.get("cold_start_model_id", "rolling_mean")
     cold_start_min_months = pipeline_cfg.get("cold_start_min_months", 3)
+    # Champion sources with no .pkl (statistical / foundation / DL) — generated from
+    # history with their TRUE model_id instead of the lgbm fallback (F-11).
+    non_tree_models = load_non_tree_model_ids()
 
     plan_version = args.plan_version or get_planning_date().strftime(config["plan_version"]["format"])
     forecast_month_generated = get_planning_date().replace(day=1)
@@ -1522,6 +1587,18 @@ def main() -> None:
                             "to train and persist model weights, then re-run this script.")
                 return
 
+        # Data-integrity guard: abort if dim_sku.ml_cluster was wiped (every DFU
+        # NULL while per-cluster trees are loaded). Otherwise tree inference would
+        # silently collapse high-volume forecasts to a near-constant. Fail loud.
+        if _cluster_assignments_wiped(champion_df, loaded_models, non_tree_models):
+            raise RuntimeError(
+                "dim_sku.ml_cluster is NULL for every champion DFU while multi-cluster "
+                "tree models are loaded — per-cluster tree inference would collapse to a "
+                "single arbitrary cluster model (high-volume forecasts crash to a "
+                "near-constant). Restore the cluster assignment first:\n"
+                "  uv run python scripts/ml/restore_cluster_assignments.py"
+            )
+
         # Pre-load customer features if any enriched model is in the set
         enriched_ids = {m for m in model_ids_needed if "cust_enriched" in m or "hierarchical" in m}
         if enriched_ids:
@@ -1584,11 +1661,15 @@ def main() -> None:
             with profiled_section("build_cluster_groups"):
                 cluster_groups: dict[tuple, list] = defaultdict(list)
                 cluster_fallback_count = 0
-                # Gap-10 instrumentation: count DFUs whose intended producer
-                # (champion source_model_id / cold-start model) has no loaded
-                # artifact and is silently replaced by the production fallback.
-                # DISTINCT from cluster_fallback_count, which counts a missing
-                # CLUSTER label within an already-loaded model.
+                # Non-tree champions (statistical / foundation / DL, and the cold-start
+                # model) are collected here and generated from history AFTER this loop —
+                # they have no .pkl and must keep their TRUE model_id, never the lgbm
+                # fallback (F-11: displayed champion == shipped model).
+                statistical_routed: dict[str, list] = defaultdict(list)
+                # Gap-10 residual instrumentation: count any TREE champion source whose
+                # .pkl set is missing and is replaced by the production fallback. DISTINCT
+                # from cluster_fallback_count, which counts a missing CLUSTER label
+                # within an already-loaded model.
                 model_substitution_count = 0
                 model_substitution_sources: Counter = Counter()
 
@@ -1641,6 +1722,15 @@ def main() -> None:
                         # Mature DFU: use champion assignment
                         model_id = champ["source_model_id"] or fallback_model_id
 
+                    # Non-tree champion source (statistical baseline, foundation, DL,
+                    # or the cold-start rolling_mean): no .pkl exists, so the tree path
+                    # would substitute the lgbm fallback and ship LightGBM under the
+                    # champion's label. Route it to the statistical generator instead so
+                    # the shipped forecast actually IS its champion model (F-11).
+                    if model_id in non_tree_models and model_id not in loaded_models:
+                        statistical_routed[model_id].append(champ)
+                        continue
+
                     artifact = _resolve_artifact(model_id, cluster_id)
                     if artifact is None:
                         skipped += 1
@@ -1668,6 +1758,14 @@ def main() -> None:
                         f"{sum(len(v) for v in cluster_groups.values()):,}",
                         len(cluster_groups), f"{skipped:,}",
                         f"{cold_start_count:,}", cold_start_model_id)
+            n_statistical = sum(len(v) for v in statistical_routed.values())
+            if n_statistical:
+                logger.info(
+                    "%s DFU(s) routed to the statistical generator by their champion "
+                    "source (%s) — no .pkl, generated from history (shipped == champion).",
+                    f"{n_statistical:,}",
+                    ", ".join(sorted(statistical_routed)),
+                )
             if cluster_fallback_count:
                 logger.warning(
                     "%s DFU(s) had no model for their ml_cluster label and were routed "
@@ -1676,63 +1774,87 @@ def main() -> None:
                     f"{cluster_fallback_count:,}",
                 )
             if model_substitution_count:
-                # Gap-10 data-integrity warning: the displayed champion model is
-                # NOT the model that generated these forecasts. The champion
-                # source_model_id (or cold-start model) had no loaded artifact —
-                # typically a STATISTICAL baseline (no .pkl) — so it was silently
-                # replaced by the production fallback. Route statistical champion
-                # sources through the statistical path (F-11b) or confirm the
-                # fallback is intended.
+                # Residual Gap-10: a TREE champion source had no persisted .pkl set and
+                # was replaced by the production fallback, so the displayed champion does
+                # NOT match the model that generated these rows. Non-tree champions
+                # (statistical / foundation / DL) are routed to the statistical path
+                # above and are unaffected — a count here means a tree model's weights
+                # were never persisted. Re-run that model's backtest.
                 breakdown = ", ".join(
                     f"{src}={cnt:,}"
                     for src, cnt in model_substitution_sources.most_common()
                 )
                 logger.warning(
-                    "DATA INTEGRITY (Gap-10): %s DFU(s) had their champion source model "
-                    "silently substituted by the production fallback '%s' because the "
-                    "intended producer has no loaded artifact — the displayed champion "
-                    "model does NOT match the model that generated these forecasts. "
-                    "Per-source breakdown: %s. Route statistical champion sources through "
-                    "the statistical path (F-11b) or confirm this fallback is intended.",
+                    "DATA INTEGRITY (Gap-10): %s DFU(s) had a TREE champion source "
+                    "silently substituted by the production fallback '%s' because its "
+                    ".pkl artifacts are missing — the displayed champion does NOT match "
+                    "the model that generated these forecasts. Per-source breakdown: %s. "
+                    "Re-run that model's backtest to persist its cluster weights.",
                     f"{model_substitution_count:,}",
                     fallback_model_id,
                     breakdown,
                 )
 
-            # Batch-predict per cluster group — parallelise across independent groups
-            n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))
-            logger.info("Step 3b: Running batched inference (%d groups, %d workers)...",
-                        len(cluster_groups), n_workers)
+            # Batch-predict per cluster group — parallelise across independent groups.
+            # Guarded: when every champion routes to the statistical path (no tree
+            # groups), ThreadPoolExecutor(max_workers=0) would raise — skip it.
+            if cluster_groups:
+                n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))
+                logger.info("Step 3b: Running batched inference (%d groups, %d workers)...",
+                            len(cluster_groups), n_workers)
 
-            def _run_group(key_entries):
-                (mid, cid), entries = key_entries
-                art = entries[0][2]
-                dfu_lst = [(e[0], e[1]) for e in entries]
-                rows = generate_forecasts_batch(
-                    artifact=art,
-                    dfu_list=dfu_lst,
-                    horizon=horizon,
-                    forecast_month_generated=forecast_month_generated,
-                    run_id=run_id,
-                    model_id=mid,
-                    cat_encoders=cat_encoders,
-                    sigma_lookup=sigma_lookup if sigma_lookup else None,
-                    # Gate CI bands on the RESOLVED ci_enabled (which honors the
-                    # CLI --confidence-intervals override), not the raw config flag —
-                    # otherwise the UI toggle is silently ignored when config has
-                    # confidence_interval.enabled: false.
-                    ci_cfg=ci_cfg if ci_enabled else None,
-                )
-                return (mid, cid, len(dfu_lst), rows)
+                def _run_group(key_entries):
+                    (mid, cid), entries = key_entries
+                    art = entries[0][2]
+                    dfu_lst = [(e[0], e[1]) for e in entries]
+                    rows = generate_forecasts_batch(
+                        artifact=art,
+                        dfu_list=dfu_lst,
+                        horizon=horizon,
+                        forecast_month_generated=forecast_month_generated,
+                        run_id=run_id,
+                        model_id=mid,
+                        cat_encoders=cat_encoders,
+                        sigma_lookup=sigma_lookup if sigma_lookup else None,
+                        # Gate CI bands on the RESOLVED ci_enabled (which honors the
+                        # CLI --confidence-intervals override), not the raw config flag —
+                        # otherwise the UI toggle is silently ignored when config has
+                        # confidence_interval.enabled: false.
+                        ci_cfg=ci_cfg if ci_enabled else None,
+                    )
+                    return (mid, cid, len(dfu_lst), rows)
 
-            with profiled_section("batched_inference"):
-                with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                    futures = {executor.submit(_run_group, item): item for item in cluster_groups.items()}
-                    for future in as_completed(futures):
-                        mid, cid, n_dfus, batch_rows = future.result()
-                        all_rows.extend(batch_rows)
-                        logger.info("(%s, cluster %s): %s DFUs -> %s rows",
-                                    mid, cid, f"{n_dfus:,}", f"{len(batch_rows):,}")
+                with profiled_section("batched_inference"):
+                    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                        futures = {
+                            executor.submit(_run_group, item): item
+                            for item in cluster_groups.items()
+                        }
+                        for future in as_completed(futures):
+                            mid, cid, n_dfus, batch_rows = future.result()
+                            all_rows.extend(batch_rows)
+                            logger.info("(%s, cluster %s): %s DFUs -> %s rows",
+                                        mid, cid, f"{n_dfus:,}", f"{len(batch_rows):,}")
+
+            # Non-tree champions (statistical baselines, foundation, DL, cold-start):
+            # generate from history with their TRUE model_id. This is what makes the
+            # shipped "Prod (champion)" curve actually be Seasonal Naive / Rolling
+            # Median / etc. instead of the lgbm fallback (F-11).
+            if statistical_routed:
+                with profiled_section("statistical_champion_inference"):
+                    for mid, champ_rows in sorted(statistical_routed.items()):
+                        stat_rows = generate_forecasts_statistical(
+                            model_id=mid,
+                            sales_index=sales_index,
+                            attrs_index=attrs_index,
+                            champion_df=pd.DataFrame(champ_rows),
+                            horizon=horizon,
+                            forecast_month_generated=forecast_month_generated,
+                            run_id=run_id,
+                        )
+                        all_rows.extend(stat_rows)
+                        logger.info("(%s, statistical): %s DFUs -> %s rows",
+                                    mid, f"{len(champ_rows):,}", f"{len(stat_rows):,}")
 
             logger.info("Step 3 complete: %s rows, %s skipped", f"{len(all_rows):,}", f"{skipped:,}")
 
