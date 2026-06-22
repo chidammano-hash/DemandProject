@@ -457,6 +457,7 @@ async def test_promote_gate_first_promotion_allowed_and_logs_to_ledger():
         (1,),           # ledger insert returning id
         (500,),         # staging count
         (250,),         # DFU count
+        (500,),         # persisted rows for run_id (integrity gate)
         (99,),          # lineage emit returning id (Gen-4 G)
     ]
     cursor.rowcount = 500
@@ -487,6 +488,7 @@ async def test_promote_gate_disabled_skips_checks():
         (1,),           # ledger insert returning id (for applied log)
         (500,),         # staging count
         (250,),         # DFU count
+        (500,),         # persisted rows for run_id (integrity gate)
         (99,),          # lineage emit returning id (Gen-4 G)
     ]
     cursor.rowcount = 500
@@ -565,15 +567,17 @@ async def test_promote_champion_captures_insert_rowcount_not_coverage_count(tmp_
     #  1) COUNT staging               -> non-zero so promote proceeds
     #  2) SELECT promoted experiment  -> experiment_id row
     #  3) COUNT _dfu_champion         -> expected_dfus
-    #  4) NOT EXISTS unmatched count  -> 0 (full coverage)
+    #  4) unmatched DFU-month count   -> 0 (full coverage)
     #  5) COUNT DISTINCT DFUs         -> dfu_count
-    #  6) lineage emit RETURNING id
+    #  6) persisted rows (run_id)     -> insert_n (integrity gate)
+    #  7) lineage emit RETURNING id
     cursor.fetchone.side_effect = [
         (insert_n,),   # staging COUNT
         (53,),         # promoted champion experiment_id
         (12300,),      # expected_dfus
         (0,),          # unmatched_dfus
         (12300,),      # dfu_count
+        (insert_n,),   # persisted rows for run_id (must equal rows_promoted)
         (99,),         # lineage emit returning id
     ]
 
@@ -613,6 +617,293 @@ async def test_promote_champion_captures_insert_rowcount_not_coverage_count(tmp_
     assert log_calls[0][5] == insert_n
 
 
+# ---------------------------------------------------------------------------
+# 6c. Per-month champion routing (issue promote-per-month-collapse)
+#     Champion winners are DFU-MONTH grain; promote must NOT collapse them to
+#     one model per DFU. The winners map keys on (item_id, loc, startdate) and
+#     resolves equal-startdate rows via a deterministic tie-break (model_id ASC).
+# ---------------------------------------------------------------------------
+
+
+def test_build_per_month_winners_keys_on_month():
+    """A DFU with a different model per month keeps BOTH per-month entries."""
+    from api.routers.forecasting.backtest_management import _build_per_month_winners
+
+    dfu = {"item_id": "10031", "loc": "1401-BULK"}
+    rows = [
+        {**dfu, "model_id": "seasonal_naive", "startdate": "2026-01-01"},
+        {**dfu, "model_id": "rolling_mean", "startdate": "2026-02-01"},
+    ]
+    winners = _build_per_month_winners(rows)
+    assert winners[("10031", "1401-BULK", "2026-01-01")] == "seasonal_naive"
+    assert winners[("10031", "1401-BULK", "2026-02-01")] == "rolling_mean"
+
+
+def test_build_per_month_winners_deterministic_tie_break():
+    """Equal (item_id, loc, startdate) rows resolve to the LOWEST model_id, not
+    file order."""
+    from api.routers.forecasting.backtest_management import _build_per_month_winners
+
+    # mstl appears FIRST in file order but lgbm_cluster < mstl lexically → wins.
+    rows = [
+        {"item_id": "A", "loc": "L", "model_id": "mstl", "startdate": "2026-01-01"},
+        {"item_id": "A", "loc": "L", "model_id": "lgbm_cluster", "startdate": "2026-01-01"},
+    ]
+    key = ("A", "L", "2026-01-01")
+    assert _build_per_month_winners(rows)[key] == "lgbm_cluster"
+    # Reversed file order yields the SAME result (deterministic).
+    assert _build_per_month_winners(list(reversed(rows)))[key] == "lgbm_cluster"
+
+
+def test_build_per_dfu_fallback_lowest_model_id():
+    """Per-DFU fallback collapses the per-month winners to the LOWEST model_id.
+
+    Mirrors the generate side (filter_rows_to_champion_months's
+    fallback_model = min(per_month.values())) so the fallback used for
+    out-of-backtest-window months is deterministic and reproducible.
+    """
+    from api.routers.forecasting.backtest_management import _build_per_dfu_fallback
+
+    winners = {
+        ("10031", "1401-BULK", "2026-01-01"): "seasonal_naive",
+        ("10031", "1401-BULK", "2026-02-01"): "rolling_mean",  # < seasonal_naive
+        ("20055", "1401-BULK", "2026-01-01"): "lgbm_cluster",
+    }
+    fallback = _build_per_dfu_fallback(winners)
+    # rolling_mean < seasonal_naive lexically -> the DFU's fallback.
+    assert fallback[("10031", "1401-BULK")] == "rolling_mean"
+    assert fallback[("20055", "1401-BULK")] == "lgbm_cluster"
+
+
+@pytest.mark.asyncio
+async def test_promote_champion_routes_per_month_models(tmp_path):
+    """A DFU's per-month winners are written as overrides; promote routes every
+    staged month via override-or-fallback (NOT a forecast_month-equality JOIN).
+
+    The fix decouples month routing from the backtest-grain startdate: a per-DFU
+    fallback temp table (_dfu_champion) plus a per-month override temp table
+    (_dfu_champion_month). The INSERT JOINs staging on the resolved
+    COALESCE(override, fallback) model, so months outside the backtest window
+    still ship via fallback instead of being dropped.
+    """
+    pool, conn, cursor = _make_pool()
+
+    recorded: list[tuple] = []
+
+    def _capturing_execute(sql, params=None):
+        recorded.append((sql, params))
+        if " ".join(sql.split()).upper().startswith("INSERT INTO FACT_PRODUCTION_FORECAST"):
+            cursor.rowcount = 18
+        return None
+
+    cursor.execute.side_effect = _capturing_execute
+
+    copy_cm = MagicMock()
+    copy_cm.__enter__ = MagicMock(return_value=copy_cm)
+    copy_cm.__exit__ = MagicMock(return_value=False)
+    copied_rows: list[tuple] = []
+    copy_cm.write_row.side_effect = lambda row: copied_rows.append(row)
+    cursor.copy.return_value = copy_cm
+
+    cursor.fetchone.side_effect = [
+        (18,),     # staging COUNT
+        (53,),     # promoted champion experiment_id
+        (2,),      # expected_dfus (per-DFU fallback rows)
+        (0,),      # unmatched_dfus
+        (2,),      # dfu_count
+        (18,),     # persisted rows for run_id (integrity gate)
+        (99,),     # lineage emit returning id
+    ]
+
+    champion_dir = tmp_path / "data" / "champion"
+    champion_dir.mkdir(parents=True)
+    # Two DFUs; first has two months with two different winning models.
+    (champion_dir / "experiment_53_winners.csv").write_text(
+        "item_id,loc,model_id,startdate\n"
+        "10031,1401-BULK,seasonal_naive,2026-01-01\n"
+        "10031,1401-BULK,rolling_mean,2026-02-01\n"
+        "20055,1401-BULK,lgbm_cluster,2026-01-01\n"
+        "20055,1401-BULK,lgbm_cluster,2026-02-01\n"
+    )
+
+    with patch("api.core._get_pool", return_value=pool), \
+         patch(f"{_ROUTER_MOD}._PROJECT_ROOT", tmp_path):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/champion/promote")
+
+    assert resp.status_code == 201
+    assert resp.json()["promotion_type"] == "champion"
+
+    # Per-DFU fallback table is keyed on (item_id, loc) — NOT forecast_month.
+    ddl = next(s for s, _ in recorded if "CREATE TEMP TABLE _dfu_champion " in s)
+    norm = " ".join(ddl.split())
+    assert "PRIMARY KEY (item_id, loc)" in norm
+    assert "forecast_month" not in norm
+
+    # Per-month override table carries forecast_month.
+    ddl_m = next(s for s, _ in recorded if "CREATE TEMP TABLE _dfu_champion_month" in s)
+    assert "PRIMARY KEY (item_id, loc, forecast_month)" in " ".join(ddl_m.split())
+
+    # The INSERT routes each staged month via override-or-fallback; the JOIN to
+    # the fallback table must NOT equality-match on forecast_month (that coupling
+    # is the bug that dropped future months).
+    insert = next(
+        s for s, _ in recorded
+        if "INSERT INTO fact_production_forecast" in s and "JOIN _dfu_champion" in s
+    )
+    insert_norm = " ".join(insert.split())
+    assert "COALESCE(m.winning_model_id, c.winning_model_id)" in insert_norm
+    # The fallback JOIN is on (item_id, loc) only; the month-equality predicate
+    # belongs ONLY to the LEFT JOIN of the override table.
+    assert "JOIN _dfu_champion c ON c.item_id = s.item_id AND c.loc = s.loc LEFT JOIN" in insert_norm
+
+    # Fallback COPY writes ONE row per DFU (the deterministic min model_id).
+    fallback_rows = [r for r in copied_rows if len(r) == 3]
+    assert ("10031", "1401-BULK", "rolling_mean") in fallback_rows  # min of the two
+    assert ("20055", "1401-BULK", "lgbm_cluster") in fallback_rows
+    assert len(fallback_rows) == 2
+
+    # Per-month override COPY writes one row per (DFU, month) with a recorded winner.
+    override_rows = [r for r in copied_rows if len(r) == 4]
+    assert ("10031", "1401-BULK", "2026-01-01", "seasonal_naive") in override_rows
+    assert ("10031", "1401-BULK", "2026-02-01", "rolling_mean") in override_rows
+    assert len(override_rows) == 4
+
+
+# ---------------------------------------------------------------------------
+# 6d. Promote routing SQL — REAL Postgres (issue promote-future-month-drop).
+#     The MagicMock tests above prove the SQL *shape* and the COPY rows; only a
+#     live JOIN can prove the resolved-routing SELECT actually covers EVERY
+#     staged future month (not just the backtest-window months in the CSV).
+#     Guarded by RUN_PG_INTEGRATION + DB reachability; skips otherwise. Uses
+#     ephemeral temp tables only — NEVER touches fact_production_forecast.
+# ---------------------------------------------------------------------------
+
+
+def _pg_routing_conn():
+    """Connect to the live DB for the integration routing test, or None.
+
+    Skips (returns None) unless RUN_PG_INTEGRATION is set AND a connection
+    succeeds — keeps the default mocked suite hermetic.
+    """
+    import os
+
+    if not os.environ.get("RUN_PG_INTEGRATION"):
+        return None
+    import psycopg
+
+    from common.core.db import get_db_params
+
+    try:
+        return psycopg.connect(**get_db_params())
+    except psycopg.Error:
+        return None
+
+
+# The resolved-routing SELECT mirrors the INSERT…SELECT in promote_model's
+# champion branch (override-or-fallback over every staged month). Kept in the
+# test as the SELECT body only — the integration test asserts the routed
+# (DFU, month, model) set without writing to any fact table.
+_ROUTING_SELECT = """
+    SELECT s.item_id, s.loc, s.forecast_month,
+           COALESCE(m.winning_model_id, c.winning_model_id) AS resolved_model,
+           s.model_id
+    FROM _t_staging s
+    JOIN _t_fallback c
+      ON c.item_id = s.item_id AND c.loc = s.loc
+    LEFT JOIN _t_override m
+      ON m.item_id = s.item_id AND m.loc = s.loc
+     AND m.forecast_month = s.forecast_month
+    WHERE s.model_id = COALESCE(m.winning_model_id, c.winning_model_id)
+"""
+
+
+@pytest.mark.integration
+def test_promote_routing_covers_full_future_horizon_real_pg():
+    """Live JOIN: routing ships EVERY staged future month, not just CSV months.
+
+    Backtest window (override) covers M1..M2; staging spans M1..M4. Each DFU is
+    staged under 2 candidate models per month. The resolved-routing SELECT must
+    return one row per (DFU, staged month) — overrides for M1..M2, the per-DFU
+    fallback (min model_id) for M3..M4 — proving the future-month-drop bug is
+    fixed (distinct routed months == distinct staged months).
+    """
+    conn = _pg_routing_conn()
+    if conn is None:
+        pytest.skip("RUN_PG_INTEGRATION unset or Postgres unreachable")
+    months = ["2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01"]
+    # Two candidate models staged per (DFU, month). lgbm_cluster < seasonal_naive.
+    candidates = {
+        ("10031", "1401-BULK"): ["seasonal_naive", "lgbm_cluster"],
+        ("20055", "1401-BULK"): ["rolling_mean", "lgbm_cluster"],
+    }
+    # Per-month winners (override) only for the backtest window M1..M2.
+    overrides = [
+        ("10031", "1401-BULK", "2026-01-01", "seasonal_naive"),
+        ("10031", "1401-BULK", "2026-02-01", "lgbm_cluster"),
+        ("20055", "1401-BULK", "2026-01-01", "rolling_mean"),
+        ("20055", "1401-BULK", "2026-02-01", "rolling_mean"),
+    ]
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                CREATE TEMP TABLE _t_staging (
+                    item_id text, loc text, forecast_month date, model_id text
+                ) ON COMMIT DROP
+            """)
+            cur.execute(
+                "CREATE TEMP TABLE _t_fallback (item_id text, loc text, "
+                "winning_model_id text) ON COMMIT DROP"
+            )
+            cur.execute("""
+                CREATE TEMP TABLE _t_override (
+                    item_id text, loc text, forecast_month date, winning_model_id text
+                ) ON COMMIT DROP
+            """)
+            staging_rows = [
+                (dfu[0], dfu[1], mth, mdl)
+                for dfu, mdls in candidates.items()
+                for mth in months
+                for mdl in mdls
+            ]
+            cur.executemany(
+                "INSERT INTO _t_staging VALUES (%s, %s, %s, %s)", staging_rows
+            )
+            # Per-DFU fallback = lowest model_id among the DFU's overrides.
+            cur.executemany(
+                "INSERT INTO _t_fallback VALUES (%s, %s, %s)",
+                [("10031", "1401-BULK", "lgbm_cluster"),
+                 ("20055", "1401-BULK", "rolling_mean")],
+            )
+            cur.executemany(
+                "INSERT INTO _t_override VALUES (%s, %s, %s, %s)", overrides
+            )
+            cur.execute(_ROUTING_SELECT)
+            routed = cur.fetchall()
+    finally:
+        conn.close()
+
+    # Exactly one routed row per (DFU, staged month): 2 DFUs x 4 months = 8.
+    routed_keys = {(r[0], r[1], str(r[2])) for r in routed}
+    assert len(routed) == 8
+    assert len(routed_keys) == 8
+    # Full future-month coverage: distinct routed months == distinct staged months.
+    routed_months = {str(r[2]) for r in routed}
+    assert routed_months == set(months)
+    # Override months use the recorded winner.
+    by_key = {(r[0], r[1], str(r[2])): r[3] for r in routed}
+    assert by_key[("10031", "1401-BULK", "2026-01-01")] == "seasonal_naive"
+    assert by_key[("10031", "1401-BULK", "2026-02-01")] == "lgbm_cluster"
+    # Out-of-window months (M3, M4) route via the per-DFU fallback (min model_id).
+    assert by_key[("10031", "1401-BULK", "2026-03-01")] == "lgbm_cluster"
+    assert by_key[("10031", "1401-BULK", "2026-04-01")] == "lgbm_cluster"
+    assert by_key[("20055", "1401-BULK", "2026-03-01")] == "rolling_mean"
+    assert by_key[("20055", "1401-BULK", "2026-04-01")] == "rolling_mean"
+
+
 @pytest.mark.asyncio
 async def test_promote_single_model_captures_insert_rowcount(tmp_path):
     """Regression guard: the single-model branch still captures its INSERT count.
@@ -634,12 +925,14 @@ async def test_promote_single_model_captures_insert_rowcount(tmp_path):
 
     # Gate disabled -> skip wape checks. Single-model path fetchone sequence:
     #  1) ledger prev_hash (genesis)  2) ledger insert id
-    #  3) staging COUNT  4) DFU COUNT  5) lineage emit returning id
+    #  3) staging COUNT  4) DFU COUNT  5) persisted rows (run_id)
+    #  6) lineage emit returning id
     cursor.fetchone.side_effect = [
         (None,),       # ledger prev_hash
         (1,),          # ledger insert returning id
         (insert_n,),   # staging COUNT
         (250,),        # DFU COUNT
+        (insert_n,),   # persisted rows for run_id (must equal rows_promoted)
         (99,),         # lineage emit returning id
     ]
 

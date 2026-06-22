@@ -606,6 +606,66 @@ def submit_backtest_load(model_id: str, run_id: int | None = None):
 # ---------------------------------------------------------------------------
 
 
+def _build_per_month_winners(
+    rows: list[dict[str, Any]],
+) -> dict[tuple[str, str, str], str]:
+    """Build the per-month champion routing map from winners-CSV rows.
+
+    Champion winners are selected at DFU-MONTH grain: a single (item_id, loc)
+    can have a different winning model for each forecast month. The returned
+    map is keyed by ``(item_id, loc, startdate)`` → ``winning_model_id`` so the
+    month dimension is carried end-to-end into promotion (collapsing it to one
+    model per DFU shipped the wrong model across most of the horizon — see
+    issue promote-per-month-collapse).
+
+    ``startdate`` is the winner CSV's month label (YYYY-MM-01), matched against
+    ``fact_production_forecast_staging.forecast_month`` on promote.
+
+    Deterministic tie-break: the winners file can carry multiple rows for the
+    same ``(item_id, loc, startdate)`` (e.g. across customer_groups). Instead
+    of letting file order decide (non-deterministic), the LOWEST ``model_id``
+    (lexical ASC) wins — a single, reproducible rule shared with the generate
+    side's per-month resolution.
+    """
+    winners: dict[tuple[str, str, str], str] = {}
+    for row in rows:
+        key = (row["item_id"], row["loc"], row["startdate"])
+        model_id = row["model_id"]
+        existing = winners.get(key)
+        if existing is None or model_id < existing:
+            winners[key] = model_id
+    return winners
+
+
+def _build_per_dfu_fallback(
+    winners: dict[tuple[str, str, str], str],
+) -> dict[tuple[str, str], str]:
+    """Collapse the per-month winners map to one fallback model per DFU.
+
+    The winners CSV is at backtest-grain: its ``startdate`` values only cover
+    the historical backtest window (e.g. 9 months), while staging spans the
+    full future horizon (e.g. 32 months). Joining promotion on the month label
+    therefore drops every staged month that has no winners row — amputating
+    ~75% of the horizon the UI reads.
+
+    To route EVERY staged month, each DFU also gets a fallback model used for
+    any month with no explicit per-month winner. The rule mirrors the generate
+    side (``filter_rows_to_champion_months`` in
+    ``generate_production_forecasts.py``): the LOWEST ``model_id`` (lexical ASC)
+    among the DFU's winners — deterministic and reproducible. The fallback is
+    restricted to a staged model at JOIN time (a model with no staged row for
+    the DFU simply won't match and is surfaced by the coverage check), so it
+    can only ship a model that was actually generated.
+    """
+    fallback: dict[tuple[str, str], str] = {}
+    for (item_id, loc, _startdate), model_id in winners.items():
+        dfu = (item_id, loc)
+        existing = fallback.get(dfu)
+        if existing is None or model_id < existing:
+            fallback[dfu] = model_id
+    return fallback
+
+
 def _load_dfu_assignments() -> list[tuple[str, str, str]]:
     """Load DFU-level champion model assignments.
 
@@ -1034,23 +1094,33 @@ def promote_model(
                            "Re-run the champion experiment or promote a different one.",
                 )
 
-            # Latest assignment per (item_id, loc) wins (tracks startdate for tie-breaking).
-            latest: dict[tuple[str, str], tuple[str, str]] = {}
+            # Per-month champion routing: a (item_id, loc) can win a DIFFERENT
+            # model for each forecast month, so the map is keyed by
+            # (item_id, loc, startdate) and carried through to the JOIN. Equal
+            # (item_id, loc, startdate) rows resolve via a deterministic
+            # tie-break (lowest model_id), never file order.
             with winners_path.open(newline="") as f:
-                for row in csv.DictReader(f):
-                    key = (row["item_id"], row["loc"])
-                    startdate = row["startdate"]
-                    prev = latest.get(key)
-                    if prev is None or startdate > prev[0]:
-                        latest[key] = (startdate, row["model_id"])
+                winners = _build_per_month_winners(list(csv.DictReader(f)))
 
-            if not latest:
+            if not winners:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Winners file for experiment {champion_experiment_id} is empty.",
                 )
 
-            # Bulk-load assignments into a temp table via COPY, then join on promote.
+            # The winners CSV is at backtest-grain: its startdate values only
+            # cover the historical backtest window, while staging spans the
+            # whole future horizon. Routing must therefore be DECOUPLED from the
+            # backtest-grain startdate so EVERY staged month for a champion DFU
+            # ships a model (mirrors generate_production_forecasts.py's per-DFU
+            # fallback). Two temp tables:
+            #   _dfu_champion       — per-DFU fallback model (one row per DFU)
+            #   _dfu_champion_month — explicit per-month overrides (where the
+            #                         CSV recorded a winner for that month)
+            # The INSERT resolves each staged month to its override-or-fallback
+            # model, so months outside the backtest window route via fallback
+            # instead of vanishing.
+            fallback = _build_per_dfu_fallback(winners)
             cur.execute("""
                 CREATE TEMP TABLE _dfu_champion (
                     item_id text NOT NULL,
@@ -1059,10 +1129,32 @@ def promote_model(
                     PRIMARY KEY (item_id, loc)
                 ) ON COMMIT DROP
             """)
-            with cur.copy("COPY _dfu_champion (item_id, loc, winning_model_id) FROM STDIN") as copy:
-                for (dfu_item_id, dfu_loc), (_, winning_model_id) in latest.items():
+            with cur.copy(
+                "COPY _dfu_champion (item_id, loc, winning_model_id) FROM STDIN"
+            ) as copy:
+                for (dfu_item_id, dfu_loc), winning_model_id in fallback.items():
                     copy.write_row((dfu_item_id, dfu_loc, winning_model_id))
 
+            cur.execute("""
+                CREATE TEMP TABLE _dfu_champion_month (
+                    item_id text NOT NULL,
+                    loc text NOT NULL,
+                    forecast_month date NOT NULL,
+                    winning_model_id text NOT NULL,
+                    PRIMARY KEY (item_id, loc, forecast_month)
+                ) ON COMMIT DROP
+            """)
+            with cur.copy(
+                "COPY _dfu_champion_month (item_id, loc, forecast_month, winning_model_id) FROM STDIN"
+            ) as copy:
+                for (dfu_item_id, dfu_loc, startdate), winning_model_id in winners.items():
+                    copy.write_row((dfu_item_id, dfu_loc, startdate, winning_model_id))
+
+            # Route every staged month of each champion DFU: take the per-month
+            # override where the CSV has one, else the per-DFU fallback. The
+            # JOIN to staging on the RESOLVED model restricts shipping to models
+            # that were actually generated for that (DFU, month) — a fallback
+            # with no staged row simply won't match and is surfaced below.
             cur.execute("""
                 INSERT INTO fact_production_forecast
                     (plan_version, item_id, loc, forecast_month, forecast_qty,
@@ -1078,33 +1170,51 @@ def promote_model(
                 JOIN _dfu_champion c
                   ON c.item_id = s.item_id
                  AND c.loc = s.loc
-                 AND c.winning_model_id = s.model_id
+                LEFT JOIN _dfu_champion_month m
+                  ON m.item_id = s.item_id
+                 AND m.loc = s.loc
+                 AND m.forecast_month = s.forecast_month
+                WHERE s.model_id = COALESCE(m.winning_model_id, c.winning_model_id)
             """, (plan_version, CHAMPION_MODEL_ID, run_id_str))
             # Capture the INSERT's affected-row count NOW: the coverage SELECTs
             # below overwrite cur.rowcount (each yields 1), so reading it later
             # would record total_rows=1 against a 6-figure production table.
             rows_promoted = cur.rowcount
 
-            # Coverage check: the inner join above silently drops any champion DFU
-            # whose winning model has no staged rows (that model's Generate wasn't
-            # run, or a model_id spelling mismatch). Surface the gap instead of
-            # letting DFUs disappear from production unnoticed.
+            # Coverage check: the join ships a row for every staged (DFU, month)
+            # whose resolved (override-or-fallback) model has a staged row for
+            # that month. Surface any staged champion DFU-month that DID NOT
+            # route — its resolved model has no staged row for that month (that
+            # model's Generate wasn't run, or a model_id spelling mismatch) —
+            # instead of letting it disappear from production unnoticed.
             cur.execute("SELECT COUNT(*) FROM _dfu_champion")
             expected_dfus = cur.fetchone()[0]
             cur.execute("""
-                SELECT COUNT(*) FROM _dfu_champion c
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM fact_production_forecast_staging s
-                    WHERE s.item_id = c.item_id AND s.loc = c.loc
-                      AND s.model_id = c.winning_model_id
-                )
+                SELECT COUNT(*) FROM (
+                    SELECT DISTINCT c.item_id, c.loc, sm.forecast_month
+                    FROM _dfu_champion c
+                    JOIN (
+                        SELECT DISTINCT item_id, loc, forecast_month
+                        FROM fact_production_forecast_staging
+                    ) sm ON sm.item_id = c.item_id AND sm.loc = c.loc
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM fact_production_forecast_staging s
+                        LEFT JOIN _dfu_champion_month m
+                          ON m.item_id = s.item_id AND m.loc = s.loc
+                         AND m.forecast_month = s.forecast_month
+                        WHERE s.item_id = c.item_id AND s.loc = c.loc
+                          AND s.forecast_month = sm.forecast_month
+                          AND s.model_id = COALESCE(m.winning_model_id, c.winning_model_id)
+                    )
+                ) unmatched
             """)
             unmatched_dfus = cur.fetchone()[0]
             if unmatched_dfus:
                 logger.warning(
-                    "Champion promote: %d of %d champion DFUs had no staged rows "
-                    "for their winning model and were dropped from production "
-                    "(run Generate for those models or check model_id spelling).",
+                    "Champion promote: %d staged champion DFU-month(s) routed to a "
+                    "model with no staged row and were dropped from production "
+                    "(run Generate for those models or check model_id spelling). "
+                    "%d champion DFU(s) total.",
                     unmatched_dfus, expected_dfus,
                 )
         else:
@@ -1130,6 +1240,29 @@ def promote_model(
             "SELECT COUNT(DISTINCT item_id || '|' || loc) FROM fact_production_forecast"
         )
         dfu_count = cur.fetchone()[0]
+
+        # 5b. rows_promoted integrity gate. fact_production_forecast was emptied
+        # (step 3) and this run's INSERT is the only writer, so the rows tagged
+        # with run_id MUST equal rows_promoted; and a valid promotion ships at
+        # least one row per DFU (>= dfu_count). A mismatch means the INSERT
+        # count was captured wrong (the total_rows=1 regression) or rows were
+        # lost between INSERT and commit — fail loud rather than persist a
+        # corrupt promotion ledger entry.
+        cur.execute(
+            "SELECT COUNT(*) FROM fact_production_forecast WHERE run_id = %s::uuid",
+            (run_id_str,),
+        )
+        persisted_rows = cur.fetchone()[0]
+        if persisted_rows != rows_promoted or rows_promoted < dfu_count:
+            logger.error(
+                "Promote integrity check failed: rows_promoted=%s persisted=%s "
+                "dfu_count=%s run_id=%s",
+                rows_promoted, persisted_rows, dfu_count, run_id_str,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Promotion row-count integrity check failed",
+            )
 
         # 6. Log promotion
         promotion_type = "champion" if is_champion else "single"

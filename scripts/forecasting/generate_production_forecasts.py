@@ -195,7 +195,7 @@ def load_active_models(model_id: str, config: dict) -> dict[str, dict]:
 
 
 def get_champion_assignments(conn, item_id: str | None = None, loc: str | None = None) -> pd.DataFrame:
-    """Return the most recent champion model assignment per DFU.
+    """Return the champion model assignment per DFU-MONTH.
 
     Returns `source_model_id` — the underlying algorithm (e.g. lgbm_cluster) whose
     artifacts are used for production inference.  Populated by champion selection
@@ -206,7 +206,18 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
     fallback model). NULL therefore means only a legacy row written before that
     column existed; the caller falls back to `fallback_model_id` from config.
 
-    Returns DataFrame with columns: item_id, loc, source_model_id, cluster_id, customer_group.
+    Champion routing is genuinely (item_id, loc, forecast_month)-grained: a DFU
+    can win a different model for each month. This returns ONE row per
+    (item_id, loc, startdate) so the month dimension is preserved downstream
+    (collapsing to one row per (item_id, loc) shipped the latest month's model
+    across the whole horizon — see issue promote-per-month-collapse).
+
+    Deterministic tie-break: equal (item_id, loc, startdate) rows across
+    customer_groups resolve to the LOWEST source_model_id (lexical ASC) — the
+    same rule the promote endpoint applies — never row/scan order.
+
+    Returns DataFrame with columns:
+        item_id, loc, startdate, source_model_id, cluster_id, customer_group.
     """
     where_clauses = ["f.model_id = 'champion'"]
     params: list = []
@@ -220,10 +231,15 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
 
     where_sql = " AND ".join(where_clauses)
 
+    # DISTINCT ON (item_id, loc, startdate) keeps the month dimension and picks a
+    # deterministic row per month. NULLS LAST + source_model_id ASC make the
+    # tie-break reproducible: prefer a row that carries a source, then the
+    # lowest model_id (matches _build_per_month_winners on the promote side).
     sql = f"""
-        SELECT DISTINCT ON (f.item_id, f.loc)
+        SELECT DISTINCT ON (f.item_id, f.loc, f.startdate)
             f.item_id                   AS item_id,
             f.loc,
+            f.startdate,
             f.source_model_id,
             d.ml_cluster                AS cluster_id,
             d.customer_group
@@ -232,17 +248,109 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
                       AND d.customer_group = f.customer_group
                       AND d.loc = f.loc
         WHERE {where_sql}
-        ORDER BY f.item_id, f.loc, f.startdate DESC, f.customer_group
+        ORDER BY f.item_id, f.loc, f.startdate,
+                 f.source_model_id ASC NULLS LAST, f.customer_group
     """
 
     # Streamed: scans fact_external_forecast_monthly. DISTINCT ON shrinks the
-    # output to one row per (item_id, loc), but the underlying scan is still
-    # fact-table-sized.
+    # output to one row per (item_id, loc, startdate), but the underlying scan
+    # is still fact-table-sized.
     df = read_sql_chunked(conn, sql, params=params)
     with_src = int(df["source_model_id"].notna().sum())
-    logger.info("Champion assignments loaded: %s DFUs (%s with source_model_id)",
-                f"{len(df):,}", f"{with_src:,}")
+    n_dfus = df.drop_duplicates(["item_id", "loc"]).shape[0] if len(df) else 0
+    logger.info(
+        "Champion assignments loaded: %s DFU-months across %s DFUs (%s with source_model_id)",
+        f"{len(df):,}", f"{n_dfus:,}", f"{with_src:,}",
+    )
     return df
+
+
+def build_month_routing(
+    champion_df: pd.DataFrame,
+) -> dict[tuple[str, str], dict[pd.Timestamp, str]]:
+    """Map each DFU to its per-month champion source_model_id.
+
+    Champion routing is (item_id, loc, forecast_month)-grained. This returns
+    ``{(item_id, loc): {forecast_month: source_model_id}}`` so the generation
+    loop can stage each month under its TRUE champion model rather than
+    collapsing a DFU to a single model across the whole horizon.
+
+    ``startdate`` (the champion row's month label) is normalized to the first
+    of the month, matching ``forecast_month`` on the produced rows. Rows whose
+    ``source_model_id`` is NULL are skipped — the caller applies its config
+    fallback for those months.
+    """
+    routing: dict[tuple[str, str], dict[pd.Timestamp, str]] = defaultdict(dict)
+    if champion_df.empty or "startdate" not in champion_df.columns:
+        return routing
+    for row in champion_df.itertuples(index=False):
+        src = getattr(row, "source_model_id", None)
+        if src is None or (isinstance(src, float) and pd.isna(src)):
+            continue
+        month = pd.Timestamp(row.startdate).normalize().replace(day=1)
+        routing[(row.item_id, row.loc)][month] = src
+    return routing
+
+
+def collapse_to_dfu(champion_df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse the per-month champion frame to ONE row per (item_id, loc).
+
+    The generation loops build a per-DFU inference grid (cluster_id and
+    customer_group are DFU-level, not month-level), so they iterate once per
+    DFU. Per-month routing is carried separately via :func:`build_month_routing`
+    and applied as a post-generation filter. The retained ``source_model_id``
+    is the deterministic earliest-month champion (rows arrive ordered by
+    startdate ASC from :func:`get_champion_assignments`); months that disagree
+    are regenerated under their own model and filtered in.
+    """
+    if champion_df.empty:
+        return champion_df
+    deduped = champion_df.drop_duplicates(subset=["item_id", "loc"], keep="first")
+    return deduped.reset_index(drop=True)
+
+
+def filter_rows_to_champion_months(
+    rows: list[dict],
+    month_routing: dict[tuple[str, str], dict[pd.Timestamp, str]],
+) -> list[dict]:
+    """Keep only generated rows whose model_id wins that (DFU, forecast_month).
+
+    A DFU is generated under EACH distinct model it wins across the horizon;
+    this drops the months where a given model is NOT the champion, so the
+    surviving rows are per-month correct (recursive coherence is preserved —
+    each kept month came from a full-horizon recursion of its own model).
+
+    A DFU with no per-month routing entry (cold-start, --model-id override, or
+    a fully NULL-source champion) is passed through unchanged: those
+    intentionally use a single model across all months.
+
+    A month that has no recorded champion (NULL source for that month, while
+    OTHER months of the DFU do route) would otherwise be emitted by every model
+    the DFU is generated under. To stay deterministic and avoid duplicate
+    (DFU, month) staging rows, such a month is kept only from the DFU's
+    lexically-lowest enqueued model — the same earliest/lowest tie-break used
+    elsewhere.
+    """
+    if not month_routing:
+        return rows
+    # Deterministic fallback model per DFU for months with no recorded winner.
+    fallback_model = {
+        dfu: min(per_month.values()) for dfu, per_month in month_routing.items()
+    }
+    kept: list[dict] = []
+    for row in rows:
+        dfu = (row["item_id"], row["loc"])
+        per_month = month_routing.get(dfu)
+        if per_month is None:
+            kept.append(row)
+            continue
+        month = pd.Timestamp(row["forecast_month"]).normalize().replace(day=1)
+        winner = per_month.get(month) or fallback_model[dfu]
+        # Keep only the row whose model is this month's (true or fallback)
+        # champion; the other enqueued models lost the month.
+        if winner == row["model_id"]:
+            kept.append(row)
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -1542,14 +1650,32 @@ def main() -> None:
         # Load data
         logger.info("Step 1: Loading data...")
         with profiled_section("load_data"):
-            champion_df = get_champion_assignments(conn, item_filter, loc_filter)
-            if len(champion_df) == 0:
+            # Per-month (item_id, loc, startdate) champion assignments. A DFU
+            # can win a different model each month; this frame preserves that.
+            champion_month_df = get_champion_assignments(conn, item_filter, loc_filter)
+            if len(champion_month_df) == 0:
                 logger.info("No champion assignments found. Run 'make champion-select' first.")
                 return
 
-            if args.max_dfus and len(champion_df) > args.max_dfus:
-                champion_df = champion_df.head(args.max_dfus)
-                logger.info("Sampling limited to %s DFUs (--max-dfus)", f"{args.max_dfus:,}")
+            if args.max_dfus:
+                # Sample the FIRST N distinct DFUs (not the first N month-rows,
+                # which would truncate a DFU's horizon mid-stream).
+                distinct_dfus = champion_month_df[["item_id", "loc"]].drop_duplicates()
+                keep_dfus = distinct_dfus.head(args.max_dfus)
+                if len(keep_dfus) < len(distinct_dfus):
+                    champion_month_df = champion_month_df.merge(
+                        keep_dfus, on=["item_id", "loc"], how="inner"
+                    )
+                    logger.info("Sampling limited to %s DFUs (--max-dfus)", f"{args.max_dfus:,}")
+
+            # Per-DFU month → champion model_id routing (applied as a
+            # post-generation filter so each month ships its true champion).
+            month_routing = build_month_routing(champion_month_df)
+            # One row per DFU for the per-DFU generation loops (cluster_id /
+            # customer_group are DFU-level). The kept source_model_id is the
+            # earliest month's champion; other months are regenerated under
+            # their own model and filtered in.
+            champion_df = collapse_to_dfu(champion_month_df)
 
             sales_df = load_recent_sales(conn, item_filter, loc_filter,
                                          lookback_months=lookback_months)
@@ -1560,10 +1686,11 @@ def main() -> None:
         # source_model_id = the underlying algorithm that won per DFU (e.g. lgbm_cluster).
         # Populated by champion selection after sql/007_create_fact_external_forecast_monthly.sql is applied.
         # Always include fallback_model_id so every DFU has at least one model to use.
+        # Use the PER-MONTH frame so every model that wins ANY month is loaded.
         if args.model_id:
             model_ids_needed = {args.model_id}
         else:
-            src_ids = set(champion_df["source_model_id"].dropna().unique())
+            src_ids = set(champion_month_df["source_model_id"].dropna().unique())
             model_ids_needed = src_ids | {fallback_model_id, cold_start_model_id}
 
         # Load model artifacts
@@ -1698,6 +1825,47 @@ def main() -> None:
                         cluster_fallback_count += 1
                     return art
 
+                def _enqueue_dfu_model(item_id, loc, cluster_id, model_id, champ) -> bool:
+                    """Route ONE (DFU, model) into the tree or statistical path.
+
+                    Returns True if the DFU-model was enqueued (or routed to the
+                    statistical generator), False if it was skipped (no
+                    artifact / no grid). A DFU may be enqueued under several
+                    models when its per-month champion varies; the per-month
+                    filter later keeps only the winning months.
+                    """
+                    nonlocal skipped
+                    # Non-tree champion source (statistical baseline, foundation, DL,
+                    # or the cold-start rolling_mean): no .pkl exists, so the tree path
+                    # would substitute the lgbm fallback and ship LightGBM under the
+                    # champion's label. Route it to the statistical generator instead so
+                    # the shipped forecast actually IS its champion model (F-11).
+                    if model_id in non_tree_models and model_id not in loaded_models:
+                        statistical_routed[model_id].append(champ)
+                        return True
+
+                    artifact = _resolve_artifact(model_id, cluster_id)
+                    if artifact is None:
+                        return False
+
+                    grid = build_inference_grid(
+                        item_id=item_id,
+                        loc=loc,
+                        cluster_id=cluster_id,
+                        horizon=horizon,
+                        min_months=cold_start_min_months,
+                        sales_index=sales_index,
+                        attrs_index=attrs_index,
+                        item_index=item_index,
+                    )
+                    if grid is None:
+                        return False
+
+                    cluster_groups[(model_id, cluster_id)].append(
+                        ({"item_id": item_id, "loc": loc, "cluster_id": cluster_id}, grid, artifact)
+                    )
+                    return True
+
                 cold_start_count = 0
                 for _, champ in champion_df.iterrows():
                     item_id = champ["item_id"]
@@ -1713,46 +1881,39 @@ def main() -> None:
                         continue
 
                     if args.model_id:
-                        model_id = args.model_id
-                    elif n_months < min_history_months:
-                        # Cold-start DFU: insufficient history for tree models
-                        model_id = cold_start_model_id
-                        cold_start_count += 1
+                        # Single-model override: one model across the whole horizon.
+                        if not _enqueue_dfu_model(item_id, loc, cluster_id, args.model_id, champ):
+                            skipped += 1
+                        continue
+                    if n_months < min_history_months:
+                        # Cold-start DFU: insufficient history for tree models —
+                        # one cold-start model across the whole horizon. This
+                        # OVERRIDES any per-month champion routing, so drop the
+                        # DFU from month_routing too — otherwise the post-filter
+                        # would discard its cold-start rows (their model_id does
+                        # not match the routed winners).
+                        month_routing.pop((item_id, loc), None)
+                        if _enqueue_dfu_model(item_id, loc, cluster_id, cold_start_model_id, champ):
+                            cold_start_count += 1
+                        else:
+                            skipped += 1
+                        continue
+
+                    # Mature DFU: enqueue under EACH distinct champion model it
+                    # wins across the horizon. The per-month filter keeps only
+                    # the months each model wins. Falls back to the collapsed
+                    # source (or config fallback) when no per-month routing.
+                    per_month = month_routing.get((item_id, loc))
+                    if per_month:
+                        dfu_models = sorted(set(per_month.values()))
                     else:
-                        # Mature DFU: use champion assignment
-                        model_id = champ["source_model_id"] or fallback_model_id
-
-                    # Non-tree champion source (statistical baseline, foundation, DL,
-                    # or the cold-start rolling_mean): no .pkl exists, so the tree path
-                    # would substitute the lgbm fallback and ship LightGBM under the
-                    # champion's label. Route it to the statistical generator instead so
-                    # the shipped forecast actually IS its champion model (F-11).
-                    if model_id in non_tree_models and model_id not in loaded_models:
-                        statistical_routed[model_id].append(champ)
-                        continue
-
-                    artifact = _resolve_artifact(model_id, cluster_id)
-                    if artifact is None:
+                        dfu_models = [champ["source_model_id"] or fallback_model_id]
+                    enqueued_any = False
+                    for model_id in dfu_models:
+                        if _enqueue_dfu_model(item_id, loc, cluster_id, model_id, champ):
+                            enqueued_any = True
+                    if not enqueued_any:
                         skipped += 1
-                        continue
-
-                    grid = build_inference_grid(
-                        item_id=item_id,
-                        loc=loc,
-                        cluster_id=cluster_id,
-                        horizon=horizon,
-                        min_months=cold_start_min_months,
-                        sales_index=sales_index,
-                        attrs_index=attrs_index,
-                        item_index=item_index,
-                    )
-                    if grid is None:
-                        skipped += 1
-                        continue
-
-                    cluster_groups[(model_id, cluster_id)].append(
-                        ({"item_id": item_id, "loc": loc, "cluster_id": cluster_id}, grid, artifact)
-                    )
 
             logger.info("%s DFUs in %d cluster groups, %s skipped, %s cold-start (→ %s)",
                         f"{sum(len(v) for v in cluster_groups.values()):,}",
@@ -1857,6 +2018,16 @@ def main() -> None:
                                     mid, f"{len(champ_rows):,}", f"{len(stat_rows):,}")
 
             logger.info("Step 3 complete: %s rows, %s skipped", f"{len(all_rows):,}", f"{skipped:,}")
+
+        # Per-month champion routing: each mature DFU was generated under every
+        # model it wins across the horizon; drop the months where a given model
+        # is NOT the champion so each (DFU, month) ships its true champion. A
+        # no-op for --model-id / cold-start (no per-month routing) runs.
+        if not args.model_id and month_routing:
+            n_before = len(all_rows)
+            all_rows = filter_rows_to_champion_months(all_rows, month_routing)
+            logger.info("Per-month champion filter: kept %s of %s rows",
+                        f"{len(all_rows):,}", f"{n_before:,}")
 
         # Write to staging table
         staging_model_id = args.model_id or "champion"

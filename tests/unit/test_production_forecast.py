@@ -21,9 +21,13 @@ from scripts.forecasting.generate_production_forecasts import (
     build_sales_index,
     build_attrs_index,
     build_cat_encoders,
+    build_month_routing,
+    collapse_to_dfu,
+    filter_rows_to_champion_months,
     generate_forecast_recursive,
     generate_forecasts_batch,
     generate_forecasts_statistical,
+    get_champion_assignments,
 )
 from common.core.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
 
@@ -931,3 +935,124 @@ def test_cluster_wipe_not_flagged_for_single_global_model():
     from scripts.forecasting.generate_production_forecasts import _cluster_assignments_wiped
     loaded = {"lgbm_cluster": {"global": {}}}
     assert _cluster_assignments_wiped(_champ_df([None, None]), loaded, set()) is False
+
+
+# ---------------------------------------------------------------------------
+# Per-month champion routing (issue promote-per-month-collapse — generate side)
+# ---------------------------------------------------------------------------
+
+
+def _per_month_champ_df():
+    """Champion frame for one DFU whose model varies by month."""
+    return pd.DataFrame([
+        {"item_id": "10031", "loc": "1401-BULK", "startdate": pd.Timestamp("2026-01-01"),
+         "source_model_id": "seasonal_naive", "cluster_id": 2, "customer_group": "ALL"},
+        {"item_id": "10031", "loc": "1401-BULK", "startdate": pd.Timestamp("2026-02-01"),
+         "source_model_id": "rolling_mean", "cluster_id": 2, "customer_group": "ALL"},
+    ])
+
+
+def test_build_month_routing_keeps_per_month_model():
+    """build_month_routing carries (item_id, loc) → {month: model_id} per month."""
+    routing = build_month_routing(_per_month_champ_df())
+    dfu = ("10031", "1401-BULK")
+    assert routing[dfu][pd.Timestamp("2026-01-01")] == "seasonal_naive"
+    assert routing[dfu][pd.Timestamp("2026-02-01")] == "rolling_mean"
+
+
+def test_build_month_routing_skips_null_source():
+    """NULL source_model_id rows are skipped (caller applies config fallback)."""
+    df = pd.DataFrame([
+        {"item_id": "A", "loc": "L", "startdate": pd.Timestamp("2026-01-01"),
+         "source_model_id": None, "cluster_id": 1, "customer_group": "ALL"},
+    ])
+    routing = build_month_routing(df)
+    assert pd.Timestamp("2026-01-01") not in routing.get(("A", "L"), {})
+
+
+def test_collapse_to_dfu_one_row_per_dfu():
+    """collapse_to_dfu reduces the per-month frame to one row per (item_id, loc)."""
+    collapsed = collapse_to_dfu(_per_month_champ_df())
+    assert len(collapsed) == 1
+    # Earliest month's champion is retained deterministically (rows arrive ASC).
+    assert collapsed.iloc[0]["source_model_id"] == "seasonal_naive"
+
+
+def test_filter_rows_to_champion_months_keeps_winning_months_only():
+    """Each model's rows survive only for the months it wins."""
+    routing = build_month_routing(_per_month_champ_df())
+    rows = [
+        # seasonal_naive generated full horizon for this DFU
+        {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-01-01"),
+         "model_id": "seasonal_naive"},
+        {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
+         "model_id": "seasonal_naive"},
+        # rolling_mean generated full horizon for this DFU
+        {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-01-01"),
+         "model_id": "rolling_mean"},
+        {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
+         "model_id": "rolling_mean"},
+    ]
+    kept = filter_rows_to_champion_months(rows, routing)
+    by_month = {(r["forecast_month"], r["model_id"]) for r in kept}
+    assert (pd.Timestamp("2026-01-01"), "seasonal_naive") in by_month
+    assert (pd.Timestamp("2026-02-01"), "rolling_mean") in by_month
+    # The losing rows are dropped — one model per (DFU, month).
+    assert (pd.Timestamp("2026-01-01"), "rolling_mean") not in by_month
+    assert (pd.Timestamp("2026-02-01"), "seasonal_naive") not in by_month
+    assert len(kept) == 2
+
+
+def test_filter_rows_no_winner_month_kept_from_lowest_model_only():
+    """A month with no recorded champion is kept from ONE deterministic model.
+
+    Avoids duplicate (DFU, month) staging rows when the DFU is generated under
+    several models but a given month has no winner recorded.
+    """
+    # Only January routes (rolling_mean); February has NO recorded winner.
+    routing = {("10031", "1401-BULK"): {pd.Timestamp("2026-01-01"): "rolling_mean"}}
+    rows = [
+        {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
+         "model_id": "rolling_mean"},
+        {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
+         "model_id": "seasonal_naive"},
+    ]
+    kept = filter_rows_to_champion_months(rows, routing)
+    # Lowest enqueued model for this DFU is rolling_mean (< seasonal_naive).
+    assert len(kept) == 1
+    assert kept[0]["model_id"] == "rolling_mean"
+
+
+def test_filter_rows_passthrough_when_no_routing():
+    """A DFU with no per-month routing (cold-start / override) is untouched."""
+    rows = [
+        {"item_id": "A", "loc": "L", "forecast_month": pd.Timestamp("2026-01-01"),
+         "model_id": "rolling_mean"},
+    ]
+    assert filter_rows_to_champion_months(rows, {}) == rows
+
+
+def test_get_champion_assignments_returns_per_month_rows():
+    """get_champion_assignments keeps the startdate dimension (per-month rows)."""
+    per_month = _per_month_champ_df()
+
+    captured = {}
+
+    def _fake_read_sql_chunked(conn, sql, params=None):
+        captured["sql"] = sql
+        return per_month.copy()
+
+    with patch(
+        "scripts.forecasting.generate_production_forecasts.read_sql_chunked",
+        side_effect=_fake_read_sql_chunked,
+    ):
+        df = get_champion_assignments(MagicMock())
+
+    # Query must group per (item_id, loc, startdate), not per (item_id, loc).
+    assert "DISTINCT ON (f.item_id, f.loc, f.startdate)" in captured["sql"]
+    # Deterministic tie-break is source_model_id ASC (shared with promote side).
+    assert "f.source_model_id ASC" in captured["sql"]
+    assert "startdate" in df.columns
+    # Two months for the one DFU survive.
+    assert len(df) == 2
+    assert set(df["source_model_id"]) == {"seasonal_naive", "rolling_mean"}
