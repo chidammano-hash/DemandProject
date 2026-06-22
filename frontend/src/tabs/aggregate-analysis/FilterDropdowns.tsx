@@ -66,7 +66,7 @@ export function FilterDropdown({
       <button
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors",
+          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ease-smooth",
           selected.length > 0
             ? "border-primary/30 bg-primary/8 text-primary font-medium"
             : "border-border bg-card text-muted-foreground hover:bg-muted/50",
@@ -76,7 +76,7 @@ export function FilterDropdown({
         <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 max-h-60 min-w-[180px] overflow-y-auto rounded-md border border-border bg-card p-1 shadow-lg">
+        <div className="absolute left-0 top-full z-50 mt-1 max-h-60 min-w-[180px] overflow-y-auto rounded-md border border-border bg-card p-1 shadow-elevated animate-scale-in origin-top">
           {selected.length > 0 && (
             <button
               onClick={() => {
@@ -93,7 +93,7 @@ export function FilterDropdown({
               key={val}
               onClick={() => toggle(val)}
               className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors",
+                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors ease-smooth",
                 selected.includes(val) ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/50",
               )}
             >
@@ -184,7 +184,7 @@ export function SearchableFilterDropdown({
       <button
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors",
+          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ease-smooth",
           selected.length > 0
             ? "border-primary/30 bg-primary/8 text-primary font-medium"
             : "border-border bg-card text-muted-foreground hover:bg-muted/50",
@@ -194,7 +194,7 @@ export function SearchableFilterDropdown({
         <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-md border border-border bg-card shadow-lg">
+        <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-md border border-border bg-card shadow-elevated animate-scale-in origin-top">
           <div className="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
             <Search className="h-3 w-3 text-muted-foreground" />
             <input
@@ -227,7 +227,7 @@ export function SearchableFilterDropdown({
               <button
                 key={val}
                 onClick={() => addItem(val)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/50"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground transition-colors ease-smooth hover:bg-muted/50"
               >
                 <span className="flex h-3.5 w-3.5 items-center justify-center rounded-sm border border-border" />
                 <span className="truncate">{val}</span>
@@ -258,7 +258,7 @@ export function TimeGrainToggle({
       <button
         onClick={() => onChange("month")}
         className={cn(
-          "px-2.5 py-1.5 text-xs transition-colors",
+          "px-2.5 py-1.5 text-xs transition-colors ease-smooth",
           value === "month" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50",
         )}
       >
@@ -267,7 +267,7 @@ export function TimeGrainToggle({
       <button
         onClick={() => onChange("quarter")}
         className={cn(
-          "border-l border-border px-2.5 py-1.5 text-xs transition-colors",
+          "border-l border-border px-2.5 py-1.5 text-xs transition-colors ease-smooth",
           value === "quarter" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50",
         )}
       >

@@ -63,6 +63,12 @@ function applyPalette(palette: ThemePalette) {
     ["--bg-gradient-base-start", palette.bgGradientBaseStart],
     ["--bg-gradient-base-mid", palette.bgGradientBaseMid],
     ["--bg-gradient-base-end", palette.bgGradientBaseEnd],
+    ["--success", palette.success],
+    ["--success-foreground", palette.successForeground],
+    ["--warning", palette.warning],
+    ["--warning-foreground", palette.warningForeground],
+    ["--info", palette.info],
+    ["--info-foreground", palette.infoForeground],
   ];
   for (const [prop, value] of map) {
     root.style.setProperty(prop, value);

@@ -91,7 +91,7 @@ export function SearchableSelect({
         <ul
           id={`${ariaLabel}-listbox`}
           role="listbox"
-          className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-card text-card-foreground shadow-lg"
+          className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-card text-card-foreground shadow-elevated animate-scale-in origin-top"
         >
           <li
             role="option"

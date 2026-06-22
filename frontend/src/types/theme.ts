@@ -40,6 +40,12 @@ export interface ThemePalette {
   bgGradientBaseStart: string;
   bgGradientBaseMid: string;
   bgGradientBaseEnd: string;
+  success: string;
+  successForeground: string;
+  warning: string;
+  warningForeground: string;
+  info: string;
+  infoForeground: string;
 }
 
 export interface SidebarThemeConfig {

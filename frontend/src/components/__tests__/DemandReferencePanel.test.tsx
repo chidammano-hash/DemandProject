@@ -66,7 +66,8 @@ describe("DemandReferencePanel", () => {
 
     expect(screen.getByText("+3.5%")).toBeInTheDocument();
     expect(screen.getByText("82.3%")).toBeInTheDocument();
-    expect(screen.getByText("1,200")).toBeInTheDocument();
+    // current_inventory: 1200 → compact notation ("1.2K"), per kpiFmt in DemandReferencePanel.
+    expect(screen.getByText("1.2K")).toBeInTheDocument();
     expect(screen.getByText("14d")).toBeInTheDocument();
   });
 

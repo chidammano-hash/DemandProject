@@ -29,9 +29,9 @@ export const OKABE_ITO: string[] = [
 ];
 
 export const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }> = {
-  light: { grid: "#e2e8f0", axis: "#64748b", tooltip_bg: "#ffffff", tooltip_border: "#e2e8f0" },
-  dark: { grid: "#2d3548", axis: "#94a3b8", tooltip_bg: "#1e2433", tooltip_border: "#2d3548" },
-  soft: { grid: "#DDD8D0", axis: "#8A8078", tooltip_bg: "#FDFCFA", tooltip_border: "#DDD8D0" },
+  light: { grid: "#eaeef4", axis: "#7c8798", tooltip_bg: "#ffffff", tooltip_border: "#eaeef4" },
+  dark: { grid: "#283449", axis: "#9aa6b8", tooltip_bg: "#1e2433", tooltip_border: "#283449" },
+  soft: { grid: "#E5E0D8", axis: "#9A9088", tooltip_bg: "#FDFCFA", tooltip_border: "#E5E0D8" },
 };
 
 export const SKU_SALES_COLORS: Record<string, string> = {

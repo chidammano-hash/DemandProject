@@ -49,7 +49,8 @@ function Select({ value, onValueChange, children }: SelectProps) {
     [],
   );
 
-  // Close on outside click
+  // Close on outside click or Escape — respect the keyboard: a user who opened the
+  // menu must be able to dismiss it without reaching for the mouse.
   React.useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
@@ -57,8 +58,15 @@ function Select({ value, onValueChange, children }: SelectProps) {
         setOpen(false);
       }
     }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   return (
@@ -77,9 +85,11 @@ function SelectTrigger({ className, children }: { className?: string; children?:
   return (
     <button
       type="button"
+      aria-haspopup="listbox"
+      aria-expanded={open}
       onClick={() => setOpen(!open)}
       className={cn(
-        "flex items-center justify-between gap-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm hover:bg-accent focus:outline-none",
+        "flex items-center justify-between gap-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors ease-smooth hover:bg-accent focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         className,
       )}
     >
@@ -101,7 +111,10 @@ function SelectContent({ children }: { children?: React.ReactNode }) {
   const { open } = React.useContext(SelectContext);
   if (!open) return null;
   return (
-    <div className="absolute left-0 top-full z-[200] mt-1 min-w-full rounded-md border bg-popover py-1 shadow-lg">
+    <div
+      role="listbox"
+      className="absolute left-0 top-full z-[200] mt-1 min-w-full rounded-md border bg-popover py-1 shadow-elevated animate-scale-in origin-top"
+    >
       {children}
     </div>
   );

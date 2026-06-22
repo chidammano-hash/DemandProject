@@ -41,11 +41,17 @@
   --kpi-best: #10B981;
   --kpi-warning: #EF4444;
   --kpi-ceiling: 192 91% 36%;
-  --bg-gradient-primary: rgba(0, 0, 0, 0);
-  --bg-gradient-secondary: rgba(0, 0, 0, 0);
-  --bg-gradient-base-start: #FAFAFA;
-  --bg-gradient-base-mid: #FAFAFA;
-  --bg-gradient-base-end: #FAFAFA;
+  --bg-gradient-primary: hsla(224, 76%, 50%, 0.06);
+  --bg-gradient-secondary: hsla(190, 85%, 45%, 0.045);
+  --bg-gradient-base-start: #FBFCFE;
+  --bg-gradient-base-mid: #F5F8FC;
+  --bg-gradient-base-end: #EEF2F8;
+  --success: 160 84% 30%;
+  --success-foreground: 0 0% 100%;
+  --warning: 30 90% 42%;
+  --warning-foreground: 30 60% 10%;
+  --info: 214 90% 52%;
+  --info-foreground: 0 0% 100%;
   /* Sidebar tokens */
   --sidebar-background: 222 47% 11%;
   --sidebar-foreground: 215 20% 65%;
@@ -87,11 +93,17 @@
   --kpi-best: #34D399;
   --kpi-warning: #F87171;
   --kpi-ceiling: #22D3EE;
-  --bg-gradient-primary: rgba(0, 0, 0, 0);
-  --bg-gradient-secondary: rgba(0, 0, 0, 0);
-  --bg-gradient-base-start: #18181B;
-  --bg-gradient-base-mid: #18181B;
-  --bg-gradient-base-end: #18181B;
+  --bg-gradient-primary: hsla(217, 91%, 60%, 0.10);
+  --bg-gradient-secondary: hsla(190, 90%, 52%, 0.06);
+  --bg-gradient-base-start: #0C1322;
+  --bg-gradient-base-mid: #0A0F1C;
+  --bg-gradient-base-end: #070B14;
+  --success: 158 64% 52%;
+  --success-foreground: 222 47% 8%;
+  --warning: 38 92% 56%;
+  --warning-foreground: 30 60% 10%;
+  --info: 213 94% 68%;
+  --info-foreground: 222 47% 8%;
   --sidebar-background: 222 47% 5%;
   --sidebar-foreground: 215 20% 55%;
   --sidebar-primary: 213 94% 68%;
@@ -117,6 +129,8 @@ body,
 
 body {
   @apply text-foreground min-h-screen antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05", "cv11", "ss01";
   background-color: hsl(var(--background));
   background-image:
     radial-gradient(circle at 12% 10%, var(--bg-gradient-primary), transparent 36%),
@@ -134,8 +148,14 @@ html[data-transitioning] * {
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in {
-  animation: fadeIn 200ms ease-out;
+  animation: fadeIn 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* Scale-in + overlay-in animations (motion foundation — Loop 3) */
+@keyframes scale-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+.animate-scale-in { animation: scale-in 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+.animate-overlay-in { animation: overlay-in 180ms ease-out; }
 
 /* Shimmer animation for loading states */
 @keyframes shimmer {
@@ -163,6 +183,8 @@ html[data-transitioning] * {
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in,
+  .animate-scale-in,
+  .animate-overlay-in,
   .animate-pour-shimmer,
   .animate-shimmer,
   .animate-fade-slide-out,

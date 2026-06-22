@@ -41,6 +41,23 @@ const config: Config = {
           active: "hsl(var(--sidebar-active))",
           hover: "hsl(var(--sidebar-hover))",
         },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
+      },
+      boxShadow: {
+        card: "0 1px 2px -1px rgb(15 23 42 / 0.06), 0 3px 8px -2px rgb(15 23 42 / 0.08)",
+        "card-hover": "0 6px 16px -4px rgb(15 23 42 / 0.12), 0 12px 28px -6px rgb(15 23 42 / 0.10)",
+        elevated: "0 12px 32px -8px rgb(15 23 42 / 0.20), 0 4px 10px -3px rgb(15 23 42 / 0.10)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -51,6 +68,11 @@ const config: Config = {
         sans: ["Inter", "Avenir Next", "Trebuchet MS", "Segoe UI", "sans-serif"],
         mono: ["JetBrains Mono", "Fira Code", "Cascadia Code", "ui-monospace", "monospace"],
       },
+      transitionTimingFunction: {
+        smooth: "cubic-bezier(0.4, 0, 0.2, 1)",
+        spring: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "out-expo": "cubic-bezier(0.16, 1, 0.3, 1)",
+      },
       keyframes: {
         "fade-in": {
           from: { opacity: "0", transform: "translateY(6px)" },
@@ -59,10 +81,20 @@ const config: Config = {
         shimmer: {
           "100%": { transform: "translateX(100%)" },
         },
+        "scale-in": {
+          from: { opacity: "0", transform: "scale(0.96)" },
+          to: { opacity: "1", transform: "scale(1)" },
+        },
+        "overlay-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
       },
       animation: {
         "fade-in": "fade-in 250ms ease-out",
         shimmer: "shimmer 2s infinite",
+        "scale-in": "scale-in 180ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "overlay-in": "overlay-in 180ms ease-out",
       },
     },
   },

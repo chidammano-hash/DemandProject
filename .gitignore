@@ -63,3 +63,6 @@ _to_remove/
 
 # TypeScript incremental compile cache (regenerable on every build)
 *.tsbuildinfo
+
+# Playwright MCP transient output (console logs + debug screenshots)
+.playwright-mcp/

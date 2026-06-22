@@ -258,21 +258,28 @@ describe("KpiCard", () => {
     expect(valueEl?.className).toContain("font-bold");
   });
 
-  it("applies severity border-l for size='lg'", () => {
+  it("renders inset accent span with kpi-best bg for size='lg' severity='best'", () => {
     const { container } = render(
       <KpiCard label="Hero" value="99%" size="lg" severity="best" />
     );
+    // Root must NOT carry the old heavy border classes
     const root = container.firstChild as HTMLElement;
-    expect(root.className).toContain("border-l-4");
-    expect(root.className).toContain("border-l-[var(--kpi-best)]");
+    expect(root.className).not.toContain("border-l-4");
+    // The inset accent span must be present with the correct token bg class
+    const accentSpan = container.querySelector("span[aria-hidden='true']");
+    expect(accentSpan).not.toBeNull();
+    expect(accentSpan!.className).toContain("bg-[var(--kpi-best)]");
+    expect(accentSpan!.className).toContain("rounded-r-full");
   });
 
-  it("does not apply severity border-l for size='md'", () => {
+  it("does not render accent span for size='md' even with severity", () => {
     const { container } = render(
       <KpiCard label="Normal" value="99%" size="md" severity="best" />
     );
     const root = container.firstChild as HTMLElement;
     expect(root.className).not.toContain("border-l-4");
+    const accentSpan = container.querySelector("span[aria-hidden='true']");
+    expect(accentSpan).toBeNull();
   });
 
   it("does not render sparkline for size='sm' even with data", () => {

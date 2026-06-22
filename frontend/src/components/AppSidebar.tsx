@@ -151,7 +151,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                   <div className="my-2 px-2">
                     <div className="border-t border-border/40" />
                     {!collapsed && (
-                      <span className="mt-2 block text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/50">
+                      <span className="mt-2 block text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/60">
                         {SECTION_LABELS[item.section]}
                       </span>
                     )}
@@ -162,7 +162,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                   aria-current={isActive ? "page" : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    "group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-150",
+                    "group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-all duration-150 ease-smooth",
                     collapsed && "justify-center px-0",
                     isActive
                       ? "bg-sidebar-active/15 font-medium text-sidebar-active"
@@ -171,7 +171,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                 >
                   {/* Active indicator bar */}
                   {isActive && (
-                    <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-active" />
+                    <span className="absolute left-0 top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-active" />
                   )}
                   <Icon
                     className={cn("h-[18px] w-[18px] flex-shrink-0", isActive ? "text-sidebar-active" : "")}

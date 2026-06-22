@@ -72,7 +72,7 @@ export function EmptyState({
       role={variant === "error" ? "alert" : "status"}
       aria-live={variant === "error" ? "assertive" : "polite"}
       className={cn(
-        "flex flex-col items-center justify-center rounded-xl border px-8 py-12 text-center",
+        "flex flex-col items-center justify-center rounded-xl border px-8 py-12 text-center animate-fade-in",
         VARIANT_CLASSES[variant],
         className,
       )}
@@ -105,7 +105,7 @@ export function EmptyState({
       )}
 
       {variant === "no-data" && steps && steps.length > 0 && (
-        <div className="w-full max-w-sm rounded-lg border bg-card p-4 text-left">
+        <div className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-card text-left">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             How to populate
           </p>

@@ -47,11 +47,10 @@ const SIZE_CONFIG = {
   },
 } as const;
 
-const SEVERITY_BORDER = {
-  best: "border-l-4 border-l-[var(--kpi-best)]",
-  warning: "border-l-4 border-l-[var(--kpi-warning)]",
-  neutral: "",
-} as const;
+const SEVERITY_ACCENT_BG: Record<"best" | "warning", string> = {
+  best: "bg-[var(--kpi-best)]",
+  warning: "bg-[var(--kpi-warning)]",
+};
 
 function Sparkline({ data }: { data: number[] }) {
   if (data.length < 2) return null;
@@ -111,10 +110,19 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
     ? trend.direction === "up" ? TrendingUp : trend.direction === "down" ? TrendingDown : Minus
     : null;
 
-  const severityBorder = size === "lg" && severity ? SEVERITY_BORDER[severity] : "";
+  const showAccent = size === "lg" && (severity === "best" || severity === "warning");
 
   return (
-    <div className={cn("rounded-lg border border-border/60 bg-card shadow-sm hover:shadow-md transition-shadow duration-200", cfg.wrapper, severityBorder, borderClass, className)}>
+    <div className={cn("relative overflow-hidden rounded-xl border border-border/60 bg-card shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200", cfg.wrapper, showAccent && "pl-4", borderClass, className)}>
+      {showAccent && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute left-0 top-1/2 h-[55%] w-1 -translate-y-1/2 rounded-r-full",
+            SEVERITY_ACCENT_BG[severity as "best" | "warning"],
+          )}
+        />
+      )}
       <div className="flex items-center gap-1.5">
         {Icon && <Icon className={cn(cfg.icon, "text-muted-foreground")} strokeWidth={1.5} />}
         <p className="text-xs text-muted-foreground">

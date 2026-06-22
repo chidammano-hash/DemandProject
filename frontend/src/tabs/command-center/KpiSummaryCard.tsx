@@ -24,14 +24,9 @@ export function KpiSummaryCard({
   progress?: number;
   caption?: string;
 }) {
-  const borderColor =
-    color === "green"
-      ? "border-l-green-500"
-      : color === "amber"
-        ? "border-l-amber-500"
-        : color === "red"
-          ? "border-l-red-500"
-          : "border-l-border";
+  // Left-border accent removed — semantic color is expressed via the icon chip
+  // and value text. Kept as a no-op binding so callers that set `color` continue
+  // to work without any prop changes.
 
   const textColor =
     color === "green"
@@ -62,18 +57,15 @@ export function KpiSummaryCard({
 
   return (
     <div
-      className={cn(
-        "rounded-lg border border-l-4 bg-card p-4 shadow-sm transition-shadow hover:shadow-md",
-        borderColor
-      )}
+      className="rounded-xl border border-border/70 bg-card p-4 shadow-card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5"
     >
       <div className="flex items-center gap-2 mb-2">
-        <div className={cn("rounded-md p-1.5", iconBg)}>
+        <div className={cn("rounded-lg p-2", iconBg)}>
           <Icon className={cn("h-3.5 w-3.5", textColor || "text-muted-foreground")} />
         </div>
         <p className="text-xs font-medium text-muted-foreground">{label}</p>
       </div>
-      <p className={cn("text-2xl font-bold tracking-tight", textColor)}>{value}</p>
+      <p className={cn("text-2xl font-bold tabular-nums tracking-tight", textColor)}>{value}</p>
       {badge && (
         <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-red-600 dark:text-red-400">
           <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
