@@ -135,7 +135,15 @@ def main() -> None:
                         help=f"Cluster labels CSV (default: {DEFAULT_LABELS_CSV})")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview the update count without writing")
+    parser.add_argument("--skip-if-missing", action="store_true",
+                        help="Exit 0 (no-op) if the labels CSV is absent — used when "
+                             "chained into load-all before any clustering scenario exists")
     args = parser.parse_args()
+
+    if args.skip_if_missing and not args.csv.exists():
+        logger.info("Cluster labels CSV absent (%s) — skipping restore (no clusters promoted yet)",
+                    args.csv)
+        return
 
     df = load_assignments(args.csv)
     logger.info("Loaded %s assignments from %s (%d distinct labels)",

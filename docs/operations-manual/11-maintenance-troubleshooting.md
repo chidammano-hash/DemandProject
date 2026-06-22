@@ -429,17 +429,36 @@ fresh-all
 
 ### SKU-dimension reload & downstream staleness
 
-A **full reload of the `sku` dataset truncates `dim_sku`**, which blanks the
-`ml_cluster` column. This happens on `make db-truncate-data` (part of `fresh-all`)
-**and** on a standalone `make load-all` / `make load-dfu` — not only on the explicit
-wipe. (Incremental `make pipeline-refresh` upserts by key and preserves `ml_cluster`.)
+A **full reload of the `sku` dataset truncates `dim_sku` and re-INSERTs from
+`dfu.txt`**, which carries **no** ML-computed `ml_cluster` label. Two safeguards
+now keep `ml_cluster` from being silently wiped (loop-4):
+
+1. **The loader preserves the label across its own TRUNCATE.** The `sku`-domain
+   branch of `scripts/etl/load_dataset_postgres.py` snapshots the existing
+   `(sku_ck, ml_cluster)` into a temp table *before* TRUNCATE and re-merges it onto
+   the freshly loaded rows *after* INSERT — matched on the full `sku_ck` grain
+   `(item_id, customer_group, loc)`, filling only rows the feed left NULL. So a
+   reload of a database that already has labels keeps them. (Guarded to the `sku`
+   domain; other domains are unaffected. `make pipeline-refresh` is covered too —
+   its refresh path calls the same `load_domain`.)
+2. **`make load-all` re-applies promoted labels after the sku load.** Immediately
+   after `--dataset sku`, `load-all` runs
+   `scripts/ml/restore_cluster_assignments.py --skip-if-missing`, which re-applies
+   `data/clustering/cluster_labels.csv` onto `dim_sku.ml_cluster`. This is the
+   recovery path for the case the in-DB snapshot is empty — e.g. the **first** load
+   after a clustering scenario was promoted, or a load into a freshly truncated DB.
+   It is **idempotent** (a no-op when labels already match) and `--skip-if-missing`
+   exits cleanly on a fresh DB before any clustering scenario exists.
 
 - **Full pipelines self-heal.** `fresh-all` / `fresh-features` re-run `cluster-all`
   + `features-compute` right after the load, so `ml_cluster` is repopulated before
-  anything reads it.
-- **Partial loads do not.** Running `load-all` / `load-dfu` on its own (or
-  `db-truncate-data` then loading) without re-running clustering leaves `ml_cluster`
-  NULL. Per-cluster tree models then train on zero clusters and score ~0% accuracy.
+  anything reads it (and `fresh-load` inherits the restore step via `load-all`).
+- **Manual recovery.** If `ml_cluster` is somehow NULL after a load (e.g. a labels
+  CSV that lagged behind the data), run
+  `uv run python scripts/ml/restore_cluster_assignments.py` (add `--dry-run` to
+  preview) to re-apply the promoted labels without re-fitting clustering, or
+  `make cluster-all` to re-run + re-promote. Per-cluster tree models trained against
+  a fully-NULL `ml_cluster` collapse to the global/fallback model and score ~0%.
 
 This is surfaced **non-blockingly**: `GET /dashboard/pipeline-readiness` derives the
 condition live and flags it **only on a total loss of clustering** — i.e. when *no*

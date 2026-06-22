@@ -7,6 +7,7 @@ contract; the DB UPDATE is exercised via the live pipeline.
 """
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pandas as pd
@@ -16,7 +17,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.ml.restore_cluster_assignments import load_assignments  # noqa: E402
+from scripts.ml.restore_cluster_assignments import (  # noqa: E402
+    load_assignments,
+    restore_ml_cluster,
+)
 
 
 def _write_csv(tmp_path: Path, rows: list[dict]) -> Path:
@@ -62,3 +66,149 @@ def test_load_assignments_drops_null_rows(tmp_path):
     df = load_assignments(csv)
     assert len(df) == 1
     assert df.iloc[0]["sku_ck"] == "84587_ALL_1401-BULK"
+
+
+# ---------------------------------------------------------------------------
+# restore_ml_cluster — DB UPDATE contract (re-apply + idempotency + grain)
+# ---------------------------------------------------------------------------
+# A small in-memory fake stands in for psycopg: dim_sku is a {sku_ck: ml_cluster}
+# map and the function's COPY + IS-DISTINCT-FROM UPDATE are emulated so the
+# re-apply / idempotency / full-grain-join behaviour is pinned without a live DB.
+
+
+class _FakeCursor:
+    """Emulates the exact SQL restore_ml_cluster issues against a dim_sku map."""
+
+    def __init__(self, dim_sku: dict[str, str | None]):
+        self.dim_sku = dim_sku          # sku_ck -> ml_cluster (full-grain key)
+        self._updates: dict[str, str] = {}  # staged sku_ck -> cluster_label
+        self._last_count = 0
+        self.commits = 0
+        self.rollbacks = 0
+        self.rowcount = 0
+
+    def execute(self, sql, params=None):
+        s = " ".join(sql.split())
+        if "CREATE TEMP TABLE _cluster_updates" in s:
+            self._updates = {}
+        elif s.startswith("SELECT COUNT(*)") and "_cluster_updates" in s:
+            # rows that match on the full sku_ck grain AND would change
+            self._last_count = sum(
+                1 for ck, lbl in self._updates.items()
+                if ck in self.dim_sku and self.dim_sku[ck] != lbl
+            )
+        elif s.startswith("UPDATE dim_sku"):
+            changed = 0
+            for ck, lbl in self._updates.items():
+                # full-grain match: join is on d.sku_ck = u.sku_ck (no fan-out)
+                if ck in self.dim_sku and self.dim_sku[ck] != lbl:
+                    self.dim_sku[ck] = lbl
+                    changed += 1
+            self.rowcount = changed
+        else:  # pragma: no cover — unexpected SQL fails loud
+            raise AssertionError(f"unexpected SQL: {s}")
+
+    def fetchone(self):
+        return (self._last_count,)
+
+    @contextmanager
+    def copy(self, _sql):
+        yield self  # COPY ctx: write_row stages into _updates
+
+    def write_row(self, row):
+        sku_ck, cluster_label = row
+        self._updates[sku_ck] = cluster_label
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeConn:
+    def __init__(self, dim_sku):
+        self._cur = _FakeCursor(dim_sku)
+
+    def cursor(self):
+        return self._cur
+
+    def commit(self):
+        self._cur.commits += 1
+
+    def rollback(self):
+        self._cur.rollbacks += 1
+
+
+def _df(rows):
+    return pd.DataFrame(rows)
+
+
+def test_restore_reapplies_labels_to_null_rows():
+    """Every sku_ck in the source gets its label written onto a NULL dim_sku row."""
+    dim_sku = {
+        "84587_ALL_1401-BULK": None,
+        "11286_ALL_1401-BULK": None,
+        "99999_ALL_9999-BULK": None,  # not in source -> untouched
+    }
+    conn = _FakeConn(dim_sku)
+    df = _df([
+        {"sku_ck": "84587_ALL_1401-BULK", "cluster_label": "very_high_volume_periodic"},
+        {"sku_ck": "11286_ALL_1401-BULK", "cluster_label": "high_volume_periodic"},
+    ])
+
+    updated = restore_ml_cluster(df, conn)
+
+    assert updated == 2
+    assert dim_sku["84587_ALL_1401-BULK"] == "very_high_volume_periodic"
+    assert dim_sku["11286_ALL_1401-BULK"] == "high_volume_periodic"
+    assert dim_sku["99999_ALL_9999-BULK"] is None  # absent from source -> NULL
+    assert conn._cur.commits == 1
+
+
+def test_restore_is_idempotent_second_run_noop():
+    """Re-running with labels already present updates zero rows (idempotent)."""
+    dim_sku = {"84587_ALL_1401-BULK": None}
+    df = _df([{"sku_ck": "84587_ALL_1401-BULK", "cluster_label": "very_high_volume_periodic"}])
+
+    conn1 = _FakeConn(dim_sku)
+    assert restore_ml_cluster(df, conn1) == 1
+
+    conn2 = _FakeConn(dim_sku)  # labels now present
+    assert restore_ml_cluster(df, conn2) == 0
+    assert dim_sku["84587_ALL_1401-BULK"] == "very_high_volume_periodic"
+
+
+def test_restore_dry_run_does_not_write():
+    """--dry-run counts the would-be changes but rolls back without mutating."""
+    dim_sku = {"84587_ALL_1401-BULK": None}
+    conn = _FakeConn(dim_sku)
+    df = _df([{"sku_ck": "84587_ALL_1401-BULK", "cluster_label": "very_high_volume_periodic"}])
+
+    would_change = restore_ml_cluster(df, conn, dry_run=True)
+
+    assert would_change == 1
+    assert dim_sku["84587_ALL_1401-BULK"] is None  # unchanged
+    assert conn._cur.rollbacks == 1
+    assert conn._cur.commits == 0
+
+
+def test_restore_matches_full_sku_ck_grain_no_fanout():
+    """Two SKUs sharing (item_id, loc) but differing in customer_group are
+    distinct sku_ck keys — each gets exactly its own label (no fan-out)."""
+    # Same item_id (84587) + loc (1401-BULK), different customer_group (ALL vs ON)
+    dim_sku = {
+        "84587_ALL_1401-BULK": None,
+        "84587_ON_1401-BULK": None,
+    }
+    conn = _FakeConn(dim_sku)
+    df = _df([
+        {"sku_ck": "84587_ALL_1401-BULK", "cluster_label": "high_volume_periodic"},
+        {"sku_ck": "84587_ON_1401-BULK", "cluster_label": "low_volume_intermittent"},
+    ])
+
+    updated = restore_ml_cluster(df, conn)
+
+    assert updated == 2  # each grain row touched once, not fanned out
+    assert dim_sku["84587_ALL_1401-BULK"] == "high_volume_periodic"
+    assert dim_sku["84587_ON_1401-BULK"] == "low_volume_intermittent"

@@ -229,8 +229,8 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  backtest-bolt-full   - run Chronos Bolt backtest + load predictions"
 	@echo "  backtest-chronos2    - run Chronos 2 foundation model backtest"
 	@echo "  backtest-chronos2-full - run Chronos 2 backtest + load predictions"
-	@echo "  backtest-all         - run all six backtests sequentially"
-	@echo "  backtest-all-parallel- run all six backtests in parallel (logs in data/backtest/logs/)"
+	@echo "  backtest-all         - run all clean-rebuild backtests sequentially (cluster + cust-enriched trees + foundation)"
+	@echo "  backtest-all-parallel- run all clean-rebuild backtests in parallel (logs in data/backtest/logs/)"
 	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
 	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after backtest-all)"
 	@echo "  backtest-load-all-bulk - load ALL models with single index cycle (~4x faster)"
@@ -473,6 +473,12 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset customer
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset time
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sku
+	# dfu.txt carries no ML cluster label. The loader preserves ml_cluster across its
+	# own TRUNCATE, but on a first load after a clustering promote the in-DB snapshot is
+	# empty — re-apply the promoted labels from data/clustering/cluster_labels.csv so
+	# per-cluster tree models route correctly. Idempotent; --skip-if-missing no-ops
+	# cleanly on a fresh DB before any clustering scenario is promoted (loop-4).
+	$(UV) python scripts/ml/restore_cluster_assignments.py --skip-if-missing
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sales
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset forecast
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset inventory
@@ -804,18 +810,30 @@ backtest-nbeats-full: backtest-nbeats backtest-load-nbeats
 
 backtest-baselines: backtest-seasonal-naive backtest-rolling-mean
 
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos backtest-bolt backtest-chronos2 backtest-chronos2e  ## Run all backtests sequentially (tree + foundation models)
+# backtest-all produces every compete:true model that runs on a clean rebuild:
+#   lgbm_cluster, catboost_cluster, xgboost_cluster (cluster trees),
+#   lgbm/catboost/xgboost_cust_enriched (customer-enriched trees),
+#   chronos_bolt, chronos2, chronos2_enriched (foundation), + chronos (compete:false ref).
+# Cheap/operator-gated baselines (mstl, nbeats, nhits, rolling_mean, rolling_median,
+# seasonal_naive, bolt_hierarchical) are run on demand via their own targets.
+# run_champion_selection.assert_competing_models_covered() fails loud if any
+# compete:true model is missing from fact_external_forecast_monthly after load.
+backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-cust-enriched-all backtest-chronos backtest-bolt backtest-chronos2 backtest-chronos2e  ## Run all clean-rebuild backtests sequentially (cluster + cust-enriched trees + foundation)
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
-	@echo "[parallel] Starting LGBM, CatBoost, XGBoost, Chronos, Bolt, Chronos2 concurrently — logs in data/backtest/logs/"
+	@echo "[parallel] Starting cluster trees, cust-enriched trees, Chronos, Bolt, Chronos2, Chronos2-enriched concurrently — logs in data/backtest/logs/"
 	$(UV) python scripts/ml/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
 	$(UV) python scripts/ml/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
 	$(UV) python scripts/ml/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest.py --model lgbm --model-id lgbm_cust_enriched $(ARGS) > data/backtest/logs/lgbm_cust_enriched.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest.py --model catboost --model-id catboost_cust_enriched $(ARGS) > data/backtest/logs/catboost_cust_enriched.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest.py --model xgboost --model-id xgboost_cust_enriched $(ARGS) > data/backtest/logs/xgboost_cust_enriched.log 2>&1 & \
 	$(UV) python -m scripts.ml.run_backtest_chronos > data/backtest/logs/chronos.log 2>&1 & \
 	$(UV) python -m scripts.ml.run_backtest_chronos_bolt > data/backtest/logs/chronos_bolt.log 2>&1 & \
 	$(UV) python -m scripts.ml.run_backtest_chronos2 > data/backtest/logs/chronos2.log 2>&1 & \
-	wait && echo "[parallel] All six backtests complete. Check data/backtest/logs/ for output."
+	$(UV) python -m scripts.ml.run_backtest_chronos2_enriched > data/backtest/logs/chronos2_enriched.log 2>&1 & \
+	wait && echo "[parallel] All clean-rebuild backtests complete (3 cluster + 3 cust-enriched trees, chronos/bolt/chronos2/chronos2e). Check data/backtest/logs/ for output."
 
 backtest-load:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --model $(MODEL) --replace

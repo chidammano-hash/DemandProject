@@ -17,6 +17,7 @@ Usage:
 import argparse
 import io
 import json
+import logging
 import sys
 import time
 import warnings
@@ -30,6 +31,8 @@ import yaml
 from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -141,6 +144,60 @@ def load_config(config_path: Path) -> dict[str, Any]:
             f"must be one of {sorted(STRATEGY_REGISTRY.keys())}"
         )
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Pre-champion roster-coverage guard
+# ---------------------------------------------------------------------------
+
+def assert_competing_models_covered(
+    cur: psycopg.Cursor,
+    models: list[str],
+) -> None:
+    """Fail loud if any competing model has no rows in fact_external_forecast_monthly.
+
+    The champion competition can only select among models that were actually
+    backtested AND loaded into ``fact_external_forecast_monthly``. If a
+    ``compete: true`` model (per ``get_competing_model_ids()``) was never produced
+    by ``backtest-all`` / ``backtest-load-all`` — e.g. the cust_enriched trees
+    before they were chained in — it silently has zero candidate rows and drops
+    out of the competition. Picking the champion from a partial field is a quiet
+    data-coverage defect, so we assert full coverage up front and raise on the gap
+    rather than ship a champion chosen from an incomplete roster.
+
+    Raises:
+        RuntimeError: if one or more competing models have zero candidate rows.
+    """
+    if not models:
+        return
+
+    placeholders = ",".join(["%s"] * len(models))
+    sql = f"""
+        SELECT model_id, COUNT(*) AS n
+        FROM fact_external_forecast_monthly
+        WHERE model_id IN ({placeholders})
+        GROUP BY model_id
+    """
+    cur.execute(sql, list(models))
+    counts = {model_id: int(n) for model_id, n in cur.fetchall()}
+
+    missing = sorted(m for m in models if counts.get(m, 0) == 0)
+    if missing:
+        logger.error(
+            "Champion roster coverage gap: %d competing model(s) have zero rows in "
+            "fact_external_forecast_monthly: %s. These were never backtested+loaded, "
+            "so the champion would be selected from a partial field. Run their "
+            "backtest+load targets (see Makefile backtest-all / backtest-load-all) "
+            "before champion selection.",
+            len(missing),
+            ", ".join(missing),
+        )
+        raise RuntimeError(
+            "Competing models missing from fact_external_forecast_monthly "
+            f"(zero candidate rows): {', '.join(missing)}. "
+            "Champion selection requires every compete:true model to be "
+            "backtested and loaded first."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +937,18 @@ def main() -> None:
     print(f"  Models: {', '.join(models)}")
     print(f"  Champion model_id: '{champion_id}'")
     print()
+
+    # Step 0: Roster-coverage guard. Every compete:true model must have candidate
+    # rows in fact_external_forecast_monthly or the competition runs on a partial
+    # field (the durable guard against backtest-all / config roster drift). Skip
+    # when loading pre-computed experiment winners — that path doesn't query the
+    # live candidate set, and the experiment may intentionally use a subset.
+    if not args.load_winners_from:
+        print("Verifying competing-model coverage in fact_external_forecast_monthly...")
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            assert_competing_models_covered(cur, models)
+        print(f"  All {len(models)} competing models present.")
+        print()
 
     # Step 1: Load cached winners or run strategy to compute them
     t0 = time.time()

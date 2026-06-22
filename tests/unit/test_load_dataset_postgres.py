@@ -10,6 +10,8 @@ from scripts.etl.load_dataset_postgres import (
     _ensure_partition_exists,
     _is_partitioned,
     _resolve_forecast_execution_lag,
+    _restore_ml_cluster_from_snapshot,
+    _snapshot_ml_cluster,
     load_domain,
 )
 
@@ -170,3 +172,48 @@ class TestLoadDomain:
 
         assert result["skipped"] is True
         mock_pg.connect.assert_not_called()
+
+
+# ---------- TestMlClusterPreservation (loop-4) ----------
+# dfu.txt carries no ML cluster label, so the dim_sku reload TRUNCATEs +
+# re-INSERTs with ml_cluster = NULL. The loader snapshots the existing labels
+# before TRUNCATE and re-merges them after INSERT so the wipe never happens.
+
+class TestMlClusterPreservation:
+    def test_snapshot_creates_temp_table_of_non_null_labels(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (1234,)
+
+        preserved = _snapshot_ml_cluster(cur)
+
+        assert preserved == 1234
+        sqls = [c[0][0] for c in cur.execute.call_args_list]
+        # snapshot table created ON COMMIT DROP, only non-null labels captured
+        assert any("CREATE TEMP TABLE" in s and "ON COMMIT DROP" in s for s in sqls)
+        snap_sql = next(s for s in sqls if "CREATE TEMP TABLE" in s)
+        assert "ml_cluster IS NOT NULL" in snap_sql
+
+    def test_restore_from_snapshot_fills_only_null_rows_on_full_grain(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (1,)  # snapshot table exists
+        cur.rowcount = 1234
+
+        restored = _restore_ml_cluster_from_snapshot(cur)
+
+        assert restored == 1234
+        update_sql = next(
+            c[0][0] for c in cur.execute.call_args_list if "UPDATE dim_sku" in c[0][0]
+        )
+        # full sku_ck grain join (no fan-out) + only fill NULLs left by the feed
+        assert "d.sku_ck = s.sku_ck" in update_sql
+        assert "d.ml_cluster IS NULL" in update_sql
+
+    def test_restore_from_snapshot_noop_when_snapshot_absent(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = None  # snapshot temp table not present
+
+        restored = _restore_ml_cluster_from_snapshot(cur)
+
+        assert restored == 0
+        # existence check ran, but no UPDATE was issued
+        assert not any("UPDATE dim_sku" in c[0][0] for c in cur.execute.call_args_list)
