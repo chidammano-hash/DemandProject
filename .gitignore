@@ -66,3 +66,6 @@ _to_remove/
 
 # Playwright MCP transient output (console logs + debug screenshots)
 .playwright-mcp/
+
+# Agent-pod issue tracker (transient orchestration output)
+tmp/

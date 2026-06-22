@@ -5,12 +5,96 @@ into common/core/etl_helpers.py (covered by tests/unit/test_etl_helpers.py).
 What remains here are the loader's own column/table constants.
 """
 
+import logging
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl import load_backtest_forecasts as bt
+
+
+def _make_backtest_dir(tmp_path, model_dirs, *, with_predictions=True):
+    """Create a fake data/backtest/ tree with <model>/backtest_predictions.csv files."""
+    backtest_dir = tmp_path / "backtest"
+    backtest_dir.mkdir()
+    for name in model_dirs:
+        d = backtest_dir / name
+        d.mkdir()
+        if with_predictions:
+            (d / "backtest_predictions.csv").write_text(
+                "forecast_ck,model_id\n1,placeholder\n", encoding="utf-8"
+            )
+    return backtest_dir
+
+
+class TestResolveInputFilesAll:
+    """The --all branch must derive its include set from the config roster
+    (forecastable union competing), not a hardcoded 4-name allowlist. Regression
+    guard for the 'data for algorithms not copied to champion' bug where 11 of
+    15 backtested model dirs were silently skipped.
+    """
+
+    def test_resolve_all_loads_every_roster_dir_with_predictions(self, tmp_path, monkeypatch):
+        roster = {"lgbm_cluster", "catboost_cluster", "xgboost_cluster", "mstl", "seasonal_naive"}
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(roster))
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(roster))
+
+        backtest_dir = _make_backtest_dir(tmp_path, roster)
+
+        resolved = bt._resolve_input_files(None, None, True, backtest_dir, None)
+        resolved_models = {p.parent.name for p in resolved}
+
+        # NOT just the old 4 — mstl and seasonal_naive must now be included.
+        assert resolved_models == roster
+
+    def test_resolve_all_excludes_auxiliary_dirs(self, tmp_path, monkeypatch):
+        roster = {"lgbm_cluster", "catboost_cluster"}
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(roster))
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(roster))
+
+        backtest_dir = _make_backtest_dir(
+            tmp_path,
+            {"lgbm_cluster", "logs", "tuning_archive", "lgbm_cluster_baseline_20260322"},
+        )
+
+        resolved = bt._resolve_input_files(None, None, True, backtest_dir, None)
+        resolved_models = {p.parent.name for p in resolved}
+
+        assert resolved_models == {"lgbm_cluster"}
+        assert "logs" not in resolved_models
+        assert "tuning_archive" not in resolved_models
+        assert "lgbm_cluster_baseline_20260322" not in resolved_models
+
+    def test_resolve_all_warns_on_skipped_dir(self, tmp_path, monkeypatch, caplog):
+        roster = {"lgbm_cluster"}
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(roster))
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(roster))
+
+        # 'mystery_model' is not in the roster and not an aux dir → must warn.
+        backtest_dir = _make_backtest_dir(tmp_path, {"lgbm_cluster", "mystery_model"})
+
+        with caplog.at_level(logging.WARNING, logger=bt.logger.name):
+            resolved = bt._resolve_input_files(None, None, True, backtest_dir, None)
+
+        resolved_models = {p.parent.name for p in resolved}
+        assert resolved_models == {"lgbm_cluster"}
+        warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("mystery_model" in msg for msg in warnings)
+
+    def test_resolve_all_includes_chronos(self, tmp_path, monkeypatch):
+        # Regression for the inverted allowlist: chronos is forecastable but
+        # NOT competing, so the union must still keep it loadable.
+        forecastable = {"lgbm_cluster", "chronos"}
+        competing = {"lgbm_cluster"}  # chronos intentionally absent here
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(forecastable))
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(competing))
+
+        backtest_dir = _make_backtest_dir(tmp_path, {"lgbm_cluster", "chronos"})
+
+        resolved = bt._resolve_input_files(None, None, True, backtest_dir, None)
+        resolved_models = {p.parent.name for p in resolved}
+        assert "chronos" in resolved_models
 
 
 class TestArchiveStreaming:

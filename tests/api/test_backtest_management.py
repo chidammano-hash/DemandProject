@@ -506,6 +506,166 @@ async def test_promote_gate_disabled_skips_checks():
 
 
 # ---------------------------------------------------------------------------
+# 6b. POST /backtest-management/champion/promote — rowcount capture ordering
+#     Regression: cur.rowcount must be captured from the INSERT, not from the
+#     coverage SELECT COUNT(*) queries that run after it. Previously the late
+#     read recorded total_rows=1 against a 6-figure production table.
+# ---------------------------------------------------------------------------
+
+
+def _rowcount_by_sql(cursor, insert_n: int):
+    """Build an execute side-effect that drives ``cursor.rowcount`` from the SQL.
+
+    Mirrors real psycopg behaviour: each executed statement overwrites
+    ``cur.rowcount``. The INSERT into fact_production_forecast yields
+    ``insert_n`` affected rows; every subsequent SELECT COUNT(*) coverage query
+    yields 1. A constant mock rowcount cannot catch the capture-ordering bug —
+    this SQL-keyed sequence can.
+    """
+    def _side_effect(sql, params=None):
+        normalized = " ".join(sql.split()).upper()
+        if normalized.startswith("INSERT INTO FACT_PRODUCTION_FORECAST"):
+            cursor.rowcount = insert_n
+        elif normalized.startswith("SELECT COUNT"):
+            cursor.rowcount = 1
+        # Other statements (CREATE TEMP, UPDATE, DELETE, log INSERT, lineage)
+        # leave rowcount as last set — matching psycopg's running behaviour.
+        return None
+
+    return _side_effect
+
+
+@pytest.mark.asyncio
+async def test_promote_champion_captures_insert_rowcount_not_coverage_count(tmp_path):
+    """Champion promote must report the INSERT's row count, not the SELECT's.
+
+    Drives ``cursor.rowcount`` from a SQL-keyed sequence (INSERT -> N, the
+    coverage SELECT COUNT(*) queries -> 1). Fails on the pre-fix code (which
+    read rowcount after the SELECTs, recording 1) and passes after the fix.
+    """
+    insert_n = 295200
+    pool, conn, cursor = _make_pool()
+
+    exec_side_effect = _rowcount_by_sql(cursor, insert_n)
+    recorded: list[tuple] = []
+
+    def _capturing_execute(sql, params=None):
+        recorded.append((sql, params))
+        return exec_side_effect(sql, params)
+
+    cursor.execute.side_effect = _capturing_execute
+
+    # Champion branch bulk-loads assignments via cur.copy(...) -> context mgr.
+    copy_cm = MagicMock()
+    copy_cm.__enter__ = MagicMock(return_value=copy_cm)
+    copy_cm.__exit__ = MagicMock(return_value=False)
+    cursor.copy.return_value = copy_cm
+
+    # fetchone sequence for the champion path (gate is bypassed for champion):
+    #  1) COUNT staging               -> non-zero so promote proceeds
+    #  2) SELECT promoted experiment  -> experiment_id row
+    #  3) COUNT _dfu_champion         -> expected_dfus
+    #  4) NOT EXISTS unmatched count  -> 0 (full coverage)
+    #  5) COUNT DISTINCT DFUs         -> dfu_count
+    #  6) lineage emit RETURNING id
+    cursor.fetchone.side_effect = [
+        (insert_n,),   # staging COUNT
+        (53,),         # promoted champion experiment_id
+        (12300,),      # expected_dfus
+        (0,),          # unmatched_dfus
+        (12300,),      # dfu_count
+        (99,),         # lineage emit returning id
+    ]
+
+    # Winners CSV is the source of truth for DFU->model routing; the endpoint
+    # reads it from _PROJECT_ROOT/data/champion/experiment_<id>_winners.csv.
+    champion_dir = tmp_path / "data" / "champion"
+    champion_dir.mkdir(parents=True)
+    winners = champion_dir / "experiment_53_winners.csv"
+    winners.write_text(
+        "item_id,loc,model_id,startdate\n"
+        "ITEM_A,LOC_1,lgbm_cluster,2026-01-01\n"
+        "ITEM_B,LOC_2,mstl,2026-01-01\n"
+    )
+
+    with patch("api.core._get_pool", return_value=pool), \
+         patch(f"{_ROUTER_MOD}._PROJECT_ROOT", tmp_path):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/champion/promote")
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["promotion_type"] == "champion"
+    # The bug: this returned 1 (last SELECT's rowcount) instead of insert_n.
+    assert data["rows_promoted"] == insert_n
+
+    # The model_promotion_log INSERT must persist total_rows == insert_n.
+    log_calls = [
+        params for sql, params in recorded
+        if "INSERT INTO model_promotion_log" in sql and params is not None
+    ]
+    assert len(log_calls) == 1
+    # Param order: (model_id, promotion_type, champion_experiment_id,
+    #               plan_version, dfu_count, total_rows, promoted_by, notes)
+    assert log_calls[0][5] == insert_n
+
+
+@pytest.mark.asyncio
+async def test_promote_single_model_captures_insert_rowcount(tmp_path):
+    """Regression guard: the single-model branch still captures its INSERT count.
+
+    Same SQL-keyed rowcount sequence; the single-model INSERT yields N and the
+    DFU COUNT that follows yields 1. rows_promoted must be N, not 1.
+    """
+    insert_n = 218328
+    pool, conn, cursor = _make_pool()
+
+    exec_side_effect = _rowcount_by_sql(cursor, insert_n)
+    recorded: list[tuple] = []
+
+    def _capturing_execute(sql, params=None):
+        recorded.append((sql, params))
+        return exec_side_effect(sql, params)
+
+    cursor.execute.side_effect = _capturing_execute
+
+    # Gate disabled -> skip wape checks. Single-model path fetchone sequence:
+    #  1) ledger prev_hash (genesis)  2) ledger insert id
+    #  3) staging COUNT  4) DFU COUNT  5) lineage emit returning id
+    cursor.fetchone.side_effect = [
+        (None,),       # ledger prev_hash
+        (1,),          # ledger insert returning id
+        (insert_n,),   # staging COUNT
+        (250,),        # DFU COUNT
+        (99,),         # lineage emit returning id
+    ]
+
+    cfg = {"champion": {"promote_gate": {"enabled": False}}}
+    with patch("api.core._get_pool", return_value=pool), \
+         patch(f"{_ROUTER_MOD}.load_forecast_pipeline_config", return_value=cfg):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/promote")
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["promotion_type"] == "single"
+    assert data["rows_promoted"] == insert_n
+
+    log_calls = [
+        params for sql, params in recorded
+        if "INSERT INTO model_promotion_log" in sql and params is not None
+    ]
+    assert len(log_calls) == 1
+    assert log_calls[0][5] == insert_n
+
+
+# ---------------------------------------------------------------------------
 # 7. POST /backtest-management/{model_id}/generate — horizon + CI threading
 # ---------------------------------------------------------------------------
 

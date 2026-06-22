@@ -31,6 +31,7 @@ from common.core.etl_helpers import (
     recreate_forecast_archive_indexes_and_constraints,
     recreate_forecast_indexes_and_constraints,
 )
+from common.core.utils import get_competing_model_ids, get_forecastable_model_ids  # noqa: E402
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,18 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
     logger.info("Archive load complete.")
 
 
+# Known auxiliary subdirectories under data/backtest/ that are never models and
+# must be excluded from the --all roster scan. `*_baseline_*` dirs hold stale
+# baseline CSVs that would overwrite real backtest data (the original guard).
+_AUX_DIR_NAMES = {"logs", "tuning_archive"}
+
+
+def _is_auxiliary_dir(name: str) -> bool:
+    """True for non-model dirs under data/backtest/ (logs, tuning_archive,
+    *_baseline_* snapshots) that --all must never load."""
+    return name in _AUX_DIR_NAMES or "_baseline_" in name
+
+
 def _resolve_input_files(
     args_input: str | None,
     args_model: str | None,
@@ -223,17 +236,33 @@ def _resolve_input_files(
         return found
 
     if args_all:
-        # Only load from canonical model directories — skip auxiliary dirs
-        # like lgbm_cluster_baseline_20260322, logs, tuning_archive that
-        # contain stale CSVs which would overwrite real backtest data.
-        _CANONICAL_MODEL_DIRS = {"lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"}
-        found = sorted(
-            p for p in backtest_dir.glob("*/backtest_predictions.csv")
-            if p.parent.name in _CANONICAL_MODEL_DIRS
+        # Load every backtested model dir that is in the config roster. The
+        # roster is forecastable union competing: forecastable is the superset
+        # that also keeps loaded-but-non-competing models like `chronos`, while
+        # genuine auxiliary dirs (logs, tuning_archive, *_baseline_* stale CSVs
+        # that would overwrite real backtest data) are excluded. Driving the
+        # include set from config — instead of a hardcoded 4-name allowlist —
+        # ensures a newly-backtested model is never silently dropped.
+        roster = set(get_forecastable_model_ids()) | set(get_competing_model_ids())
+        candidates = sorted(backtest_dir.glob("*/backtest_predictions.csv"))
+        found = [p for p in candidates if p.parent.name in roster]
+
+        # Surface every on-disk backtest dir that we are NOT loading and that is
+        # NOT a known auxiliary dir, so a silent omission is impossible.
+        skipped = sorted(
+            p.parent.name
+            for p in candidates
+            if p.parent.name not in roster and not _is_auxiliary_dir(p.parent.name)
         )
+        if skipped:
+            logger.warning(
+                "Skipping %d backtest dir(s) with predictions but not in roster: %s",
+                len(skipped), skipped,
+            )
+
         if not found:
-            logger.info(f"No backtest_predictions.csv files found under {backtest_dir}/*/")
-            logger.info(f"  (looked in canonical dirs: {sorted(_CANONICAL_MODEL_DIRS)})")
+            logger.info(f"No roster backtest_predictions.csv files found under {backtest_dir}/*/")
+            logger.info(f"  (roster has {len(roster)} model(s): {sorted(roster)})")
             logger.info("  Run a backtest first: make backtest-lgbm-cluster")
             sys.exit(1)
         return found

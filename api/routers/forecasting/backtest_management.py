@@ -1080,6 +1080,10 @@ def promote_model(
                  AND c.loc = s.loc
                  AND c.winning_model_id = s.model_id
             """, (plan_version, CHAMPION_MODEL_ID, run_id_str))
+            # Capture the INSERT's affected-row count NOW: the coverage SELECTs
+            # below overwrite cur.rowcount (each yields 1), so reading it later
+            # would record total_rows=1 against a 6-figure production table.
+            rows_promoted = cur.rowcount
 
             # Coverage check: the inner join above silently drops any champion DFU
             # whose winning model has no staged rows (that model's Generate wasn't
@@ -1117,8 +1121,9 @@ def promote_model(
                 FROM fact_production_forecast_staging
                 WHERE model_id = %s
             """, (plan_version, run_id_str, model_id))
-
-        rows_promoted = cur.rowcount
+            # Capture the INSERT's affected-row count before any later query
+            # (e.g. the DFU count below) overwrites cur.rowcount.
+            rows_promoted = cur.rowcount
 
         # 5. Count DFUs
         cur.execute(
