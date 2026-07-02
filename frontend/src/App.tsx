@@ -12,7 +12,9 @@ import { useTheme } from "@/hooks/useTheme";
 import { useSidebar } from "@/hooks/useSidebar";
 import { useGlobalFilters } from "@/hooks/useGlobalFilters";
 import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import { ActiveSkuProvider } from "@/context/ActiveSkuContext";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { GlobalChatDrawer } from "./tabs/sku-chat/GlobalChatDrawer";
 import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
 import { JobNotificationProvider } from "@/context/JobNotificationContext";
 import {
@@ -37,6 +39,7 @@ const ExplorerTab = lazy(() => import("./tabs/ExplorerTab").then((m) => ({ defau
 // ClustersTab removed from sidebar — still importable if needed via URL
 const ClustersTab = lazy(() => import("./tabs/ClustersTab"));
 const ItemAnalysisTab = lazy(() => import("./tabs/ItemAnalysisTab").then((m) => ({ default: m.ItemAnalysisTab })));
+const SkuChatTab = lazy(() => import("./tabs/SkuChatTab").then((m) => ({ default: m.SkuChatTab })));
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
 const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
@@ -162,6 +165,7 @@ export default function App() {
   return (
     <ThemeProvider value={themeValue}>
       <GlobalFilterProvider value={globalFilters}>
+        <ActiveSkuProvider>
         <ScenarioNotificationProvider>
         <JobNotificationProvider>
         <div className="flex h-screen overflow-hidden">
@@ -298,6 +302,11 @@ export default function App() {
                     <SkuFeaturesTab />
                   </TabPanel>
                 )}
+                {activeTab === "skuChat" && (
+                  <TabPanel tabKey="skuChat" resetKeys={[activeTab]}>
+                    <SkuChatTab />
+                  </TabPanel>
+                )}
                 {activeTab === "integration" && (
                   <TabPanel tabKey="integration" resetKeys={[activeTab]}>
                     <IntegrationTab />
@@ -306,10 +315,12 @@ export default function App() {
               </div>
             </div>
           </div>
+          <GlobalChatDrawer activeTab={activeTab} />
           <Toaster />
         </div>
         </JobNotificationProvider>
         </ScenarioNotificationProvider>
+        </ActiveSkuProvider>
       </GlobalFilterProvider>
     </ThemeProvider>
   );

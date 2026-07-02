@@ -229,9 +229,9 @@ def _base_model_name(model_id: str, algo_type: str) -> str:
 
     Examples:
         ``lgbm_cluster``        -> ``lgbm``
-        ``catboost_cust_enriched`` -> ``catboost``
+        ``catboost_cluster``    -> ``catboost``
         ``xgboost_cluster``     -> ``xgboost``
-        ``chronos2``            -> ``chronos2`` (foundation; returned as-is)
+        ``chronos2_enriched``   -> ``chronos2_enriched`` (foundation; returned as-is)
 
     For foundation / deep_learning / statistical models we just return the
     model_id — they do not use the tree param mapping.
@@ -258,7 +258,7 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
       underlying model weights.  The stub's docstring contains a ``TODO``
       explaining where the real loader should live; call sites for those
       families currently dispatch through their own script-level loaders
-      (e.g. ``run_backtest_chronos.py``).
+      (e.g. ``run_backtest_chronos2_enriched.py``).
 
     For callers that already have a fully-resolved param dict and just need a
     raw tree estimator (e.g. hyperparameter tuning trials), see
@@ -336,7 +336,7 @@ class _FoundationStub:
     """Lightweight stand-in for foundation / DL / statistical algorithms.
 
     TODO: replace with real loaders once we have a common foundation-model
-    wrapper.  For now, scripts like ``run_backtest_chronos.py`` still call
+    wrapper.  For now, scripts like ``run_backtest_chronos2_enriched.py`` still call
     their own loaders directly; ``build_model`` just surfaces the declared
     algorithm so tests and generic orchestration code can introspect it.
     """

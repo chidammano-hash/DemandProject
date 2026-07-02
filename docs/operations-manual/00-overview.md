@@ -16,7 +16,7 @@ End-to-end runbook for populating, operating, and maintaining every module of th
 | 6 | [Production Forecasting](06-production-forecasting.md) | Generate + promote → `fact_production_forecast` populated, served by `/forecast/*` |
 | 7 | [Inventory Planning](07-inventory-planning.md) | Safety stock, EOQ, policies, exceptions, projections, KPIs |
 | 8 | [Operations: S&OP, Control Tower, DQ, Jobs](08-operations-sop-control-tower.md) | S&OP cycle, control tower KPIs, events, storyboard, DQ, scheduler |
-| 9 | [AI / LLM Intelligence](09-ai-intelligence.md) | AI Planner, Chat, embeddings, tuning chat, admin LLM reset |
+| 9 | [AI / LLM Intelligence](09-ai-intelligence.md) | AI Planner, SKU Chatbot (Claude Agent SDK), Market Intel, embeddings, tuning chat, admin LLM reset |
 | 10 | [Frontend, Testing & Maintenance](10-frontend-testing-maintenance.md) | Vite/React dev, type gen, test suites, perf profiling, AI UX loop (`/ux-loop`), deploy |
 | 11 | [Maintenance, Cleanup & Troubleshooting](11-maintenance-troubleshooting.md) | pg-queue, DB maintenance/VACUUM, full wipe-and-reload, data cleanup, read-replica deployment, troubleshooting matrix, phase dependencies |
 

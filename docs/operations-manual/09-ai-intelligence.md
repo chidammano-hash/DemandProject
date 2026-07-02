@@ -430,3 +430,123 @@ The UI sends only the provider *name*; the API key never leaves the server.
 
 To switch the local Ollama model to `qwen2.5:32b` (higher quality, slower), edit
 `models.ollama` in `config/ai/ai_champion_config.yaml`.
+
+---
+
+## 9.12 SKU Chatbot (Claude Agent SDK)
+
+### 9.12.1 What it is
+
+A conversational, **read-only** per-SKU assistant. A planner asks free-form
+questions about one SKU (item + customer group + location) and gets grounded,
+cited answers streamed back. Unlike the AI Planner (proactive, write-capable,
+portfolio-wide) and unlike the OpenAI/Ollama LLM client above, the chatbot runs
+on the **Claude Agent SDK** (`claude-agent-sdk`) — the SDK the Claude Code
+harness exposes.
+
+- Service package: `common/ai/sku_chat/` (`config`, `auth`, `model_router`, `sku_data`, `tools`, `agent`, `prompts`, `store`)
+- Router: `api/routers/intelligence/sku_chat.py` (prefix `/sku-chat`)
+- Config: `config/ai/sku_chat_config.yaml`
+- Frontend: **SKU Chat** sidebar tab + a **global, page-aware chat drawer on every tab** (`GlobalChatDrawer`, mounted in `App.tsx`; per-page focus/suggestions/scope from `pageChatConfig.ts`)
+- Spec: `docs/specs/06-ai-platform/07-sku-chatbot.md`
+
+### 9.12.2 Enabling it (the one operational prerequisite)
+
+The Agent SDK is an **optional extra**, lazy-imported, so the base install and
+test suite run without it. To run the live chatbot:
+
+```bash
+uv sync --extra agent          # installs claude-agent-sdk + its bundled Claude Code CLI
+```
+
+Until this is run, `POST /sku-chat/stream` returns a single SSE `error` event
+(`"claude-agent-sdk is not installed. Run uv sync --extra agent."`) — by design,
+so the rest of the API is unaffected.
+
+### 9.12.3 Authentication modes (`auth.mode` in `sku_chat_config.yaml`)
+
+The Agent SDK delegates model auth to its bundled Claude Code runtime;
+`common/ai/sku_chat/auth.py` turns one config switch into the right environment.
+
+| `auth.mode` | Behaviour | Use when |
+|---|---|---|
+| `auto` (default) | Inherit the surrounding Claude Code session — **no `ANTHROPIC_API_KEY` needed** | Local dev inside Claude Code |
+| `api_key` | Requires `ANTHROPIC_API_KEY` (fails loud at request time if absent) | Standalone container / CI |
+| `bedrock` | Sets `CLAUDE_CODE_USE_BEDROCK=1` (AWS creds) | AWS-native deploy |
+| `vertex` | Sets `CLAUDE_CODE_USE_VERTEX=1` (GCP creds) | GCP-native deploy |
+
+> The subscription-auth inheritance (`auto`) and the exact SDK option surface
+> should be validated against the installed SDK/CLI version on first live run —
+> all SDK touch-points are isolated in `agent.py` / `tools.py`.
+
+### 9.12.4 Model routing — "use Opus / Sonnet / Haiku wisely"
+
+Each turn is routed to a tier by `model_router.py` (deterministic keyword/length
+heuristic; an LLM classifier can replace `classify_tier` later). Tier→model map
+lives in `sku_chat_config.yaml` `models.*`:
+
+| Tier | Default model | Routes on |
+|---|---|---|
+| `fast` | `claude-haiku-4-5` | short questions, lookups ("what is the lead time?") |
+| `standard` | `claude-sonnet-4-6` | one-SKU analysis (default) |
+| `deep` | `claude-opus-4-8` | "why" / "compare" / "recommend"; the UI "Deep analysis" toggle |
+
+### 9.12.5 Endpoints (prefix `/sku-chat`)
+
+| Method & Path | Purpose |
+|---|---|
+| `GET  /sku-chat/config` | Active tiers, auth mode, guardrails (never leaks secrets); drives the UI badge |
+| `POST /sku-chat/session` | Create a session id bound to a SKU (key-guarded) |
+| `GET  /sku-chat/session/{id}` | Session + ordered message history (404 if unknown) |
+| `POST /sku-chat/stream` | Stream one turn as Server-Sent Events — `meta` / `text` / `tool` / `result` / `error` (key-guarded) |
+
+### 9.12.6 Persistence & cleanup
+
+Phase 3 persistence is **best-effort**: `common/ai/sku_chat/store.py` writes
+`sku_chat_session` / `sku_chat_message` / `sku_chat_call_log` (`sql/196`), but
+every write catches `psycopg.Error` and no-ops, so the chat streams whether or
+not the migration is applied. Toggle with `persistence.enabled` in config.
+
+- Apply the schema: run `sql/196_create_sku_chat_log.sql`.
+- Truncate with the rest of the non-config data: the three tables are in the
+  `db-truncate-data` Make target (see `11-maintenance-troubleshooting.md`).
+- Retention: `sku_chat_call_log` follows the 2-month log-retention policy
+  (`11-maintenance-troubleshooting.md` § Data Retention Policies).
+
+### 9.12.7 Why it's safe to run non-interactively
+
+The agent runs under `permission_mode="bypassPermissions"` — safe **because** the
+exposed tools cannot write fact tables. Seven (`mcp__sku__*`: profile, sales,
+forecast, inventory, accuracy, cluster peers, search) are strictly read-only. The
+one write-capable tool, `apply_champion_adjustment` (§ 9.12.8), only **stages** a
+proposal to `sku_chat_pending_adjustment`; the forecast write happens only on a
+key-guarded, human-approved endpoint. No Bash / Write / file tools are
+registered, so the worst the agent can do autonomously is stage a proposal a
+planner must approve.
+
+### 9.12.8 Champion-forecast adjustment (agentic, approval-gated)
+
+When `champion_adjust.enabled` (default `true`) in `sku_chat_config.yaml`, the
+chatbot can **drive the AI Champion adjuster** — reusing its engine
+(`common/ai/champion_adjust_service.py`, see § 9.11 / spec 02-27), not
+reimplementing it. Flow:
+
+1. The planner clicks **"AI Adjust"** in the chat (or asks). The agent calls the
+   `apply_champion_adjustment` tool, which runs `adjust_dfu()` (the adjuster's
+   tested preview + guardrails) and **stages** the validated proposal in
+   `sku_chat_pending_adjustment` (`sql/197`). No forecast is written.
+2. The stream emits an `approval_request` event; the UI shows an **approval card**
+   (recommendation / % / confidence / rationale) with **Approve / Reject**.
+3. **Approve** → `POST /sku-chat/adjustment/{approval_id}` `{"decision":"approve"}`
+   → the existing guarded `save_adjustment` writes `fact_ai_champion_forecast`
+   (`model_id='ai_champion'`, quantities re-derived from the baseline, guardrails
+   re-applied). **Reject** → row marked rejected; nothing written.
+
+Operational notes:
+- Requires the adjuster's LLM provider configured in
+  `config/ai/ai_champion_config.yaml` (Ollama is the $0 default).
+- Apply `sql/197` to enable staging; `sku_chat_pending_adjustment` is in the
+  `db-truncate-data` target. Set `champion_adjust.enabled: false` to keep the
+  chatbot fully read-only.
+- The agent **never** writes the forecast directly — the only forecast write is
+  the human-approved, key-guarded endpoint.

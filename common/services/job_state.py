@@ -88,14 +88,7 @@ _BACKTEST_OUTPUT_DIRS: dict[str, str] = {
     "lgbm": "lgbm_cluster",
     "catboost": "catboost_cluster",
     "xgboost": "xgboost_cluster",
-    "lgbm_cust_enriched": "lgbm_cust_enriched",
-    "catboost_cust_enriched": "catboost_cust_enriched",
-    "xgboost_cust_enriched": "xgboost_cust_enriched",
-    "chronos": "chronos",
-    "chronos_bolt": "chronos_bolt",
-    "chronos2": "chronos2",
     "chronos2_enriched": "chronos2_enriched",
-    "bolt_hierarchical": "bolt_hierarchical",
     "mstl": "mstl",
     "nbeats": "nbeats",
     "nhits": "nhits",
@@ -470,29 +463,19 @@ def _run_backtest(
     }
     # Foundation models: python -m invocation
     foundation_modules = {
-        "chronos": "scripts.ml.run_backtest_chronos",
-        "chronos_bolt": "scripts.ml.run_backtest_chronos_bolt",
-        "chronos_bolt_ft": "scripts.ml.run_backtest_chronos_bolt_ft",
-        "chronos2": "scripts.ml.run_backtest_chronos2",
         "chronos2_enriched": "scripts.ml.run_backtest_chronos2_enriched",
     }
     # Models whose backtest scripts need a heavy optional dependency, mapped to the
-    # extra that provides it. Chronos variants (+ bolt_hierarchical) import
+    # extra that provides it. The Chronos 2 Enriched foundation model imports
     # chronos-forecasting (the `foundation` extra); nbeats/nhits import
     # neuralforecast (the `dl` extra). Both pull torch.
     _MODEL_EXTRAS = {
-        "chronos": "foundation",
-        "chronos_bolt": "foundation",
-        "chronos_bolt_ft": "foundation",
-        "chronos2": "foundation",
         "chronos2_enriched": "foundation",
-        "bolt_hierarchical": "foundation",
         "nhits": "dl",
         "nbeats": "dl",
     }
     # Special scripts: direct file path
     special_scripts = {
-        "bolt_hierarchical": "scripts/ml/run_backtest_bolt_hierarchical.py",
         "mstl": "scripts/ml/run_backtest_mstl.py",
         "seasonal_naive": ("scripts/ml/run_backtest.py", ["--model", "seasonal_naive"]),
         "rolling_mean": ("scripts/ml/run_backtest.py", ["--model", "rolling_mean"]),
@@ -592,12 +575,7 @@ def _make_backtest_runner(model: str):
 _run_backtest_lgbm = _make_backtest_runner("lgbm")
 _run_backtest_catboost = _make_backtest_runner("catboost")
 _run_backtest_xgboost = _make_backtest_runner("xgboost")
-_run_backtest_chronos = _make_backtest_runner("chronos")
-_run_backtest_chronos_bolt = _make_backtest_runner("chronos_bolt")
-_run_backtest_chronos_bolt_ft = _make_backtest_runner("chronos_bolt_ft")
-_run_backtest_chronos2 = _make_backtest_runner("chronos2")
 _run_backtest_chronos2_enriched = _make_backtest_runner("chronos2_enriched")
-_run_backtest_bolt_hierarchical = _make_backtest_runner("bolt_hierarchical")
 _run_backtest_mstl = _make_backtest_runner("mstl")
 _run_backtest_seasonal_naive = _make_backtest_runner("seasonal_naive")
 _run_backtest_rolling_mean = _make_backtest_runner("rolling_mean")

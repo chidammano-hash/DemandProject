@@ -52,6 +52,13 @@ dl = [
 statistical = [
     "statsforecast>=2.0.0",
 ]
+# SKU Chatbot (spec 06-ai-platform/07) — Claude Agent SDK. Lazy-imported by
+# common/ai/sku_chat so the base install and test suite do not require it.
+# Install with `uv sync --extra agent` to run the chatbot. Requires the
+# bundled Claude Code CLI (Node) the package ships with.
+agent = [
+    "claude-agent-sdk>=0.1.0",
+]
 
 [dependency-groups]
 dev = [

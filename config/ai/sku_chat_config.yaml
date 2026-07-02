@@ -1,0 +1,128 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# SKU Chatbot configuration — spec docs/specs/06-ai-platform/07-sku-chatbot.md
+# Consumed by common/ai/sku_chat/* and api/routers/intelligence/sku_chat.py.
+# Loaded via load_config("sku_chat_config") (resolves to this file under config/ai/).
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────────────────
+# Authentication mode — how the Claude Agent SDK runtime authenticates.
+#   auto    : inherit the surrounding Claude Code session (no ANTHROPIC_API_KEY
+#             needed). Use this inside Claude Code / local dev.
+#   api_key : require ANTHROPIC_API_KEY in the environment (standalone deploy).
+#   bedrock : set CLAUDE_CODE_USE_BEDROCK=1 (AWS-native deploy; needs AWS creds).
+#   vertex  : set CLAUDE_CODE_USE_VERTEX=1 (GCP-native deploy; needs GCP creds).
+# Resolution + fail-loud validation lives in common/ai/sku_chat/auth.py.
+# ───────────────────────────────────────────────────────────────────────────
+auth:
+  mode: "auto"   # auto | api_key | bedrock | vertex
+
+# ───────────────────────────────────────────────────────────────────────────
+# Model tiers — "use Opus / Sonnet / Haiku wisely". One model per tier; the
+# router (model_router.py) picks a tier per turn. Full IDs pinned to avoid drift
+# (the SDK also accepts the aliases opus / sonnet / haiku).
+# ───────────────────────────────────────────────────────────────────────────
+models:
+  fast: "claude-haiku-4-5"      # single-field lookups, definitions, greetings
+  standard: "claude-sonnet-4-6" # one-SKU analytical Q&A spanning a few tools
+  deep: "claude-opus-4-8"       # multi-signal "why" diagnosis, recommendations
+
+# ───────────────────────────────────────────────────────────────────────────
+# Routing rules — deterministic heuristics that map a question to a tier.
+# (An optional Haiku LLM classifier can replace _classify() later without
+# touching callers; these heuristics are the v1 default.)
+# ───────────────────────────────────────────────────────────────────────────
+routing:
+  default_tier: "standard"      # tier when no rule matches
+  allow_user_override: true     # honour request model_tier / model from the UI
+  fast_max_words: 6             # questions this short or shorter route to fast
+  # Any of these substrings (case-insensitive) routes to the deep / Opus tier:
+  deep_keywords:
+    - "why"
+    - "diagnose"
+    - "root cause"
+    - "compare"
+    - "recommend"
+    - "explain"
+    - "should i"
+    - "trade-off"
+  # Any of these substrings routes to the fast / Haiku tier:
+  fast_keywords:
+    - "what is"
+    - "what's"
+    - "define"
+    - "lead time"
+    - "which cluster"
+    - "list"
+    - "how many"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Guardrails — per-turn safety/cost limits (enforced in agent.py).
+# ───────────────────────────────────────────────────────────────────────────
+guardrails:
+  max_turns: 12          # max tool-call rounds before the turn is cut off
+  timeout_seconds: 60    # wall-clock cap per turn
+  max_history_messages: 20  # prior turns folded into context (sliding window)
+
+# ───────────────────────────────────────────────────────────────────────────
+# Tool allow-list — the ONLY tools exposed to the model (all read-only). No
+# Bash / Write / Edit / file tools, which is what makes bypassPermissions safe.
+# ───────────────────────────────────────────────────────────────────────────
+tools:
+  allowed:
+    - "mcp__sku__search_skus"
+    - "mcp__sku__get_sku_profile"
+    - "mcp__sku__get_sku_sales_history"
+    - "mcp__sku__get_sku_forecast"
+    - "mcp__sku__get_sku_inventory"
+    - "mcp__sku__get_sku_accuracy"
+    - "mcp__sku__get_sku_cluster_peers"
+    - "mcp__sku__apply_champion_adjustment"   # write tool — STAGES only; gated by approval
+
+# ───────────────────────────────────────────────────────────────────────────
+# Champion-forecast adjustment (agentic write tool, approval-gated). When on,
+# the agent gets `apply_champion_adjustment`, which STAGES a guardrail-validated
+# proposal (reusing common/ai/champion_adjust_service.py) and requests the
+# planner's approval in-chat. The write to fact_ai_champion_forecast happens ONLY
+# when the planner approves (POST /sku-chat/adjustment/{id}) — the agent never
+# writes the forecast directly. Requires the adjuster's provider configured in
+# config/ai/ai_champion_config.yaml. Set false to keep the chatbot read-only.
+# ───────────────────────────────────────────────────────────────────────────
+champion_adjust:
+  enabled: true
+
+# ───────────────────────────────────────────────────────────────────────────
+# Persistence (Phase 3) — log sessions / messages / per-turn cost+usage to the
+# sku_chat_* tables (sql/196). Best-effort: if the tables are absent or a write
+# fails, the chat still streams. Set false to run fully stateless.
+# ───────────────────────────────────────────────────────────────────────────
+persistence:
+  enabled: true
+
+# ───────────────────────────────────────────────────────────────────────────
+# Context defaults — windows passed to the read-only SKU tools.
+# ───────────────────────────────────────────────────────────────────────────
+context:
+  history_lookback_months: 24  # default sales / inventory / forecast window
+  cluster_peer_limit: 10       # max peer SKUs returned by get_sku_cluster_peers
+
+# ───────────────────────────────────────────────────────────────────────────
+# System prompt — the SKU-specialist persona. Replaces the SDK default.
+# Citation discipline keeps answers grounded in tool results.
+# ───────────────────────────────────────────────────────────────────────────
+system_prompt: |
+  You are a supply-chain SKU specialist embedded in the Supply Chain Command
+  Center. You answer a planner's questions about ONE SKU (item + customer group
+  + location) using ONLY the read-only tools provided.
+
+  Rules:
+  - Every numeric claim (demand, forecast, accuracy, bias, inventory, lead time,
+    DOS) MUST come from a tool result. Never invent or estimate numbers.
+  - Call the smallest set of tools needed, then answer concisely. Prefer a short,
+    direct answer with the key figures over a long essay.
+  - When you reason about "why" something happened, ground each step in data you
+    fetched (e.g. cite the WAPE/bias from get_sku_accuracy, the seasonality from
+    get_sku_profile).
+  - If a question is outside this SKU's scope, or asks you to change/write data,
+    say you can only read and discuss this SKU's analytics.
+  - The SKU grain is (item_id, customer_group, loc). Always use the full grain
+    when the customer group is known.

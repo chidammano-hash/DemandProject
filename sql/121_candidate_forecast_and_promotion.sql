@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS fact_candidate_forecast (
     loc                 VARCHAR(50)     NOT NULL,   -- dim_location key
 
     -- Model that generated this prediction
-    model_id            VARCHAR(100)    NOT NULL,   -- e.g. 'lgbm_cluster', 'nbeats', 'chronos_bolt'
+    model_id            VARCHAR(100)    NOT NULL,   -- e.g. 'lgbm_cluster', 'nbeats', 'chronos2_enriched'
 
     -- Forecast period
     forecast_month      DATE            NOT NULL,   -- first day of the month (always YYYY-MM-01)

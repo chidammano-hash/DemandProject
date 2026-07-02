@@ -50,6 +50,7 @@ The data layer everything else depends on.
 | 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
 | 07 | [Customer Demand Fact](01-foundation/07-customer-demand-fact.md) | Customer-level demand fact table, monthly range-partitioned by startdate |
 | 08 | [Known Gaps](01-foundation/08-known-gaps.md) | Technical debt and known limitations tracked for future resolution |
+| 09 | [Databricks + Lakebase Migration](01-foundation/09-databricks-lakebase-migration.md) | **Proposed** — port to Databricks: Lakebase (Postgres) DB, Delta-synced source tables, synced-vs-native split, token auth |
 
 ---
 
@@ -77,10 +78,8 @@ Predict future demand using ML models, then select the best forecast per item.
 | 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
 | 16 | [Expert System Backtest](02-forecasting/16-expert-system-backtest.md) | Segment→algorithm routing backtest (`expsys_accuracy` router) |
 | 17 | [External ML Forecast Loading](02-forecasting/17-ext-ml-forecast-load.md) | ETL to load externally-generated ML forecasts into the platform |
-| 18 | [Chronos Foundation Models](02-forecasting/18-chronos-foundation-models.md) | Four Chronos variants (T5, Bolt, Chronos 2, Chronos 2 Enriched) — architecture, covariates, configuration, performance benchmarks |
+| 18 | [Chronos 2 Enriched Foundation Model](02-forecasting/18-chronos-foundation-models.md) | The surviving Chronos 2 Enriched foundation model (31 covariates) — architecture, covariates, configuration, performance benchmarks |
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
-| 20 | [Bolt Hierarchical](02-forecasting/20-bolt-hierarchical.md) | Customer-level bottom-up Chronos Bolt with top-down reconciliation — uses true demand from `fact_customer_demand_monthly` to correct stockout bias |
-| 21 | [Customer-Enriched Features](02-forecasting/21-customer-enriched-features.md) | 34 customer-derived features (concentration, churn, OOS, channel mix, customer attribute mix) for tree model enrichment |
 | 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
 | 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Candidate→production forecast promotion workflow (`fact_candidate_forecast` → `fact_production_forecast`) |
@@ -91,7 +90,7 @@ Predict future demand using ML models, then select the best forecast per item.
 | 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
 | 28 | [Feature Selection Pipeline](02-forecasting/28-feature-selection-pipeline.md) | Multi-stage per-timeframe feature selection (duplicate / near-zero-variance / correlation / cumulative SHAP) |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation model) → 19 (pipeline config) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
 
 ---
 
@@ -161,6 +160,7 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | 04 | [Storyboard](06-ai-platform/04-storyboard.md) | Exception cards with causal chains and decision logging |
 | 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Append-only audit trail; policy engine planned |
 | 06 | [Forecast Explain API](06-ai-platform/06-explain-api.md) | SHAP-based forecast explanation per DFU |
+| 07 | [SKU Chatbot](06-ai-platform/07-sku-chatbot.md) | Conversational per-SKU assistant on the Claude Agent SDK; tiered Haiku/Sonnet/Opus routing; standalone tab + Item Analysis side chat; best-effort persistence (sql/196). Subscription auth in Claude Code, API key/Bedrock/Vertex standalone (**Partial** — Phases 1+3 shipped; needs `uv sync --extra agent` for the live path) |
 | 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Hash-chained append-only AI decision ledger (**Partial** — ledger shipped; policy engine not yet wired) |
 
 ---

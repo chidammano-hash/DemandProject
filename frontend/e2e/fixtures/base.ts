@@ -66,6 +66,7 @@ export const SIDEBAR_LABELS = [
   "Inv. Backtest",
   "Portfolio",
   "Item Analysis",
+  "SKU Chat",
   "FVA & ROI",
   "Customer Map",
   "Explorer",

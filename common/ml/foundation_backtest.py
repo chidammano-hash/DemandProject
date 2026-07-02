@@ -1,9 +1,8 @@
 """
 Shared scaffolding for foundation model backtests.
 
-All four foundation model backtest scripts (chronos, chronos2, chronos_bolt,
-chronos2_enriched) share >90% identical structure.  This module extracts the
-common workflow:
+The foundation model backtest scripts (currently chronos2_enriched) share a
+>90% identical structure.  This module extracts the common workflow:
   - CLI argument parsing
   - Config loading + model enablement check
   - Data loading from Postgres
@@ -66,7 +65,7 @@ class FoundationModelSpec:
     """Everything that differs between foundation model backtest scripts.
 
     Attributes:
-        model_id: Default model identifier (e.g. "chronos", "chronos_bolt").
+        model_id: Default model identifier (e.g. "chronos2_enriched").
         config_key: Key under ``algorithms`` in forecast_pipeline_config.yaml.
         dispatcher_key: Key passed to ``run_foundation_models`` params dict.
         display_name: Human-readable name for log messages.
@@ -87,8 +86,8 @@ class FoundationModelSpec:
             default ``run_foundation_models`` call.  Receives a
             PerTimeframeContext and the state from pre_timeframe_hook, and
             returns a DataFrame of predictions (or empty DataFrame).
-        profiler_prefix: Prefix for profiled_section labels (e.g. "chronos",
-            "c2", "bolt").  Defaults to model_id.
+        profiler_prefix: Prefix for profiled_section labels (e.g. "c2").
+            Defaults to model_id.
         tmp_dir_prefix: Prefix for tempdir in parallel mode.
     """
 

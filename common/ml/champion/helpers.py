@@ -293,9 +293,7 @@ def _expanding_uncertainty_stats(df: pd.DataFrame) -> pd.DataFrame:
 
 # Re-export the model-family map used by diversity-aware strategies.
 _MODEL_FAMILIES: dict[str, str] = {
-    "chronos2": "chronos",
     "chronos2_enriched": "chronos",
-    "chronos_bolt": "chronos",
     "catboost_cluster": "tree",
     "xgboost_cluster": "tree",
     "lgbm_cluster": "tree",

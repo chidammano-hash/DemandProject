@@ -81,8 +81,7 @@ const META_DEFAULTS = {
 /** Fallback model IDs used before pipeline config loads */
 const DEFAULT_MODELS = [
   "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
-  "lgbm_cust_enriched", "catboost_cust_enriched", "xgboost_cust_enriched",
-  "chronos", "chronos_bolt", "chronos2", "chronos2_enriched", "bolt_hierarchical",
+  "chronos2_enriched",
   "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean",
 ];
 

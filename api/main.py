@@ -246,6 +246,7 @@ from api.routers.inventory import inv_planning_insights     # noqa: E402
 # --- Gen-4 subdirectory imports ---
 from api.routers.operations import sop              # noqa: E402
 from api.routers.intelligence import ai_planner      # noqa: E402
+from api.routers.intelligence import sku_chat      # noqa: E402  # 06-07 SKU Chatbot (Claude Agent SDK)
 from api.routers.intelligence import explain as explain_router  # noqa: E402  # Gen-4 G: forecast explain
 from api.routers.core import dashboard               # noqa: E402
 from api.routers.core import jobs                    # noqa: E402
@@ -316,6 +317,7 @@ app.include_router(fill_rate.router)
 app.include_router(control_tower.router)
 app.include_router(jobs.router)
 app.include_router(ai_planner.router)
+app.include_router(sku_chat.router)
 app.include_router(storyboard.router)
 app.include_router(production_forecast.router)
 app.include_router(consensus_plan.router)

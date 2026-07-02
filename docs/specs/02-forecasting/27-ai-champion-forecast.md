@@ -1,6 +1,6 @@
 # 27 — AI Champion Forecast (interactive forward adjuster)
 
-**Status:** Implemented (service, API, SQL, Item Analysis UI) — 2026-06-16
+**Status:** Implemented (service, API, SQL, chart overlay) — 2026-06-16. The interactive adjuster **panel** was removed 2026-06-24 in favor of the SKU Chat agentic champion adjustment (§6).
 **Supersedes:** the removed *AI Planner — FVA Backtest* (walk-forward backtest) **and** the earlier batch AI Champion pipeline. This feature keeps the LLM recommendation brain but is now **interactive and single-DFU** — there is no batch job, script, or Make target.
 
 ---
@@ -9,7 +9,7 @@
 
 The promoted **champion** production forecast is the best statistical/ML model per DFU, but it only knows history. We want an optional AI pass that nudges the champion's **forward** forecast using judgment a planner would apply — customer-concentration shifts, recent trend breaks, product/market context — and persist the result as a **new forecast model**, `ai_champion`.
 
-This is **forward-only** (it adjusts the future, never replays history) and **on-demand**: a planner opens an item on the **Item Analysis** tab, picks a provider, and clicks **AI Adjust**. One LLM call runs for that DFU; the planner previews the result and optionally **Saves** it.
+This is **forward-only** (it adjusts the future, never replays history) and **on-demand**. The adjustment is now initiated through the **SKU Chat agent** (approval-gated) rather than a dedicated panel; the planner reviews the staged recommendation and approves it, and the saved `ai_champion` forecast renders on the Item Analysis chart (§6).
 
 ## 2. Goals & Non-Goals
 
@@ -57,9 +57,9 @@ A dedicated table (not `fact_production_forecast`) because that table's unique i
 
 ## 6. UI
 
-**Item Analysis tab** — `frontend/src/tabs/item-analysis/AiChampionItemPanel.tsx` (query module `frontend/src/api/queries/ai-champion.ts`). Shown by default (toggle it off via the **"AI Champion"** checkbox in the panel toolbar). Shows any previously-saved adjustment for the selected DFU; a **provider dropdown**, an optional **planner-comment textarea** (free-text steer sent as `user_comment` on `/adjust`), + an **AI Adjust** button run a fresh adjustment; the result renders as a "Preview — not saved" card (recommendation, rationale, champion-vs-AI table) with a **Save** button. There is no FVA-tab panel.
+> **2026-06-24 — the dedicated interactive adjuster panel was removed.** The `AiChampionItemPanel` card (provider dropdown + planner-comment textarea + **AI Adjust**/**Save**) is superseded by the **SKU Chat agentic champion adjustment** (approval-gated) — see [06-ai-platform/07-sku-chatbot](../06-ai-platform/07-sku-chatbot.md). The service, API, SQL, and the read-only chart overlay below all remain. The old `POST /ai-champion/adjust` + `/ai-champion/save` write endpoints stay live but are no longer called from the UI (the SKU Chat agent reaches the same `champion_adjust_service` engine via its staging tool).
 
-**Chart overlay** — once an adjustment is **saved**, the `ai_champion` forward forecast is merged into the main Item Analysis forecast chart (`UnifiedChart`) as an amber dashed line alongside the champion/production/staging lines, and the recommendation rationale renders as a caption above the chart. The overlay shares the saved query key (`aiChampionKeys.saved`) with `AiChampionItemPanel`, so saving in the panel auto-refreshes the chart. The line has a toggle pill (`AI Champion`) and is hidden when no saved row exists for the DFU.
+**Chart overlay** — the `ai_champion` forward forecast is merged into the main Item Analysis forecast chart (`UnifiedChart`) as an amber dashed line alongside the champion/production/staging lines, and the recommendation rationale renders as a caption above the chart. It is fed by `fetchAiChampionSaved` (`GET /ai-champion/forecast`, query module `frontend/src/api/queries/ai-champion.ts`) — now read-only — and shows the **latest saved adjustment** for the DFU regardless of source (the SKU Chat agent's approved adjustments write to the same `fact_ai_champion_forecast` table). The line has a toggle pill (`AI Champion`, on by default) and is hidden when no saved row exists for the DFU.
 
 ## 7. Configuration (`config/ai/ai_champion_config.yaml`)
 

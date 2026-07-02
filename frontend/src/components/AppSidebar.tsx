@@ -11,6 +11,7 @@ import {
   Brain, Monitor,
   CalendarDays,
   Shield, BarChart3, MapPin, FlaskConical,
+  MessageSquare,
   Settings2,
   TerminalSquare,
   History,
@@ -48,6 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
   { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },
   { key: "skuFeatures",       label: "SKU Features",       icon: FlaskConical, section: "demand" },
+  { key: "skuChat",           label: "SKU Chat",           icon: MessageSquare, section: "demand" },
   // Supply — inventory & replenishment
   { key: "invPlanning",  label: "Inv. Planning", icon: Brain,        section: "supply",  shortcut: "4" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },

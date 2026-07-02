@@ -6,10 +6,10 @@ describe("formatChampionLabel", () => {
     const mix = [
       { model: "lgbm_cluster", weight: 0.35 },
       { model: "nbeats", weight: 0.4 },
-      { model: "chronos", weight: 0.25 },
+      { model: "chronos2_enriched", weight: 0.25 },
     ];
     expect(formatChampionLabel(mix)).toBe(
-      "champion (40% N-BEATS, 35% LightGBM, 25% Chronos T5)",
+      "champion (40% N-BEATS, 35% LightGBM, 25% Chronos 2E)",
     );
   });
 

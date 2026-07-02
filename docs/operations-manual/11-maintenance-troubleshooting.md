@@ -326,6 +326,7 @@ Configured in `config/platform/db_maintenance_config.yaml`:
 | `fact_inventory_snapshot` | 24 months | Drop old partitions |
 | `job_history` | 3 months | DELETE + VACUUM |
 | `ai_call_log` | 2 months | DELETE + VACUUM |
+| `sku_chat_call_log` | 2 months | DELETE + VACUUM |
 | `fact_audit_log` | 12 months | DELETE + VACUUM |
 | `fact_query_performance` | 1 month | DELETE + VACUUM |
 

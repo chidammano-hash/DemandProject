@@ -57,6 +57,8 @@ What `make ui-init` does: `cd frontend && npm install` (`Makefile:452-453`).
 
 **Fallback if `uv` is unavailable:** `make init-pip` creates a plain `.venv` and installs the minimum FastAPI stack via `pip` (no ML deps).
 
+**Optional extras** (`pyproject.toml` `[project.optional-dependencies]`, installed via `uv sync --extra <name>`): `foundation` (Chronos), `dl` (NeuralForecast), `statistical` (statsforecast), `gpu` (cupy/numba), and `agent` (`claude-agent-sdk` — required only to run the **SKU Chatbot** live; lazy-imported, so the base install and tests don't need it — see `09-ai-intelligence.md` § 9.12).
+
 ---
 
 ## 3. Environment Variables

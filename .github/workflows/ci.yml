@@ -28,7 +28,6 @@ jobs:
           uv run pytest tests/ \
             --cov \
             --cov-fail-under=70 \
-            --ignore=tests/unit/test_backtest_chronos.py \
             -v --tb=short
 
   frontend-tests:

@@ -67,8 +67,8 @@ export function SweepBuilder({ onClose }: { onClose: () => void }) {
   });
 
   const algos = pipelineConfig?.algorithms ?? {};
-  // Roster = every enabled model that competes or is forecastable (covers the
-  // current champion's `chronos`, which is forecast=true but not compete=true).
+  // Roster = every enabled model that competes or is forecastable (covers
+  // models that are forecast=true but not compete=true).
   const roster = useMemo(
     () =>
       Object.entries(algos)

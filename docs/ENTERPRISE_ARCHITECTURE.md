@@ -269,6 +269,8 @@ Supply Chain Command Center
 ├── L1: AI & DECISION SUPPORT
 │   ├── L2: AI Planning Agent
 │   │   └── Claude-powered, 10 tools (9 read-only SQL + 1 create_insight), portfolio scans
+│   ├── L2: SKU Chatbot
+│   │   └── Claude Agent SDK, 7 read-only per-SKU tools, tiered Haiku/Sonnet/Opus, side chat
 │   ├── L2: Control Tower
 │   │   └── Cross-dimensional KPI command center with drill-down
 │   ├── L2: Market Intelligence
@@ -1614,6 +1616,16 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Decision** | Two-tier MV strategy: (1) extend `mv_customer_activity_monthly` so 9/16 customer-analytics endpoints can route through it when `item_id` is null; (2) add three specialized MVs (`mv_customer_segment_trends`, `mv_customer_demand_at_risk`, `mv_customer_order_patterns`) for the highest-cost panels (segment trends, demand-at-risk, order patterns). All four refresh nightly via the existing tiered MV pipeline. |
 | **Rationale** | Tier 1 (extending an existing MV) is cheaper than adding new MVs and gets most endpoints to fast in one move. Tier 2 (specialized MVs) handles panels whose query shapes don't fit the shared MV. `/kpis` drops from 10.8s → 63ms at 1× and survives 30s `statement_timeout` at 40×. |
 | **Consequences** | Three more MVs to keep refresh-ordered (added to the tiered refresh in correct dependency order). Stale-by-up-to-24h is acceptable for analytics panels but must be documented in the UI. New MVs added to RUNBOOK cleanup and Makefile `refresh-mvs-tiered`. |
+
+### ADR-017: Databricks + Lakebase as an Alternate Deployment Target
+
+| Attribute | Value |
+|---|---|
+| **Status** | Proposed (direction agreed; not yet implemented) |
+| **Context** | Customers running their lakehouse on Databricks want the platform to use **Lakebase** (Databricks' managed, Postgres-compatible OLTP DB) instead of self-hosted PostgreSQL, with **Delta Lake** (Unity Catalog) as the system-of-record for input data, synced into Lakebase — while keeping the application code essentially unchanged. |
+| **Decision** | Adopt a **synced-vs-native table split**: the existing `DomainSpec`/`etl_config.yaml` **source** tables become **read-only Lakebase synced tables** fed from Delta; all **app-written** tables (forecasts, experiments, champion, AI/chat logs) stay **native** Lakebase tables written by the unchanged psycopg/`COPY` paths. Connection auth moves from a static password to **rotating Lakebase OAuth tokens** behind the single `get_db_params` cred source. Host on a **Databricks App** (API) + **Workflows** (pipelines); artifacts to **Unity Catalog Volumes**; the SKU-Chat agent flips `auth.mode` to **bedrock**. Full plan in [docs/specs/01-foundation/09-databricks-lakebase-migration.md](specs/01-foundation/09-databricks-lakebase-migration.md). |
+| **Rationale** | Lakebase is Postgres wire-compatible, so the entire app/SQL/ML/frontend layer and all 33 MVs are unchanged. The codebase already separates source-loaded from app-written tables — exactly the line Lakebase's read-only synced tables force — so the split is classification, not rewrite. Three existing abstractions (single DB-cred source of truth, the `READ_REPLICA_URL` switch, the agent `auth.mode` switch) localize the real changes. |
+| **Consequences** | The hot-path change is token-rotation auth in `common/core/db.py`/`api/pool.py` (long-lived pooled connections must reconnect with a fresh token). The highest correctness risk is the **write-after-sync conflict** on `dim_sku` (loaded from source AND mutated by `sku_features`) and `customer_features_monthly` — must be modelled as native-seeded-from-raw, or clustering and full-grain accuracy/FVA joins break silently. Source-load ETL scripts (`load_dataset_postgres.py`, `load_customer_demand_postgres.py`, `load_ext_ml_forecasts.py`) are retired for Delta sync; generative-pipeline COPYs are untouched. Extension allowlist (`vector`/`pg_trgm`/`pgcrypto`/`pg_stat_statements`), pool sizing vs Lakebase `max_connections`, and Redis (external vs in-memory fallback) must be verified per target workspace. |
 
 ---
 

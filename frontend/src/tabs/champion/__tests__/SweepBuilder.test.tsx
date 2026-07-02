@@ -26,10 +26,10 @@ vi.mock("@/api/queries/unified-model-tuning", () => ({
     algorithms: {
       lgbm_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
       catboost_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
-      chronos: { type: "foundation", enabled: true, compete: false, forecast: true },
-      chronos2: { type: "foundation", enabled: true, compete: true, forecast: true },
+      nbeats: { type: "deep_learning", enabled: true, compete: false, forecast: true },
+      chronos2_enriched: { type: "foundation", enabled: true, compete: true, forecast: true },
     },
-    champion: { models: ["lgbm_cluster", "chronos"] },
+    champion: { models: ["lgbm_cluster", "chronos2_enriched"] },
   }),
 }));
 
@@ -50,7 +50,7 @@ describe("SweepBuilder", () => {
     expect(screen.getByText("Ensemble Top-3")).toBeDefined();
     // Config-driven model roster (labels via model-labels).
     expect(await screen.findByText("LightGBM")).toBeDefined();
-    expect(screen.getByText("Chronos T5")).toBeDefined();
+    expect(screen.getByText("Chronos 2E")).toBeDefined();
     expect(screen.getByText("Mode")).toBeDefined();
     expect(screen.getByText("Segment axis")).toBeDefined();
     expect(screen.getByText("Objective")).toBeDefined();
@@ -60,7 +60,7 @@ describe("SweepBuilder", () => {
     renderBuilder();
     // Presets show with counts; "All tree (2)" from two tree models.
     expect(await screen.findByText(/All tree \(2\)/)).toBeDefined();
-    expect(screen.getByText(/All foundation \(2\)/)).toBeDefined();
+    expect(screen.getByText(/All foundation \(1\)/)).toBeDefined();
   });
 
   it("candidate count = number of templates (model subset doesn't multiply)", async () => {
@@ -84,6 +84,6 @@ describe("SweepBuilder", () => {
     const body = createChampionSweep.mock.calls[0][0];
     expect(body.label).toBe("My sweep");
     expect(body.grid_spec.templates).toEqual(["rolling_6m"]);
-    expect(body.grid_spec.models_variants).toEqual([["lgbm_cluster", "chronos"]]);
+    expect(body.grid_spec.models_variants).toEqual([["lgbm_cluster", "chronos2_enriched"]]);
   });
 });

@@ -5,19 +5,22 @@ services:
       POSTGRES_DB: demand_mvp
       POSTGRES_USER: demand
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-demand}
+    # NOTE: this is a YAML folded scalar (`>`) — every indented line below is
+    # LITERAL text concatenated into the postgres command. Do NOT put `#`
+    # comments inside it; they are not stripped and break Compose parsing.
+    # max_connections=200 (dev headroom). Multi-pool invariant the API must
+    # satisfy against THIS (primary) ceiling:
+    #   GUNICORN_WORKERS x (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead
+    #       <= max_connections
+    # Defaults: 4 x (12 + 20) = 128 <= 200. The read-replica pool
+    # (GUNICORN_WORKERS x READ_POOL_MAX_SIZE) counts against the REPLICA's
+    # own max_connections, not this one. Enforced by `make deploy-check`.
     command: >
       postgres
       -c shared_buffers=4GB
       -c work_mem=128MB
       -c maintenance_work_mem=1GB
       -c effective_cache_size=12GB
-      # max_connections=200 (dev headroom). Multi-pool invariant the API must
-      # satisfy against THIS (primary) ceiling:
-      #   GUNICORN_WORKERS × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead
-      #       ≤ max_connections
-      # Defaults: 4 × (12 + 20) = 128 ≤ 200. The read-replica pool
-      # (GUNICORN_WORKERS × READ_POOL_MAX_SIZE) counts against the REPLICA's
-      # own max_connections, not this one. Enforced by `make deploy-check`.
       -c max_connections=200
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1

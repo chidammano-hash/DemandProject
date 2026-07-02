@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingElement } from "@/components/LoadingElement";
 
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { usePublishActiveSku } from "@/context/ActiveSkuContext";
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePanelToggles } from "@/hooks/usePanelToggles";
 import {
@@ -39,7 +40,6 @@ import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 // Unified chart (demand + supply in one view)
 import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
-import { AiChampionItemPanel } from "./item-analysis/AiChampionItemPanel";
 import { loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/measures";
 import { itemBreadcrumbLabel } from "./item-analysis/breadcrumb";
 
@@ -96,6 +96,9 @@ export function ItemAnalysisTab() {
 
   const debouncedSkuItem = useDebounce(skuItem, 500);
   const debouncedSkuLocation = useDebounce(skuLocation, 500);
+
+  // Publish the SKU shown on this page so the global chat assistant inherits its scope.
+  usePublishActiveSku(debouncedSkuItem, debouncedSkuLocation);
 
   // Deep-link: consume ?item=…&loc=… URL params on mount
   useEffect(() => {
@@ -230,8 +233,8 @@ export function ItemAnalysisTab() {
     return () => { cancelled = true; };
   }, [debouncedSkuItem, debouncedSkuLocation]);
 
-  // Saved AI Champion forecast — shares its query key with AiChampionItemPanel,
-  // so a Save in the panel auto-refreshes this overlay on the chart.
+  // Saved AI Champion forecast overlay — the latest adjustment for this DFU,
+  // now produced by the SKU Chat agentic adjustment (approval-gated).
   const aiItem = debouncedSkuItem.trim();
   const aiLoc = debouncedSkuLocation.trim();
   const { data: aiChampionSaved } = useQuery({
@@ -629,11 +632,6 @@ export function ItemAnalysisTab() {
             )}
           </CardContent>
         </Card>
-      )}
-
-      {/* ---- AI Champion (forward adjustment for this DFU) ---- */}
-      {panels.aiChampion && hasDfu && (
-        <AiChampionItemPanel itemId={debouncedSkuItem} loc={debouncedSkuLocation} />
       )}
     </section>
   );

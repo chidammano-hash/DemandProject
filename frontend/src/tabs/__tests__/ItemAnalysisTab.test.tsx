@@ -18,11 +18,8 @@ vi.mock("@/api/queries/production-forecast", () => ({
 }));
 
 vi.mock("@/api/queries/ai-champion", () => ({
-  AI_CHAMPION_PROVIDERS: [{ value: "ollama", label: "Ollama (local, $0)" }],
   aiChampionKeys: { saved: (i: string, l: string) => ["ai-champion", "saved", i, l] },
   fetchAiChampionSaved: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
-  adjustAiChampion: vi.fn(),
-  saveAiChampion: vi.fn(),
 }));
 
 vi.mock("@/api/queries", () => ({

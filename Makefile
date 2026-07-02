@@ -223,18 +223,14 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  backtest-lgbm        - run LGBM per-cluster backtest (settings from forecast_pipeline_config.yaml)"
 	@echo "  backtest-catboost    - run CatBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
 	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
-	@echo "  backtest-chronos     - run Chronos T5 foundation model backtest"
-	@echo "  backtest-chronos-full- run Chronos T5 backtest + load predictions"
-	@echo "  backtest-bolt        - run Chronos Bolt foundation model backtest"
-	@echo "  backtest-bolt-full   - run Chronos Bolt backtest + load predictions"
-	@echo "  backtest-chronos2    - run Chronos 2 foundation model backtest"
-	@echo "  backtest-chronos2-full - run Chronos 2 backtest + load predictions"
-	@echo "  backtest-all         - run all clean-rebuild backtests sequentially (cluster + cust-enriched trees + foundation)"
+	@echo "  backtest-chronos2e   - run Chronos 2 Enriched foundation model backtest"
+	@echo "  backtest-chronos2e-full - run Chronos 2 Enriched backtest + load predictions"
+	@echo "  backtest-all         - run all clean-rebuild backtests sequentially (cluster trees + foundation)"
 	@echo "  backtest-all-parallel- run all clean-rebuild backtests in parallel (logs in data/backtest/logs/)"
 	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
 	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after backtest-all)"
 	@echo "  backtest-load-all-bulk - load ALL models with single index cycle (~4x faster)"
-	@echo "  backtest-load-bulk   - load 4 core models (lgbm, catboost, xgboost, chronos) in bulk"
+	@echo "  backtest-load-bulk   - load 4 core models (lgbm, catboost, xgboost, chronos2_enriched) in bulk"
 	@echo "  backtest-load-main-only - load specific models to main table only (MODELS='...')"
 	@echo "  backtest-load-archive-only - load specific models to archive only (MODELS='...')"
 	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_cluster catboost_cluster')"
@@ -363,6 +359,9 @@ db-apply-sql:  ## Apply all sql/*.sql migration files to Postgres
 	done
 	$(PSQL) -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
 	@echo "Applied $$(ls sql/*.sql | wc -l | tr -d ' ') SQL migration files"
+
+db-apply-sql-lakebase:  ## Apply all sql/*.sql to a networked Postgres / Lakebase (token-auth via env)
+	$(UV) python -m scripts.db.apply_sql_lakebase $(ARGS)
 
 down:  ## Stop Docker services
 	$(DC) down
@@ -698,71 +697,11 @@ backtest-catboost:
 backtest-xgboost:
 	$(UV) python scripts/ml/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
 
-backtest-chronos:
-	$(UV) python -m scripts.ml.run_backtest_chronos
-
-backtest-load-chronos:
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos --replace
-
-backtest-chronos-full: backtest-chronos backtest-load-chronos
-
-backtest-bolt:
-	$(UV) python -m scripts.ml.run_backtest_chronos_bolt
-
-backtest-load-bolt:
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos_bolt --replace
-
-backtest-bolt-full: backtest-bolt backtest-load-bolt
-
-# Fine-tuned Chronos-Bolt (spec 32): fine-tune first, then backtest the post-cutoff holdout.
-finetune-chronos-bolt:
-	$(UV) python scripts/ml/finetune_chronos_bolt.py $(ARGS)
-
-backtest-bolt-ft:
-	$(UV) python -m scripts.ml.run_backtest_chronos_bolt_ft
-
-backtest-load-bolt-ft:
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos_bolt_ft --replace
-
-backtest-bolt-ft-full: backtest-bolt-ft backtest-load-bolt-ft
-
-backtest-bolt-hier:
-	$(UV) python -m scripts.ml.run_backtest_bolt_hierarchical
-
-backtest-load-bolt-hier:
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model bolt_hierarchical --replace
-
-backtest-bolt-hier-full: backtest-bolt-hier backtest-load-bolt-hier
-
 customer-features:
 	$(UV) python -m scripts.ml.generate_customer_features_sql
 
 customer-features-python:
 	$(UV) python -m scripts.ml.generate_customer_features
-
-backtest-lgbm-cust:
-	$(UV) python -m scripts.ml.run_backtest --model lgbm --model-id lgbm_cust_enriched
-
-backtest-catboost-cust:
-	$(UV) python -m scripts.ml.run_backtest --model catboost --model-id catboost_cust_enriched
-
-backtest-xgboost-cust:
-	$(UV) python -m scripts.ml.run_backtest --model xgboost --model-id xgboost_cust_enriched
-
-backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
-
-backtest-load-cust-enriched:
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model lgbm_cust_enriched --replace
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model catboost_cust_enriched --replace
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model xgboost_cust_enriched --replace
-
-backtest-chronos2:
-	$(UV) python -m scripts.ml.run_backtest_chronos2
-
-backtest-load-chronos2:
-	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos2 --replace
-
-backtest-chronos2-full: backtest-chronos2 backtest-load-chronos2
 
 backtest-chronos2e:
 	$(UV) python -m scripts.ml.run_backtest_chronos2_enriched
@@ -812,28 +751,21 @@ backtest-baselines: backtest-seasonal-naive backtest-rolling-mean
 
 # backtest-all produces every compete:true model that runs on a clean rebuild:
 #   lgbm_cluster, catboost_cluster, xgboost_cluster (cluster trees),
-#   lgbm/catboost/xgboost_cust_enriched (customer-enriched trees),
-#   chronos_bolt, chronos2, chronos2_enriched (foundation), + chronos (compete:false ref).
+#   chronos2_enriched (foundation).
 # Cheap/operator-gated baselines (mstl, nbeats, nhits, rolling_mean, rolling_median,
-# seasonal_naive, bolt_hierarchical) are run on demand via their own targets.
+# seasonal_naive) are run on demand via their own targets.
 # run_champion_selection.assert_competing_models_covered() fails loud if any
 # compete:true model is missing from fact_external_forecast_monthly after load.
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-cust-enriched-all backtest-chronos backtest-bolt backtest-chronos2 backtest-chronos2e  ## Run all clean-rebuild backtests sequentially (cluster + cust-enriched trees + foundation)
+backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos2e  ## Run all clean-rebuild backtests sequentially (cluster trees + foundation)
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
-	@echo "[parallel] Starting cluster trees, cust-enriched trees, Chronos, Bolt, Chronos2, Chronos2-enriched concurrently — logs in data/backtest/logs/"
+	@echo "[parallel] Starting cluster trees + Chronos2-enriched concurrently — logs in data/backtest/logs/"
 	$(UV) python scripts/ml/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
 	$(UV) python scripts/ml/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
 	$(UV) python scripts/ml/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest.py --model lgbm --model-id lgbm_cust_enriched $(ARGS) > data/backtest/logs/lgbm_cust_enriched.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest.py --model catboost --model-id catboost_cust_enriched $(ARGS) > data/backtest/logs/catboost_cust_enriched.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest.py --model xgboost --model-id xgboost_cust_enriched $(ARGS) > data/backtest/logs/xgboost_cust_enriched.log 2>&1 & \
-	$(UV) python -m scripts.ml.run_backtest_chronos > data/backtest/logs/chronos.log 2>&1 & \
-	$(UV) python -m scripts.ml.run_backtest_chronos_bolt > data/backtest/logs/chronos_bolt.log 2>&1 & \
-	$(UV) python -m scripts.ml.run_backtest_chronos2 > data/backtest/logs/chronos2.log 2>&1 & \
 	$(UV) python -m scripts.ml.run_backtest_chronos2_enriched > data/backtest/logs/chronos2_enriched.log 2>&1 & \
-	wait && echo "[parallel] All clean-rebuild backtests complete (3 cluster + 3 cust-enriched trees, chronos/bolt/chronos2/chronos2e). Check data/backtest/logs/ for output."
+	wait && echo "[parallel] All clean-rebuild backtests complete (3 cluster trees + chronos2e). Check data/backtest/logs/ for output."
 
 backtest-load:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --model $(MODEL) --replace
@@ -845,12 +777,12 @@ backtest-load-all-bulk:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --all --replace --bulk
 
 backtest-load-bulk:  ## Load 4 core models with single index cycle (~4x faster)
-	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
+	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster chronos2_enriched --replace --bulk
 
-backtest-load-main-only:  ## Load specific models to main table only (skip archive). Usage: make backtest-load-main-only MODELS="lgbm_cluster chronos"
+backtest-load-main-only:  ## Load specific models to main table only (skip archive). Usage: make backtest-load-main-only MODELS="lgbm_cluster chronos2_enriched"
 	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --main-only
 
-backtest-load-archive-only:  ## Load specific models to archive only (skip main). Usage: make backtest-load-archive-only MODELS="lgbm_cluster chronos"
+backtest-load-archive-only:  ## Load specific models to archive only (skip main). Usage: make backtest-load-archive-only MODELS="lgbm_cluster chronos2_enriched"
 	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --archive-only
 
 # ---------------------------------------------------------------------------
@@ -1592,6 +1524,10 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE ai_insights CASCADE;' \
 	  'TRUNCATE TABLE ai_planning_memos CASCADE;' \
 	  'TRUNCATE TABLE ai_call_log CASCADE;' \
+	  'TRUNCATE TABLE sku_chat_pending_adjustment CASCADE;' \
+	  'TRUNCATE TABLE sku_chat_call_log CASCADE;' \
+	  'TRUNCATE TABLE sku_chat_message CASCADE;' \
+	  'TRUNCATE TABLE sku_chat_session CASCADE;' \
 	  'TRUNCATE TABLE planner_decisions CASCADE;' \
 	  'TRUNCATE TABLE exception_queue CASCADE;' \
 	  'TRUNCATE TABLE fact_sop_approved_plan CASCADE;' \

@@ -819,7 +819,7 @@ def strategy_diverse_ensemble(
     For each DFU-month, greedily select top-K models by prior WAPE while
     applying a multiplicative penalty when a candidate belongs to the same
     model family as an already-selected model.  This discourages blending
-    structurally similar models (e.g. chronos2 + chronos2_enriched) that
+    structurally similar models (e.g. two cluster tree variants) that
     would otherwise dominate the ensemble.
 
     Effective WAPE for selection:

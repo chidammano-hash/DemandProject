@@ -97,6 +97,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Event Calendar | [../05-operations/03-event-calendar.md](../05-operations/03-event-calendar.md) | Operations |
 | Scenario Planning | [../05-operations/04-scenario-planning.md](../05-operations/04-scenario-planning.md) | Operations |
 | AI Planning Agent | [../06-ai-platform/01-ai-planning-agent.md](../06-ai-platform/01-ai-planning-agent.md) | AI |
+| SKU Chatbot (Claude Agent SDK, tiered Haiku/Sonnet/Opus, Item Analysis side chat) | [../06-ai-platform/07-sku-chatbot.md](../06-ai-platform/07-sku-chatbot.md) | AI |
 | Chatbot + Market Intelligence | [../06-ai-platform/02-market-intel.md](../06-ai-platform/02-market-intel.md) | AI |
 | Control Tower | [../06-ai-platform/03-control-tower.md](../06-ai-platform/03-control-tower.md) | AI |
 | Storyboard (Exception Workflow) | [../06-ai-platform/04-storyboard.md](../06-ai-platform/04-storyboard.md) | AI |
