@@ -182,6 +182,7 @@ make e2e               # Playwright E2E (needs API on :8000)
 make lint              # Ruff lint check + fix
 make format            # Ruff format
 make type-check        # Mypy
+make ai-sync-check     # Verify hooks/skills/config wiring
 
 # Routes
 make audit-routers     # Verify main.py ↔ vite.config.ts parity
@@ -233,18 +234,22 @@ Multi-step plans: this pass happens at **each** step, not only the end. Multi-ag
 
 ### Always-active automation (from `.claude/settings.json`)
 - **PostToolUse (Write/Edit)**: ruff on Python, anti-pattern checks on SQL, auto-runs edited test files.
-- **PreToolUse (Bash)**: blocks `git commit` if ruff or pytest fails.
+- **PreToolUse (Bash)**: blocks `git commit` if new CLAUDE.md rule violations detected.
 
-### Auto-trigger agents
-| Trigger | Agent | Skills |
-|---|---|---|
-| After Python changes | `python-reviewer` | `python-patterns`; routers also `api-design`; SQL-heavy also `postgres-patterns` |
-| Forecasting/ML changes | `forecasting-developer` / `forecasting-qa` | `forecasting-patterns` |
-| SQL/schema change | `database-reviewer` | `postgres-patterns` — verify `%s`, explicit columns, indexes |
-| New feature / bug fix | `tdd-guide` | `tdd-workflow` — write test FIRST (failing), then implement |
-| Before commit | `code-reviewer` | `security-review` (no secrets/injection/keys), `verification-loop` (build/types/lint/tests) |
-| Complex multi-file | `planner` | wait for user CONFIRM before editing |
-| New/modified pipeline script | — | run `make perf-script SCRIPT=<name>` |
+### How hooks, skills, and agents work together
+
+**Hooks** (`.claude/hooks/` + `.pre-commit-config.yaml`) fire immediately on edit/commit — purely mechanical quality gates (type check, lint, secret scan, test run).
+**Skills** (`.claude/skills/`) are on-demand reference guides loaded when work context matches (e.g., "Writing a Python router" → `api-design` skill loads automatically).
+**Agents** (spawned via `Agent()` tool) are expert reviewers — must be invoked manually for deep analysis. Each agent loads relevant skills.
+
+**Recommended agents by task** (manual invocation):
+- Python/FastAPI changes: `python-reviewer` (loads `python-patterns`, `api-design` for routers)
+- SQL/database changes: `database-reviewer` (loads `postgres-patterns`)
+- New feature/test-first: `tdd-guide` (loads `tdd-workflow`)
+- Forecasting/ML: `forecasting-developer` / `forecasting-qa` (load `forecasting-patterns`)
+- Pre-PR comprehensive check: `code-reviewer` (loads `security-review`, `verification-loop`)
+- Complex architecture: `planner` (requires user CONFIRM before editing)
+- Pipeline scripts: run `make perf-script SCRIPT=<name>` for profiling
 
 ### Tests are mandatory (no exceptions)
 - New `common/` module → `tests/unit/test_<module>.py`
