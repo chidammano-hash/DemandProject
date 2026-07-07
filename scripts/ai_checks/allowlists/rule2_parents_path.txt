@@ -76,3 +76,7 @@ tests/unit/test_backtest_multi_seed.py
 tests/unit/test_feature_engineering_new.py
 tests/unit/test_gen4_stream_f.py
 tests/unit/test_populate_dq_checks.py
+# --- pinned 2026-07-07 (pre-existing, grandfathered to enable hard-block gate) ---
+scripts/inventory/compute_lead_time_variability.py
+scripts/ml/run_champion_sweep.py
+tests/unit/test_restore_cluster_assignments.py

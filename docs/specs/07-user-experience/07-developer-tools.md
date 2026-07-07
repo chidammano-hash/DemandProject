@@ -65,18 +65,6 @@ Skills live in `.claude/skills/`. Claude auto-activates them based on what you'r
 
 ---
 
-### `python-testing`
-**Activates when:** Writing pytest tests or designing test fixtures
-
-**What it does:**
-- Guides RED→GREEN→REFACTOR cycle with pytest
-- Suggests fixture patterns, parametrize, and mock strategies
-- Targets 80%+ coverage with edge cases and error paths
-
-**Relevant to DemandProject:** All files in `tests/unit/` and `tests/api/`. Aligns with the existing `conftest.py` mock pool pattern (`make_pool()`).
-
----
-
 ### `postgres-patterns`
 **Activates when:** Writing SQL, designing schemas, or troubleshooting query performance
 
@@ -99,32 +87,6 @@ Skills live in `.claude/skills/`. Claude auto-activates them based on what you'r
 - Targets 80% minimum, 100% for financial/business-critical logic
 
 **Relevant to DemandProject:** Aligns with the mandatory testing rules in CLAUDE.md. Use whenever adding new endpoints, components, or Python modules.
-
----
-
-### `backend-patterns`
-**Activates when:** Designing API endpoints, background jobs, or data access layers
-
-**What it does:**
-- Repository pattern: encapsulate DB access behind a standard interface
-- Service layer: business logic decoupled from HTTP layer
-- N+1 query prevention
-- Caching strategies for hot paths
-
-**Relevant to DemandProject:** FastAPI router architecture, `api/core.py` connection pool patterns, APScheduler job design in `common/services/job_registry.py`.
-
----
-
-### `frontend-patterns`
-**Activates when:** Building React components, managing state, optimizing rendering
-
-**What it does:**
-- Composition over inheritance (compound components, render props)
-- TanStack Query for server state (stale-while-revalidate, cache invalidation)
-- Performance: `useMemo`, `useCallback`, `React.memo` — only where measured
-- Lazy loading and code splitting
-
-**Relevant to DemandProject:** All files in `frontend/src/tabs/`, `frontend/src/components/`, hooks in `frontend/src/hooks/`. Matches the existing TanStack Query + Recharts + shadcn/ui stack.
 
 ---
 
@@ -503,9 +465,7 @@ This runs: build → types → lint → `make test-all` → security → coverag
 | Fix build or type errors | `/build-fix` |
 | Run all quality checks | `/quality-gate` or `/verify pre-pr` |
 | Writing Python code | `python-patterns` skill (auto) |
-| Writing pytest tests | `python-testing` skill (auto) |
 | Writing SQL or schemas | `postgres-patterns` skill (auto) |
-| Building React components | `frontend-patterns` skill (auto) |
 | Designing new endpoints | `api-design` skill (auto) |
 | Security-sensitive code | `security-review` skill (auto) |
 | Complex feature planning | `planner` agent (auto or explicit) |
@@ -522,11 +482,8 @@ This runs: build → types → lint → `make test-all` → security → coverag
 .claude/
 ├── skills/
 │   ├── python-patterns/SKILL.md
-│   ├── python-testing/SKILL.md
 │   ├── postgres-patterns/SKILL.md
 │   ├── tdd-workflow/SKILL.md
-│   ├── backend-patterns/SKILL.md
-│   ├── frontend-patterns/SKILL.md
 │   ├── api-design/SKILL.md
 │   ├── verification-loop/SKILL.md
 │   └── security-review/SKILL.md

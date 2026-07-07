@@ -53,3 +53,6 @@ scripts/ml/run_expert_system_backtest.py
 scripts/ops/fix_dq_issues.py
 scripts/ops/run_sop_cycle.py
 common/core/etl_helpers.py
+# --- pinned 2026-07-07 (pre-existing; f-string SQL — worth a real Identifier fix) ---
+api/routers/forecasting/champion_sweeps.py
+api/routers/forecasting/accuracy_budget.py

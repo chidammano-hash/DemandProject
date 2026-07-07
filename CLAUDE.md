@@ -31,47 +31,73 @@
 
 Hard constraints. Violations cause bugs, test failures, or silent data corruption.
 
+### Mechanically enforced (the pre-commit gate hard-blocks NEW violations)
+These 6 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
+existing files) and hard-block a commit that adds a new one — so they need no prose vigilance,
+just don't add them:
+- `date.today()` only in `common/core/planning_date.py` → use `get_planning_date()`.
+- No `Path(__file__).resolve().parents[N]` at module level → `from common.core.paths import …`
+  (allowed only in an `if __name__ == "__main__"` bootstrap).
+- No bare `except Exception` → catch specific + `logger.exception()`; escape hatch
+  `# noqa: BLE001 — <reason>`.
+- No `print()` in `scripts/{etl,ml,inventory,forecasting,ops,ai}` → `logging.getLogger(__name__)`.
+- psycopg3 `%s` placeholders, never `$1`/`$2`; no f-string SQL inside `cur.execute()`.
+- No `: any` / `<any>` / `as any` in `frontend/src/api/queries/` → generate types via `npm run gen:types`.
+
 ### Workflow (applies to every change)
-- **Review + refactor at each step.** Before reporting any change as complete: re-read your own diff, fix anything you'd flag in code review, refactor for clarity if the diff is messy. In multi-step plans (parallel agents, multi-file refactors), each step ends with this self-pass — don't defer it to the end. **[FREQUENTLY VIOLATED]**
-- **Docs updated in the same commit as the code.** When a change affects architecture, APIs, schemas, conventions, infra, or operational procedures, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`, `docs/operations-manual/`, `docs/specs/<domain>/`, this file if rules changed) in the same commit. Don't ship code today and document tomorrow — they drift permanently. The "Documentation Update Rules" mapping in the Workflow & Hooks section tells you which doc maps to which kind of change. **[FREQUENTLY VIOLATED]**
+- **Self-review + refactor at each step** before reporting done (also a global habit). In
+  multi-step plans, each step ends with this self-pass — don't defer to the end.
+- **Docs updated in the same commit as the code.** Architecture/API/schema/convention/infra
+  changes update the relevant docs (`docs/ARCHITECTURE.md`, `docs/ENTERPRISE_ARCHITECTURE.md`,
+  `docs/operations-manual/`, `docs/specs/<domain>/`, this file if rules changed). The
+  Feature Integration Checklist (step 5, below) maps each kind of change to its doc.
 
-### Backend / Python
-- **`date.today()` forbidden outside `common/core/planning_date.py`.** Use `get_planning_date()`. Env overrides: `PLANNING_DATE`, `USE_SYSTEM_DATE`. **[FREQUENTLY VIOLATED]**
-- **`Path(__file__).resolve().parents[N]` forbidden at module level.** Allowed only in `if __name__ == "__main__"` bootstrap. Use `from common.core.paths import PROJECT_ROOT, CONFIG_DIR, DATA_DIR, SQL_DIR, SCRIPTS_DIR`. **[FREQUENTLY VIOLATED]**
-- **`except Exception` forbidden.** Catch specific (`psycopg.Error`, `ValueError`, …) and log via `logger.exception()`. `# noqa: BLE001 — <reason>` requires inline justification. **[FREQUENTLY VIOLATED]**
-- **`get_conn()` not `Depends(_get_pool)`** in `inv_planning_*.py` routers. `Depends(_get_pool)` causes 422 in tests because FastAPI inspects MagicMock signatures. **[FREQUENTLY VIOLATED]**
-- **psycopg3 uses `%s` placeholders** — never `$1`/`$2`. All SQL in scripts and routers. **[FREQUENTLY VIOLATED]**
-- **`domains.py` mounted LAST** in `api/main.py` — its catch-all `{domain}` shadows other routes.
-- **All routers MUST use `APIRouter(prefix="/...")`** plus short paths in `@router.get`/`.post`/etc. Never the full path inside the decorator.
-- **5xx responses never interpolate exception text.** Pattern: `logger.exception("...")` then `raise HTTPException(status_code=500, detail="<short verb-phrase>")`. No `f"...{exc}"`, no `str(exc)` in 500 details.
-- **Every write endpoint** (`@router.post`/`put`/`delete`/`patch`) **MUST have `dependencies=[Depends(require_api_key)]`** at router or per-route level.
-- **Identifier interpolation requires `psycopg.sql.Identifier`** — never f-string identifier interpolation in SQL. Values use `%s`.
-- **Pydantic v2 only** — `model_config = ConfigDict(...)`, never `class Config:`.
-- **No backward-compat shims.** When moving a module, rewrite all importers in the same change. Canonical: `from common.core.db import get_db_params`.
-- **Routers/modules > 800 LoC must split** by sub-feature into a domain folder.
-- **No `_row_to_dict` outside `common/core/sql_helpers.py`.** Import `row_to_dict_from_cursor` / `row_to_dict_from_cols`.
-- **Read-only analytics endpoints opt into `get_async_read_only_conn()`** (or sync sibling `get_read_only_conn()`). Routes to a Postgres read replica when `READ_REPLICA_URL` is set; otherwise falls back to the primary pool with no behaviour change. Use ONLY for queries that tolerate replica lag — never for read-after-write flows. Currently used by 7 customer-analytics endpoints. See `docs/operations-manual/11-maintenance-troubleshooting.md` "Read Replica Deployment".
+### Backend / Python (architectural — not mechanically checkable, hold these yourself)
+- **`get_conn()` not `Depends(_get_pool)`** in `inv_planning_*.py` routers (`Depends` → 422 in
+  tests: FastAPI inspects the MagicMock signature).
+- **`domains.py` mounted LAST** in `api/main.py` — its `{domain}` catch-all shadows other routes.
+- **`APIRouter(prefix="/...")` + short decorator paths.** Never the full path in the decorator.
+- **5xx never interpolate exception text** → `logger.exception(...)` then
+  `HTTPException(500, detail="<verb-phrase>")`. No `str(exc)`/`f"...{exc}"` in a 500.
+- **Every write endpoint** has `dependencies=[Depends(require_api_key)]`.
+- **Identifiers via `psycopg.sql.Identifier`** — never f-string; values via `%s`.
+- **Pydantic v2 only** (`model_config = ConfigDict(...)`, never `class Config:`).
+- **No backward-compat shims** — rewrite all importers in the same change
+  (`from common.core.db import get_db_params`).
+- **Modules/routers > 800 LoC split** by sub-feature into a domain folder.
+- **No `_row_to_dict` outside `common/core/sql_helpers.py`** → `row_to_dict_from_cursor` /
+  `row_to_dict_from_cols`.
+- **Read-only analytics opt into `get_async_read_only_conn()`** / `get_read_only_conn()`
+  (read replica when `READ_REPLICA_URL` set; never for read-after-write). 7 CA endpoints use it.
 
-### ML / Forecasting
-- **All tree-model `.fit()` and instantiation goes through `common/ml/model_registry.py`** (`fit_model()`, `build_model()`). Direct `LGBMRegressor()` / `CatBoostRegressor()` / `XGBRegressor()` outside `model_registry.py` is a defect — applies to tuning, training, backtest, production, meta-learner.
-- **All ML hyperparameters live in `forecast_pipeline_config.yaml` `algorithms.<id>.params`.** No defaults like `kwargs.get("n_estimators", 200)` in Python.
-- **Forecast quantity column constant: `from common.core.constants import FORECAST_QTY_COL`.** Never the string literal `"basefcst_pref"`.
-- **Foundation-model loaders live in `common/ml/foundation_backtest.py`.** Never import from `scripts/algorithm_testing/`.
-- **`ml_cluster` is metadata, NOT a model feature.** Listed in `METADATA_COLS`, excluded by `get_feature_columns()`. Still merged via `build_feature_matrix()` for per-cluster partitioning.
+### ML / Forecasting → see skill `forecasting-patterns` for the full pattern catalog
+- **All tree `.fit()`/instantiation goes through `common/ml/model_registry.py`.** Direct
+  `LGBMRegressor()`/`CatBoostRegressor()`/`XGBRegressor()` elsewhere is a defect.
+- **All ML hyperparameters live in `forecast_pipeline_config.yaml`** — no `kwargs.get()` defaults.
+- **`ml_cluster` is metadata, NOT a feature** (in `METADATA_COLS`, merged for partitioning only).
+- **`FORECAST_QTY_COL`** constant, never the literal `"basefcst_pref"`.
 
 ### Testing
-- **All API tests use `make_pool` from `tests/api/conftest.py`.** Hand-rolled `MagicMock` chains on `psycopg.connect` are forbidden. Use `httpx.AsyncClient(transport=ASGITransport(app))` with `patch("api.core._get_pool")`.
+- **All API tests use `make_pool` / `make_async_pool` from `tests/api/conftest.py`.** No
+  hand-rolled `MagicMock` on `psycopg.connect`. `httpx.AsyncClient(transport=ASGITransport(app))`
+  + `patch("api.core._get_pool")` (async handlers: `_get_async_pool`).
 
 ### Frontend
-- **Tab files MUST be < 600 lines.** Split into `frontend/src/tabs/<tab-name>/<Subpanel>.tsx`.
-- **All HTTP from frontend goes through `src/api/queries/<module>.ts` using `fetchJson`.** Never raw `fetch(` in tabs/components.
-- **No `: any`, `<any>`, or `as any` in `src/api/queries/`.** Mirror the backend Pydantic schema as a TS interface.
-- **Charts: never accept `theme` as a prop.** Read from `useThemeContext()` / `useChartColors()`. Inline hex colors are forbidden in `tabs/` and `components/`.
-- **New API path prefixes: add to BOTH `frontend/vite.config.ts` `API_PATH_PREFIXES` AND the barrel `frontend/src/api/queries/index.ts`** in the same change. Otherwise frontend gets HTML instead of JSON.
+- **Tab files < 600 lines** → split into `frontend/src/tabs/<tab-name>/<Subpanel>.tsx`.
+- **All HTTP via `src/api/queries/<module>.ts` `fetchJson`** — never raw `fetch(` in tabs/components.
+- **Charts read theme from `useThemeContext()`/`useChartColors()`** — no `theme` prop, no inline hex.
+- **New API prefix → BOTH `frontend/vite.config.ts` `API_PATH_PREFIXES` AND the
+  `frontend/src/api/queries/index.ts` barrel**, same change (else frontend gets HTML not JSON).
 
 ### Data Pipeline
-- **New data sources MUST extend the standard pipeline.** Add to `normalize-all` + `load-all` Make targets, register `DomainSpec` in `common/core/domain_specs.py`, add to `etl_config.yaml` `domain_order`. Never standalone.
-- **Forecast promotion**: predictions land in `fact_candidate_forecast`, are promoted to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion uses `data/champion/dfu_assignments.csv`. **Generate threads UI controls**: `POST /backtest-management/{model_id}/generate` accepts `horizon` + `confidence_intervals` query params (optional → pipeline-config defaults); the job handler maps them to the script's `--horizon` / `--confidence-intervals`|`--no-confidence-intervals` flags. Per-DFU time-series reads live in `api/routers/forecasting/production_forecast.py`: `/forecast/production/staging` (future, grouped by model) and `/forecast/candidate` (past out-of-sample backtest, grouped by model) — the Item Analysis chart overlays `staging_<model>` + `backtest_<model>` lines from these.
+- **New data sources extend the standard pipeline** — register `DomainSpec` in
+  `common/core/domain_specs.py`, add to `etl_config.yaml` `domain_order` + `normalize-all` +
+  `load-all`. Never standalone.
+- **Forecast promotion**: `fact_candidate_forecast` → `fact_production_forecast` via
+  `POST /backtest-management/{model_id}/promote` (champion uses `data/champion/dfu_assignments.csv`).
+  `generate` accepts `horizon` + `confidence_intervals` query params → script flags. Per-DFU reads:
+  `/forecast/production/staging` (future) + `/forecast/candidate` (past backtest) drive the Item
+  Analysis overlay. Detail in skill `forecasting-patterns`.
 
 ---
 
@@ -111,69 +137,28 @@ When adding a router: (1) `app.include_router()` in `api/main.py` BEFORE `domain
 
 ## Patterns & Pitfalls
 
-Each entry: **symptom → cause → fix**. File paths are anchors.
+The detailed symptom → cause → fix catalogs now live in **on-demand skills** (they load when
+the matching work happens, instead of taxing every turn). Reach for:
 
-### API & Routers
-- **422 in tests on `inv_planning_*` endpoints** → `Depends(_get_pool)` parameter inspected by FastAPI as MagicMock → use `get_conn()` directly.
-- **Mock tuples reject the response** → mock column count != SQL select column count → align mock tuple to exact column order/count of the query.
-- **Catch-all swallows a new route** → `domains.py` mounted before the new router → move `app.include_router(domains.router)` to be last in `api/main.py`.
-- **`POST /{model_id}/train` 400** → only `type === "tree"` models support production training; foundation/`deep_learning` rejected by design.
-- **Import error after restructure** → using a pre-restructure path (e.g. `common.<old>` instead of `common.core.<…>`) → use the canonical path: `from common.core.db import get_db_params`. Run `grep -rln "from common\.<old> " --include="*.py"` to find stragglers.
-- **Admin endpoints**: `api/routers/platform/admin.py`, `require_api_key` guarded. `POST /admin/llm/reset` clears OpenAI/Anthropic singletons. `POST /admin/tuning/invalidate-stale` clears `cluster_tuning_profile.stale`; logs `noop` if column absent or psycopg error.
+| Domain | Skill | Covers |
+|---|---|---|
+| Python idioms + hard rules | `python-patterns` | planning date, no bare except, psycopg3, Pydantic v2, canonical imports, YAML config |
+| FastAPI routers | `api-design` | 422/`get_conn`, `domains.py` last, safe 5xx, read-replica, register-a-router checklist |
+| SQL / ETL / MV / pools | `postgres-patterns` | query patterns, COPY `write_row`, null/sales-filter rules, MV tiered refresh, 3-pool invariant |
+| Forecasting engine | `forecasting-patterns` | backtest/champion/production lifecycle, per-cluster training, leakage guards, cold-start/intermittent, SHAP stages, dim_sku grain, formulas |
+| Tests | `tdd-workflow` | `make_pool`/`make_async_pool`, `TestQueryWrapper`, echarts/react-virtual mocks, test placement |
+| Security | `security-review` | secrets, SQL injection, API-key/role guards, PII in logs |
+| Pre-PR verification | `verification-loop` | type/lint/test/security phases |
 
-### Frontend
-- **"HTML instead of JSON"** → missing Vite proxy entry for new API prefix → add to `frontend/vite.config.ts` and `frontend/src/api/queries/index.ts` barrel; run `make audit-routers` to verify parity. See `frontend/vite.config.ts` for the authoritative proxy list.
-- **Test wrappers**: wrap with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for charts, `@tanstack/react-virtual` for virtualized rows.
-
-### ML & Forecasting
-- **Dimension mismatch in SHAP** → feature stripped from `feature_cols` but model trained with full set → pre-SHAP stages (duplicate/variance/correlation in `shap_selector.py`) prune the *selection pool* only; SHAP input must match the trained set.
-- **Cold-start DFU has no forecast** → < `cold_start_min_months` (3) months history → DFUs with 3–11 months route to `cold_start_model_id` (rolling_mean); < 3 months are skipped (absolute floor). Config: `forecast_pipeline_config.yaml` `production_forecast`.
-- **Multi-stage feature selection** (`shap_selector.py`): 4 stages per timeframe — (0) duplicate alias removal, (1) near-zero variance, (2) correlation pre-filter, (3) SHAP cumulative. Config keys: `correlation_filter`, `variance_filter`. **Per-cluster SHAP**: `compute_timeframe_shap_per_cluster()` returns `dict[str, list[str]]`. Sparse clusters skip SHAP. Stratified 50/50 sampling for >50% zeros.
-- **Cluster strategy resolution**: `algorithms.<name>.cluster_strategy` (default `"per_cluster"`). Tree/statistical only — foundation/DL always global.
-- **Clustering master switch**: `clustering.enabled` in `forecast_pipeline_config.yaml`. When `false`, all backtests fall back to `global` regardless of per-algorithm setting. Check via `is_clustering_enabled()` from `common.core.utils`.
-- **Per-cluster tuning profiles** (`config/forecasting/cluster_tuning_profiles.yaml`): Phase 1 matches by `match_criteria.cluster_name`, Phase 2 by statistical criteria (mean_demand, cv_demand, zero_demand_pct). First match wins per `_PROFILE_PRIORITY`. Resolved by `resolve_cluster_params()` in `backtest_framework.py`.
-- **Intermittent routing**: clusters with > 70% zero-demand rows (`backtest.intermittent_threshold`) → rolling mean baseline (`backtest.baseline_intermittent`). Early stopping uses 5% patience standard, 10% sparse/intermittent (`compute_early_stop_patience()`).
-- **Clustering library** lives in `common/ml/clustering/` — `features.py`, `training.py`, `labeling.py`, `scenario.py`. Params stored in `cluster_experiment` table (promoted row), NOT YAML. Operates on **SKUs** (item+location), not DFUs.
-- **SKU features** computed once in `common/ml/sku_features/` and stored in `dim_sku`; clustering reads pre-computed values. Config: `config/forecasting/sku_features_config.yaml`.
-- **`model_registry.build_model(algorithm_id, params=None)`**: reads `algorithms.<id>` entry, translates via `to_native_params()`, returns configured tree estimator. Foundation/DL/statistical → `_FoundationStub`. Unknown id → `UnknownAlgorithm` (subclass of `ValueError`).
-- **Chunked fact-table reads**: production ML/forecasting scripts use `read_sql_chunked()` / `stream_query_in_chunks()` from `common.core.sql_helpers` for any query that scans a fact table (sales, forecast, inventory snapshots). Bare `pd.read_sql(...)` without `chunksize` over a fact table is a defect at 40× scale — it OOMs the worker. See `scripts/ml/train_meta_learner.py` and `scripts/forecasting/generate_production_forecasts.py` for the pattern.
-- **dim_sku joins use the full sku_ck grain.** `dim_sku.sku_ck = (item_id, customer_group, loc)` and `customer_group` is NOT unique per `(item_id, loc)`. Any accuracy / FVA / budget endpoint that joins the forecast fact to `dim_sku` must match on `item_id AND customer_group AND loc` — a 2-key join fans every fact row across customer_groups and inflates WAPE/accuracy/bias. Canonical reference: `accuracy.py`. (`accuracy_budget.py` + `fva.py` were fixed 2026-06-20.)
-- **Backtest model persistence under embargo**: with `embargo_months >= 1` the last timeframe is skipped (empty predict window), so `.pkl` persistence targets `_last_persistable_timeframe()`, NOT `len(timeframes)-1`. Guarding persistence on the raw last index persists nothing under the default embargo.
-- **Fail loud, don't zero-fill**: a failed recursive prediction in `generate_production_forecasts.py` re-raises (logged) rather than substituting a column of zeros — an all-zero forecast reads downstream as "no demand" and silently corrupts the plan/safety stock.
-
-### Data Loading
-- **Staged CSV convention**: normalized CSVs land in `data/staged/`. `DomainSpec.clean_file` embeds the prefix (`"staged/itemdata_clean.csv"`); resolution is `ROOT / "data" / spec.clean_file`. ML intermediates (`clustering_features.csv`, `seasonality_results.csv`) also live under `data/staged/`. No new normalized output at `data/` root.
-- **Null normalization**: `''`, `'null'`, `'none'`, `'NA'` → NULL during load.
-- **Type casting**: integer/float/date fields auto-cast with null coercion.
-- **Sales filtering**: only `TYPE=1` rows enter `fact_sales_monthly`.
-- **Time dimension**: auto-generated 2020–2035, not from a file.
-- **Forecast `model_id`**: default `'external'` for source-system feeds. `UNIQUE(forecast_ck, model_id)` prevents duplicates.
-- **Execution-lag loading**: dual-path insert with phase ordering — archive loaded BEFORE staging mutation. See `docs/specs/02-forecasting/03-backtest-framework.md`.
-- **Customer demand**: `site` → `location_id` via `dim_location.site_id`; `posting_prd` (YYYYMM) → `startdate` (YYYY-MM-01); `demand_qty = MAX(0, demand_cases)`; `sales_qty = MAX(0, demand_cases - oos_cases)`. Supports `--replace` and `--month YYYY-MM`.
-- **COPY uses `copy.write_row((...))`, never hand-built buffers.** Raw tab-delimited `io.StringIO`/f-string COPY buffers desync the stream — text-format COPY treats tab as the column delimiter, newline as the row terminator, backslash as the escape char — so any free-text dimension value (`item_id`/`customer_group`/`loc` from external CSVs) containing one of those silently shifts columns, routes the WRONG row, or drops rows. Always `with cur.copy("COPY t (cols) FROM STDIN") as copy: copy.write_row((...))` with an explicit column list (psycopg3 escapes + type-adapts each value). JSONB columns need a `psycopg.types.json.Jsonb` wrapper. **[FREQUENTLY VIOLATED]**
-- **Never write synthetic/random forecast data to fact tables.** `generate_quantile_forecasts.py` trains on `rng.uniform` noise (MVP stub) and is guarded to refuse the `fact_demand_plan` write unless `--dry-run`/`--allow-synthetic`. Any script that would persist placeholder data to a consumed fact table must fail loud, not write silently.
-
-### MV & Performance
-- **Stale MV after refresh** → wrong order (dependent before source) → use tiered refresh; see `Makefile` `refresh-mvs-tiered`.
-- **Stub table pattern**: an MV depending on a future feature's table → create with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN yields NULL → neutral scores until real data flows.
-- **Connection pool exhaustion / `FATAL: too many connections`** → the API runs THREE independent pools per gunicorn worker, sized separately in `api/pool.py`: sync primary `POOL_MAX_SIZE` (default **12**), async primary `ASYNC_POOL_MAX_SIZE` (default **20**, carries the Customer-Analytics fan-out), and read-replica `READ_POOL_MAX_SIZE` (default **12**, only created when `READ_REPLICA_URL` is set). Multi-pool invariant against the PRIMARY ceiling: `GUNICORN_WORKERS × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead ≤ postgres max_connections` (dev `max_connections=200` in `docker-compose.yml`); the read pool counts against the REPLICA's own ceiling. The `make deploy-check` preflight gate enforces this exact formula (trips at >85% of `max_connections`). Don't tune one pool past the invariant; check unclosed connections.
-- **Profiling**: wrap major stages with `profiled_section()` from `common/services/perf_profiler.py` instead of raw `time.time()`. `wrap_connection()` enforces `default_transaction_read_only = true` and rolls back. Thresholds in `config/platform/perf_config.yaml` — never hardcoded.
-- **GPU**: `DEMAND_GPU=on|off|auto` (default `auto`). `cupy` for Monte Carlo; `numba` for seasonality JIT. All scripts fall back gracefully.
-
-### Config
-- **All config in YAML**, loaded via `load_config(name)` from `common.core.utils`. No magic numbers. Forecast pipeline master config: `config/forecasting/forecast_pipeline_config.yaml` (algorithm roster + params, backtest, tuning, champion, forecast, run tracking). Helpers: `load_forecast_pipeline_config()`, `get_algorithm_roster(stage=…)`, `get_competing_model_ids()`, `get_forecastable_model_ids()`, `get_algorithm_params(model_id)`. Old configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`, `clustering_config.yaml`) deleted.
-- **`_includes` directive** at top of any YAML loads listed files first as defaults — used for `shared_constants.yaml` inheritance.
-- **Inline comments required** on every key in every config YAML — explanation, valid options, default. Use `# ═══ SECTION ═══` headers. Update comments when values change.
-
-### Code Quality
-- **DB params**: `from common.core.db import get_db_params`. No inline connection helpers.
-- **Timestamp helper**: `from common.core.utils import _ts`. No per-file `_ts()`.
-- **Structured logging**: `logging.getLogger(__name__)` — never raw `print()`. `basicConfig()` only in `__main__`.
-
-### Formulas
-- **Accuracy**: `100 - (100 * SUM(ABS(F-A)) / ABS(SUM(A)))`
-- **Bias**: `(SUM(Forecast) / SUM(History)) - 1`
-- **WAPE**: `SUM(|F-A|) / |SUM(A)|`
+Still-here quick facts that don't belong to one skill:
+- **Frontend "HTML instead of JSON"** → missing Vite proxy entry → add to `frontend/vite.config.ts`
+  + `frontend/src/api/queries/index.ts`; `make audit-routers` to verify. (Full checklist in `api-design`.)
+- **Customer-demand load**: `site` → `location_id` via `dim_location.site_id`; `posting_prd`
+  (YYYYMM) → `startdate`; `demand_qty = MAX(0, demand_cases)`;
+  `sales_qty = MAX(0, demand_cases - oos_cases)`. Supports `--replace`, `--month YYYY-MM`.
+- **GPU**: `DEMAND_GPU=on|off|auto` (default `auto`) — `cupy` (Monte Carlo), `numba` (seasonality JIT); all fall back.
+- **Admin** (`api/routers/platform/admin.py`, `require_api_key`): `POST /admin/llm/reset` clears
+  LLM singletons; `POST /admin/tuning/invalidate-stale` clears `cluster_tuning_profile.stale`.
 
 ---
 
@@ -253,8 +238,9 @@ Multi-step plans: this pass happens at **each** step, not only the end. Multi-ag
 ### Auto-trigger agents
 | Trigger | Agent | Skills |
 |---|---|---|
-| After Python changes | `python-reviewer` | `python-patterns`; routers also `api-design` + `backend-patterns`; SQL-heavy also `postgres-patterns` |
-| SQL/schema change | `database-reviewer` | verify `%s`, explicit columns, indexes |
+| After Python changes | `python-reviewer` | `python-patterns`; routers also `api-design`; SQL-heavy also `postgres-patterns` |
+| Forecasting/ML changes | `forecasting-developer` / `forecasting-qa` | `forecasting-patterns` |
+| SQL/schema change | `database-reviewer` | `postgres-patterns` — verify `%s`, explicit columns, indexes |
 | New feature / bug fix | `tdd-guide` | `tdd-workflow` — write test FIRST (failing), then implement |
 | Before commit | `code-reviewer` | `security-review` (no secrets/injection/keys), `verification-loop` (build/types/lint/tests) |
 | Complex multi-file | `planner` | wait for user CONFIRM before editing |

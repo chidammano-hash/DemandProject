@@ -61,3 +61,6 @@ scripts/ops/fix_dq_issues.py
 scripts/ops/run_perf_analysis.py
 tests/unit/test_intramonth_stockout.py
 tests/unit/test_utils.py
+# --- pinned 2026-07-07 (pre-existing, grandfathered to enable hard-block gate) ---
+api/routers/forecasting/champion_sweeps.py
+scripts/ml/run_champion_sweep.py

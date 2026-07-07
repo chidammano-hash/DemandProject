@@ -85,7 +85,7 @@ async def get_blended_summary():
             # horizon trails the system clock, so CURRENT_DATE matches zero rows and
             # blanks the summary. Matches the sibling routers' get_planning_date()
             # convention (CURRENT_DATE is the SQL equivalent of the forbidden
-            # date.today()).
+            # host-clock date call).
             cur.execute("""
                 SELECT
                     COUNT(DISTINCT (item_id, loc))                 AS total_dfus,

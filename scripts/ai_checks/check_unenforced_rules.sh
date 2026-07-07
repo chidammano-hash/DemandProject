@@ -53,7 +53,7 @@ echo "[Rule 1] date.today() must only appear in common/core/planning_date.py"
 RULE1_ALLOW=$(read_allowlist "$ALLOW_DIR/rule1_date_today.txt")
 RULE1_HITS=$(grep -rln "date\.today()" --include="*.py" . 2>/dev/null \
   | normalize \
-  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" \
+  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" | grep -v "^tmp/" \
   | grep -v "^common/core/planning_date\.py$" \
   | grep -v "^tests/" \
   | sort -u || true)
@@ -79,7 +79,7 @@ echo "[Rule 2] Path(__file__).resolve().parents[ requires common.core.paths impo
 RULE2_ALLOW=$(read_allowlist "$ALLOW_DIR/rule2_parents_path.txt")
 RULE2_HITS=$(grep -rln "Path(__file__)\.resolve()\.parents\[" --include="*.py" . 2>/dev/null \
   | normalize \
-  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" \
+  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" | grep -v "^tmp/" \
   | sort -u || true)
 
 while IFS= read -r f; do
@@ -102,7 +102,7 @@ RULE3_ALLOW=$(read_allowlist "$ALLOW_DIR/rule3_bare_except.txt")
 # Find files with offending lines
 RULE3_HITS=$(grep -rlE "except Exception\b" --include="*.py" . 2>/dev/null \
   | normalize \
-  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" \
+  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" | grep -v "^tmp/" \
   | sort -u || true)
 
 while IFS= read -r f; do
