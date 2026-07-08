@@ -18,6 +18,7 @@ from common.ml.tuning import (
     iteration_param_for_model,
     load_best_params,
     merge_fixed_params,
+    prepare_fold_features,
     save_best_params,
     trial_best_rounds_or_max,
     tune_for_timeframe,
@@ -381,6 +382,70 @@ class TestTrainFoldFnsRegistry:
     def test_all_entries_are_callable(self):
         for name, fn in TRAIN_FOLD_FNS.items():
             assert callable(fn), f"TRAIN_FOLD_FNS[{name!r}] is not callable"
+
+
+class TestPrepareFoldFeatures:
+    def test_lgbm_and_xgboost_cast_categoricals_and_fill_numeric_gaps(self):
+        X_train = pd.DataFrame(
+            {
+                "region": ["WEST", None],
+                "brand": ["A", "B"],
+                "qty_lag_1": [10.0, np.nan],
+            }
+        )
+        X_val = pd.DataFrame(
+            {
+                "region": ["EAST", "WEST"],
+                "brand": ["B", None],
+                "qty_lag_1": [np.nan, 20.0],
+            }
+        )
+
+        for model_name in ("lgbm", "xgboost"):
+            X_tr, X_va, effective_cat_cols = prepare_fold_features(
+                model_name,
+                X_train,
+                X_val,
+                ["region"],
+            )
+
+            assert effective_cat_cols == ["region", "brand"]
+            assert X_tr["region"].dtype.name == "category"
+            assert X_va["brand"].dtype.name == "category"
+            assert "__NA__" in X_tr["region"].cat.categories
+            assert "__NA__" in X_va["brand"].cat.categories
+            assert X_tr["qty_lag_1"].isna().sum() == 0
+            assert X_va["qty_lag_1"].isna().sum() == 0
+            assert X_tr["qty_lag_1"].iloc[1] == 0.0
+            assert X_va["qty_lag_1"].iloc[0] == 0.0
+
+    def test_catboost_casts_categoricals_to_strings(self):
+        X_train = pd.DataFrame(
+            {
+                "region": ["WEST", None],
+                "qty_lag_1": [10.0, np.nan],
+            }
+        )
+        X_val = pd.DataFrame(
+            {
+                "region": ["EAST", None],
+                "qty_lag_1": [np.nan, 20.0],
+            }
+        )
+
+        X_tr, X_va, effective_cat_cols = prepare_fold_features(
+            "catboost",
+            X_train,
+            X_val,
+            ["region"],
+        )
+
+        assert effective_cat_cols == ["region"]
+        assert X_tr["region"].tolist() == ["WEST", "__NA__"]
+        assert X_va["region"].tolist() == ["EAST", "__NA__"]
+        assert X_tr["region"].dtype == object
+        assert X_tr["qty_lag_1"].iloc[1] == 0.0
+        assert X_va["qty_lag_1"].iloc[0] == 0.0
 
 
 # ── fixed params merge ────────────────────────────────────────────────────────

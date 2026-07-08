@@ -270,6 +270,57 @@ def trial_best_rounds_or_max(trial: Any, n_estimators_max: int) -> int:
     return int(best_rounds) if best_rounds is not None else int(n_estimators_max)
 
 
+def prepare_fold_features(
+    model_name: str,
+    X_train: pd.DataFrame,
+    X_val: pd.DataFrame,
+    cat_cols: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Prepare one tuning fold's features for the target tree backend.
+
+    Tuning entry points rebuild train/validation folds repeatedly, so this
+    helper keeps the feature treatment aligned before the shared registry fit:
+    categorical columns are cast to the dtype each backend expects, additional
+    object/string feature columns are treated as categoricals, and numeric
+    feature gaps are zero-filled consistently in both train and validation.
+    """
+    X_tr = X_train.copy()
+    X_va = X_val.copy()
+    feature_cols = list(X_tr.columns)
+
+    discovered_cat_cols = list(
+        X_tr.select_dtypes(include=["object", "string"]).columns.union(
+            X_va.select_dtypes(include=["object", "string"]).columns
+        )
+    )
+    effective_cat_cols = list(
+        dict.fromkeys(
+            [
+                *[col for col in cat_cols if col in feature_cols],
+                *[col for col in discovered_cat_cols if col in feature_cols],
+            ]
+        )
+    )
+
+    for col in feature_cols:
+        if col in effective_cat_cols:
+            train_values = X_tr[col].astype(object).fillna("__NA__").astype(str)
+            val_values = X_va[col].astype(object).fillna("__NA__").astype(str)
+            if model_name == "catboost":
+                X_tr[col] = train_values
+                X_va[col] = val_values
+            else:
+                categories = pd.Index(train_values).union(pd.Index(val_values))
+                X_tr[col] = pd.Categorical(train_values, categories=categories)
+                X_va[col] = pd.Categorical(val_values, categories=categories)
+            continue
+
+        X_tr[col] = X_tr[col].fillna(0)
+        X_va[col] = X_va[col].fillna(0)
+
+    return X_tr, X_va, effective_cat_cols
+
+
 # ── Per-fold model training functions ─────────────────────────────────────────
 # These are used by both tune_hyperparams.py (global tuning) and
 # tune_for_timeframe() (causal per-timeframe tuning). Lazy model imports keep
@@ -306,22 +357,28 @@ def _train_fold(
     }
     model = build_tree_model(backend, full_params)
 
-    feature_cols = list(X_train.columns)
+    X_train_prepared, X_val_prepared, effective_cat_cols = prepare_fold_features(
+        backend,
+        X_train,
+        X_val,
+        cat_cols,
+    )
+    feature_cols = list(X_train_prepared.columns)
     fit_model(
         model,
         backend,
-        X_train,
+        X_train_prepared,
         y_train,
-        X_val,
+        X_val_prepared,
         y_val,
-        cat_cols,
+        effective_cat_cols,
         feature_cols,
         lib_module,
         n_estimators_max,
         early_stopping_rounds=early_stopping_rounds,
     )
 
-    preds = np.maximum(model.predict(X_val), 0)
+    preds = np.maximum(model.predict(X_val_prepared), 0)
     best_rounds = get_best_iteration(model, backend) or n_estimators_max
     return preds, best_rounds
 
@@ -388,22 +445,28 @@ def train_catboost_fold(
     }
     model = build_tree_model("catboost", full_params)
 
-    feature_cols = list(X_train.columns)
+    X_train_prepared, X_val_prepared, effective_cat_cols = prepare_fold_features(
+        "catboost",
+        X_train,
+        X_val,
+        cat_cols,
+    )
+    feature_cols = list(X_train_prepared.columns)
     fit_model(
         model,
         "catboost",
-        X_train,
+        X_train_prepared,
         y_train,
-        X_val,
+        X_val_prepared,
         y_val,
-        cat_cols,
+        effective_cat_cols,
         feature_cols,
         cb,
         n_estimators_max,
         early_stopping_rounds=early_stopping_rounds,
     )
 
-    preds = np.maximum(model.predict(X_val), 0)
+    preds = np.maximum(model.predict(X_val_prepared), 0)
     best_rounds = get_best_iteration(model, "catboost") or n_estimators_max
     return preds, best_rounds
 
