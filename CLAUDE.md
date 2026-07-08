@@ -93,10 +93,12 @@ just don't add them:
 - **New data sources extend the standard pipeline** — register `DomainSpec` in
   `common/core/domain_specs.py`, add to `etl_config.yaml` `domain_order` + `normalize-all` +
   `load-all`. Never standalone.
-- **Forecast promotion**: `fact_candidate_forecast` → `fact_production_forecast` via
-  `POST /backtest-management/{model_id}/promote` (champion uses `data/champion/dfu_assignments.csv`).
-  `generate` accepts `horizon` + `confidence_intervals` query params → script flags. Per-DFU reads:
-  `/forecast/production/staging` (future) + `/forecast/candidate` (past backtest) drive the Item
+- **Forecast promotion**: `fact_production_forecast_staging` → `fact_production_forecast` via
+  `POST /backtest-management/{model_id}/promote` (champion routes per-DFU, per-month via the
+  promoted experiment's `data/champion/experiment_{id}_winners.csv`, keyed on `(item_id, loc,
+  startdate)`; `dfu_assignments.csv` is dead code, unreferenced). `generate` accepts `horizon` +
+  `confidence_intervals` query params → script flags. Per-DFU reads: `/forecast/production/staging`
+  (future) + `/forecast/candidate` (past backtest, from `fact_candidate_forecast`) drive the Item
   Analysis overlay. Detail in skill `forecasting-patterns`.
 
 ---

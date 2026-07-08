@@ -52,8 +52,8 @@ tuning:
 |---|---|
 | `common/ml/tuning.py` | Shared CV split generator, stabilised WAPE objective, Optuna helpers, JSON load/save |
 | `common/ml/tuning_tracker.py` | Tuning-run registry + leaderboard |
-| `scripts/tune_hyperparams.py` | Global per-algorithm tuning entrypoint |
-| `scripts/tune_cluster_hyperparams.py` | Per-cluster tuning entrypoint (writes `cluster_tuning_profiles.yaml`) |
+| `scripts/ml/tune_hyperparams.py` | Global per-algorithm tuning entrypoint |
+| `scripts/ml/tune_cluster_hyperparams.py` | Per-cluster tuning entrypoint (writes `cluster_tuning_profiles.yaml`) |
 | `scripts/ml/auto_tune.py` | Strategy-driven auto-tune (consumes `tune_strategies.yaml`) |
 
 ---
@@ -75,25 +75,15 @@ The next `make backtest-all` cycle picks up the new params automatically.
 
 ---
 
-## 5.3 Per-Family Tuning — Customer-Enriched Tree Models
+## 5.3 Customer-Enriched Tree Models (Removed)
 
-Customer-enriched variants (`lgbm_cust`, `catboost_cust`, `xgboost_cust`) use
-the 34 pre-computed customer-derived features from
-`make customer-features`. They are backtested via `make backtest-cust-enriched-all`.
-
-> **Note (verify in your local Makefile):** A dedicated
-> `make tune-cust-enriched-all` target is **not** defined in the current
-> Makefile. To tune the customer-enriched family you must invoke the script
-> directly with the appropriate algorithm IDs:
->
-> ```bash
-> uv run python scripts/tune_hyperparams.py --model lgbm_cust
-> uv run python scripts/tune_hyperparams.py --model catboost_cust
-> uv run python scripts/tune_hyperparams.py --model xgboost_cust
-> ```
->
-> If a per-family tune target is added, register it under the
-> `tune-cust-enriched-all:` rule and add it to the help block.
+The customer-enriched tree variants (`lgbm_cust_enriched`, `catboost_cust_enriched`,
+`xgboost_cust_enriched`) that consumed the 34 pre-computed customer-derived features
+from `make customer-features` were removed from
+`config/forecasting/forecast_pipeline_config.yaml` in the deprecated-model cleanup
+(`5ab8d593`). There is no `backtest-cust-enriched-all` or `tune-cust-enriched-all`
+target, and no algorithm entry sets `customer_features: true`. See Section 4.2 of
+`04-forecasting-backtest.md` for the current state of the customer-features pipeline.
 
 ---
 
@@ -160,9 +150,9 @@ candidate forecast pool already loaded into `fact_candidate_forecast`.
 
 | Stage | Make Target | Script | Output |
 |---|---|---|---|
-| 1. Train meta-learner | `champion-train-meta` | `scripts/run_champion_meta_training.py` | Random-forest classifier predicting per-DFU winning model |
-| 2. Simulate strategies | `champion-simulate` | `scripts/simulate_champion_strategies.py` | Per-strategy accuracy vs ceiling, written to `data/champion/` |
-| 3. Select champion | `champion-select` | `scripts/run_champion_selection.py` | `data/champion/dfu_assignments.csv` and `champion_summary.json` |
+| 1. Train meta-learner | `champion-train-meta` | `scripts/ml/train_meta_learner.py` | Random-forest classifier predicting per-DFU winning model |
+| 2. Simulate strategies | `champion-simulate` | `scripts/ml/simulate_champion_strategies.py` | Per-strategy accuracy vs ceiling, written to `data/champion/` |
+| 3. Select champion | `champion-select` | `scripts/ml/run_champion_selection.py` | `data/champion/dfu_assignments.csv` and `champion_summary.json` |
 
 `make champion-all = champion-train-meta + champion-simulate + champion-select`.
 
@@ -191,7 +181,7 @@ champion:
     test_months: 3
     performance_window: 6
   models:                     # candidate model pool
-    - chronos2
+    - chronos2_enriched
     - nbeats
     - nhits
 ```
@@ -422,7 +412,7 @@ competition:
   metric: accuracy_pct
   lag: execution
   min_dfu_rows: 3
-  models: [catboost_cluster, xgboost_cluster, chronos2, chronos2_enriched, chronos_bolt, seasonal_naive, rolling_mean]
+  models: [catboost_cluster, xgboost_cluster, chronos2_enriched, seasonal_naive, rolling_mean]
   strategy: expanding          # expanding | rolling | decay | ensemble | meta_learner
   strategy_params:
     window_months: 6
@@ -611,12 +601,12 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 | `common/ml/tuning_tracker.py` | Tuning-run registry + leaderboard |
 | `common/ml/champion/` (package: `registry.py` + 8 strategy modules) | Strategy registry (causal, exec-lag aware) — 31 strategies across `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment` |
 | `common/ml/backtest_framework.py` | `resolve_cluster_params()` Phase 1/Phase 2 matcher |
-| `scripts/tune_hyperparams.py` | Global per-algorithm tuning |
-| `scripts/tune_cluster_hyperparams.py` | Per-cluster tuning |
+| `scripts/ml/tune_hyperparams.py` | Global per-algorithm tuning |
+| `scripts/ml/tune_cluster_hyperparams.py` | Per-cluster tuning |
 | `scripts/ml/auto_tune.py` | Strategy-driven auto-tune (LGBM/CatBoost/XGBoost) |
-| `scripts/run_champion_selection.py` | Champion selection (Stage 3) |
-| `scripts/simulate_champion_strategies.py` | Strategy simulator (Stage 2) |
-| `scripts/run_champion_experiment.py` | Champion-experiment runner (used by Champion Experiments tab) |
+| `scripts/ml/run_champion_selection.py` | Champion selection (Stage 3) |
+| `scripts/ml/simulate_champion_strategies.py` | Strategy simulator (Stage 2) |
+| `scripts/ml/run_champion_experiment.py` | Champion-experiment runner (used by Champion Experiments tab) |
 | `api/routers/platform/admin.py` | `POST /admin/tuning/invalidate-stale` |
 | `api/routers/forecasting/backtest_management.py` | `POST /{model_id}/promote` (single + champion) |
 | `api/routers/forecasting/tuning_chat.py` | Tuning chat backend |

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `scripts/run_backtest.py`, `scripts/run_backtest_catboost.py`, `scripts/run_backtest_xgboost.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py` |
+| **Key Files** | `scripts/ml/run_backtest.py`, `scripts/ml/run_backtest_catboost.py`, `scripts/ml/run_backtest_xgboost.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py` |
 
 ---
 
@@ -117,12 +117,12 @@ Requires XGBoost >= 2.0 for native categorical support.
 
 ## Configuration
 
-All algorithm options are in `config/forecasting/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for the complete reference. Each script accepts only `--config`, `--model-id`, and `--n-timeframes` as CLI arguments.
+All algorithm options are in `config/forecasting/forecast_pipeline_config.yaml`. See [Forecast Pipeline Config](./19-forecast-pipeline-config.md) for the complete reference. Each script accepts only `--config`, `--model-id`, and `--n-timeframes` as CLI arguments.
 
 ## Dependencies
 
 - [Backtest Framework](./03-backtest-framework.md) -- shared orchestrator
-- [Algorithm Config](./06-algorithm-config.md) -- controls all algorithm behavior
+- [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- controls all algorithm behavior
 - Clustering (in `03-demand-intelligence/`) -- provides `ml_cluster` feature
 - Python packages: `lightgbm>=4.0`, `catboost>=1.2`, `xgboost>=2.0`
 

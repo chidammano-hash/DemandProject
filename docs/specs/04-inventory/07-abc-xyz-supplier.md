@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/classify_abc_xyz.py`, `api/routers/inventory/inv_planning_abc_xyz.py`, `sql/032_create_supplier_performance.sql` |
+| **Key Files** | `scripts/classify_abc_xyz.py`, `api/routers/inventory/inv_planning_abc_xyz.py`, `api/routers/inventory/inv_planning_supplier.py`, `sql/143_add_otif_drop_old_supplier_mv.sql` |
 
 ---
 
@@ -56,17 +56,17 @@ The combined segment (e.g., `AX`, `BZ`) is written to `dim_sku` and drives auto-
 
 ### Supplier Performance (IPfeature12)
 
-`mv_supplier_performance` aggregates delivery KPIs from inventory receipt patterns:
+`mv_supplier_po_performance` aggregates delivery KPIs from `fact_purchase_orders` (the legacy `mv_supplier_performance` proxy view, based on `dim_item_lead_time_profile`, was retired in `sql/143`):
 
 | Metric | Formula | Purpose |
 |---|---|---|
-| On-time delivery % | Orders within +/- 2 days of promise / total | Reliability measure |
-| Avg lead time | Mean days from order to receipt | Planning parameter |
-| LT variability | Std dev of observed lead times | SS input |
-| Reliability score | `0.5 * on_time_pct + 0.3 * (1 - lt_cv) + 0.2 * fill_rate` | Composite 0-100 score |
-| SKU-location count | Distinct items supplied | Coverage breadth |
-
-Supports trending over time to detect supplier deterioration.
+| OTD % (on-time delivery) | Closed PO lines delivered by promise date / delivery-evaluated lines | Reliability measure |
+| OTIF % (on-time in-full) | Closed PO lines on-time AND received_qty >= ordered_qty / delivery-evaluated lines | Fulfillment measure |
+| In-full % | Closed PO lines with received_qty >= ordered_qty / delivery-evaluated lines | Quantity accuracy |
+| Avg lead time | Mean days from order to receipt (closed POs) | Planning parameter |
+| LT variability (LT CV) | Std dev of observed lead times / avg lead time | SS input |
+| Reliability score | `40% * otif_pct + 20% * otd_pct + 40% * (1 - lt_cv)`, clamped to 0-100 | Composite 0-100 score |
+| Distinct items | Distinct items supplied by the supplier | Coverage breadth |
 
 ---
 
@@ -86,9 +86,9 @@ Supplier performance:
 
 | View | Grain | Key Columns |
 |---|---|---|
-| `mv_supplier_performance` | supplier + item grouping | on_time_pct, avg_lt, lt_cv, reliability_score, sku_loc_count |
+| `mv_supplier_po_performance` | supplier_id | otd_pct, otif_pct, in_full_pct, avg_lead_time_days, stddev_lead_time_days, reliability_score, distinct_items |
 
-DDL: `sql/032_create_supplier_performance.sql`
+DDL: `sql/092_mv_supplier_po_performance.sql` (base view); OTIF columns added and legacy `mv_supplier_performance` dropped in `sql/143_add_otif_drop_old_supplier_mv.sql`
 
 ---
 
@@ -98,17 +98,17 @@ ABC-XYZ:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/abc-xyz/matrix` | 9-cell distribution counts |
-| GET | `/inv-planning/abc-xyz/detail` | Per-DFU classification |
-| GET | `/inv-planning/abc-xyz/migration` | Period-over-period class changes |
+| GET | `/inv-planning/abc-xyz/matrix` | 9-cell matrix: DFU counts, avg service level, avg DOS min/max per cell |
+| GET | `/inv-planning/abc-xyz/summary` | Portfolio-level summary: total/classified DFUs, X/Y/Z counts, avg demand CV, avg intermittency ratio |
+| GET | `/inv-planning/abc-xyz/detail` | Paginated per-DFU classification; filters `abc_vol`, `xyz_class`, `segment`, `item`, `location`, `brand`, `category`, `market`; `limit`/`offset` |
 
 Supplier performance:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/supplier/summary` | Top/bottom supplier ranking |
-| GET | `/inv-planning/supplier/detail` | Per-supplier metrics |
-| GET | `/inv-planning/supplier/trend` | Supplier performance over time |
+| GET | `/inv-planning/supplier-performance/summary` | Portfolio-level supplier reliability summary; filters `brand`, `category`, `market` |
+| GET | `/inv-planning/supplier-performance/detail` | Paginated per-supplier metrics; filters `supplier`, `min_score`, `max_score`, `brand`, `category`, `market`; `sort_by`/`sort_dir`, `limit`/`offset` |
+| GET | `/inv-planning/supplier-performance/items` | Items supplied by a given `supplier_no` (required) with lead-time profile data; `limit`/`offset` |
 
 Routers: `inv_planning_abc_xyz.py`, `inv_planning_supplier.py`
 
@@ -124,19 +124,19 @@ make supplier-perf-all     # supplier-perf-schema + supplier-perf-refresh
 | Step | Script | Output |
 |---|---|---|
 | Classify | `scripts/classify_abc_xyz.py` | `dim_sku` columns updated |
-| Refresh | MV refresh | `mv_supplier_performance` |
+| Refresh | MV refresh | `mv_supplier_po_performance` |
 
 ---
 
 ## Configuration
 
-ABC thresholds are embedded in the classification script (80/95 percentile cutoffs). XYZ thresholds align with `config/variability_config.yaml` CV bands. Supplier reliability formula weights are in the materialized view SQL.
+ABC thresholds are embedded in the classification script (80/95 percentile cutoffs). XYZ thresholds align with the CV bands in `config/forecasting/sku_features_config.yaml` (`variability` section) - `config/variability_config.yaml` does not exist and should not be recreated. Supplier reliability formula weights are in the materialized view SQL.
 
 ---
 
 ## Dependencies
 
-- **Upstream:** `fact_sales_monthly` (revenue for ABC), `dim_sku` (demand_cv for XYZ), `fact_inventory_snapshot` (supplier receipts)
+- **Upstream:** `fact_sales_monthly` (revenue for ABC), `dim_sku` (demand_cv for XYZ), `fact_purchase_orders` (supplier PO delivery and lead-time data)
 - **Downstream:** Policy auto-assignment, safety stock service levels, investment optimization prioritization
 
 ---

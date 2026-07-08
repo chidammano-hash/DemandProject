@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/ml/compute_sku_features.py` (unified pipeline, `make features-compute`), `scripts/compute_lead_time_variability.py`, `config/variability_config.yaml`, `sql/022_create_demand_variability.sql`. (The legacy `scripts/compute_demand_variability.py` was deleted; use `make features-compute`.) |
+| **Key Files** | `scripts/ml/compute_sku_features.py` (unified pipeline, `make features-compute`), `scripts/compute_lead_time_variability.py`, `config/forecasting/sku_features_config.yaml`, `sql/022_add_demand_variability_columns.sql`. (The legacy `scripts/compute_demand_variability.py` was deleted; use `make features-compute`.) |
 
 ---
 
@@ -76,7 +76,7 @@ Demand variability -- 13 columns on `dim_sku`:
 | `demand_mad` | NUMERIC | 120.5 |
 | `variability_class` | TEXT | `moderate` |
 
-DDL: `sql/022_create_demand_variability.sql`
+DDL: `sql/022_add_demand_variability_columns.sql`
 
 Lead time variability:
 
@@ -95,7 +95,7 @@ DDL: `sql/023_create_lead_time_profile.sql`
 | GET | `/inv-planning/variability/summary` | Portfolio variability distribution |
 | GET | `/inv-planning/variability/detail` | Per-DFU variability metrics |
 | GET | `/inv-planning/lead-time/summary` | LT reliability distribution |
-| GET | `/inv-planning/lead-time/detail` | Per-item LT profile |
+| GET | `/inv-planning/lead-time/profile` | Per-item LT profile |
 
 Routers: `inv_planning_variability.py`, `inv_planning_lead_time.py`
 
@@ -114,15 +114,17 @@ Routers: `inv_planning_variability.py`, `inv_planning_lead_time.py`
 
 ## Configuration
 
-File: `config/variability_config.yaml`
+`config/variability_config.yaml` does not exist - it predates the unified pipeline and was never recreated (see CLAUDE.md "Do not recreate deleted configs"). Variability thresholds now live in `config/forecasting/sku_features_config.yaml`, `variability` section:
 
 ```yaml
-history_months: 36
-cv_thresholds:
-  low: 0.3
-  moderate: 0.6
-  high: 1.0
+variability:
+  cv_thresholds:
+    smooth: 0.3
+    erratic: 0.8
+  intermittency_threshold: 0.15
 ```
+
+Note: `compute_sku_features.py` classifies into `smooth`/`erratic`/`intermittent`/`lumpy` (see [../03-demand-intelligence/02-sku-feature-engineering](../03-demand-intelligence/02-sku-feature-engineering.md)), not the `low`/`moderate`/`high`/`erratic` taxonomy shown above - that table describes the legacy scheme and has not been reconciled with the current classifier.
 
 File: `config/inventory/inventory_planning_config.yaml` (lead_time section)
 

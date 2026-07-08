@@ -79,16 +79,21 @@ Safety stock endpoints:
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/inv-planning/safety-stock/summary` | By-class summary + top gaps |
-| GET | `/inv-planning/safety-stock/detail` | Per-DFU SS targets |
-| GET | `/inv-planning/safety-stock/gap-analysis` | Items where current stock < SS |
+| GET | `/inv-planning/safety-stock/detail` | Per-DFU SS targets, paginated |
+| GET | `/inv-planning/safety-stock/waterfall` | SS waterfall decomposition (demand component vs. LT component) for a single item+location |
+| GET | `/inv-planning/safety-stock/explain` | Formula-substituted SS decomposition + what-if sensitivity analysis for a single DFU |
+| POST | `/inv-planning/safety-stock/override` | Manually override `ss_combined` for an item+location, recalculating gap/coverage (auth required) |
+| POST | `/inv-planning/safety-stock/what-if` | Simulate SS under modified demand/lead-time/service-level inputs; read-only, no DB write (auth required) |
+| GET | `/inv-planning/safety-stock/config` | Return `safety_stock_config.yaml` as JSON |
 
 Simulation endpoints:
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/inv-planning/simulation/run` | Trigger simulation for item set |
+| POST | `/inv-planning/simulation/run` | Trigger simulation for item set (201) |
 | GET | `/inv-planning/simulation/results` | Simulation output with curves |
 | GET | `/inv-planning/simulation/compare` | Compare analytical vs simulated SS |
+| GET | `/inv-planning/simulation/{sim_run_id}/status` | Poll status of a running/completed simulation |
 
 Router: `inv_planning_safety_stock.py`, `inv_planning_simulation.py`
 

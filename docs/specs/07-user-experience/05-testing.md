@@ -1,6 +1,6 @@
 # Testing
 
-> The full-stack testing strategy: pytest for backend (1636+ tests), Vitest + React Testing Library for frontend (457+ tests), and Playwright for end-to-end browser smoke tests (8 test files). All three layers run without external infrastructure -- the database is mocked in backend and frontend tests; only E2E tests require running services.
+> The full-stack testing strategy: pytest for backend (4,426+ tests) and Vitest + React Testing Library for frontend (1,171+ tests), as of 2026-07-07, plus Playwright for end-to-end browser smoke tests (8 test files). All three layers run without external infrastructure - the database is mocked in backend and frontend tests; only E2E tests require running services.
 
 | | |
 |---|---|
@@ -26,10 +26,12 @@ A three-layer testing pyramid: unit tests at the base (fastest, most numerous), 
 
 ### Testing Pyramid
 
+Counts below are point-in-time (measured via `pytest --collect-only` and a live `vitest run`) and grow as features accumulate - treat them as approximate, not exact.
+
 | Layer | Tool | Count | Speed | Infrastructure |
 |---|---|---|---|---|
-| Backend unit | pytest | 1636+ | ~0.7s | None (all mocked) |
-| Frontend unit/integration | Vitest + RTL | 457+ | ~1.5s | None (all mocked) |
+| Backend unit | pytest | 4,426+ | ~0.7s | None (all mocked) |
+| Frontend unit/integration | Vitest + RTL | 1,171+ (165 files) | ~1.5s | None (all mocked) |
 | E2E smoke | Playwright | ~15 tests (8 files) | ~30s | API on :8000 + Vite on :5173 |
 
 ### Backend Testing (pytest)

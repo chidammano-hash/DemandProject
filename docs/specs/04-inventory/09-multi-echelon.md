@@ -1,12 +1,12 @@
 # Multi-Echelon Safety Stock
 
-> 2-echelon optimization that computes safety stock across DC and downstream locations jointly using risk pooling, reducing total network inventory while maintaining end-customer service levels, with cascade risk badges for upstream shortage propagation.
+> 2-echelon optimization that computes safety stock across DC and downstream locations jointly using risk pooling, reducing total network inventory while maintaining end-customer service levels, with a cascade risk flag for upstream shortage propagation.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_echelon_targets.py`, `api/routers/inventory/echelon_planning.py`, `config/inventory/echelon_config.yaml` |
+| **Key Files** | `scripts/inventory/compute_echelon_targets.py`, `api/routers/operations/echelon_planning.py`, `config/inventory/echelon_config.yaml` |
 
 ---
 
@@ -48,16 +48,9 @@ SS_i_echelon = SS_i_single - pooling_benefit_i
 pooling_benefit_i = (sigma_i / sigma_DC) * (SS_DC_single - SS_DC_echelon)
 ```
 
-### Cascade Risk Scoring
+### Cascade Risk Flag
 
-Each downstream location gets a cascade risk severity based on upstream coverage:
-
-| Severity | Condition | Badge |
-|---|---|---|
-| `low` | DC DOS > 2x avg downstream LT | Green |
-| `medium` | DC DOS between 1-2x avg downstream LT | Yellow |
-| `high` | DC DOS < 1x avg downstream LT | Orange |
-| `critical` | DC projected stockout within LT | Red |
+Each reorder-point row carries `cascade_risk_flag` (boolean) on `fact_echelon_reorder_points`, surfaced by `GET /supply/echelon/reorder-points` and used to sort at-risk locations to the top of the response. It is not a multi-tier severity - the API exposes a single flag, not graded low/medium/high/critical badges.
 
 ### Worked Example
 
@@ -67,22 +60,26 @@ DC-EAST supplies 5 regional warehouses. Single-echelon total SS = 15,000 units. 
 
 ## Data Model
 
+Three tables (`sql/054_create_echelon_planning.sql`):
+
 | Table | Grain | Key Columns |
 |---|---|---|
-| `dim_supply_network` | source_loc + dest_loc | echelon_level, transit_days, is_active |
-| `fact_echelon_targets` | item_id + loc + echelon | ss_single, ss_echelon, pooling_benefit, cascade_risk |
+| `dim_echelon_network` | parent_loc + child_loc (unique) | `echelon_level` (1=DC, 2=regional, 3=store), `link_type`, `replenishment_lead_time_days`, `is_active` |
+| `fact_echelon_ss_targets` | item_id + loc + echelon_level (unique) | `echelon_ss_qty`, `standalone_ss_qty`, `pooling_benefit_pct`, `service_level_target`, `computed_at` |
+| `fact_echelon_reorder_points` | item_id + loc + echelon_level (unique) | `reorder_point_qty`, `echelon_ss_qty`, `demand_during_lt_qty`, `cascade_risk_flag`, `computed_at` |
 
 ---
 
 ## API
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/inv-planning/echelon/summary` | Network-wide SS comparison (single vs multi) |
-| GET | `/inv-planning/echelon/detail` | Per-location echelon targets with cascade risk |
-| GET | `/inv-planning/echelon/network` | Network topology with flow volumes |
+| Method | Path | Params | Purpose |
+|---|---|---|---|
+| GET | `/supply/echelon/network` | none | Location hierarchy (parent to child links) from `dim_echelon_network` where `is_active = TRUE` |
+| GET | `/supply/echelon/targets` | `item_id`, `loc`, `echelon_level`, `page`, `page_size` (default 50, capped 200) | Paginated network-optimized SS targets per echelon from `fact_echelon_ss_targets` |
+| GET | `/supply/echelon/summary` | none | Portfolio pooling-benefit and coverage KPIs (total SKU-locs, avg pooling benefit %, total units saved, echelon depth, last computed) |
+| GET | `/supply/echelon/reorder-points` | `item_id`, `loc`, `page`, `page_size` (default 50, capped 200) | Paginated echelon ROPs with cascade risk flag from `fact_echelon_reorder_points`, sorted cascade-risk-first |
 
-Router: `echelon_planning.py`
+Router: `api/routers/operations/echelon_planning.py`
 
 ---
 
@@ -94,29 +91,32 @@ make echelon-compute    # Compute multi-echelon SS targets
 
 | Step | Script | Output |
 |---|---|---|
-| Compute | `scripts/compute_echelon_targets.py` | `fact_echelon_targets` rows |
+| Compute | `scripts/inventory/compute_echelon_targets.py` | `fact_echelon_ss_targets` rows |
 
 ---
 
 ## Configuration
 
-File: `config/inventory/echelon_config.yaml`
+File: `config/inventory/echelon_config.yaml`, `echelon` section:
 
 ```yaml
-echelon_levels: 2
-correlation_method: pearson    # demand correlation estimation
-min_pooling_benefit_pct: 5.0   # don't pool if benefit < 5%
-cascade_risk_thresholds:
-  low: 2.0        # DC DOS / avg downstream LT
-  medium: 1.0
-  high: 0.5
+echelon:
+  z_score_default: 1.645              # Z-score for echelon SS (1.645 = 95%, 2.326 = 99%)
+  default_service_level: 0.95         # Target fill rate for echelon nodes
+  min_downstream_nodes: 2             # Minimum downstream nodes to apply pooling
+  cascade_risk_multiplier: 1.0        # Scales risk propagation from downstream to upstream
+  coverage_alert_threshold_days: 7    # DC coverage below this triggers a control-tower alert
+  default_lt_days: 10                 # DC-to-store lead time fallback
+  default_lt_std_days: 2.0            # Lead time std-dev fallback
 ```
+
+A `scheduler` section registers the weekly recompute job (`compute_echelon_targets`, Monday 04:00 cron) with APScheduler.
 
 ---
 
 ## Dependencies
 
-- **Upstream:** `fact_safety_stock_targets` (single-echelon baseline), `dim_supply_network` (topology), `fact_sales_monthly` (demand correlations)
+- **Upstream:** `dim_echelon_network` (topology), `dim_sku` (demand mean/std for pooling), `fact_inventory_snapshot` (DC on-hand)
 - **Downstream:** Rebalancing (network-aware transfers), investment optimization (echelon-adjusted SS)
 
 ---

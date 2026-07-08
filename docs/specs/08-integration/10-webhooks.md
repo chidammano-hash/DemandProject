@@ -16,17 +16,17 @@ External systems (ERP portals, BI dashboards, partner platforms) need to know wh
 
 ## Solution
 
-An outbound webhook system lets external consumers register callback URLs for specific event types. When an event occurs, the dispatcher fans out signed HTTP POST requests to all active subscribers. Payloads are signed with HMAC-SHA256 so consumers can verify authenticity. Failed deliveries retry with exponential backoff, and a circuit breaker disables registrations that fail repeatedly.
+An outbound webhook system lets external consumers register callback URLs for specific event types. When an event occurs, the dispatcher fans out signed HTTP POST requests to all active subscribers. Payloads are signed with HMAC-SHA256 so consumers can verify authenticity. Failed deliveries retry up to 3 attempts total with exponential backoff; if every attempt fails, the dispatcher gives up and logs the failure - there is no circuit breaker that disables a registration.
 
 ## How It Works
 
-1. An external system registers a webhook via `POST /webhooks` with a target URL and list of event types
+1. An external system registers a webhook via `POST /webhooks/register` with a target URL and list of event types
 2. The system receives a signing secret (auto-generated or provided) for payload verification
 3. When a subscribed event occurs, the dispatcher sends an HTTP POST with a signed JSON payload
 4. The consumer verifies the `X-Webhook-Signature` header by computing the same HMAC
-5. If delivery fails, the dispatcher retries up to 3 times (at 30s, 120s, 600s intervals)
-6. After 10 consecutive failures, the circuit breaker disables the registration for 1 hour
-7. All delivery attempts are logged to `fact_webhook_delivery` for debugging
+5. If delivery fails, `dispatch_webhook()` retries up to 3 attempts total, with exponential backoff between attempts (~2s after the first failure, ~4s after the second) and a 10-second timeout per attempt
+6. If every attempt fails, the dispatcher gives up - there is no circuit breaker, and the registration is left active
+7. One row is written to `fact_webhook_delivery` per event per webhook, recording the outcome and attempt number of the last try (not one row per individual attempt)
 
 ## Supported Event Types
 
@@ -72,8 +72,6 @@ Every webhook delivery includes:
 | `secret` | `TEXT` | HMAC signing key |
 | `description` | `TEXT` | Human-readable label |
 | `is_active` | `BOOLEAN` | Whether the webhook is active |
-| `consecutive_failures` | `INTEGER` | Failure counter for circuit breaker |
-| `disabled_until` | `TIMESTAMPTZ` | Circuit breaker re-enable time |
 
 ### `fact_webhook_delivery`
 
@@ -96,15 +94,15 @@ Every webhook delivery includes:
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/webhooks` | Register a new webhook (URL, events, secret) |
+| POST | `/webhooks/register` | Register a new webhook (URL, events, secret) |
 | GET | `/webhooks` | List all registered webhooks |
 | POST | `/webhooks/{id}/test` | Send a test payload to verify the endpoint |
 | DELETE | `/webhooks/{id}` | Deactivate a webhook registration |
-| GET | `/webhooks/{id}/deliveries` | Delivery history for a webhook (paginated) |
+| GET | `/webhooks/deliveries?webhook_id=<id>` | Delivery history, optionally filtered by webhook (default 50 results, `limit` caps at 500) |
 
 ## Configuration
 
-No config file required. Retry intervals (30s, 120s, 600s), circuit breaker threshold (10 failures), and delivery timeout (10s) are constants in `common/services/webhook_dispatcher.py`.
+No config file required. Retry count (3 attempts total), backoff base (2.0, i.e. ~2s / ~4s between attempts), and delivery timeout (10s) are constants (`max_retries`, `backoff_base`) in `common/services/webhook_dispatcher.py`.
 
 ## Dependencies
 

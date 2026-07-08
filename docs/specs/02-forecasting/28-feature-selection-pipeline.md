@@ -93,8 +93,6 @@ Per-timeframe selection respects the causal boundary. The correlation structure 
 - SKU Features tab and clustering UI
 - Inventory planning (ABC-XYZ segmentation)
 
-See [Known Gaps section 1](../01-foundation/08-known-gaps.md) for full analysis.
-
 ## TS Profile Features
 
 Per-DFU static features computed from historical demand in `_compute_ts_profile_features()`:

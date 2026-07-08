@@ -1,6 +1,6 @@
 # Developer Tools — Claude Code Skills, Agents & Commands
 
-> A developer guide to the 9 skills, 5 agents, and 6 commands installed in `.claude/` for the DemandProject. These are tailored for the Python + FastAPI + React + PostgreSQL stack used here. Skills auto-activate based on context, agents are spawned for specialized tasks, and commands are invoked manually with slash syntax.
+> A developer guide to the 7 skills, 10 agents, and 7 commands installed in `.claude/` for the DemandProject. These are tailored for the Python + FastAPI + React + PostgreSQL stack used here. Skills auto-activate based on context, agents are spawned for specialized tasks, and commands are invoked manually with slash syntax.
 
 | | |
 |---|---|
@@ -133,6 +133,18 @@ Runs 6 checks in order:
 
 ---
 
+### `forecasting-patterns`
+**Activates when:** Editing or reviewing backtest, champion selection, tuning, feature selection, production forecast generation, or accuracy/FVA endpoints
+
+**What it does:**
+- Documents the backtest -> champion -> production forecast lifecycle and per-cluster training
+- Enforces the model-registry rule (`common/ml/model_registry.py` for all tree `.fit()`/instantiation) and the YAML-only hyperparameter rule
+- Covers leakage guards, cold-start/intermittent routing, and the WAPE/bias accuracy formulas
+
+**Relevant to DemandProject:** `common/ml/`, `scripts/ml/`, `scripts/forecasting/`, `api/routers/forecasting/`. Full design surface: `docs/specs/02-forecasting/`; master config: `config/forecasting/forecast_pipeline_config.yaml`.
+
+---
+
 ## Agents
 
 Agents are specialized subprocesses with a focused role and limited tool access. Claude spawns them automatically for matching tasks, or you can ask Claude to "use the planner agent" / "run the code-reviewer agent" explicitly.
@@ -258,6 +270,88 @@ on-hand, on-order, and coverage days per location
 
 ---
 
+### `design-developer`
+**Model:** Sonnet | **Tools:** Read, Edit, Write, Bash, Grep, Glob
+
+**Use when:** Implementing one scoped UI/UX increment (code + tests) inside a design-pod loop, against an exact token contract handed down by the orchestrator.
+
+**Trigger phrases:**
+- Spawned by the design-pod orchestrator (manager + product designer critiquing the live app via Playwright), one per developer per loop
+
+**What it does:**
+- Implements only its assigned, disjoint file slice so two design-developers can run in parallel without colliding
+- Enforces token rules: no inline hex in `src/tabs/`/`src/components/`, charts read theme via `useThemeContext()`/`useChartColors()` (never a `theme` prop), all three color modes (light/soft/dark) handled
+- Updates and runs tests for every component/hook it touches; self-reviews its diff before reporting
+
+**DemandProject note:** Never commits. Keeps tab files under the 600-line limit, splitting into sub-panels when needed.
+
+---
+
+### `forecasting-developer`
+**Model:** Opus | **Tools:** Read, Edit, Write, Bash, Grep, Glob
+
+**Use when:** Implementing one scoped forecasting-accuracy increment (code + tests) inside the autonomous forecasting pod.
+
+**Trigger phrases:**
+- Spawned by the Forecasting Manager with exactly one increment per invocation
+
+**What it does:**
+- Scoped to `api/routers/forecasting/`, `common/ml/`, `scripts/forecasting/`, `scripts/ml/`, `config/forecasting/*.yaml`, new SQL migrations, and the matching tests
+- Test-first: writes or extends the failing test that encodes the increment's success criterion before implementing
+- Enforces the forecasting hard rules from CLAUDE.md (`get_planning_date()`, `model_registry.py` for tree `.fit()`, `FORECAST_QTY_COL`, `read_sql_chunked()` over fact tables)
+
+**DemandProject note:** Never commits and never self-certifies - `forecasting-qa` and the two SME agents gate whether the increment ships.
+
+---
+
+### `forecasting-qa`
+**Model:** Sonnet | **Tools:** Read, Bash, Grep, Glob (read-only)
+
+**Use when:** Independently verifying a `forecasting-developer` increment before it ships.
+
+**Trigger phrases:**
+- Spawned by the Forecasting Manager after `forecasting-developer` reports done
+
+**What it checks:**
+- Reproduces the developer's claimed tests plus a broader `pytest tests/ -q` run for anything plausibly affected
+- Lint delta (`ruff check` on changed files - any new E/F error is an automatic FAIL)
+- CLAUDE.md rule scan on changed files (`date.today(`, bare `except`, `$1` placeholders, literal `"basefcst_pref"`, `Depends(_get_pool)` in `inv_planning_*`, missing `require_api_key` on writes, magic numbers)
+- Test coverage exists for new endpoints/modules, and any accuracy claim came from a causally valid train-past/eval-future backtest
+
+**DemandProject note:** Read-only on code - never edits, never commits. Returns a PASS/FAIL verdict with an ordered blocker list.
+
+---
+
+### `forecasting-sme-commercial`
+**Model:** Opus | **Tools:** Read, Grep, Glob, Bash (read-only)
+
+**Use when:** Judging whether a proposed forecasting increment is realistic and useful for the business - seasonality, promotions, long-tail SKUs, intermittent demand, cold-start, and whether planners would trust the result.
+
+**Trigger phrases:**
+- Spawned by the Forecasting Manager alongside `forecasting-sme-statistical` to review an increment
+
+**What it judges:**
+- Decision usefulness for planners, seasonality/promo-timing handling, long-tail/low-volume realism, bias direction (stockout vs. write-off cost asymmetry), planner trust, and whether the change fits the monthly planning cadence
+
+**DemandProject note:** Advises only, never edits code. Returns a USEFUL / NOT-USEFUL / USEFUL-NICHE verdict.
+
+---
+
+### `forecasting-sme-statistical`
+**Model:** Opus | **Tools:** Read, Grep, Glob, Bash (read-only)
+
+**Use when:** Judging whether a proposed accuracy increment is methodologically sound - causal validity, leakage, overfitting, metric integrity, model/cluster appropriateness.
+
+**Trigger phrases:**
+- Spawned by the Forecasting Manager alongside `forecasting-sme-commercial` to review an increment
+
+**What it judges:**
+- Causal validity (train-past/eval-future, no target leakage or hindsight model selection), generalization vs. coverage/selection bias, metric integrity (WAPE/bias formulas at the right grain), model appropriateness per cluster volatility, and whether a delta survives seed/run noise
+
+**DemandProject note:** Advises only, never edits code. Returns a SOUND / UNSOUND / SOUND-BUT-IMMATERIAL verdict.
+
+---
+
 ## Commands
 
 Commands are slash commands you type directly. They expand into full prompts and usually invoke an agent.
@@ -356,6 +450,20 @@ Logs:     OK/X console.logs
 
 Ready for PR: YES/NO
 ```
+
+---
+
+### `/ux-loop [cycles]`
+Runs the persona-driven critique -> fix loop against the **live** app for N cycles (default 5).
+
+```
+/ux-loop
+/ux-loop 3
+```
+
+**How it works:** Playwright drives 14 planner tabs and screenshots them, a Demand-Planner agent and a Usability/Simplification agent find issues from the screenshots plus code, then a Technical-Fixer agent applies fixes under strict test-first TDD and re-validates against the live endpoints. Findings and red/green evidence land in `tests/Automated_tests/`.
+
+**DemandProject note:** Edits the working tree but does not commit - review with `git diff` afterward. Requires a host `uvicorn --reload` on `:8000` (the Docker API image has no `--reload`) and the Vite dev server on `:5173`.
 
 ---
 
@@ -464,15 +572,24 @@ This runs: build → types → lint → `make test-all` → security → coverag
 | Review code before committing | `/code-review` |
 | Fix build or type errors | `/build-fix` |
 | Run all quality checks | `/quality-gate` or `/verify pre-pr` |
+| Harden the live UI over several cycles | `/ux-loop [cycles]` |
 | Writing Python code | `python-patterns` skill (auto) |
 | Writing SQL or schemas | `postgres-patterns` skill (auto) |
+| Building or refactoring with tests | `tdd-workflow` skill (auto) |
 | Designing new endpoints | `api-design` skill (auto) |
+| Preparing for a PR | `verification-loop` skill (auto) |
 | Security-sensitive code | `security-review` skill (auto) |
+| Backtest/champion/production forecasting work | `forecasting-patterns` skill (auto) |
 | Complex feature planning | `planner` agent (auto or explicit) |
 | TDD enforcement | `tdd-guide` agent (via `/tdd`) |
 | Post-change review | `code-reviewer` agent (auto or `/code-review`) |
 | SQL/schema review | `database-reviewer` agent (explicit) |
 | Python code review | `python-reviewer` agent (explicit) |
+| Scoped UI/UX design increment | `design-developer` agent (design-pod loop) |
+| Scoped forecasting-accuracy increment | `forecasting-developer` agent (forecasting pod) |
+| QA gate on a forecasting increment | `forecasting-qa` agent (forecasting pod) |
+| Commercial-realism review of a forecasting change | `forecasting-sme-commercial` agent (forecasting pod) |
+| Methodological-soundness review of a forecasting change | `forecasting-sme-statistical` agent (forecasting pod) |
 
 ---
 
@@ -486,23 +603,28 @@ This runs: build → types → lint → `make test-all` → security → coverag
 │   ├── tdd-workflow/SKILL.md
 │   ├── api-design/SKILL.md
 │   ├── verification-loop/SKILL.md
-│   └── security-review/SKILL.md
+│   ├── security-review/SKILL.md
+│   └── forecasting-patterns/SKILL.md
 ├── agents/
 │   ├── planner.md
 │   ├── tdd-guide.md
 │   ├── code-reviewer.md
 │   ├── database-reviewer.md
-│   └── python-reviewer.md
+│   ├── python-reviewer.md
+│   ├── design-developer.md
+│   ├── forecasting-developer.md
+│   ├── forecasting-qa.md
+│   ├── forecasting-sme-commercial.md
+│   └── forecasting-sme-statistical.md
 └── commands/
     ├── tdd.md
     ├── plan.md
     ├── code-review.md
     ├── build-fix.md
     ├── quality-gate.md
-    └── verify.md
+    ├── verify.md
+    └── ux-loop.md
 ```
-
-Source: `everything-claude-code-main/` — see that directory for 65+ additional skills and 16 agents not installed here.
 
 ---
 

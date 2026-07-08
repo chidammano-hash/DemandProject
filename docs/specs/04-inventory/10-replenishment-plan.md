@@ -1,12 +1,12 @@
 # Replenishment Plan
 
-> Forward-looking replenishment plan generator that combines production forecast confidence intervals, safety stock targets, current inventory positions, and policy parameters to produce a month-by-month order schedule per DFU with baseline deviation flagging.
+> Forward-looking replenishment plan generator that combines production forecast confidence intervals, safety stock targets, current inventory positions, and policy parameters to produce a month-by-month order schedule per DFU, with each row compared against its stored historical safety-stock baseline.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_replenishment_plan.py`, `api/routers/inventory/inv_planning_replenishment.py`, `config/inventory/inventory_planning_config.yaml` (projection section) |
+| **Key Files** | `scripts/inventory/compute_replenishment_plan.py`, `api/routers/inventory/inv_planning_replenishment.py`, `config/inventory/replenishment_plan_config.yaml` |
 
 ---
 
@@ -18,7 +18,7 @@ Safety stock targets and replenishment policies define *what* to maintain, but p
 
 ## Solution
 
-A forward-looking replenishment plan generator that combines production forecast confidence intervals (CI bands), safety stock targets, current inventory positions, and policy parameters to produce a month-by-month order schedule per DFU. The plan compares against a historical baseline to highlight changes.
+A forward-looking replenishment plan generator that combines production forecast confidence intervals (CI bands), safety stock targets, current inventory positions, and policy parameters to produce a month-by-month order schedule per DFU. Each row also carries the DFU's `historical_ss` (from `fact_safety_stock_targets`) alongside the newly-computed `ss_combined`, so planners can see whether the forward-looking recommendation is raising or lowering safety stock versus the currently-live target.
 
 ---
 
@@ -39,23 +39,26 @@ For each DFU, for each planning month in the horizon:
 | Periodic Review (R,S) | Up to target at each review interval |
 | Demand-Driven (DDMRP) | Refill to green zone when buffer penetrated |
 
-4. **Apply CI bands:** The production forecast's confidence interval (from `fact_production_forecast`) provides a forward sigma estimate. The plan uses the upper CI bound for safety calculations in the first 1-3 months (conservative) and the point forecast for months 4+.
+4. **Derive demand variability from CI bands:** `sigma_demand_monthly = (forecast_qty_upper - forecast_qty_lower) / (2 * ci_z_score)`, using the production forecast's P10/P90 confidence interval as an 80%-confidence spread (`sigma_method = 'ci_spread'`). If CI bands are NULL, falls back to `dim_sku.demand_std` (`sigma_method = 'historical_fallback'`).
 
-5. **Compare to baseline:** Historical average order pattern (trailing 6 months) serves as the comparison. Deviations flagged with direction and magnitude.
+5. **Compare to the historical SS baseline:** Each row also carries `historical_ss` (the DFU's currently-live `fact_safety_stock_targets.ss_combined`) alongside the newly-computed `ss_combined`, plus the delta (`ss_delta`, `ss_delta_pct`). This is a safety-stock comparison, not an order-quantity trend line - there is no trailing-order-history baseline in this pipeline.
 
 ### Output Columns
 
+Selected columns from `fact_replenishment_plan` (full DDL: `sql/041_create_replenishment_plan.sql`):
+
 | Column | Type | Purpose |
 |---|---|---|
-| `item_id`, `loc` | TEXT | DFU identity |
-| `plan_month` | DATE | Planning period |
-| `forecast_qty` | NUMERIC | Expected demand (point forecast) |
-| `forecast_upper_ci` | NUMERIC | Upper confidence bound |
-| `projected_position` | NUMERIC | Inventory before order |
-| `order_qty` | NUMERIC | Recommended order |
-| `order_date` | DATE | When to place (plan_month - lead_time) |
-| `policy_id` | TEXT | Governing policy |
-| `vs_baseline_pct` | NUMERIC | Change vs historical average |
+| `plan_version`, `item_id`, `loc`, `plan_month` | TEXT/TEXT/TEXT/DATE | Unique key |
+| `horizon_months` | SMALLINT | Forward horizon position (1 = T+1, 2 = T+2, ...) |
+| `policy_id`, `policy_type`, `abc_vol` | TEXT | Policy and ABC context snapshot at compute time |
+| `forecast_qty`, `forecast_qty_lower`, `forecast_qty_upper` | NUMERIC | Point forecast and P10/P90 CI bounds |
+| `sigma_method` | TEXT | `ci_spread` or `historical_fallback` |
+| `ss_combined` | NUMERIC | Recommended forward-looking safety stock |
+| `historical_ss`, `ss_delta`, `ss_delta_pct` | NUMERIC | Currently-live SS baseline and the delta vs. `ss_combined` |
+| `eoq`, `effective_eoq`, `cycle_stock` | NUMERIC | EOQ and cycle stock |
+| `reorder_point`, `order_qty`, `order_up_to_level` | NUMERIC | Policy-specific replenishment parameters (nullable by policy type) |
+| `is_below_ss` | BOOLEAN | `current_qty_on_hand < ss_combined` |
 
 ---
 
@@ -63,49 +66,61 @@ For each DFU, for each planning month in the horizon:
 
 | Table | Grain | Purpose |
 |---|---|---|
-| `fact_replenishment_plan` | item_id + loc + plan_month | Forward order schedule |
+| `fact_replenishment_plan` | plan_version + item_id + loc + plan_month (unique) | Forward order schedule, one row per DFU per forward month per plan version |
+
+DDL: `sql/041_create_replenishment_plan.sql`
 
 ---
 
 ## API
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/inv-planning/replenishment-plan/summary` | Horizon-level totals (units, value, order count) |
-| GET | `/inv-planning/replenishment-plan/detail` | Per-DFU monthly plan |
-| GET | `/inv-planning/replenishment-plan/changes` | Items with significant baseline deviations |
-| POST | `/inv-planning/replenishment-plan/generate` | Trigger plan generation |
+| Method | Path | Params | Purpose |
+|---|---|---|---|
+| GET | `/inv-planning/replenishment/summary` | `plan_version`, `policy_type`, `abc_vol` | Portfolio totals for the first plan month, plus a by-policy-type breakdown |
+| GET | `/inv-planning/replenishment/detail` | `item`, `location`, `policy_type`, `abc_vol`, `is_below_ss`, `plan_version`, `plan_month`, `limit` (1-500, default 50), `offset`, `sort_by`, `sort_dir` | Paginated per-DFU monthly plan rows |
+| GET | `/inv-planning/replenishment/comparison` | `plan_version`, `abc_vol`, `policy_type` | Forecast SS (`ss_combined`) vs. historical SS by ABC class, with increased/decreased/unchanged counts |
+| GET | `/inv-planning/replenishment/dfu` | `item_id` (required), `loc` (required), `plan_version` | Full forward time series for a single DFU; 404 if none found |
 
-Router: `inv_planning_replenishment.py`
+Router: `api/routers/inventory/inv_planning_replenishment.py`
+
+There is no plan-generation endpoint - the plan is written by the pipeline script below, not triggered via the API.
 
 ---
 
 ## Pipeline
 
+```
+make replplan-schema    # create fact_replenishment_plan table (one-time)
+make replplan-compute   # compute forward replenishment plan from production forecast CI bands
+make replplan-all       # replplan-schema + replplan-compute
+```
+
 | Step | Script | Output |
 |---|---|---|
-| Generate plan | `scripts/compute_replenishment_plan.py` | `fact_replenishment_plan` rows |
+| Generate plan | `scripts/inventory/compute_replenishment_plan.py` | `fact_replenishment_plan` rows |
 
 ---
 
 ## Configuration
 
-The replenishment plan reads policy parameters from `config/inventory/replenishment_policy_config.yaml` and projection settings from `config/inventory/inventory_planning_config.yaml` (projection section). Planning horizon length and CI band usage rules are configurable.
+File: `config/inventory/replenishment_plan_config.yaml`, `replenishment_plan` section (includes `shared_constants.yaml` for service levels, z-table, and cost defaults):
 
 ```yaml
-# In inventory_planning_config.yaml, projection section
-planning_horizon_months: 6
-ci_conservative_months: 3    # Use upper CI for months 1-3
-baseline_lookback_months: 6
-change_threshold_pct: 20     # Flag deviations > 20%
+replenishment_plan:
+  sigma_method: ci_spread        # derive sigma_demand_monthly from CI bands
+  ci_confidence: 0.80            # P10/P90 = 80% interval
+  ci_z_score: 1.282              # z for 80% CI
+  fallback_to_historical: true   # use dim_sku.demand_std when CI bands are NULL
+  lt_default_days: 14            # fallback when dim_item_lead_time_profile has no entry
+  eoq_annualization_months: 12   # forward months summed for annualized demand
 ```
 
 ---
 
 ## Dependencies
 
-- **Upstream:** `fact_production_forecast` (demand + CI bands), `fact_safety_stock_targets` (ROP), `fact_dfu_policy_assignment` (policy type + params), `agg_inventory_monthly` (current position), open POs
-- **Downstream:** Planned order generation, procurement, financial planning (projected spend)
+- **Upstream:** `fact_production_forecast` (demand + CI bands), `fact_dfu_policy_assignment` (policy type + params), `fact_safety_stock_targets` (historical SS baseline), `fact_inventory_snapshot` (current position), `dim_sku` (historical demand_std fallback)
+- **Downstream:** Procurement, financial planning (projected spend)
 
 ---
 

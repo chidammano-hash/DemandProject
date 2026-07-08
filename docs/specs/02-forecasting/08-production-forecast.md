@@ -108,12 +108,23 @@ When `model_selection.strategy` is `champion` (default):
 - Support per-cluster tuning profiles and early stopping
 - Use recursive inference for multi-step horizons (lag features from prior predictions)
 
-### Foundation Models (Chronos, Chronos Bolt, N-HiTS)
+### Foundation Model (Chronos 2 Enriched)
 
-- **No separate training step required** -- zero-shot or pre-trained
+- **No separate training step required** -- zero-shot or pre-trained. `chronos2_enriched` is the only
+  remaining foundation-model variant (Chronos T5, Chronos Bolt, and non-enriched Chronos 2 were removed
+  in commit `5ab8d593`); see [Chronos Foundation Models](./18-chronos-foundation-models.md)
 - Consume raw sales history directly at inference time
 - Output predictions for all horizons in a single forward pass
 - No `.pkl` artifacts to manage
+
+### Deep Learning Models (N-BEATS, N-HiTS)
+
+- **No separate production training step** -- Step 1 (`train_production_models.py`) only trains tree
+  models; N-BEATS and N-HiTS never produce `.pkl` artifacts
+- `forecast: true` and `compete: true` in the algorithm roster, so a DFU whose champion is
+  `nbeats`/`nhits` IS eligible for production forecasting -- as a non-tree producer it routes through
+  `generate_forecasts_statistical()` like the statistical baselines (see Step 2 above), not a full
+  recursive deep-learning inference pass
 
 ### Statistical Models (rolling_mean, seasonal_naive, rolling_median, mstl)
 

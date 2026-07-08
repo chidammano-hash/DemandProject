@@ -159,10 +159,10 @@ Controls search spaces, CV settings, and trial budgets for all three algorithms.
 
 - [Backtest Framework](./03-backtest-framework.md) -- orchestrator that these capabilities extend
 - [Tree Models](./04-tree-models.md) -- the algorithms being tuned/selected/recursed
-- [Algorithm Config](./06-algorithm-config.md) -- config file reference
+- [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- config file reference
 - Python packages: `optuna>=3.0`, `shap>=0.43.0`
 
 ## See Also
 
-- [Algorithm Config](./06-algorithm-config.md) -- how to enable these features via YAML
+- [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- how to enable these features via YAML
 - [Accuracy KPIs](./01-accuracy-kpis.md) -- where SHAP panel lives in the UI

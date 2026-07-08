@@ -92,10 +92,10 @@ Inventory backtest endpoints (Feature 37):
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-backtest/summary` | Model comparison (stockout/excess/service level/WAPE) |
-| GET | `/inv-backtest/trend` | Monthly trend by model |
-| GET | `/inv-backtest/root-cause` | Bias direction attribution |
-| GET | `/inv-backtest/detail` | DFU-level event detail |
+| GET | `/inventory-backtest/summary` | Per-model outcome metrics: stockout rate, excess rate, cycle service level, WAPE |
+| GET | `/inventory-backtest/trend` | Monthly stockout/excess/WAPE trend by model |
+| GET | `/inventory-backtest/root-cause` | Bias-direction correlation with stockout/excess events for a single model (correlational, not causal) |
+| GET | `/inventory-backtest/detail` | Paginated DFU-level stockout/excess events with forecast error detail |
 
 ---
 

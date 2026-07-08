@@ -60,14 +60,14 @@ layer:** cap + paginate at the API, partition + index at the DB, virtualize + do
 
 ### P0 — hard failures / cliffs (do first)
 
-| # | Change | Layer | Effort | Impact |
-|---|---|---|---|---|
-| 1 ⭐ | **Fix the connection-pool math** (see backend C-1) so `workers × (sync+async+read) < max_connections`; make the preflight gate count all three pools; reconcile docs (20) vs code (50). | Backend | S | H |
-| 2 ⭐ | **Range-partition the 4–5 unpartitioned hot fact tables** (PO, lead-time, staging, archive, external_forecast) via the existing `auto_create_partitions.py`. | DB | M | H |
-| 3 ⭐ | **Make `limit`/`topN` mandatory + server-aggregate + virtualize** the four flagship surfaces (Accuracy Slice, Workbench, SQL Runner, Affinity). | FE+BE | M | H |
-| 4 | **Move the PCA cluster scatter from recharts (SVG) to canvas echarts** + server-side point cap. | Frontend | S | H |
-| 5 | **Add the `dim_sku (item_id, customer_group, loc)` composite covering index.** | DB | S | H |
-| 6 | **Migrate multi-hour jobs (backtests, champion sweep, inventory pipeline, MV refresh) to pg-queue.** | Backend | M | H |
+| # | Change | Layer | Effort | Impact | Status |
+|---|---|---|---|---|---|
+| 1 ⭐ | **Fix the connection-pool math** (see backend C-1) so `workers × (sync+async+read) < max_connections`; make the preflight gate count all three pools; reconcile docs (20) vs code (50). | Backend | S | H | Done (`af9aa495`) |
+| 2 ⭐ | **Range-partition the 4–5 unpartitioned hot fact tables** (PO, lead-time, staging, archive, external_forecast) via the existing `auto_create_partitions.py`. | DB | M | H | Not Started |
+| 3 ⭐ | **Make `limit`/`topN` mandatory + server-aggregate + virtualize** the four flagship surfaces (Accuracy Slice, Workbench, SQL Runner, Affinity). | FE+BE | M | H | In Progress - Accuracy Slice + SQL Runner shipped (`45a87e53`, part 1/2); Workbench + Affinity still unbounded |
+| 4 | **Move the PCA cluster scatter from recharts (SVG) to canvas echarts** + server-side point cap. | Frontend | S | H | Done (`af9aa495`) |
+| 5 | **Add the `dim_sku (item_id, customer_group, loc)` composite covering index.** | DB | S | H | Done (`af9aa495`, `sql/195`) |
+| 6 | **Migrate multi-hour jobs (backtests, champion sweep, inventory pipeline, MV refresh) to pg-queue.** | Backend | M | H | Not Started |
 
 The single most urgent item is **#1** — it is a hard failure (`FATAL: too many connections`) that
 triggers the moment concurrency rises, and the code default silently contradicts the documented gate.

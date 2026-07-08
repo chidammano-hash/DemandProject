@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | SopTab |
-| **Key Files** | `SopTab.tsx`, `api/routers/operations/sop.py`, `scripts/run_sop_cycle.py`, `config/operations/sop_config.yaml`, `sql/056_create_sop_module.sql` |
+| **Key Files** | `SopTab.tsx`, `api/routers/operations/sop.py`, `scripts/ops/run_sop_cycle.py`, `config/operations/sop_config.yaml`, `sql/056_create_sop_module.sql` |
 
 ---
 
@@ -51,15 +51,21 @@ Gaps are computed as the difference between demand forecast totals, supply-const
 
 ## Data Model
 
-| Table | Purpose | Key Columns |
-|---|---|---|
-| `fact_sop_cycles` | Cycle header | `cycle_id`, `period`, `current_stage`, `created_at`, `closed_at` |
-| `fact_sop_demand_review` | Demand inputs per DFU (Demand Forecast Unit -- item + location) | `cycle_id`, `item_id`, `loc`, `statistical_qty`, `override_qty`, `final_qty` |
-| `fact_sop_supply_constraints` | Supply flags per item-location | `cycle_id`, `item_id`, `loc`, `constraint_type`, `constrained_qty`, `notes` |
-| `fact_sop_gaps` | Identified gaps | `cycle_id`, `gap_type`, `item_id`, `loc`, `gap_qty`, `resolution`, `status` |
-| `fact_sop_approved_plan` | Locked consensus plan | `cycle_id`, `item_id`, `loc`, `approved_qty`, `approved_by`, `approved_at` |
+| Table | Purpose | Grain | Key Columns |
+|---|---|---|---|
+| `fact_sop_cycles` | Cycle header | One row per `cycle_month` | `cycle_id`, `cycle_month`, `status`, `demand_plan_version`, `supply_plan_version`, `approved_plan_version`, `facilitated_by`, `approved_by`, `demand_review_at`, `supply_review_at`, `pre_sop_at`, `executive_sop_at`, `approved_at`, `created_at`, `updated_at` |
+| `fact_sop_demand_review` | Demand inputs | **Category grain**, not item/location -- one row per `(cycle_id, item_category)` | `cycle_id`, `item_category`, `statistical_demand_qty`, `commercial_demand_qty`, `consensus_demand_qty`, `statistical_demand_val`, `commercial_demand_val`, `consensus_demand_val`, `review_status` |
+| `fact_sop_supply_constraints` | Supply flags | **Category grain**, not item/location -- one row per `(cycle_id, constraint_type)` | `constraint_id`, `cycle_id`, `constraint_type`, `supplier_id`, `impact_qty`, `impact_period`, `mitigation_status` |
+| `fact_sop_gaps` | Identified gaps | One row per `(cycle_id, gap_type)` | `gap_id`, `cycle_id`, `gap_type`, `gap_qty`, `gap_value`, `severity`, `resolution_options` (JSONB), `resolution_status` |
+| `fact_sop_approved_plan` | Locked consensus plan | Item + location grain -- one row per `(cycle_id, item_id, loc, plan_month)` | `id`, `cycle_id`, `item_id`, `loc`, `plan_month`, `approved_qty`, `statistical_qty`, `override_qty`, `source`, `locked` |
 
-All five tables share `cycle_id` as the join key.
+All five tables share `cycle_id` as the join key. Only `fact_sop_approved_plan` carries item/location detail --
+the demand-review, supply-constraint, and gap tables roll up to `item_category` (or `constraint_type`/`gap_type`)
+for the cycle as a whole.
+
+The `status` column on `fact_sop_cycles` holds the actual stage value written by the API (`demand_review` ->
+`supply_review` -> `pre_sop` -> `executive_sop` -> `approved` -> `closed`), which is a terser machine name for
+the same six stages described above.
 
 ---
 
@@ -67,14 +73,15 @@ All five tables share `cycle_id` as the join key.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/sop/cycles` | List all cycles with stage and date range |
-| POST | `/sop/cycles` | Create a new cycle for a given period |
-| GET | `/sop/cycles/{id}` | Cycle detail including demand review, constraints, gaps |
-| PUT | `/sop/cycles/{id}/advance` | Move cycle to next stage (validates gate conditions) |
-| PUT | `/sop/cycles/{id}/approve` | Lock cycle at Stage 6, write approved plan |
-| GET | `/sop/gaps/{cycle_id}` | Gap cards for a specific cycle |
+| GET | `/sop/cycles` | List cycles, paginated, newest `cycle_month` first |
+| POST | `/sop/cycles` | Create a new cycle for a month (auth); defaults to the current planning-date month, 409 on duplicate |
+| GET | `/sop/cycles/{cycle_id}` | Cycle detail including demand review and supply constraints |
+| POST | `/sop/cycles/{cycle_id}/advance` | Move cycle to the next stage in `status` (auth) |
+| POST | `/sop/cycles/{cycle_id}/approve` | Lock the cycle at `approved`, record `approved_by`/`approved_plan_version` (auth) |
+| GET | `/sop/cycles/{cycle_id}/gaps` | Gap cards for a cycle, filterable by `severity` and `resolution_status` |
+| GET | `/sop/approved-plan` | Locked approved demand, filterable by `cycle_id`, `item_id`, `loc` |
 
-All mutation endpoints require API key authentication when `API_KEY` is set.
+Advance and approve are `POST`, not `PUT` -- both require API key authentication.
 
 ---
 
@@ -85,7 +92,10 @@ All mutation endpoints require API key authentication when `API_KEY` is set.
 | Schema | `make sop-schema` | Creates the 5 S&OP tables |
 | Seed | `make sop-seed` | Creates an initial cycle for the current planning period |
 | Full | `make sop-all` | Schema + seed |
-| Run | `scripts/run_sop_cycle.py` | Programmatic cycle advancement (used by job scheduler) |
+| Create | `make sop-create CYCLE_MONTH=YYYY-MM-DD` | Create a cycle for a specific month |
+| Advance | `make sop-advance CYCLE_ID=n` | Advance a cycle to its next stage |
+| Populate | `make sop-populate CYCLE_ID=n` | Populate demand-review rows for a cycle |
+| Run | `scripts/ops/run_sop_cycle.py --action {create,advance,populate-demand}` | Programmatic cycle operations (used by job scheduler) |
 
 ---
 
@@ -95,11 +105,16 @@ File: `config/operations/sop_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|
-| `cycle_cadence` | How often a new cycle is created | `monthly` |
-| `stages` | Ordered list of stage names and gate rules | 6 stages as listed above |
-| `gap_thresholds.demand_supply_pct` | Minimum percent gap to flag | `5.0` |
-| `gap_thresholds.budget_variance_pct` | Budget deviation threshold | `10.0` |
-| `auto_seed_demand` | Whether to pre-populate demand review from production forecast | `true` |
+| `sop.planning_horizon_months` | Forward planning horizon | `12` |
+| `sop.demand_review_day` | Day of the prior month the demand-review meeting is scheduled | `5` |
+| `sop.supply_review_day` | Day of the prior month the supply-review meeting is scheduled | `10` |
+| `sop.pre_sop_day` | Day of the prior month the pre-S&OP meeting is scheduled | `15` |
+| `sop.executive_sop_day` | Day of the prior month the executive sign-off is scheduled | `20` |
+| `sop.stages` | Ordered stage machine (matches `status` above) | `demand_review, supply_review, pre_sop, executive_sop, approved, closed` |
+| `sop.demand_baseline_model` | `model_id` from `fact_external_forecast_monthly` used as the consensus baseline | `champion` |
+| `sop.supply_gap_alert_pct` | Alert when supply falls below this fraction of consensus demand | `0.10` |
+| `sop.approvers` | Role required at each stage (informational only, not server-enforced) | `demand_planner`, `supply_planner`, `supply_chain_manager`, `vp_supply_chain` |
+| `scheduler.cron` | Scheduled cycle-advancement cadence | `0 7 1 * *` |
 
 ---
 

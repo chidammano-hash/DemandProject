@@ -108,17 +108,20 @@ DDL: `sql/071_create_transfer_network.sql`, `sql/072_create_rebalancing_plan.sql
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/rebalancing/kpis` | Network balance KPIs |
-| GET | `/inv-planning/rebalancing/network` | Transfer lane topology |
-| GET | `/inv-planning/rebalancing/imbalances` | Imbalanced items list |
-| POST | `/inv-planning/rebalancing/compute` | Trigger rebalancing computation |
-| GET | `/inv-planning/rebalancing/plans` | List rebalancing plans |
-| GET | `/inv-planning/rebalancing/plans/{id}` | Plan detail with transfers |
-| PUT | `/inv-planning/rebalancing/plans/{id}/approve` | Approve a plan |
-| GET | `/inv-planning/rebalancing/transfers` | All transfers across plans |
-| PUT | `/inv-planning/rebalancing/transfers/{id}/status` | Update transfer status |
+| GET | `/inv-planning/rebalancing/kpis` | Network balance KPIs (avg DOS CV, imbalanced item count, excess/shortage location counts) plus latest plan summary |
+| GET | `/inv-planning/rebalancing/network` | List active transfer lanes; filters `source_loc`, `dest_loc`; `limit`/`offset` |
+| POST | `/inv-planning/rebalancing/network` | Create or update a transfer lane (upserts on source_loc + dest_loc + transfer_mode) |
+| DELETE | `/inv-planning/rebalancing/network/{lane_id}` | Deactivate (soft-delete) a transfer lane |
+| GET | `/inv-planning/rebalancing/imbalances` | Items with simultaneous excess and shortage across locations; filter `item`; `limit`/`offset` |
+| POST | `/inv-planning/rebalancing/compute` | Trigger rebalancing computation in the background (`solver`, `horizon_weeks`, `budget_cap` in body); returns 202 Accepted |
+| GET | `/inv-planning/rebalancing/plans` | List rebalancing plans; filter `status`; `limit`/`offset` |
+| GET | `/inv-planning/rebalancing/plans/{plan_id}` | Single plan detail with summary KPIs (cost, ROI, network balance before/after) |
+| GET | `/inv-planning/rebalancing/plans/{plan_id}/transfers` | Paginated transfers within a plan; filters `urgency`, `status`, `item`; `sort_by`/`sort_dir`, `limit`/`offset` |
+| POST | `/inv-planning/rebalancing/transfers/{transfer_id}/approve` | Approve a recommended transfer (`approved_by` required in body) |
+| POST | `/inv-planning/rebalancing/transfers/{transfer_id}/reject` | Reject a recommended or held transfer (`rejection_reason` required in body) |
+| POST | `/inv-planning/rebalancing/plans/{plan_id}/approve-all` | Bulk-approve all recommended transfers in a plan and mark the plan approved |
 
-Plus 3 additional endpoints for transfer history, plan deletion, and bulk approval. Router: `inv_planning_rebalancing.py` (12 endpoints total).
+There is no endpoint to delete a rebalancing plan. All write endpoints (POST/DELETE) require an API key. Router: `inv_planning_rebalancing.py` (12 endpoints total).
 
 ---
 

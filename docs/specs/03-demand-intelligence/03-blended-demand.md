@@ -1,12 +1,12 @@
 # Blended Demand
 
-> Combines statistical forecast output with demand sensing signals into a single alpha-weighted blended demand quantity per DFU per month, with per-segment alpha overrides and near-horizon decay.
+> Combines statistical forecast output with demand sensing signals into a single alpha-weighted blended demand quantity per DFU per week, with a linear alpha decay over the sensing horizon and a velocity-spike outlier cap.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (Sensing group) |
-| **Key Files** | `scripts/forecasting/compute_blended_forecast.py`, `api/routers/forecasting/blended_forecast.py`, `config/blended_demand_config.yaml` |
+| **Key Files** | `scripts/forecasting/compute_blended_forecast.py`, `api/routers/forecasting/blended_forecast.py`, `config/forecasting/forecast_domain_config.yaml` (`sensing` section) |
 
 ---
 
@@ -24,7 +24,7 @@ Planners receive demand signals from multiple sources: statistical forecasts (ML
 
 ## Solution
 
-An alpha-weighted blending engine that combines statistical forecast output with demand sensing signals into a single blended demand quantity per DFU per month. The alpha parameter controls the weight given to each source, and can be configured globally or overridden per segment.
+An alpha-weighted blending engine that combines statistical forecast output with demand sensing signals into a single blended demand quantity per DFU per week. Alpha decays linearly from 1.0 (pure sensing) at the current week to 0.0 (pure statistical) at the edge of the sensing horizon, and a velocity-spike cap prevents a single large in-month order from blowing up the near-term blended plan.
 
 ---
 
@@ -32,65 +32,65 @@ An alpha-weighted blending engine that combines statistical forecast output with
 
 ### Blending Formula
 
-For each DFU-month:
+For each DFU-week:
 
 ```
-blended_qty = alpha * sensing_qty + (1 - alpha) * statistical_qty
+blended_qty = alpha_weight * sensing_signal_qty + (1 - alpha_weight) * statistical_forecast_qty
 ```
 
 Where:
-- `statistical_qty` = champion model forecast (from `fact_external_forecast_monthly` where `model_id = 'champion'`)
-- `sensing_qty` = short-horizon demand signal (from `fact_demand_signals`, extrapolated to monthly granularity)
-- `alpha` = blending weight (0.0 = pure statistical, 1.0 = pure sensing)
+- `statistical_forecast_qty` = champion model forecast (from `fact_external_forecast_monthly` where `model_id = 'champion'`, monthly figure converted to a weekly rate via `monthly_to_weekly()`, divisor 4.33 weeks/month)
+- `sensing_signal_qty` = MTD-velocity-projected monthly demand (see Velocity Projection below), converted to a weekly rate the same way
+- `alpha_weight` = blending weight for that week, 0.0 (pure statistical) to 1.0 (pure sensing) - see Alpha Decay below
+- `blended_qty` is floored at 0.0
 
-### Alpha Selection
+### Alpha Decay
 
-| Segment | Default Alpha | Rationale |
-|---|---|---|
-| Global default | 0.3 | Statistical models dominate for most items |
-| High-velocity (ABC-A) | 0.4 | Recent signals more informative for fast movers |
-| Intermittent | 0.1 | Sensing signals too noisy for sporadic demand |
-| Promotional periods | 0.5 | Equal weight during events with demand shifts |
+`compute_alpha(week_offset, sensing_horizon_weeks)` in `scripts/forecasting/compute_blended_forecast.py` decays linearly from 1.0 at the current week (`week_offset = 0`) to 0.0 at `week_offset >= sensing_horizon_weeks`:
 
-Alpha overrides can be set per ABC class or per individual DFU in the configuration file.
+```
+alpha = max(0.0, min(1.0, 1.0 - week_offset / sensing_horizon_weeks))
+```
 
-### Near-Horizon Emphasis
+Examples with the default 4-week horizon: `week_offset=0` -> 1.0 (pure sensing), `week_offset=3` -> 0.25 (mostly statistical), `week_offset=4` and beyond -> 0.0 (pure statistical). There is no per-ABC-class or per-DFU alpha override - the decay curve is uniform across the portfolio, driven only by `sensing_horizon_weeks`.
 
-Sensing signals are most valuable for the immediate planning horizon (1-3 months). Beyond that window, the blend reverts toward the statistical forecast:
+Each run writes `sensing_horizon_weeks + 4` weeks of rows per DFU (8 weeks with the default horizon of 4), so the tail weeks beyond the horizon are persisted as pure-statistical rows rather than dropped.
 
-| Horizon | Effective Alpha |
-|---|---|
-| Month +1 | Configured alpha |
-| Month +2 | alpha * 0.7 |
-| Month +3 | alpha * 0.4 |
-| Month +4 onward | 0.0 (pure statistical) |
+### Velocity Projection & Outlier Cap
+
+`compute_velocity_signal()` projects the sensing signal from month-to-date sales velocity: `daily_run_rate = mtd_sales / days_elapsed`, compared against the historical daily average to get `spike_ratio = daily_run_rate / historical_daily_avg`. If `spike_ratio` exceeds `outlier_threshold` (default 3.0), the run rate is capped at `historical_daily_avg * outlier_threshold` before projecting to a monthly (then weekly) quantity - this is what `velocity_spike_ratio` and `is_outlier_capped` record.
 
 ---
 
 ## Data Model
 
-Output is written to the blended demand forecast table, consumed by downstream replenishment and financial planning.
+Output is written to `fact_blended_demand_plan`, grain **item_id + loc + week_start + plan_version** (unique constraint `uq_blended_plan`).
 
 | Column | Type | Purpose |
 |---|---|---|
-| `item_id` | TEXT | Item identifier |
-| `loc` | TEXT | Location identifier |
-| `month_start` | DATE | Planning month |
-| `statistical_qty` | NUMERIC | Champion model forecast |
-| `sensing_qty` | NUMERIC | Demand signal extrapolation |
-| `alpha` | NUMERIC | Weight applied |
-| `blended_qty` | NUMERIC | Final blended output |
+| `item_id` | VARCHAR(50) | Item identifier |
+| `loc` | VARCHAR(50) | Location identifier |
+| `week_start` | DATE | Week start (Monday-anchored) |
+| `plan_version` | VARCHAR(50) | Plan version tag, default `latest` |
+| `alpha_weight` | NUMERIC(4,3) | Sensing weight for this week, 0.0-1.0 |
+| `sensing_signal_qty` | NUMERIC(12,2) | Weekly demand-sensing projection |
+| `statistical_forecast_qty` | NUMERIC(12,2) | Weekly champion-model forecast |
+| `blended_qty` | NUMERIC(12,2) | Final blended output (floored at 0) |
+| `velocity_spike_ratio` | NUMERIC(6,3) | MTD daily run-rate vs. historical daily average |
+| `is_outlier_capped` | BOOLEAN | Whether the velocity spike was capped at `outlier_threshold` |
 | `computed_at` | TIMESTAMPTZ | Computation timestamp |
+
+`mv_sensing_overrides_active` (materialized view, `sql/053_create_blended_forecast.sql`) narrows this to the nearest future `week_start` where `alpha_weight > 0.5`, and backs `GET /forecast/sensing-active`.
 
 ---
 
 ## API
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/inv-planning/blended-demand/summary` | Portfolio-level blended vs statistical comparison |
-| GET | `/inv-planning/blended-demand/detail` | Per-DFU blended demand with alpha values |
-| PUT | `/inv-planning/blended-demand/alpha` | Override alpha for segment or DFU |
+| Method | Path | Params | Purpose |
+|---|---|---|---|
+| GET | `/forecast/blended` | `item_id`, `loc` (required), `weeks` (default 8, capped 1-52), `plan_version` | Weekly blended forecast for one DFU, plus the summed `monthly_total_blended` |
+| GET | `/forecast/blended/summary` | none | Portfolio sensing status as of the planning date: total DFUs, count with `alpha_weight > 0.3`, average spike ratio, capped-row count |
+| GET | `/forecast/sensing-active` | `page` (default 1), `page_size` (default 50, capped 1-200) | Paginated list of DFUs where sensing dominates (`alpha_weight > 0.5`), from `mv_sensing_overrides_active` |
 
 Router: `api/routers/forecasting/blended_forecast.py`
 
@@ -99,12 +99,14 @@ Router: `api/routers/forecasting/blended_forecast.py`
 ## Pipeline
 
 ```
-make blended-demand    # Compute blended demand from champion + sensing signals
+make blended-compute        # Compute blended demand from champion + sensing signals
+make blended-compute-dfu ITEM=<item_no> LOC=<loc>   # Single DFU
+make blended-dry             # Dry run, no DB writes
 ```
 
 | Step | Script | Output |
 |---|---|---|
-| Compute blend | `scripts/forecasting/compute_blended_forecast.py` | Blended demand rows |
+| Compute blend | `scripts/forecasting/compute_blended_forecast.py` | `fact_blended_demand_plan` rows |
 
 Requires champion selection and demand signals to have run first.
 
@@ -112,24 +114,23 @@ Requires champion selection and demand signals to have run first.
 
 ## Configuration
 
-File: `config/blended_demand_config.yaml` (referenced as F3.4 in algorithm config)
+File: `config/forecasting/forecast_domain_config.yaml`, `sensing` section - read via `load_config().get("sensing", {})`.
 
 ```yaml
-default_alpha: 0.3
-horizon_decay: [1.0, 0.7, 0.4, 0.0]
-segment_overrides:
-  ABC_A: 0.4
-  intermittent: 0.1
-  promotional: 0.5
+sensing:
+  sensing_horizon_weeks: 4   # weeks over which alpha decays to 0
+  outlier_threshold: 3.0     # cap velocity spike_ratio at this multiple of the historical average
 ```
+
+The `sensing` key is not currently present in the checked-in config file, so both values fall back to the hardcoded defaults in `compute_blended_forecast.py` (`SENSING_HORIZON_WEEKS = 4`, `OUTLIER_THRESHOLD = 3.0`).
 
 ---
 
 ## Dependencies
 
-- **Upstream:** `fact_external_forecast_monthly` (champion model), `fact_demand_signals` (sensing), `dim_sku` (ABC class)
+- **Upstream:** `fact_external_forecast_monthly` (champion model, `model_id = 'champion'`), `fact_demand_signals` (MTD sensing signal)
 - **Downstream:** Replenishment planning, financial planning, S&OP demand review
-- **Libraries:** pandas, numpy
+- **Libraries:** psycopg, PyYAML
 
 ---
 
@@ -137,7 +138,7 @@ segment_overrides:
 
 - [../04-inventory/06-analytics](../04-inventory/06-analytics.md) -- Demand signals (sensing input)
 - [../02-forecasting/07-champion-selection](../02-forecasting/07-champion-selection.md) -- Statistical forecast source
-- [01-sku-clustering](01-sku-clustering.md) -- Cluster-level alpha defaults possible via segment mapping
+- [01-sku-clustering](01-sku-clustering.md) -- DFU clustering (not currently wired into alpha selection)
 
 ## Frontend
 

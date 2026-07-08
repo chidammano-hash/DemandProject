@@ -6,13 +6,13 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Demand History |
-| **Key Files** | `api/routers/inventory/demand_history.py`, `config/demand_history_config.yaml`, `tests/api/test_demand_history.py` |
+| **Key Files** | `api/routers/inventory/demand_history.py`, `config/inventory/inventory_planning_config.yaml` (`demand_history` section), `tests/api/test_demand_history.py` |
 
 ---
 
 ## Problem
 
-Planners need visibility into customer-level demand decomposition, hierarchical forecast comparison (bottom-up vs top-down vs reconciled), and cross-dimensional demand relationships — capabilities that are not available through standard item-level inventory or forecast views.
+Planners need visibility into customer-level demand decomposition, hierarchical forecast comparison (bottom-up vs top-down vs reconciled), and cross-dimensional demand relationships - capabilities that are not available through standard item-level inventory or forecast views.
 
 ## Solution
 
@@ -81,7 +81,7 @@ Returns: Pivot grid (rows x cols) with cells matrix and label dictionaries. Dril
 
 ## Configuration
 
-All parameters in config/demand_history_config.yaml:
+All parameters in `config/inventory/inventory_planning_config.yaml` (`demand_history` section):
 
 | Key | Default | Description |
 |---|---|---|

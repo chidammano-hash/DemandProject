@@ -79,7 +79,7 @@ algorithms:
     type: tree
     cluster_strategy: per_cluster   # one model per ml_cluster
     # ...
-  chronos:
+  chronos2_enriched:
     type: foundation
     # no cluster_strategy — foundation/DL models always run globally
 ```
@@ -95,26 +95,89 @@ When `clustering.enabled` is `false` (see below), backtest scripts auto-fall bac
 
 Algorithms with `cluster_strategy`:
 - `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` (tree)
-- `seasonal_naive`, `rolling_mean` (statistical)
+- `seasonal_naive`, `rolling_mean`, `rolling_median` (statistical)
 
-Foundation and deep learning models (`chronos`, `chronos_bolt`, `chronos2`, `chronos2_enriched`, `nbeats`, `nhits`) omit this key and always run globally.
+Foundation and deep learning models (`chronos2_enriched`, `nbeats`, `nhits`) omit this key and always run globally. (The T5, Bolt, and non-enriched Chronos 2 foundation-model variants were removed in commit `5ab8d593` — only `chronos2_enriched` remains; see [18-chronos-foundation-models.md](18-chronos-foundation-models.md).)
 
-### All 12 Algorithms
+### All 10 Algorithms
 
 | Algorithm | Type | tune | backtest | compete | forecast | expert | cluster_strategy |
 |---|---|---|---|---|---|---|---|
 | `lgbm_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
 | `catboost_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
 | `xgboost_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
-| `chronos` | foundation | no | yes | no | no | yes | — |
-| `chronos_bolt` | foundation | no | yes | yes | no | no | — |
-| `chronos2` | foundation | no | yes | yes | no | no | — |
-| `chronos2_enriched` | foundation | no | yes | yes | no | no | — |
-| `mstl` | statistical | no | yes | yes | no | yes | — |
-| `nbeats` | deep_learning | no | yes | yes | no | yes | — |
-| `nhits` | deep_learning | no | yes | yes | no | no | — |
-| `seasonal_naive` | statistical | no | yes | yes | no | no | per_cluster |
-| `rolling_mean` | statistical | no | yes | yes | no | yes | per_cluster |
+| `chronos2_enriched` | foundation | no | yes | yes | yes | no | — |
+| `mstl` | statistical | no | yes | yes | yes | yes | — |
+| `nbeats` | deep_learning | no | yes | yes | yes | yes | — |
+| `nhits` | deep_learning | no | yes | yes | yes | no | — |
+| `seasonal_naive` | statistical | no | yes | yes | yes | no | per_cluster |
+| `rolling_mean` | statistical | no | yes | yes | yes | yes | per_cluster |
+| `rolling_median` | statistical | no | yes | yes | yes | no | per_cluster |
+
+### Per-Algorithm Backtest Config Keys
+
+Beyond the lifecycle flags above, each tree/statistical algorithm entry accepts backtest-level
+behavioral keys, read from `algorithms.<model_id>.params`. Edit
+`config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>.params`, then run
+`make backtest-lgbm` (or catboost/xgboost) -- the script reads its section from the YAML file and
+applies cluster strategy, SHAP, tuning, recursive mode, and hyperparameters automatically. No CLI flags
+are needed; the config file is the single source of truth.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `recursive` | bool | false | Enable recursive multi-step inference. Each predict month is scored individually; the model's prediction for month T becomes `qty_lag_1` for month T+1. |
+| `shap_select` | bool | false | Enable multi-stage per-timeframe feature selection (see [Feature Selection Pipeline](28-feature-selection-pipeline.md)). |
+| `shap_threshold` | float | 0.90 | SHAP cumulative importance threshold (Stage 3). Ignored if `shap_top_n` is set. |
+| `shap_top_n` | int/null | null | Select exactly this many top features. Overrides `shap_threshold`. |
+| `shap_sample_size` | int | 500 | Rows sampled for SHAP computation per timeframe. |
+| `correlation_filter` | bool | false | Enable correlation pre-filter (Stage 2). Drops the lower-variance member of pairs above the threshold. |
+| `correlation_threshold` | float | 0.98 | Absolute Pearson correlation threshold for Stage 2. |
+| `variance_filter` | bool | false | Enable near-zero variance filter (Stage 1). |
+| `variance_threshold` | float | 0.01 | Relative variance threshold for Stage 1 (fraction of range squared). |
+| `tune_inline` | bool | false | Per-timeframe causal Optuna tuning. Mutually exclusive with `params_file`. |
+| `params_file` | string/null | null | Path to pre-tuned params JSON from `make tune-*`. Mutually exclusive with `tune_inline`. |
+| Algorithm-specific hyperparameters | varies | see `algorithms.<model_id>.params` | Default hyperparameters used when `params_file` is null and `tune_inline` is false. |
+
+**Common configurations:**
+
+Basic per-cluster backtest (default -- `cluster_strategy` is a top-level key on the algorithm entry, not under `params`):
+```yaml
+algorithms:
+  lgbm_cluster:
+    cluster_strategy: "per_cluster"
+```
+
+Apply pre-tuned parameters:
+```yaml
+algorithms:
+  lgbm_cluster:
+    params:
+      params_file: data/tuning/best_params_lgbm.json
+```
+
+SHAP + inline tuning (honest backtesting):
+```yaml
+algorithms:
+  lgbm_cluster:
+    params:
+      shap_select: true
+      tune_inline: true
+```
+
+Recursive with pre-tuned params:
+```yaml
+algorithms:
+  lgbm_cluster:
+    params:
+      recursive: true
+      params_file: data/tuning/best_params_lgbm.json
+```
+
+**What was removed:** 30+ granular Makefile targets (e.g., `backtest-lgbm-cluster-shap`,
+`backtest-catboost-cluster-tuned`, `backtest-xgboost-transfer-recursive`) were deleted -- the config
+file replaces all of them. Five algorithm families (Prophet, StatsForecast, NeuralProphet, PatchTST,
+DeepAR) were also removed along with their Makefile targets; the algorithm roster above provides the
+best accuracy-to-maintenance ratio.
 
 ### Backtest Settings
 
@@ -328,7 +391,7 @@ horizon = cfg["production_forecast"]["horizon_months"]  # 24
 
 # All algorithms that participate in champion selection
 competing = get_competing_model_ids()
-# ['lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos_bolt', 'chronos2', ...]
+# ['lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos2_enriched', 'mstl', ...]
 
 # All algorithms eligible for production forecasting
 forecastable = get_forecastable_model_ids()
@@ -388,10 +451,9 @@ All legacy config files have been deleted. The master `forecast_pipeline_config.
 
 ## Dependencies
 
-- [Algorithm Configuration](./06-algorithm-config.md) -- per-model hyperparameters now inline under `algorithms.<model_id>.params`
 - [Champion Selection](./07-champion-selection.md) -- champion strategy governed by `champion` section
 - [Production Forecast](./08-production-forecast.md) -- inference settings governed by `production_forecast` section
-- [LGBM Tuning](./10b-lgbm-tuning.md) -- tracking settings governed by `tracking` section
+- [Unified Model Tuning Studio](./11-unified-model-tuning-v2.md) -- tracking settings governed by `tracking` section
 - `cluster_experiment` table (promoted row) -- detailed clustering hyperparameters, referenced by `clustering.config_ref`
 - `config/forecasting/cluster_tuning_profiles.yaml` -- cluster tuning profiles, referenced by `clustering.tuning_profiles_ref`
 - `config/forecasting/cluster_experiment_templates.yaml` -- experiment templates, referenced by `clustering.experiment_templates_ref`
@@ -399,4 +461,5 @@ All legacy config files have been deleted. The master `forecast_pipeline_config.
 ## See Also
 
 - [Backtest Framework](./03-backtest-framework.md) -- uses `backtest` section settings
+- [Tree Models](./04-tree-models.md) -- the algorithms controlled by the per-algorithm config keys above
 - [Expert Panel](./15-expert-panel-algorithm-selection.md) -- uses `expert` lifecycle flag

@@ -48,7 +48,7 @@ The `general.ts` theme config defines:
 
 ### Chart Colors
 
-The `useChartColors()` hook returns `{ theme, chartColors, trendColors }` derived from the active theme context. All chart components consume these colors instead of hardcoded values. recharts is the default chart engine; the `ModularReactECharts` component (`echarts-modular.tsx`) is used only for the 8 heavy customer-analytics panels and reads the same theme-derived colors. The retired `EChartContainer` wrapper has been removed.
+The `useChartColors()` hook returns `{ theme, chartColors, trendColors }` derived from the active theme context. Most chart components consume these colors instead of hardcoded values, but the hook is not universally adopted: over 40 files across the tab layer hardcode hex literals for series, model, category, and threshold colors instead of reading from `useChartColors()`. This spans dedicated color-map modules (`constants/colors.ts`, `tabs/item-analysis/colors.ts`) as well as individual panels in customer-analytics, inv-planning, demand-history, dfu-analysis, lgbm-tuning, inv-backtest, and the clusters tab. These are known, long-standing exceptions rather than a sanctioned pattern - new chart work should still prefer `useChartColors()`. recharts is the default chart engine; the `ModularReactECharts` component (`echarts-modular.tsx`) is used only for the 8 heavy customer-analytics panels and reads the same theme-derived colors. The retired `EChartContainer` wrapper has been removed.
 
 ### Design Tokens
 

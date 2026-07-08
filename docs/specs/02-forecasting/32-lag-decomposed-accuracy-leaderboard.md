@@ -1,4 +1,4 @@
-# 28 — Lag-Decomposed Accuracy Leaderboard
+# 32 — Lag-Decomposed Accuracy Leaderboard
 
 | | |
 |---|---|

@@ -123,19 +123,49 @@ forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
 
 ### 4.3 Promotion Types
 
+> **Verified against code.** `promote_model()` in
+> `api/routers/forecasting/backtest_management.py` does **not** read from
+> `fact_candidate_forecast` (that table is inert - see §4.1/§5.1). It copies **staged** forecasts
+> from `fact_production_forecast_staging` into `fact_production_forecast`. The `data/champion/
+> dfu_assignments.csv` file and its loader, `_load_dfu_assignments()`, are dead code with zero
+> callers in the file - champion routing does not use them.
+
 **Single Model** (`model_id = 'lgbm_cluster'`, etc.):
-1. Validates candidate rows exist for the model
-2. Demotes current active promotion
-3. Copies all candidate rows for this model → `fact_production_forecast`
-4. Marks candidates as promoted
-5. Logs in `model_promotion_log`
+1. Gate check: enforces a minimum WAPE improvement and DFU coverage against the currently active
+   champion (bypassable via `bypass_token`); every allow/reject is logged to the AI decision ledger
+2. Validates staged rows exist in `fact_production_forecast_staging` for the model
+3. Demotes the current active promotion (`model_promotion_log.is_active = FALSE`)
+4. Deletes all rows from `fact_production_forecast` (full replace, not append)
+5. Copies every staged row for that `model_id` from `fact_production_forecast_staging` →
+   `fact_production_forecast`
+6. Logs the promotion (row count, `run_id`, etc.)
 
 **Champion** (`model_id = 'champion'`):
-1. Loads DFU-level assignments from `data/champion/dfu_assignments.csv`
-2. Falls back to best-accuracy model per DFU from candidates
-3. For each DFU, picks the assigned model's forecast from candidates
-4. Copies matched rows → `fact_production_forecast`
-5. Logs with `promotion_type = 'champion'`
+1. Validates staged rows exist (any model) in `fact_production_forecast_staging`; demotes the
+   current active promotion; deletes all rows from `fact_production_forecast` (champion promotions
+   bypass the WAPE gate - gating happens at champion-experiment level instead)
+2. Looks up the currently **promoted** `champion_experiment` row (`is_promoted = TRUE`, most
+   recently promoted)
+3. Reads that experiment's per-run winners file at
+   `data/champion/experiment_{champion_experiment_id}_winners.csv` - the source of truth for
+   DFU→model routing, written by `run_champion_experiment.py`
+4. Builds a **per-month** winners map keyed by `(item_id, loc, startdate)` - a DFU can win a
+   *different* model for each forecast month. Ties on `(item_id, loc, startdate)` resolve
+   deterministically to the lowest `model_id`, never file order
+5. Builds a **per-DFU fallback** map (one model per `(item_id, loc)`) from the same winners file,
+   used for any staged month that falls outside the backtest window the winners file covers (the
+   winners CSV is backtest-grain; staging spans the full future horizon)
+6. Two temp tables - `_dfu_champion` (per-DFU fallback) and `_dfu_champion_month` (per-month
+   overrides) - drive a single INSERT: for each staged row, resolve
+   `COALESCE(per-month override, per-DFU fallback)` and copy it to `fact_production_forecast` only
+   if a staged row exists for that resolved model
+7. Coverage check: any staged champion DFU-month whose resolved model has **no** staged row (that
+   model's Generate wasn't run, or a `model_id` spelling mismatch) is logged as a warning and
+   dropped from production rather than failing the promotion
+8. Logs the promotion with `promotion_type = 'champion'` and the resolved `champion_experiment_id`
+
+**Non-champion, non-single-model calls are not supported** - every `model_id` other than
+`'champion'` is treated as a single-model promotion.
 
 ## 5. Frontend UI
 
@@ -177,8 +207,8 @@ tables, each with a **Run all** action. The flow is:
 
 ### 5.2 Promote Champion Button
 
-Appears in the header when 2+ models have loaded candidates. Uses DFU
-assignments to select the best model per DFU.
+Appears in the header when 2+ models have loaded candidates. Routes each DFU (per forecast month) to
+its winning model from the promoted champion experiment's winners CSV - see §4.3.
 
 ### 5.3 Candidates Column
 
@@ -202,30 +232,31 @@ exposed counts, with no per-DFU time-series to chart.
 
 ## 6. Data Flow
 
+> This diagram reflects the verified `promote_model()` mechanism (§4.3), not the original
+> `fact_candidate_forecast` design described in §2-3 - that table is inert (§4.1).
+
 ```
 ┌─────────────┐    Train     ┌─────────────────┐
 │ Raw Sales    │───────────►  │ Model Artifacts  │
 │ History      │              │ (*.pkl files)    │
 └─────────────┘              └────────┬────────┘
-                                      │ Generate (backtest)
+                                      │ Generate (production forecast)
                                       ▼
-                             ┌─────────────────┐
-                             │ Predictions CSV  │
-                             │ (on disk)        │
-                             └────────┬────────┘
-                                      │ Load
-                                      ▼
-                             ┌─────────────────────┐
-                             │ fact_candidate_      │ ◄── All models land here
-                             │ forecast             │
-                             └────────┬────────────┘
+                             ┌───────────────────────┐
+                             │ fact_production_        │ ◄── Every model's staged
+                             │ forecast_staging         │     forecast lands here
+                             └────────┬──────────────┘
                                       │ Promote
                                       ▼
                              ┌─────────────────────┐
-                             │ fact_production_     │ ◄── Only promoted model
-                             │ forecast             │
+                             │ fact_production_     │ ◄── Only the promoted model
+                             │ forecast             │     (or per-DFU champion mix)
                              └─────────────────────┘
 ```
+
+The separate historical **backtest** flow (Train (backtest) → Generate (backtest) → Load) writes to
+`fact_external_forecast_monthly` + `backtest_lag_archive` (§5.1) for accuracy analysis and the Item
+Analysis backtest overlay (§5.4) - it does not feed this staging→promotion pipeline.
 
 ## 7. Migration
 

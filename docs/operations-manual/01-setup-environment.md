@@ -452,8 +452,8 @@ make supplier-perf-refresh investment-plan intramonth-refresh
 make rebalancing-refresh rebalancing-compute
 make control-tower-refresh
 
-# 4. Clustering + Seasonality
-make cluster-all && make seasonality-all
+# 4. Features (incl. seasonality/variability) + Clustering
+make features-compute && make cluster-all
 
 # 5. Backtesting
 make backtest-all && make backtest-load-all

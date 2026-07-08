@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `common/ml/backtest_framework.py`, `common/ml/model_registry.py`, `common/ml/feature_engineering.py`, `common/services/metrics.py`, `common/core/constants.py`, `scripts/load_backtest_forecasts.py`, `sql/010_create_backtest_lag_archive.sql` |
+| **Key Files** | `common/ml/backtest_framework.py`, `common/ml/model_registry.py`, `common/ml/feature_engineering.py`, `common/services/metrics.py`, `common/core/constants.py`, `scripts/etl/load_backtest_forecasts.py`, `sql/010_create_backtest_lag_archive.sql` |
 
 ---
 
@@ -50,7 +50,7 @@ Each DFU (Demand Forecast Unit -- a unique item-location combination) has an `ex
 
 **External forecast loading:** All rows in `dfu_stat_fcst.txt` are assumed to be at execution lag. The `lag` and `execution_lag` fields in the source file are ignored — the loader overwrites both from `dim_sku.execution_lag` (defaulting to 0 for unmatched DFUs). No `WHERE lag = execution_lag` filter is applied; all rows are inserted. Additionally, only the last 12 months of data (by `startdate`) are loaded, based on the current planning date.
 
-**Backtest loading:** Backtests still produce predictions at all 5 lags (0-4). The backtest loader (`scripts/load_backtest_forecasts.py`) retains the original dual-path logic: archive gets all lags, main table gets execution-lag rows only.
+**Backtest loading:** Backtests still produce predictions at all 5 lags (0-4). The backtest loader (`scripts/etl/load_backtest_forecasts.py`) retains the original dual-path logic: archive gets all lags, main table gets execution-lag rows only.
 
 ## Plain-Language Overview
 
@@ -313,7 +313,7 @@ All models use `compute_early_stop_patience(max_iterations, pct=0.03)`:
 
 ## Configuration
 
-Backtest behavior is controlled by `config/forecasting/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
+Backtest behavior is controlled by `config/forecasting/forecast_pipeline_config.yaml`. See [Forecast Pipeline Config](./19-forecast-pipeline-config.md) for details.
 
 Key backtest-level settings:
 - `early_stop_pct: 0.05` — early stopping patience as percentage of max iterations (10% for sparse clusters)
@@ -340,7 +340,7 @@ The backtest framework supports the full algorithm portfolio defined in `config/
 | Statistical baselines | `seasonal_naive`, `rolling_mean` | `make backtest-seasonal-naive`, `backtest-rolling-mean` |
 | Decomposition | `mstl` (Multiple Seasonal-Trend via LOESS) | `make backtest-mstl` |
 | Deep learning | `nhits` (N-HiTS), `nbeats` (N-BEATS) | `make backtest-nhits`, `backtest-nbeats` |
-| Foundation models | `chronos` (T5), `chronos_bolt`, `chronos2`, `chronos2_enriched` | `make backtest-chronos`, `backtest-bolt`, `backtest-chronos2`, `backtest-chronos2e` |
+| Foundation models | `chronos2_enriched` (Chronos 2 Enriched - the only Chronos variant remaining; T5, Bolt, and non-enriched Chronos 2 were removed in commit `5ab8d593`) | `make backtest-chronos2e` |
 
 All models write to the same `data/backtest/<model_id>/` directory structure and are loaded through the same dual-path loader into `backtest_lag_archive` (all lags) and `fact_external_forecast_monthly` (execution lag only).
 
@@ -353,6 +353,6 @@ All models write to the same `data/backtest/<model_id>/` directory structure and
 
 - [Tree Models](./04-tree-models.md) -- LightGBM, CatBoost, XGBoost implementations
 - [Advanced Backtest](./05-advanced-backtest.md) -- tuning, SHAP, and recursive extensions
-- [Algorithm Config](./06-algorithm-config.md) -- config file that controls backtest behavior
-- [Chronos Foundation Models](./18-chronos-foundation-models.md) -- Chronos T5, Bolt, Chronos 2, and Chronos 2 Enriched
+- [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- config file that controls backtest behavior
+- [Chronos Foundation Models](./18-chronos-foundation-models.md) -- the remaining Chronos 2 Enriched foundation model
 - [Champion Selection](./07-champion-selection.md) -- picks the best model per DFU-month from backtest results

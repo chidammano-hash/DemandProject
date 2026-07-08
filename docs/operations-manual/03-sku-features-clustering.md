@@ -20,15 +20,13 @@ The SKU features pipeline computes a unified set of time-series features for eve
 ### 1.2 Make targets
 
 ```bash
-make features-compute      # primary entry point
-make seasonality-all       # alias -> features-compute
-make variability-all       # alias -> features-compute
+make features-compute      # sole entry point
 ```
 
-All three resolve to the same script:
+Seasonality and variability computation were folded into this single target - there is no
+separate `seasonality-all` / `variability-all` target or alias. `make features-compute`
+resolves to:
 `/Users/manoharchidambaram/projects/DemandProject/scripts/ml/compute_sku_features.py`
-
-The aliases exist for backward compatibility with older runbooks; new automation should call `make features-compute`.
 
 ### 1.3 What is computed
 

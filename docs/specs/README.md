@@ -49,7 +49,6 @@ The data layer everything else depends on.
 | 05 | [Performance Profiling](01-foundation/05-performance-profiling.md) | Centralized profiling, suggestion engine, production-safe |
 | 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
 | 07 | [Customer Demand Fact](01-foundation/07-customer-demand-fact.md) | Customer-level demand fact table, monthly range-partitioned by startdate |
-| 08 | [Known Gaps](01-foundation/08-known-gaps.md) | Technical debt and known limitations tracked for future resolution |
 | 09 | [Databricks + Lakebase Migration](01-foundation/09-databricks-lakebase-migration.md) | **Proposed** — port to Databricks: Lakebase (Postgres) DB, Delta-synced source tables, synced-vs-native split, token auth |
 
 ---
@@ -65,13 +64,11 @@ Predict future demand using ML models, then select the best forecast per item.
 | 03 | [Backtest Framework](02-forecasting/03-backtest-framework.md) | Expanding-window evaluation across 10 timeframes |
 | 04 | [Tree Models](02-forecasting/04-tree-models.md) | LGBM + CatBoost + XGBoost implementations |
 | 05 | [Advanced Backtest](02-forecasting/05-advanced-backtest.md) | Hyperparameter tuning, SHAP selection, recursive forecasting |
-| 06 | [Algorithm Config](02-forecasting/06-algorithm-config.md) | One YAML file controls all model behavior |
 | 07 | [Champion Selection](02-forecasting/07-champion-selection.md) | Pick the best model per item per month (8 strategies) |
 | 08 | [Production Forecast](02-forecasting/08-production-forecast.md) | Generate real forward-looking predictions from champion models |
 | 09 | [Bias Correction](02-forecasting/09-bias-correction.md) | Detect and correct systematic over/under-forecasting |
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
-| 10b | [LGBM Tuning](02-forecasting/10b-lgbm-tuning.md) | Systematic A/B testing and run registry for tree model hyperparameter experiments |
-| 11 | [Unified Model Tuning Studio](02-forecasting/11-unified-model-tuning-v2.md) | UI-driven experiment launch, comparison, and promotion for LGBM/CatBoost/XGBoost |
+| 11 | [Unified Model Tuning Studio](02-forecasting/11-unified-model-tuning-v2.md) | UI-driven experiment launch, comparison, and promotion for LGBM/CatBoost/XGBoost; also covers the systematic A/B testing and run registry for tree model hyperparameter experiments |
 | 12 | [Dual Promotion](02-forecasting/12-dual-promotion.md) | Two-stage promotion: config → results for tuning experiments |
 | 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
@@ -82,15 +79,14 @@ Predict future demand using ML models, then select the best forecast per item.
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
 | 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
-| 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Candidate→production forecast promotion workflow (`fact_candidate_forecast` → `fact_production_forecast`) |
-| 25 | [Forecast Pipeline Workflow Guide](02-forecasting/25-forecast-pipeline-workflow-guide.md) | Concise 7-stage workflow guide (data → clustering → tuning → backtesting → load → champion → production forecast) with quick-reference commands and config table |
-| 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
+| 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Production forecast promotion workflow (`fact_production_forecast_staging` → `fact_production_forecast`); champion promotions route per-DFU via the promoted champion experiment's winners CSV |
+| 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: 7-stage quick workflow + per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
 | 27 | [AI Champion Forecast](02-forecasting/27-ai-champion-forecast.md) | Interactive, single-DFU AI adjuster: from the Item Analysis tab an LLM (Ollama/Google/Anthropic/OpenAI) nudges the promoted champion forecast forward and writes a new `model_id='ai_champion'` (preview→save, no batch, no grading) |
-| 28 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/28-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
-| 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
 | 28 | [Feature Selection Pipeline](02-forecasting/28-feature-selection-pipeline.md) | Multi-stage per-timeframe feature selection (duplicate / near-zero-variance / correlation / cumulative SHAP) |
+| 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
+| 32 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/32-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation model) → 19 (pipeline config) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
+**Reading order:** 01-03 (foundations) → 04-05 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation model) → 19 (pipeline config) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 26 (operational reference)
 
 ---
 
@@ -158,10 +154,9 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | 02 | [Market Intel](06-ai-platform/02-market-intel.md) | Google search + GPT-4o market briefings for item-location pairs |
 | 03 | [Control Tower](06-ai-platform/03-control-tower.md) | Single pane of glass for supply chain health KPIs |
 | 04 | [Storyboard](06-ai-platform/04-storyboard.md) | Exception cards with causal chains and decision logging |
-| 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Append-only audit trail; policy engine planned |
+| 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Hash-chained append-only AI decision ledger (**Partial** — ledger shipped; policy engine not yet wired) |
 | 06 | [Forecast Explain API](06-ai-platform/06-explain-api.md) | SHAP-based forecast explanation per DFU |
 | 07 | [SKU Chatbot](06-ai-platform/07-sku-chatbot.md) | Conversational per-SKU assistant on the Claude Agent SDK; tiered Haiku/Sonnet/Opus routing; standalone tab + Item Analysis side chat; best-effort persistence (sql/196). Subscription auth in Claude Code, API key/Bedrock/Vertex standalone (**Partial** — Phases 1+3 shipped; needs `uv sync --extra agent` for the live path) |
-| 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Hash-chained append-only AI decision ledger (**Partial** — ledger shipped; policy engine not yet wired) |
 
 ---
 
@@ -178,7 +173,6 @@ The React UI, automation, and testing infrastructure.
 | 05 | [Testing](07-user-experience/05-testing.md) | pytest + Vitest + Playwright testing pyramid |
 | 06 | [Backtest Cleanup](07-user-experience/06-backtest-cleanup.md) | Model and date-range forecast deletion utilities |
 | 07 | [Developer Tools](07-user-experience/07-developer-tools.md) | Claude Code skills, agents, and slash commands installed in `.claude/` |
-| 08 | [SKU Validation Plan](07-user-experience/08-sku-validation-plan.md) | End-to-end SKU-level validation plan with SQL assertion blocks for every pipeline stage (21 steps) |
 
 ---
 

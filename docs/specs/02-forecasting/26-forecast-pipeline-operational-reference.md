@@ -121,7 +121,7 @@ For a step-by-step approach, run these in order:
 | 2 | `make setup-features` | ~30 min | Clustering + seasonality + variability + lead time + ABC-XYZ + demand signals |
 | 3 | `make customer-features` | ~10 min | Pre-compute 34 customer-derived features |
 | 4 | `make tune-all` | ~1-4 hours | *(Optional)* Bayesian hyperparameter tuning — finds best params before backtesting |
-| 5 | `make backtest-all` | ~2-5 hours | Backtest 7 core algorithms (uses tuned params if step 4 ran) |
+| 5 | `make backtest-all` | ~2-5 hours | Backtest 4 core algorithms (uses tuned params if step 4 ran) |
 | 6 | `make backtest-load-all-bulk` | ~20 min | Load predictions into Postgres |
 | 7 | `make champion-all` | ~10 min | Train meta-learner + select champions |
 | 8 | `make forecast-generate` | ~15-30 min | Generate production forecasts |
@@ -178,7 +178,7 @@ Open `http://localhost:5173` to access the UI. The Aggregate Analysis tab shows 
                                    ▼
                     ┌──────────────────────────────┐
                     │       BACKTESTING            │
-                    │  7 core algorithms x 10 TFs  │
+                    │  4 core algorithms x 10 TFs  │
                     │  (uses tuned params if avail) │
                     │  make backtest-all           │
                     │  ~2-5 hours                  │
@@ -235,7 +235,7 @@ Open `http://localhost:5173` to access the UI. The Aggregate Analysis tab shows 
 | `make setup-all` (complete from scratch) | 4-6 hours |
 | `make fresh-all` (truncate + rebuild) | 4-6 hours |
 | `make fresh-champion` (data + ML pipeline) | 3-5 hours |
-| `make backtest-all-parallel` (7 models concurrent) | 1-2 hours |
+| `make backtest-all-parallel` (4 models concurrent) | 1-2 hours |
 | Single model backtest (e.g., `make backtest-lgbm`) | 20-60 min |
 | Champion selection only | 5-10 min |
 | Production forecast generation | 15-30 min |
@@ -530,13 +530,13 @@ Verify no cluster is below the minimum size threshold (2% of total).
   - `embargo_months`: 1 -- **Why:** Prevents data leakage from forecasts generated in the same month
   - `forecast_horizon`: 6
   - `early_stop_pct`: 0.03 -- **Why:** 3% patience for early stopping prevents overfitting
-- `config/forecasting/forecast_pipeline_config.yaml` -- `algorithms` section (16 algorithms):
-  - **Tree models (6):** `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`, `lgbm_cust_enriched`, `catboost_cust_enriched`, `xgboost_cust_enriched`
-  - **Foundation models (5):** `chronos`, `chronos_bolt`, `chronos2`, `chronos2_enriched`, `bolt_hierarchical`
-  - **Statistical models (3):** `mstl`, `seasonal_naive`, `rolling_mean`
+- `config/forecasting/forecast_pipeline_config.yaml` -- `algorithms` section (10 algorithms):
+  - **Tree models (3):** `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`
+  - **Foundation models (1):** `chronos2_enriched` -- the only Chronos variant remaining; T5, Bolt,
+    non-enriched Chronos 2, and `bolt_hierarchical` were removed in commit `5ab8d593`
+  - **Statistical models (4):** `mstl`, `seasonal_naive`, `rolling_mean`, `rolling_median`
   - **Deep learning models (2):** `nbeats`, `nhits`
   - Each algorithm has lifecycle flags: `enabled`, `tune`, `backtest`, `compete`, `forecast`, `expert`
-  - **Note:** `chronos` has `compete: false` -- it is backtested and used in expert panel testing, but excluded from champion selection
 - `config/forecasting/forecast_pipeline_config.yaml` -- `backtest_sampling` section:
   - `enabled`: true, `default_target_n`: 5000 -- **When to change:** Set to `false` or increase `default_target_n` for production-quality champion selection; keep sampled for experimentation speed
   - `default_method`: proportional, `min_per_cluster`: 10
@@ -550,47 +550,47 @@ Verify no cluster is below the minimum size threshold (2% of total).
 
 **CLI commands:**
 
-The `backtest-all` target runs 7 core algorithms: lgbm, catboost, xgboost, chronos, bolt, chronos2, chronos2e. The remaining 9 algorithms require separate targets.
+The `backtest-all` target runs every `compete: true` model that trains cleanly on a rebuild -- the 4
+core algorithms: lgbm, catboost, xgboost, chronos2e. The remaining 6 algorithms (cheap or
+operator-gated baselines) require separate targets.
 
 ```bash
-# Core 7 (run by backtest-all)
+# Core 4 (run by backtest-all)
 make backtest-lgbm             # LightGBM (--parallel --workers 8, defaults to lgbm)
 make backtest-catboost         # CatBoost
 make backtest-xgboost          # XGBoost
-make backtest-chronos          # Chronos T5 (~2.5h)
-make backtest-bolt             # Chronos Bolt (~12 min)
-make backtest-chronos2         # Chronos 2 (~5.5h)
-make backtest-chronos2e        # Chronos 2 Enriched (~6h)
+make backtest-chronos2e        # Chronos 2 Enriched (~6h) -- the only remaining foundation model
 
-# Additional 9 (separate targets)
-make backtest-bolt-hier        # Bolt Hierarchical
+# Additional 6 (separate targets, cheap/operator-gated)
 make backtest-mstl             # MSTL statistical
 make backtest-nhits            # N-HiTS deep learning
 make backtest-nbeats           # N-BEATS deep learning
 make backtest-seasonal-naive   # Seasonal naive baseline
 make backtest-rolling-mean     # Rolling mean baseline
-make backtest-lgbm-cust        # LightGBM with customer features
-make backtest-catboost-cust    # CatBoost with customer features
-make backtest-xgboost-cust     # XGBoost with customer features
+# rolling_median has no dedicated Make target; run directly:
+#   uv run python scripts/ml/run_backtest.py --model rolling_median
 
 # Composite targets
-make backtest-all              # 7 core algorithms sequentially
-make backtest-all-parallel     # 7 core algorithms concurrently (logs in data/backtest/logs/)
+make backtest-all              # 4 core algorithms sequentially
+make backtest-all-parallel     # 4 core algorithms concurrently (logs in data/backtest/logs/)
 make backtest-baselines        # seasonal_naive + rolling_mean
-make backtest-cust-enriched-all # All 3 customer-enriched tree models
 
 # Convenience targets (backtest + load combined)
-make backtest-chronos-full     # Chronos T5 backtest + load
-make backtest-bolt-full        # Chronos Bolt backtest + load
-make backtest-chronos2-full    # Chronos 2 backtest + load
-make backtest-bolt-hier-full   # Bolt Hierarchical backtest + load
+make backtest-chronos2e-full   # Chronos 2 Enriched backtest + load
+make backtest-mstl-full        # MSTL backtest + load
+make backtest-nhits-full       # N-HiTS backtest + load
+make backtest-nbeats-full      # N-BEATS backtest + load
 ```
 
 **Scripts:**
-- `scripts/run_backtest.py` -- tree model backtest (LGBM/CatBoost/XGBoost). Supports `--parallel`, `--workers`. Defaults to lgbm when no `--model` flag. Per-cluster training with SHAP feature selection, Tweedie objective for intermittent clusters, recursive multi-step prediction.
-- `scripts/run_backtest_chronos_bolt.py` -- foundation model backtest via `FoundationModelSpec` pattern
-- `scripts/run_backtest_dl.py` -- deep learning backtest (N-HiTS, N-BEATS) via NeuralForecast
-- `scripts/run_backtest_mstl.py` -- MSTL statistical backtest
+- `scripts/ml/run_backtest.py` -- LightGBM backtest, and the shared entry point for `seasonal_naive` /
+  `rolling_mean` / `rolling_median` via `--model`. Supports `--parallel`, `--workers`. Defaults to lgbm
+  when no `--model` flag. Per-cluster training with SHAP feature selection, Tweedie objective for
+  intermittent clusters, recursive multi-step prediction.
+- `scripts/ml/run_backtest_catboost.py`, `scripts/ml/run_backtest_xgboost.py` -- CatBoost / XGBoost backtest entry points
+- `scripts/ml/run_backtest_chronos2_enriched.py` -- the sole remaining foundation-model backtest (Chronos 2 Enriched)
+- `scripts/ml/run_backtest_dl.py` -- deep learning backtest (N-HiTS, N-BEATS) via NeuralForecast
+- `scripts/ml/run_backtest_mstl.py` -- MSTL statistical backtest
 
 **Output artifacts (per algorithm):**
 - `data/backtest/<model_id>/backtest_predictions.csv` -- execution-lag rows for DB load
@@ -632,17 +632,17 @@ make backtest-load-all-bulk    # Load all models (bulk: drop indexes -> COPY -> 
 make backtest-load-all         # Load all models (standard, per-model)
 make backtest-load MODEL=lgbm_cluster  # Single model
 make backtest-load-bulk        # 4 core models with single index cycle
-make backtest-load-main-only MODELS="lgbm_cluster chronos"  # Main table only
+make backtest-load-main-only MODELS="lgbm_cluster chronos2_enriched"  # Main table only
 make backtest-load-archive-only MODELS="lgbm_cluster"       # Archive only
 
-# Per-algorithm load targets
-make backtest-load-lgbm
-make backtest-load-catboost
-make backtest-load-bolt
+# Per-algorithm load targets (tree models load via `make backtest-load MODEL=<id>`;
+# these dedicated targets exist for the non-tree baselines)
+make backtest-load-chronos2e
 make backtest-load-mstl
 make backtest-load-nhits
+make backtest-load-nbeats
 make backtest-load-seasonal-naive
-make backtest-load-cust-enriched  # All 3 cust-enriched models
+make backtest-load-rolling-mean
 
 # After loading, refresh accuracy materialized views
 make refresh-accuracy-mvs
@@ -650,7 +650,7 @@ make accuracy-slice-refresh
 ```
 
 **Scripts:**
-- `scripts/load_backtest_forecasts.py` -- COPY-based bulk loader. Supports `--model`, `--all`, `--replace`, `--bulk`, `--main-only`, `--archive-only`. Drops secondary indexes for fast bulk insert, recreates after. Dual-path insert: archive loaded BEFORE staging mutation.
+- `scripts/etl/load_backtest_forecasts.py` -- COPY-based bulk loader. Supports `--model`, `--all`, `--replace`, `--bulk`, `--main-only`, `--archive-only`. Drops secondary indexes for fast bulk insert, recreates after. Dual-path insert: archive loaded BEFORE staging mutation.
 
 **Error Recovery:**
 - If bulk load fails mid-way: indexes may be dropped. Re-run `make backtest-load-all-bulk` -- it recreates indexes at the end.
@@ -1051,6 +1051,18 @@ psql -h localhost -p 5440 -U demand -d demand_mvp \
 
 The SQL Runner tab in the UI (`/sql-runner`) supports ad-hoc queries with CSV export.
 
+### 4.6 Troubleshooting Quick Reference
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Champion experiments fail immediately | No backtest data loaded | Run `make backtest-load-all-bulk` first |
+| "Repository not found" for Chronos 2 Enriched | HuggingFace auth issue | Run `huggingface-cli login` |
+| Backtest accuracy is 0% | No sales data for the period | Check `make health`; verify `fact_sales_monthly` has data |
+| Production forecast all NaN | No trained `.pkl` models | Run backtest + `make train-production-all` first - tree models save `.pkl` artifacts during production training, not during backtest |
+| Tuning converges in < 10 trials | Search space too narrow | Widen ranges in `config/forecasting/hyperparameter_tuning.yaml` |
+| Cold-start items get no forecast | < 3 months of history | Lower `cold_start_min_months` in `production_forecast` config (min 1) |
+| Clustering produces 1 cluster | Insufficient data diversity | Lower `min_months_history` or increase sample size in the clustering experiment config |
+
 ---
 
 ## Section 5: Expert Panel Testing
@@ -1329,13 +1341,18 @@ The accuracy monitoring dashboard. Shows:
 
 ---
 
-### Gap 10: Foundation models excluded from production forecasting
+### Gap 10: Foundation-model production-forecast inference path
 
-**What's missing:** Most foundation models have `forecast: false`. If chronos_bolt or chronos2 wins champion selection, production forecasting falls back to `fallback_model_id: lgbm_cluster`.
+**What's missing:** The sole remaining foundation model, `chronos2_enriched`, has `forecast: true`
+(unlike the deleted zero-shot Chronos/Bolt variants, which had `forecast: false`). Production
+inference for a `chronos2_enriched` champion routes through the shared non-tree
+`generate_forecasts_statistical()` path (see [Production Forecast](./08-production-forecast.md) Step
+2) rather than a `.pkl`-backed recursive pass, since foundation models never persist trained artifacts.
 
-**Impact:** Champion accuracy displayed in the UI reflects the foundation model's performance, but the production forecast uses a different (potentially worse) model.
+**Impact:** Worth re-verifying whether that shared statistical path reproduces Chronos-quality
+forecasts for a `chronos2_enriched` champion, now that it is the only foundation model in the roster.
 
-**Severity:** HIGH
+**Severity:** MEDIUM
 
 ---
 
@@ -1346,9 +1363,9 @@ The accuracy monitoring dashboard. Shows:
 | Master pipeline config | `config/forecasting/forecast_pipeline_config.yaml` |
 | Production forecast script | `scripts/forecasting/generate_production_forecasts.py` |
 | Champion selection script | `scripts/run_champion_selection.py` |
-| Tree model backtest | `scripts/run_backtest.py` |
-| Foundation model backtest | `scripts/run_backtest_chronos_bolt.py` |
-| Deep learning backtest | `scripts/run_backtest_dl.py` |
+| Tree model backtest | `scripts/ml/run_backtest.py` |
+| Foundation model backtest | `scripts/ml/run_backtest_chronos2_enriched.py` |
+| Deep learning backtest | `scripts/ml/run_backtest_dl.py` |
 | Model Tuning UI | `frontend/src/tabs/ModelTuningTab.tsx` |
 | Aggregate Analysis UI | `frontend/src/tabs/AggregateAnalysisTab.tsx` |
 | Pipeline Builder UI | `frontend/src/tabs/jobs/PipelineBuilderPanel.tsx` |

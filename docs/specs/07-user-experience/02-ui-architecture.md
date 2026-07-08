@@ -18,7 +18,7 @@ A supply chain platform with 16 lazy-loaded tabs, 28 inventory planning sub-tabs
 
 ## Solution
 
-A React + Vite + TypeScript stack with TanStack Query for server state, React.lazy for code splitting, a global filter context for cross-tab state, and Tailwind CSS + shadcn/ui for styling. The sidebar provides navigation across 12 tabs organized in 5 sections (operations-first layout). A dashboard landing page shows KPI cards, alerts, heatmap, top movers, and forecast trends.
+A React + Vite + TypeScript stack with TanStack Query for server state, React.lazy for code splitting, a global filter context for cross-tab state, and Tailwind CSS + shadcn/ui for styling. The sidebar provides navigation across 18 tabs organized in 5 sections (Tower, Demand, Supply, Operations, System). A dashboard landing page shows KPI cards, alerts, heatmap, top movers, and forecast trends.
 
 ---
 
@@ -37,17 +37,19 @@ A React + Vite + TypeScript stack with TanStack Query for server state, React.la
 
 ### Sidebar Navigation
 
-12 tabs organized in 5 sections (operations-first):
+18 tabs organized in 5 sections (Tower, Demand, Supply, Operations, System):
 
 | Section | Tabs |
 |---|---|
 | Tower | Command Center |
-| Operations | S&OP, Jobs, Data Quality |
-| Supply | Inv. Planning, Clusters, Inv. Backtest |
-| Demand | Portfolio, Item Analysis, FVA & ROI, Customer Map |
-| System | Explorer |
+| Demand | Portfolio, Item Analysis, FVA & ROI, Model Tuning, Customer Analytics, Demand History, SKU Features, SKU Chat |
+| Supply | Inv. Planning, Inv. Backtest |
+| Operations | S&OP, Jobs, Integration, Data Quality |
+| System | Explorer, SQL Runner, Settings |
 
-Keyboard shortcuts: `1`-`7` switch tabs (1=Command Center, 2=S&OP, 3=Jobs, 4=Inv. Planning, 5=Clusters, 6=Portfolio, 7=Item Analysis), `[` toggles sidebar collapse, `d` toggles dark mode, `?` opens help modal.
+Clustering (`ClustersTab` - SKU scenario What-If runs, promote, past scenarios) no longer has a sidebar entry. The tab component still ships and is reachable only by deep link: the Jobs tab's scenario-complete notification routes to it directly (`?tab=clusters`).
+
+Keyboard shortcuts: `1`-`6` switch tabs (1=Command Center, 2=Portfolio, 3=Item Analysis, 4=Inv. Planning, 5=S&OP, 6=Jobs), `[` toggles sidebar collapse, `d` toggles dark mode, `?` opens help modal.
 
 ### Global Filter Bar
 

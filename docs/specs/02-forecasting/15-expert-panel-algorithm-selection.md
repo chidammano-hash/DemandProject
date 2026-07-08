@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Expert Panel |
-| **Key Files** | `adv_algorithm_testing/foundation_models.py`, `adv_algorithm_testing/config.yaml`, `scripts/run_backtest_bolt_hierarchical.py` |
+| **Key Files** | `common/ml/expert_panel/foundation_models.py`, `common/ml/expert_panel/expert_panel_config.yaml` |
 
 ---
 

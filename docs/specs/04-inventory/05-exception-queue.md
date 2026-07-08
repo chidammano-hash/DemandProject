@@ -78,11 +78,13 @@ DDL: `sql/027_create_replenishment_exceptions.sql`
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/exceptions/list` | Paginated exception queue |
+| GET | `/inv-planning/exceptions` | Paginated exception queue (default: open, sorted by severity) |
 | GET | `/inv-planning/exceptions/summary` | Counts by type and severity |
-| PUT | `/inv-planning/exceptions/{id}/acknowledge` | Mark as acknowledged |
-| PUT | `/inv-planning/exceptions/{id}/status` | Update workflow status |
-| POST | `/inv-planning/exceptions/generate` | Trigger exception scan |
+| POST | `/inv-planning/exceptions/{exception_id}/acknowledge` | Mark as acknowledged (body: `acknowledged_by`, `notes`; auth required) |
+| POST | `/inv-planning/exceptions/{exception_id}/status` | Advance status to `ordered` or `resolved` (body: `status`, `notes`; auth required) |
+| GET | `/inv-planning/exceptions/{exception_id}/lifecycle` | Append-only state-transition history for one exception |
+| GET | `/inv-planning/exceptions/mttr` | Mean time to resolve, by type and severity |
+| POST | `/inv-planning/exceptions/generate` | Trigger exception scan (auth required) |
 
 Router: `inv_planning_exceptions.py`
 

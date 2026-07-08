@@ -1,12 +1,12 @@
 # AI Planning Agent
 
-> A proactive exception work-queue powered by Claude that scans the portfolio for inventory and forecast anomalies, generates structured insights with causal reasoning, and presents them to planners for acceptance or resolution -- not a chatbot.
+> A proactive exception work-queue powered by an LLM tool-use agent (OpenAI by default, Anthropic optional) that scans the portfolio for inventory and forecast anomalies, generates structured insights with causal reasoning, and presents them to planners for acceptance or resolution -- not a chatbot.
 
 | | |
 |---|---|
 | **Status** | Implemented |
-| **UI Tab** | AIPlannerTab |
-| **Key Files** | `AIPlannerTab.tsx`, `api/routers/intelligence/ai_planner.py`, `common/ai/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
+| **UI Tab** | CommandCenterTab (see UI Integration note below) |
+| **Key Files** | `CommandCenterTab.tsx`, `api/routers/intelligence/ai_planner.py`, `common/ai/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
 
 ---
 
@@ -16,9 +16,20 @@ With thousands of DFUs (Demand Forecast Units -- item + location combinations), 
 
 ---
 
+## UI Integration
+
+The dedicated `AIPlannerTab` screen was retired and consolidated into `CommandCenterTab` (U3.10). `CommandCenterTab`
+merges AI Planner insights with Control Tower KPIs and Storyboard exceptions into a single unified triage feed
+(`frontend/src/tabs/CommandCenterTab.tsx`, fed by `fetchAiInsights`/`updateInsightStatus` from `src/api/queries`).
+The old `?tab=aiPlanner` URL key still resolves to `commandCenter` via `TAB_REDIRECTS` in `useUrlState.ts`, so
+existing bookmarks keep working. A regression test (`frontend/src/tabs/__tests__/no-retired-tabs.test.ts`) fails
+the build if `AIPlannerTab.tsx` is ever reintroduced under `src/tabs`.
+
+---
+
 ## Solution
 
-An `AIPlannerAgent` class uses Claude's tool_use API to autonomously query the database through 10 registered tools (9 read-only SQL queries + 1 write tool). The agent loops through tool calls until it has enough context to generate a structured insight. A portfolio scan analyzes all DFUs exceeding configurable thresholds; a single-DFU mode provides deep analysis of one item-location. All insights are validated by a Pydantic model before database write. Circuit breakers (40 turns, 100K tokens) prevent runaway loops.
+An `AIPlannerAgent` class autonomously queries the database through 10 registered tools (9 read-only SQL queries + 1 write tool), looping through tool calls until it has enough context to generate a structured insight. It supports two LLM providers -- OpenAI (default) and Anthropic -- selected by `provider` in `ai_planner_config.yaml`; the OpenAI path is the one actually configured (see Configuration below), not a Claude-only agent. A portfolio scan analyzes all DFUs exceeding configurable thresholds; a single-DFU mode provides deep analysis of one item-location. All insights are validated by a Pydantic model before database write. Circuit breakers (40 turns, 100K tokens) prevent runaway loops.
 
 ---
 
@@ -28,7 +39,7 @@ An `AIPlannerAgent` class uses Claude's tool_use API to autonomously query the d
 
 1. System prompt with few-shot examples establishes output quality expectations.
 2. Agent receives either a single DFU context or a portfolio scan instruction.
-3. Claude calls read-only SQL tools to gather data: forecast performance, inventory trends, similar DFUs, stockout history, EOQ context, policy assignments.
+3. The agent calls read-only SQL tools to gather data: forecast performance, inventory trends, similar DFUs, stockout history, EOQ context, policy assignments.
 4. When the agent has sufficient evidence, it calls `create_insight` with a structured payload.
 5. `CreateInsightInput` Pydantic validator enforces: valid `insight_type`, summary must contain at least one number, `financial_impact_estimate` capped at $10M.
 6. Validated insights are written to `ai_insights`. Invalid payloads are rejected (logged, not written).
@@ -88,7 +99,7 @@ An `AIPlannerAgent` class uses Claude's tool_use API to autonomously query the d
 | POST | `/ai-planner/portfolio-scan` | Trigger async portfolio scan (returns 202) |
 | POST | `/ai-planner/analyze` | Analyze a single DFU (synchronous) |
 | GET | `/ai-planner/insights` | List insights with filtering by severity, status, type |
-| PUT | `/ai-planner/insights/{id}/status` | Accept or resolve an insight; optionally records `action_taken` |
+| POST | `/ai-planner/insights/{id}/status` | Accept or resolve an insight; optionally records `action_taken` |
 | GET | `/ai-planner/memos` | List portfolio memos |
 | GET | `/ai-planner/metrics` | Per-model token usage, latency, and error aggregates from `ai_call_log` |
 
@@ -113,7 +124,8 @@ File: `config/ai/ai_planner_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|
-| `model` | Claude model to use | `claude-opus-4-6` |
+| `provider` | LLM provider: `openai` (uses `OPENAI_API_KEY`) or `anthropic` (uses `ANTHROPIC_API_KEY`) | `openai` |
+| `model` | LLM model to use | `gpt-4o-mini` (the `common/ai/ai_planner.py` code fallback if `model` is unset is `gpt-4o`; neither is a Claude model) |
 | `thresholds.dos_critical` | DOS below this triggers stockout risk | `14` |
 | `thresholds.wape_high` | WAPE above this triggers forecast degradation | `40` |
 | `thresholds.bias_pct` | Absolute bias above this triggers investigation | `20` |
@@ -127,7 +139,8 @@ File: `config/ai/ai_planner_config.yaml`
 
 | Dependency | Reason |
 |---|---|
-| `anthropic>=0.40.0` | Claude tool_use API client |
+| `openai` Python package | Default LLM client (`provider: openai` in `ai_planner_config.yaml`) |
+| `anthropic` Python package | Alternate LLM client when `provider: anthropic` is configured |
 | Forecast data (`fact_external_forecast_monthly`) | WAPE and bias computation |
 | Inventory data (`agg_inventory_monthly`) | DOS, on-hand, trend analysis |
 | Safety stock targets (03-03) | Excess/shortage detection |

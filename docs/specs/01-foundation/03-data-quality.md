@@ -16,7 +16,7 @@ Supply Chain Command Center manages 11 domain datasets totaling hundreds of mill
 
 ## Solution
 
-A config-driven Data Quality Engine runs 12 check types against any table or column. Checks are defined in YAML (no code changes needed to add new ones), results are stored for trend analysis, and a dedicated UI tab shows per-domain health scores with an interactive Self-Heal workflow for fixing issues. The engine also provides statistical auto-fix capabilities for common problems like out-of-range values and null imputation.
+A config-driven Data Quality Engine implements 12 check types in code, of which 9 are currently configured in YAML (83 individual checks across those 9 types) - `freshness`, `row_count`, and `statistical_outlier` are implemented but have no entries configured yet. Checks are defined in YAML (no code changes needed to add new ones), results are stored for trend analysis, and a dedicated UI tab shows per-domain health scores with an interactive Self-Heal workflow for fixing issues. The engine also provides statistical auto-fix capabilities for common problems like out-of-range values and null imputation.
 
 ## How It Works
 
@@ -90,7 +90,7 @@ The Self-Heal UI workflow: Scan for Fixes -> Preview each fix with affected row 
 |---|---|---|
 | Create tables | `make dq-schema` | Apply DDL (one-time) |
 | Populate catalog | `make dq-populate` | Sync check catalog from config |
-| Run all checks | `make dq-run` | Execute all 73 checks |
+| Run all checks | `make dq-run` | Execute all 83 configured checks |
 | Full pipeline | `make dq-all` | schema + populate + run |
 
 CLI auto-fix:

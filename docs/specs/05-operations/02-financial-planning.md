@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (FinancialPlanPanel) |
-| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/operations/financial_plan.py`, `scripts/compute_financial_plan.py`, `config/operations/financial_plan_config.yaml`, `sql/057_create_financial_plan.sql` |
+| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/operations/financial_plan.py`, `scripts/ops/compute_financial_plan.py`, `config/operations/financial_plan_config.yaml`, `sql/055_create_financial_plan.sql` |
 
 ---
 
@@ -26,22 +26,22 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 ### Computation Flow
 
-1. Load current inventory positions from `agg_inventory_monthly`.
-2. Join `dim_item_cost` for unit cost per item (standard cost or weighted average cost).
-3. Join `fact_safety_stock_targets` for target stock levels.
-4. Join `fact_production_forecast` for expected future demand.
-5. For each month in the horizon, compute: projected ending inventory, inventory value (units x unit cost), carrying cost (inventory value x annual holding cost rate / 12), and cumulative budget consumption.
-6. Write results to `fact_financial_inventory_plan`.
+1. Load the latest on-hand quantity and average daily sales per item-location from `fact_inventory_snapshot`.
+2. Join `dim_item_cost` for unit cost per item-location (current row where `effective_from`/`effective_to` cover the plan date).
+3. Load committed planned-order spend from open `fact_replenishment_exceptions` rows due within the horizon.
+4. Load active budget caps from `fact_budget_periods` for the plan date.
+5. For each item-location, compute: inventory value, carrying cost, excess value (stock beyond `excess_dos_threshold` days of average daily demand), and budget utilization against the applicable budget cap.
+6. Write results to `fact_financial_inventory_plan` (upsert on `item_id, loc, plan_month, plan_version`).
 7. Data available for API queries.
 
 ### Key Formulas
 
-| Metric | Formula |
-|---|---|
-| Inventory Value | `ending_inventory_qty x unit_cost` |
-| Monthly Carrying Cost | `inventory_value x (annual_holding_cost_pct / 12)` |
-| Budget Utilization | `cumulative_carrying_cost / budget_period_amount x 100` |
-| Excess Value | `MAX(0, ending_qty - safety_stock_target) x unit_cost` |
+| Metric | Formula | Stored As |
+|---|---|---|
+| Inventory Value | `qty_on_hand x unit_cost` | `fact_financial_inventory_plan.projected_inventory_value` |
+| Monthly Carrying Cost | `inventory_value x (carrying_cost_pct / 12)` | `fact_financial_inventory_plan.carrying_cost_monthly` |
+| Excess Value | `MAX(0, qty_on_hand - avg_daily_demand x excess_dos_threshold) x unit_cost` | `fact_financial_inventory_plan.excess_value` |
+| Budget Utilization | `planned_order_value (committed spend) / budget_cap x 100` | Computed live by `GET /finance/budget-status`, not stored |
 
 ---
 
@@ -49,9 +49,12 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `dim_item_cost` | Unit cost per item | `item_id`, `unit_cost`, `cost_type`, `effective_date` |
-| `fact_financial_inventory_plan` | Monthly projections per DFU | `item_id`, `loc`, `month`, `ending_qty`, `inventory_value`, `carrying_cost`, `budget_utilization_pct` |
-| `fact_budget_periods` | Budget allocations by location and period | `loc`, `period_start`, `period_end`, `budget_amount` |
+| `dim_item_cost` | Unit cost per item-location | `item_id`, `loc`, `unit_cost`, `cost_type` (`standard`\|`moving_avg`\|`last_purchase`), `currency`, `effective_from`, `effective_to` |
+| `fact_budget_periods` | Budget allocations by scope and period | `budget_id`, `scope_type` (`global`\|`category`\|`buyer`\|`location`), `scope_value`, `period_type`, `budget_start`, `budget_end`, `budget_cap`, `carrying_cost_pct` |
+| `fact_financial_inventory_plan` | Monthly projections per item-location | `item_id`, `loc`, `plan_month`, `plan_version`, `projected_inventory_value`, `planned_order_value`, `carrying_cost_monthly`, `excess_qty`, `excess_value`, `max_stock_target`, `budget_cap`, `within_budget` |
+
+Unique key on `fact_financial_inventory_plan` is `(item_id, loc, plan_month, plan_version)` -- `plan_version` defaults
+to `'latest'` and lets a recompute run alongside a prior snapshot.
 
 ---
 
@@ -59,12 +62,15 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/financial-plan/summary` | Aggregated financial KPIs by location or category |
-| GET | `/financial-plan/detail` | Item-location level monthly projections |
-| GET | `/financial-plan/budget` | Budget periods with utilization tracking |
-| POST | `/financial-plan/compute` | Trigger financial plan recomputation |
-| GET | `/financial-plan/trend` | Monthly time series for charting |
-| GET | `/financial-plan/excess` | Items with inventory value exceeding targets |
+| GET | `/finance/inventory-plan` | Summary financial KPIs + by-category breakdown for a `plan_version` |
+| GET | `/finance/budget-status` | Budget utilization across all budget periods |
+| GET | `/finance/working-capital-trend` | Monthly time series (history + forward) for charting |
+| GET | `/finance/excess-value` | Top SKU-locations ranked by excess inventory value |
+| POST | `/finance/budget` | Create a new budget period (auth) |
+| PUT | `/finance/budget/{budget_id}` | Update a budget period's cap (auth) |
+
+The API prefix is `/finance`, not `/financial-plan`. There is no compute-trigger endpoint -- recomputation only
+happens via the `scripts/ops/compute_financial_plan.py` pipeline below.
 
 ---
 
@@ -72,9 +78,10 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 | Step | Command | What It Does |
 |---|---|---|
-| Schema | `make financial-schema` | Creates `dim_item_cost`, `fact_financial_inventory_plan`, `fact_budget_periods` |
-| Compute | `make financial-compute` | Runs the full financial plan computation |
-| Full | `make financial-all` | Schema + compute |
+| Schema | `make financial-plan-schema` | Creates `dim_item_cost`, `fact_budget_periods`, `fact_financial_inventory_plan` |
+| Compute | `make financial-plan-compute` | Runs the full financial plan computation |
+| Dry Run | `make financial-plan-dry` | Computes and logs without writing |
+| Full | `make financial-plan-all` | Schema + compute |
 
 ---
 
@@ -84,11 +91,14 @@ File: `config/operations/financial_plan_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|
-| `horizon_months` | Number of months to project forward | `12` |
-| `annual_holding_cost_pct` | Annual carrying cost as percent of inventory value | `0.25` |
-| `cost_type` | Which cost to use from `dim_item_cost` | `standard` |
-| `budget_warning_threshold_pct` | Utilization level that triggers a warning | `80` |
-| `budget_critical_threshold_pct` | Utilization level that triggers a critical alert | `95` |
+| `financial_plan.months_ahead` | Number of months to project forward | `6` |
+| `financial_plan.excess_dos_threshold` | Days-of-supply above which stock is classified as excess | `180` |
+| `financial_plan.budget_breach_alert_pct` | Utilization level that triggers a breach alert | `0.90` |
+| `financial_plan.target_inventory_turns` | Annual inventory turns target | `8.0` |
+| `financial_plan.target_dos` | Target days of supply | `45` |
+| `financial_plan.cost_type_priority` | `dim_item_cost.cost_type` fallback order | `[moving_avg, standard, landed, manual]` |
+| `carrying_cost_pct` | Annual carrying cost as percent of inventory value (from `shared_constants.yaml` via `_includes`) | inherited |
+| `scheduler.cron` | Monthly compute schedule | `0 5 1 * *` |
 
 ---
 

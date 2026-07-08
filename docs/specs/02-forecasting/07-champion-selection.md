@@ -17,7 +17,7 @@
 
 ## Problem
 
-With many competing models (tree models, foundation models, statistical baselines), no single algorithm wins for every product every month. Seasonal items might favor CatBoost in peak months and LightGBM in troughs, while intermittent items may be best served by Chronos 2 or seasonal naive. Without automated selection, planners must either pick one model for everything (suboptimal) or manually choose per item (impractical at scale with thousands of DFUs).
+With many competing models (tree models, foundation models, statistical baselines), no single algorithm wins for every product every month. Seasonal items might favor CatBoost in peak months and LightGBM in troughs, while intermittent items may be best served by Chronos 2 Enriched or seasonal naive. Without automated selection, planners must either pick one model for everything (suboptimal) or manually choose per item (impractical at scale with thousands of DFUs).
 
 ## Solution
 
@@ -37,7 +37,7 @@ Champion selection evaluates prior model performance for each DFU (Demand Foreca
 
 Because the champion picks a different model per DFU, the **Item Analysis** chart (single-DFU / `item_location` mode) labels the champion line and legend pill with the winning model — e.g. `champion (N-BEATS)`. The `/sku/analysis` endpoint returns `champion_source_by_month` (the per-month source) and `champion_dominant_source` (the most-frequent across months, used for the single legend label), read straight from `fact_external_forecast_monthly.source_model_id` (not the `agg_forecast_monthly` MV, which doesn't carry it). The label appears only after a champion selection run has populated `source_model_id`; older rows written before source-tracking show a bare `champion`.
 
-**Blend mix.** When the champion is a *blend* (ensemble / learned_blend / shrinkage / etc.), a single model name isn't enough — the forecast is a weighted combination. Every champion winner row carries `source_mix`: a JSON array of `{"model": <id>, "weight": <0-1>}` (NULL for single-model picks). It is captured at selection time — `make_blend_row(..., source_mix=mix_from(top, weights))` via the `source_mix` column added to the canonical `_OUTPUT_COLS` (so it survives router/segment `pd.concat`), persisted by `insert_ensemble_forecasts` into `fact_external_forecast_monthly.source_mix` (`sql/193`). `/sku/analysis` exposes it as `champion_mix_by_month`, and the chart's **tooltip** shows that month's exact composition — e.g. `champion (40% N-BEATS, 35% LightGBM, 25% Chronos T5)` (the mix is per-DFU **per-month**, so it can change month to month). The shared formatter is `formatChampionLabel(mix, source)` in `frontend/src/lib/model-labels.ts`.
+**Blend mix.** When the champion is a *blend* (ensemble / learned_blend / shrinkage / etc.), a single model name isn't enough - the forecast is a weighted combination. Every champion winner row carries `source_mix`: a JSON array of `{"model": <id>, "weight": <0-1>}` (NULL for single-model picks). It is captured at selection time - `make_blend_row(..., source_mix=mix_from(top, weights))` via the `source_mix` column added to the canonical `_OUTPUT_COLS` (so it survives router/segment `pd.concat`), persisted by `insert_ensemble_forecasts` into `fact_external_forecast_monthly.source_mix` (`sql/193`). `/sku/analysis` exposes it as `champion_mix_by_month`, and the chart's **tooltip** shows that month's exact composition - e.g. `champion (40% N-BEATS, 35% LightGBM, 25% Chronos 2 Enriched)` (the mix is per-DFU **per-month**, so it can change month to month). The shared formatter is `formatChampionLabel(mix, source)` in `frontend/src/lib/model-labels.ts`.
 
 ### Execution-Lag Causality (Critical)
 
@@ -110,7 +110,7 @@ With `execution_lag = 1` and `min_dfu_rows = 3`, the first qualifying month requ
 | `learned_blend` | Fits Ridge regression per DFU on causal prior data to learn optimal model blending weights (actual ≈ w1×model1 + w2×model2 + ...); clips negative weights to 0 and normalizes | When models capture complementary demand signals; learns non-uniform weights |
 | `ridge_blend` | Similar to learned_blend with additional safeguards: drops constant columns, requires min 2 non-constant models, and uses a separate min_train_months threshold | Production-grade Ridge blending with better numerical stability |
 | `uncertainty_aware` | Adds a penalty for models with volatile errors (high std-dev of absolute errors). Score = prior_wape + weight × normalized_std_err. Picks the model with lowest risk-adjusted score | When model consistency matters as much as average accuracy; penalizes unreliable models |
-| `diverse_ensemble` | Blends top-K models with a diversity penalty: models from the same family (e.g., chronos2 + chronos2_enriched) get penalized during selection. Blending weights use unpenalized inverse-WAPE | Portfolios where structurally similar models would otherwise dominate the ensemble |
+| `diverse_ensemble` | Blends top-K models with a diversity penalty: models from the same family (e.g., `nbeats` + `nhits`, both `dl`) get penalized during selection. Blending weights use unpenalized inverse-WAPE | Portfolios where structurally similar models would otherwise dominate the ensemble |
 
 ### Tier 6: Intelligent Ensembles (10)
 
@@ -201,11 +201,13 @@ The `per_segment` strategy uses Syntetos-Boylan demand classification with these
 
 ### Model Family Groups (diverse_ensemble)
 
+Source of truth: `_MODEL_FAMILIES` in `common/ml/champion/helpers.py`.
+
 | Family | Models |
 |--------|--------|
-| chronos | chronos2, chronos2_enriched, chronos_bolt |
+| chronos | chronos2_enriched (sole survivor — the T5, Bolt, and non-enriched Chronos 2 variants were removed in commit `5ab8d593`; the family has no within-family diversity penalty to apply until a second foundation model is added) |
 | tree | catboost_cluster, xgboost_cluster, lgbm_cluster |
-| baseline | seasonal_naive, rolling_mean |
+| baseline | seasonal_naive, rolling_mean, rolling_median |
 | statistical | mstl |
 | dl | nhits, nbeats |
 
@@ -311,6 +313,6 @@ The competing models list is derived from `algorithms[*].compete == true` in the
 ## See Also
 
 - [Production Forecast](./08-production-forecast.md) -- uses champion assignments to route inference
-- [Algorithm Config](./06-algorithm-config.md) -- controls which models compete
-- [Chronos Foundation Models](./18-chronos-foundation-models.md) -- Chronos 2, Chronos Bolt, and other foundation model variants that participate in champion selection
+- [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- controls which models compete
+- [Chronos Foundation Models](./18-chronos-foundation-models.md) -- Chronos 2 Enriched, the remaining foundation model variant that participates in champion selection
 - [Expert Panel](./15-expert-panel-algorithm-selection.md) -- 31-expert panel that routes DFUs to best-fit algorithms, complementary to champion selection

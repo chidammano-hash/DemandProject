@@ -73,13 +73,7 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 
 ### Forecast Loading (Dual-Path)
 
-The forecast loader uses phase ordering to preserve archive integrity:
-
-1. **Phase 3b** (Archive): Load ALL 5 lag rows into `backtest_lag_archive` from untouched staging data
-2. **Phase 3c** (Mutation): Update staging `execution_lag` from `dim_sku` values
-3. **Phase 5** (Main): Insert only rows where `lag = execution_lag` into the main forecast table
-
-This ensures the archive always has all 5 lags per DFU while the main table keeps only the execution-lag row.
+The forecast loader uses phase ordering so `backtest_lag_archive` keeps all 5 lag rows per DFU while `fact_external_forecast_monthly` keeps only the execution-lag row - see [06-execution-lag.md](06-execution-lag.md) §4.2 for the full dual-path loading mechanism.
 
 ### Materialized Views
 

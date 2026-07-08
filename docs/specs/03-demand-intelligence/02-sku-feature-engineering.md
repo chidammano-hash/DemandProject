@@ -235,7 +235,7 @@ common/ml/
     __init__.py              # Re-exports public API
     compute.py               # load_sales_from_db(), compute_all_sku_features()
     classifiers.py           # classify_seasonality_profile(), classify_variability_class()
-    persistence.py           # write_features_to_dim_sku() — COPY + UPDATE bulk write
+    persistence.py           # write_features_to_dim_sku() - COPY + UPDATE bulk write
 
 scripts/ml/
   compute_sku_features.py    # CLI entry point: run_pipeline(), main()
@@ -246,7 +246,7 @@ scripts/ml/
 **Historical scripts (DELETED):** The legacy seasonality, demand-variability, and
 profile-update detection scripts (`detect_seasonality.py`, `compute_demand_variability.py`,
 `update_seasonality_profiles.py`, plus three other deprecated ML scripts) have been
-**removed entirely** — not renamed, not shimmed. Their logic is now folded into
+**removed entirely** - not renamed, not shimmed. Their logic is now folded into
 `compute_sku_features.py` + `common/ml/sku_features/`. Any historical references
 should be updated to call `make features-compute`.
 
@@ -450,13 +450,6 @@ _DEFAULTS = {
     },
 }
 ```
-
-### Legacy Config Files (deprecated)
-
-The following config files predate the unified pipeline. They are no longer authoritative:
-
-- `config/seasonality_config.yaml` -- legacy seasonality thresholds
-- `config/variability_config.yaml` -- legacy variability thresholds
 
 All new work should reference `config/forecasting/sku_features_config.yaml` exclusively.
 

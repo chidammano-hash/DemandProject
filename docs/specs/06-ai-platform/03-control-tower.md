@@ -5,14 +5,27 @@
 | | |
 |---|---|
 | **Status** | Implemented |
-| **UI Tab** | ControlTowerTab |
-| **Key Files** | `ControlTowerTab.tsx`, `api/routers/operations/control_tower.py`, `sql/035_create_control_tower_kpis.sql` |
+| **UI Tab** | CommandCenterTab (see UI Integration note below) |
+| **Key Files** | `CommandCenterTab.tsx`, `api/routers/operations/control_tower.py`, `sql/035_create_control_tower_kpis.sql` |
 
 ---
 
 ## Problem
 
 Supply chain managers juggle multiple dashboards: one for inventory, one for forecast accuracy, one for fill rate, one for exceptions. Switching between tabs to assess overall health is slow and error-prone. When a problem spans multiple domains (e.g., forecast bias causes excess inventory which triggers a policy exception), no single view connects the dots. Managers need a one-screen summary that surfaces the most urgent issues across all domains.
+
+---
+
+## UI Integration
+
+The dedicated `ControlTowerTab` screen was retired and consolidated into `CommandCenterTab` (U3.10). `CommandCenterTab`
+merges Control Tower KPIs with AI Planner insights and Storyboard exceptions into one unified triage feed
+(`frontend/src/tabs/CommandCenterTab.tsx`, fed by `fetchControlTowerKpis`/`fetchControlTowerTrend` from
+`src/api/queries`). The old `?tab=controlTower` URL key still resolves to `commandCenter` via `TAB_REDIRECTS` in
+`useUrlState.ts`, so existing bookmarks keep working. A regression test
+(`frontend/src/tabs/__tests__/no-retired-tabs.test.ts`) fails the build if `ControlTowerTab.tsx` is ever
+reintroduced under `src/tabs`. The data shape documented below (KPI zones, alerts, top-critical items) is
+unchanged by the consolidation -- only the hosting tab moved.
 
 ---
 

@@ -1,12 +1,12 @@
 # Scenario Planning
 
-> A what-if simulation engine that models supply chain disruptions -- demand shocks, lead time delays, supplier failures, and budget changes -- to quantify financial and service-level impact before they happen.
+> A what-if simulation engine that models supply chain disruptions -- demand shocks, lead time delays, capacity constraints, and logistics disruptions -- to quantify stockout risk and financial impact before they happen.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (ScenarioPlanningPanel) |
-| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/operations/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py`, `config/operations/supply_scenario_config.yaml`, `sql/059_create_supply_scenarios.sql` |
+| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/operations/supply_scenarios.py`, `scripts/inventory/run_supply_chain_scenario.py`, `config/operations/supply_scenario_config.yaml`, `sql/058_create_supply_scenarios.sql` |
 
 ---
 
@@ -26,33 +26,56 @@ A scenario engine accepts disruption parameters (type, magnitude, scope, duratio
 
 ### Scenario Types
 
-| Type | What It Models | Key Parameters |
+`scenario_type` is a free-text `VARCHAR(50)` on `fact_supply_scenarios` -- there is no DB-enforced enum, and two
+different entry points use two different (overlapping) vocabularies for it.
+
+`POST /scenarios/supply` (the API path) documents this convention in its `_ScenarioCreate` model:
+
+| Type | `scenario_type` value | What It Models |
 |---|---|---|
-| Demand Shock | Sudden demand increase or decrease | `demand_multiplier`, affected items/locations, duration |
-| Lead Time Shock | Supplier or transit delay | `lead_time_add_days`, affected items/locations |
-| Supplier Disruption | Partial or full supplier failure | `supply_reduction_pct`, affected supplier, duration |
-| DC Disruption | Distribution center (warehouse) outage | `dc_location`, outage duration, reroute options |
-| Investment | Budget increase or decrease | `budget_change_pct`, affected locations |
-| Policy Change | Replenishment policy adjustment | `new_policy_type`, `new_service_level`, affected scope |
+| Demand Shock | `demand_shock` | Sudden demand increase or decrease |
+| Lead Time Shock | `lead_time_shock` | Supplier or transit delay |
+| Capacity Constraint | `capacity_constraint` | Supplier can only ship a fraction of ordered quantity |
+| Logistics Disruption | `logistics_disruption` | Freight/transport unavailable |
+
+"Investment" and "Policy Change" scenario types do not exist in the codebase -- there is no budget-change or
+replenishment-policy scenario type.
+
+The standalone CLI script (`scripts/inventory/run_supply_chain_scenario.py --disruption-type`) writes into the
+same `scenario_type` column using a different, overlapping vocabulary: `supplier_delay`, `capacity_constraint`,
+`demand_shock`, `transport_disruption`, `quality_hold` -- also the basis for `disruption_defaults` in
+`config/operations/supply_scenario_config.yaml`. The two paths are not reconciled; check which one produced a
+given scenario before filtering on `scenario_type`.
 
 ### Simulation Flow
 
-1. Clone current inventory positions and forecast into a simulation workspace.
-2. Apply disruption parameters to the cloned data (e.g., multiply demand by 1.3 for demand shock).
-3. Run forward projection month-by-month using the modified inputs.
-4. At each month, compute: projected on-hand, stockout events, excess over target, fill rate, carrying cost.
-5. Compare results to the baseline (no disruption) to quantify delta impact.
-6. Write results to `fact_scenario_results` with a `scenario_id` for retrieval.
+Simulation is executed by the CLI script (`--action run`), not the API -- `POST /scenarios/supply/{id}/run` only
+flips `status` to `running` and stamps `run_by`/`last_run_at`; the actual numbers come from a separate
+`scripts/inventory/run_supply_chain_scenario.py --action run --scenario-id N` invocation.
+
+1. Fetch the scenario's `disruption_type`/`impact_pct`/`duration_weeks` (from `shock_parameters`) and the
+   affected item-locations (scoped to `affected_items`/`affected_locations` if set, else the whole portfolio)
+   from `fact_inventory_snapshot`.
+2. For `supplier_delay`/`transport_disruption`: extend lead time by `duration_weeks x 7 x (impact_pct / 100)`
+   days. For `capacity_constraint`/`quality_hold`: reduce available supply by `impact_pct`%. Other disruption
+   types leave lead time and supply unchanged.
+3. Estimate stockout days as `MAX(0, adjusted_lead_time_days - (on_hand + available_supply) / daily_demand)`.
+4. Write one row per item-location to `fact_scenario_results`; mark the scenario `completed` and stamp
+   `last_run_at`.
+5. A financial-impact estimate (`stockout_units x stockout_cost_per_unit`, from `supply_scenario_config.yaml`)
+   is computed and returned in the CLI's result dict but is not persisted to any table.
 
 ### Impact Metrics
 
-| Metric | How Computed |
-|---|---|
-| Stockout Events | Count of item-location-months where projected on-hand falls below zero |
-| Revenue at Risk | Stockout units x average selling price |
-| Excess Inventory Value | Units above safety stock target x unit cost |
-| Service Level Delta | Scenario fill rate minus baseline fill rate |
-| Incremental Carrying Cost | Additional holding cost from changed inventory levels |
+| Metric | Column | How Computed |
+|---|---|---|
+| Baseline Supply | `baseline_qty` | 30-day average-demand estimate (not a live on-hand snapshot) |
+| Scenario Supply | `scenario_qty` | Available supply after the disruption is applied |
+| Impact Qty | `impact_qty` | Supply shortfall: `baseline_qty - scenario_qty` |
+| Impact % | `impact_pct` | `impact_qty / baseline_qty x 100` |
+| Stockout Risk | `stockout_risk_days` | Estimated stockout days from the depletion-time formula above |
+| Excess Risk | `excess_risk_qty` | Not populated by the CLI script -- always `0` |
+| Mitigation Option | `mitigation_option` | `"expedite"` if a stockout is projected, else `"none"` |
 
 ---
 
@@ -60,10 +83,12 @@ A scenario engine accepts disruption parameters (type, magnitude, scope, duratio
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `fact_supply_scenarios` | Scenario definitions | `scenario_id`, `scenario_type`, `name`, `parameters` (JSONB), `status`, `created_at` |
-| `fact_scenario_results` | Simulation output per item-location-month | `scenario_id`, `item_id`, `loc`, `month`, `projected_oh`, `stockout_flag`, `excess_qty`, `carrying_cost` |
-| `fact_scenario_comparison` | Baseline vs. scenario deltas | `scenario_id`, `metric`, `baseline_value`, `scenario_value`, `delta`, `delta_pct` |
-| `fact_scenario_audit` | Execution history | `scenario_id`, `run_at`, `duration_seconds`, `row_count` |
+| `fact_supply_scenarios` | Scenario definitions | `scenario_id`, `scenario_name`, `scenario_type`, `description`, `shock_parameters` (JSONB), `affected_items`/`affected_locations`/`affected_suppliers` (JSONB), `horizon_months`, `status` (`draft`\|`running`\|`completed`\|`failed`), `created_by`, `run_by`, `created_at`, `last_run_at`, `run_duration_ms` |
+| `fact_scenario_results` | Simulation output per item-location | `id`, `scenario_id`, `item_id`, `loc`, `plan_month`, `baseline_qty`, `scenario_qty`, `impact_qty`, `impact_pct`, `stockout_risk_days`, `excess_risk_qty`, `mitigation_option`, `computed_at` |
+
+There is no `fact_scenario_comparison` or `fact_scenario_audit` table. Baseline-vs-scenario comparison and
+execution history are not persisted separately -- the API reads `fact_supply_scenarios` and
+`fact_scenario_results` directly.
 
 ---
 
@@ -71,15 +96,15 @@ A scenario engine accepts disruption parameters (type, magnitude, scope, duratio
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/supply-scenarios` | List scenarios with filtering by type and status |
-| POST | `/supply-scenarios` | Create and queue a new scenario |
-| GET | `/supply-scenarios/{id}` | Scenario detail with parameters and status |
-| POST | `/supply-scenarios/{id}/run` | Execute simulation (returns 202, runs in background) |
-| GET | `/supply-scenarios/{id}/results` | Simulation results with item-level detail |
-| GET | `/supply-scenarios/{id}/comparison` | Baseline vs. scenario comparison metrics |
-| DELETE | `/supply-scenarios/{id}` | Remove scenario and its results |
+| GET | `/scenarios/supply` | List scenarios, filterable by `scenario_type` and `status` |
+| POST | `/scenarios/supply` | Create a new scenario, starts at `status = draft` (auth) |
+| GET | `/scenarios/supply/{scenario_id}` | Scenario definition + most recent run metadata |
+| POST | `/scenarios/supply/{scenario_id}/run` | Mark the scenario `running`, record `run_by`/`last_run_at` (auth) |
+| GET | `/scenarios/supply/{scenario_id}/results` | Simulation results, paginated |
 
-Simulation runs asynchronously via background thread. Poll status via the detail endpoint.
+The path prefix is `/scenarios/supply`, not `/supply-scenarios`. The router's module docstring also lists a
+`POST /scenarios/supply/{id}/compare` endpoint, but it is not implemented; there is no `DELETE` endpoint either.
+`POST .../run` only updates scenario status -- it does not itself run the simulation (see Simulation Flow above).
 
 ---
 
@@ -87,9 +112,12 @@ Simulation runs asynchronously via background thread. Poll status via the detail
 
 | Step | Command | What It Does |
 |---|---|---|
-| Schema | `make scenario-schema` | Creates scenario tables |
-| Run | `scripts/run_supply_chain_scenario.py --scenario-id X` | Execute a specific scenario |
-| Dry Run | Add `--dry-run` flag | Preview impact without writing results |
+| Schema | `make scenarios-schema` | Creates scenario tables |
+| List | `make scenarios-list` | List scenarios via the CLI script |
+| Run | `make scenarios-run SCENARIO_ID=n` | Execute a specific scenario and write `fact_scenario_results` |
+| Run (dry) | `make scenarios-run-dry SCENARIO_ID=n` | Preview impact without writing results |
+| Full | `make scenarios-all` | Currently just runs `scenarios-schema` -- no default scenario is seeded |
+| Create | `scripts/inventory/run_supply_chain_scenario.py --action create --scenario-name ... --disruption-type ... --impact-pct N --duration-weeks N` | Create a scenario via the CLI (no Make target) |
 
 ---
 
@@ -99,12 +127,14 @@ File: `config/operations/supply_scenario_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|
-| `projection_horizon_months` | How far forward to simulate | `6` |
-| `max_concurrent_scenarios` | Parallel simulation limit | `2` |
-| `demand_shock.max_multiplier` | Cap on demand shock magnitude | `3.0` |
-| `lead_time_shock.max_add_days` | Cap on lead time extension | `90` |
-| `supplier_disruption.max_reduction_pct` | Cap on supply reduction | `100` |
-| `baseline_source` | Where baseline data comes from | `production_forecast` |
+| `supply_scenario.simulation_horizon_weeks` | Simulation lookahead | `13` |
+| `supply_scenario.service_level_target` | Target fill rate for impact assessment | `0.95` |
+| `supply_scenario.stockout_cost_per_unit` | $ per unit of lost sales (margin proxy) | `10.0` |
+| `supply_scenario.excess_holding_cost_pct` | Annual holding cost as a fraction of unit cost | `0.25` |
+| `supply_scenario.disruption_defaults.<type>.typical_impact_pct` | Default severity for each of the 5 CLI disruption types | varies (`25`-`100`) |
+| `supply_scenario.disruption_defaults.<type>.typical_duration_weeks` | Default duration for each disruption type | varies (`2`-`8`) |
+| `supply_scenario.alert_threshold_usd` | Financial-impact level that surfaces a control-tower alert | `100000.0` |
+| `scheduler.cron` | Scheduled run cadence | `null` (on-demand only) |
 
 ---
 
@@ -112,10 +142,9 @@ File: `config/operations/supply_scenario_config.yaml`
 
 | Dependency | Reason |
 |---|---|
-| Inventory snapshot (03-01) | Starting inventory positions for simulation |
-| Production forecast (02-08) | Baseline demand for forward projection |
-| Safety stock targets (03-03) | Excess computed relative to targets |
-| Financial plan (05-02) | Unit costs for financial impact computation |
+| Inventory snapshot (03-01) | `fact_inventory_snapshot` supplies on-hand qty and average daily demand |
+| Item cost (`dim_item_cost`) | Unit cost for financial-impact estimation |
+| Lead time profile (`dim_lead_time_profile`) | Base lead time before disruption adjustment |
 | S&OP cycle (05-01) | Scenario results reviewed during Stage 4 |
 
 ---
@@ -123,6 +152,5 @@ File: `config/operations/supply_scenario_config.yaml`
 ## See Also
 
 - `05-operations/01-sop-cycle.md` -- scenario results inform S&OP trade-off decisions
-- `05-operations/02-financial-planning.md` -- financial impact uses same cost inputs
-- `03-inventory-planning/03-safety-stock.md` -- policy change scenarios adjust safety stock levels
-- `03-inventory-planning/12-inventory-rebalancing.md` -- DC disruption scenarios may trigger rebalancing
+- `05-operations/02-financial-planning.md` -- `dim_item_cost` and holding-cost assumptions are shared
+- `03-inventory-planning/03-safety-stock.md` -- lead-time and stockout-risk concepts shared with safety stock

@@ -15,7 +15,7 @@ The single authoritative reference for system architecture, data flow, database 
 7. [Current Dimensions](#7-current-dimensions)
 8. [Current Facts](#8-current-facts)
 9. [Database Schema Map](#9-database-schema-map)
-10. [All Tables by Category](#10-all-tables-by-category-86-tables--15-materialized-views)
+10. [All Tables by Category](#10-all-tables-by-category-169-tables--28-materialized-views)
 11. [Accuracy Slice Materialized Views](#11-accuracy-slice-materialized-views-feature10)
 12. [Materialized View Refresh Order](#12-materialized-view-refresh-order)
 13. [Compute Pipeline Dependency Graph](#13-compute-pipeline-dependency-graph)
@@ -92,11 +92,11 @@ flowchart TD
         AI["AI Insights"]
     end
 
-    subgraph API["FastAPI (72 Routers)"]
+    subgraph API["FastAPI (83 Routers)"]
         REST["/domains, /forecast,<br/>/inventory, /inv-planning,<br/>/ai-planner, /jobs, ..."]
     end
 
-    subgraph UI["React UI (16 Tabs)"]
+    subgraph UI["React UI (21 Tabs)"]
         TABS["Dashboard, Explorer,<br/>Accuracy, Item Analysis,<br/>Clusters, Inv Planning,<br/>Control Tower, AI Planner,<br/>Jobs, Data Quality, ..."]
     end
 
@@ -570,7 +570,7 @@ erDiagram
 
 ---
 
-## 10. All Tables by Category (~86 tables + 15 materialized views)
+## 10. All Tables by Category (~169 tables + 28 materialized views)
 
 ### Core Tables
 
@@ -926,7 +926,7 @@ flowchart TD
 
 ## 15. API Router Architecture
 
-`api/main.py` creates the app, adds middleware, and mounts all 81 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/` organized into 6 domain subfolders (`core/`, `forecasting/`, `intelligence/`, `inventory/`, `operations/`, `platform/`). `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `api_governance.py` does not exist as a router file (governance logic is in `common/services/rate_limiter.py`).
+`api/main.py` creates the app, adds middleware, and mounts all 83 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/` organized into 6 domain subfolders (`core/`, `forecasting/`, `intelligence/`, `inventory/`, `operations/`, `platform/`). `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `api_governance.py` does not exist as a router file (governance logic is in `common/services/rate_limiter.py`).
 
 **Mounted router modules** (alphabetical, exact list lives in `api/main.py`):
 accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster_eda, cluster_experiments, clusters, collaboration, competition, config_manager, consensus_plan, control_tower, customer_analytics, dashboard, data_quality, demand_history, domains, echelon_planning, events, explain_router, expsys_accuracy, external_signals, feature_lab, fill_rate, financial_plan, fva, integrated_targets, integration, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_algorithm_comparison, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_insights, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, medallion, model_tuning, notifications, po_router, production_forecast, reports, sampled_backtest, service_level, shap, sku_chat, sku_features, sop, sourcing_router, sql_runner, storyboard, supply, supply_scenarios, tuning_chat, unified_model_tuning, users, webhooks, working_capital.
@@ -1430,12 +1430,14 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Makefile: `report-schema`
 
 46. API Governance (08-09):
-   - Rate limiting via `common/services/rate_limiter.py`: token bucket algorithm with configurable rates per endpoint and per user
-   - API versioning: `v1` prefix on all existing routes, `v2` available for breaking changes
-   - Usage metrics: per-endpoint call counts, error rates, latency histograms
-   - Config: `config/api_governance_config.yaml` (rate limits by role, versioning policy, deprecation schedule)
-   - Rate limiting logic in `common/services/rate_limiter.py`; dedicated governance router planned but not yet implemented
-   - Middleware: rate limit enforcement returns 429 with `Retry-After` header; `X-RateLimit-*` headers on all responses
+   - Rate limiting via `common/services/rate_limiter.py`: sliding-window algorithm, applied only to
+     POST/PUT/DELETE (GETs are unlimited), per-IP only, always at the `standard` tier (300/min) -
+     `api/main.py` never selects the `free`/`premium` tiers the config also defines
+   - API versioning: `versioning.current_version`/`supported_versions` in config are read but not
+     enforced by any router; there is no live `v2`
+   - Config: `config/platform/auth_config.yaml`'s `governance:` block (merged from the former
+     standalone `api_governance_config.yaml`, per that file's own comment)
+   - No dedicated governance router, no per-endpoint overrides, no `X-RateLimit-*` response headers
 
 47. Webhooks (08-10):
    - `WebhookDispatcher` in `common/services/webhook_dispatcher.py`: event-driven webhook delivery with HMAC-SHA256 payload signing
@@ -1569,13 +1571,11 @@ All config files live in `config/`. Every compute script externalizes parameters
 | `rebalancing_config.yaml` | Rebalancing | `solver` (greedy/LP), thresholds, costs |
 | `exception_config.yaml` | Exceptions + storyboard | 6 exception types, severity thresholds |
 | `inventory_planning_config.yaml` | Lead time, simulation, projection | Merged from lead_time, simulation, projection configs |
-| `seasonality_config.yaml` | SKU feature engineering (seasonality) | CV thresholds, profile labels. See [SKU Feature Engineering spec](specs/01-foundation/02-sku-feature-engineering.md) |
-| `variability_config.yaml` | SKU feature engineering (variability) | CV thresholds, `history_months`. See [SKU Feature Engineering spec](specs/01-foundation/02-sku-feature-engineering.md) |
+| `sku_features_config.yaml` | SKU feature engineering (seasonality + variability) | CV thresholds, profile labels, `history_months`. `seasonality_config.yaml`/`variability_config.yaml` predate the unified pipeline and were never recreated - see [SKU Feature Engineering spec](specs/03-demand-intelligence/02-sku-feature-engineering.md) |
 | `tune_strategies.yaml` | Auto-tune pipeline | Merged LGBM/CatBoost/XGBoost tune strategies |
 | `ai_planner_config.yaml` | AI agent | `model`, DOS/WAPE/bias thresholds |
 | `planning_config.yaml` | Planning date | `planning_date`, `use_system_date` |
-| `data_quality_config.yaml` | DQ engine | 12 check types across 10 domains |
-| `planning_config.yaml` | Planning date | `planning_date`, `use_system_date` |
+| `data_quality_config.yaml` | DQ engine | 12 check types implemented, 83 checks configured across 9 of the 12 types |
 | `etl_config.yaml` | ETL data pipeline | Domain load order, parallel workers, MV refresh mapping |
 | `forecast_pipeline_config.yaml` | ML forecast pipeline | Algorithm roster, backtest, tuning, champion, production forecast |
 
@@ -1958,7 +1958,7 @@ APScheduler engine with job types across 5 groups (clustering, backtest, seasona
 
 ### 9. UI Platform
 
-12-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System). Light/dark themes. Global filter bar synced across tabs via URL state. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the 8 heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
+21-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System). Light/dark themes. Global filter bar synced across tabs via URL state. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the 8 heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
 
 ---
 

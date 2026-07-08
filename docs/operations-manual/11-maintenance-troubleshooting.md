@@ -355,42 +355,29 @@ Full wipe-and-reload procedure: clears non-config data, derived outputs, job/per
 make fresh-all              # Full reset: truncate + clean + load + ML + champion + baseline planning (~4-6 hours)
 make fresh-champion         # Load + features + backtests + champion (no truncate, ~3-4 hours)
 make fresh-backtest         # Load + features + backtests (no champion, ~3 hours)
-make fresh-features         # Load + clustering + seasonality + variability + LT (~1 hour)
+make fresh-features         # Load + SKU features (incl. seasonality/variability) + clustering + LT (~1 hour)
 make fresh-load             # Normalize + load + refresh MVs only (~5 min)
 ```
 
-**Individual step targets** — run these manually if you need granular control:
+**Individual step targets** - run these manually if you need granular control. Only the
+ETL/features/clustering steps unique to this fresh-recreate flow are listed below; for
+the full backtest target roster and runtimes see
+[04-forecasting-backtest.md](04-forecasting-backtest.md), for champion/tuning targets
+see [05-tuning-champion-selection.md](05-tuning-champion-selection.md), and for
+SS/EOQ/policy/health targets see [07-inventory-planning.md](07-inventory-planning.md).
 
 | Target | What it does | Time |
 |---|---|---|
 | `make db-truncate-data` | Truncate non-config data, history, and experiment tables in one transaction while preserving configuration masters | < 1 min |
 | `make clean-artifacts` | Remove stale clean CSVs, backtest/tuning outputs, clustering artifacts, champion files, and perf reports | < 1 sec |
-| `make normalize-all` | Normalize all 10 input CSVs → `data/staged/*_clean.csv` | ~1 min |
-| `make load-all` | Load all 10 domains into Postgres (dimensions first, facts second) | ~1 min |
+| `make normalize-all` | Normalize all input CSVs → `data/staged/*_clean.csv` | ~1 min |
+| `make load-all` | Load all domains into Postgres (dimensions first, facts second) | ~1 min |
 | `make refresh-mvs-tiered` | Refresh all 13 MVs in 4-tier dependency order | ~30 sec |
-| `make cluster-all` | Feature engineering + KMeans training + label + update dim_sku.ml_cluster | ~10 min |
-| `make seasonality-all` | Seasonality detection + update dim_sku | ~5 min |
-| `make variability-all` | Demand variability computation → dim_sku | ~2 min |
-| `make lt-profile-all` | Lead time profiles → dim_item_lead_time_profile | ~2 min |
-| `make backtest-lgbm` | LGBM per-cluster backtest (10 timeframes) | ~30 min |
-| `make backtest-catboost` | CatBoost per-cluster backtest | ~40 min |
-| `make backtest-xgboost` | XGBoost per-cluster backtest | ~20 min |
-| `make backtest-chronos` | Chronos T5 foundation model backtest | ~2.5 hours |
-| `make backtest-bolt` | Chronos Bolt foundation model backtest | ~12 min |
-| `make backtest-chronos2` | Chronos 2 foundation model backtest | ~5.5 hours |
-| `make backtest-chronos2e` | Chronos 2 Enriched backtest (31 covariates) | ~6 hours |
-| `make backtest-seasonal-naive` | Seasonal Naive baseline backtest | ~5 min |
-| `make backtest-rolling-mean` | Rolling Mean baseline backtest | ~5 min |
-| `make backtest-mstl` | MSTL decomposition backtest | ~15 min |
-| `make backtest-nhits` | N-HiTS deep learning backtest | ~1 hour |
-| `make backtest-nbeats` | N-BEATS deep learning backtest | ~1 hour |
-| `make backtest-baselines` | Seasonal Naive + Rolling Mean together | ~10 min |
-| `make backtest-all` | All tree + foundation backtests sequentially | ~12 hours |
+| `make features-compute` | SKU feature pipeline (volume, trend, seasonality, variability, lifecycle) → `dim_sku` | ~5 min |
+| `make cluster-all` | KMeans clustering → `dim_sku.ml_cluster` | ~10 min |
+| `make lt-profile-all` | Lead time profiles → `dim_item_lead_time_profile` | ~2 min |
+| `make backtest-all` | All 4 competing backtests (lgbm, catboost, xgboost, chronos2_enriched) | several hours, dominated by the foundation-model backtest |
 | `make backtest-load-all` | Load all backtest predictions into DB | ~5 min |
-| `make backtest-load-all-bulk` | Load all predictions with single index cycle (~4x faster) | ~1.5 min |
-| `make backtest-load-bulk` | Load 4 core models (lgbm, catboost, xgboost, chronos) in bulk | ~1 min |
-| `make backtest-load-main-only` | Load specific models to main table only (skip archive) | varies |
-| `make backtest-load-archive-only` | Load specific models to archive only (skip main table) | varies |
 | `make refresh-accuracy-mvs` | Refresh 4 accuracy MVs (after backtest load) | ~10 sec |
 | `make champion-all` | Train meta-learner + simulate strategies + select champion | ~15 min |
 | `make policy-all` | Refresh policy assignments while preserving manual overrides | ~1 min |
@@ -411,11 +398,10 @@ fresh-all
                 ├── normalize-all     (CSV → clean CSV)
                 ├── load-all          (clean CSV → Postgres)
                 └── refresh-mvs-tiered (13 MVs, tier-ordered)
+            ├── features-compute      (SKU features, incl. seasonality/variability)
             ├── cluster-all           (clustering pipeline)
-            ├── seasonality-all       (seasonality detection)
-            ├── variability-all       (demand variability)
             └── lt-profile-all        (lead time profiles)
-        ├── backtest-all              (LGBM + CatBoost + XGBoost + Chronos + Bolt + Chronos2 + Chronos2e)
+        ├── backtest-all              (LGBM + CatBoost + XGBoost + Chronos2 Enriched)
         ├── backtest-load-all         (load predictions → DB)
         └── refresh-accuracy-mvs      (accuracy MVs)
     └── champion-all                  (meta-learner + simulate + select)
@@ -522,13 +508,12 @@ setup-all
 │   └── setup-features (Phase 2)
 │       └── setup-data (Phase 1)
 │           └── run_pipeline.py --mode full --parallel
+│       ├── features-compute  (SKU features, incl. seasonality/variability)
 │       ├── cluster-all
-│       ├── seasonality-all
-│       ├── variability-all
 │       ├── lt-profile-all
 │       ├── abc-xyz-all
 │       └── demand-signals-all
-│   ├── backtest-all           (LGBM + CatBoost + XGBoost + Chronos + Bolt + Chronos2 + Chronos2e)
+│   ├── backtest-all           (LGBM + CatBoost + XGBoost + Chronos2 Enriched)
 │   ├── backtest-load-all      (predictions → DB)
 │   ├── accuracy-slice-refresh (accuracy MVs)
 │   ├── champion-all           (meta-learner + simulate + select)
@@ -750,7 +735,7 @@ Remove stale artifacts so the pipeline regenerates everything from scratch:
 ```bash
 rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
 rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
-rm -rf data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
+rm -rf data/backtest/chronos2_enriched/
 rm -rf data/backtest/seasonal_naive/ data/backtest/rolling_mean/ data/backtest/mstl/
 rm -rf data/backtest/nhits/ data/backtest/nbeats/
 rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
@@ -852,9 +837,6 @@ Sequential execution (safe for laptops). For parallel, append `&` to each and `w
 ~/.local/bin/uv run python scripts/ml/run_backtest_xgboost.py
 
 # Foundation models
-~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos
-~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos_bolt
-~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos2
 ~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos2_enriched
 
 # Statistical baselines
@@ -878,7 +860,7 @@ Sequential execution (safe for laptops). For parallel, append `&` to each and `w
 
 # Load specific models only:
 ~/.local/bin/uv run python scripts/etl/load_backtest_forecasts.py \
-  --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
+  --models lgbm_cluster catboost_cluster xgboost_cluster chronos2_enriched --replace --bulk
 ```
 
 ### Step 11: Refresh Accuracy MVs
@@ -944,7 +926,7 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 make backtest-list                                 # Row counts per model_id
 make backtest-clean MODELS="--dry-run lgbm_cluster" # Preview before deleting
 make backtest-clean MODELS="lgbm_cluster catboost_cluster"  # Delete specific tree models
-make backtest-clean MODELS="chronos chronos_bolt chronos2 chronos2_enriched"  # Delete all foundation models
+make backtest-clean MODELS="chronos2_enriched"     # Delete the foundation model
 make backtest-clean MODELS="seasonal_naive rolling_mean mstl"  # Delete statistical baselines
 make backtest-clean MODELS="nhits nbeats"          # Delete deep learning models
 make backtest-clean MODELS="--all-backtest"        # Delete all non-external backtest models
@@ -1100,7 +1082,7 @@ routed are safe because they aggregate over months of history.
 | `make forecast-generate` now **aborts** instead of producing zeros | Intended (2026-06-20): a failed recursive prediction re-raises rather than zero-filling the cluster (an all-zero forecast silently corrupts the plan). Read the logged traceback and fix the underlying prediction error — do not treat the abort as a regression. |
 | `make quantile-train` fails with `NotImplementedError` | Intended (2026-06-20): the quantile script is an MVP stub that trains on random data; it refuses to write `fact_demand_plan`. Use `--dry-run` to preview, or skip it — production CI bands come from `make forecast-generate`. |
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/forecasting/forecast_pipeline_config.yaml` champion section; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
-| Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; run `make generate-embeddings`; check API logs for rate limit errors |
+| Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; check API logs for rate limit errors |
 | AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |
 
 ### Exception Queue
@@ -1129,7 +1111,7 @@ routed are safe because they aggregate over months of history.
 | Redis unreachable / "falling back to in-memory" warning | Cache transparently falls back; check `docker ps \| grep redis`, `docker logs demandproject-redis-1`, and `REDIS_URL` env var. Multi-worker deployments lose cross-worker hit-rate + single-flight protection until Redis returns |
 | Notifications not sending | Verify channel is `enabled: true` in `config/platform/notification_config.yaml`; check SMTP credentials / Slack webhook URL |
 | Webhook deliveries failing | Check delivery history via `GET /webhooks/deliveries`; verify target URL is reachable; check HMAC signature validation on receiver |
-| Rate limiting too aggressive | Adjust limits in `config/api_governance_config.yaml`; increase `default_limit` or add per-endpoint overrides |
+| Rate limiting too aggressive | Adjust `governance.rate_limit_tiers.standard.requests_per_minute` in `config/platform/auth_config.yaml` (only the `standard` tier is read at runtime; no per-endpoint overrides exist) |
 | Anonymous admin mode in production | Set `JWT_SECRET` in `.env` — without it, all requests bypass auth |
 
 ### Frontend / API

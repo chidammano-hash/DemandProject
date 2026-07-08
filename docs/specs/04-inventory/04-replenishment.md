@@ -94,16 +94,26 @@ DDL: `sql/024_create_eoq_targets.sql`, `sql/025_create_replenishment_policy.sql`
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/eoq/summary` | Portfolio EOQ statistics |
-| GET | `/inv-planning/eoq/detail` | Per-DFU EOQ with sensitivity |
-| GET | `/inv-planning/policy/list` | All policy definitions |
-| POST | `/inv-planning/policy/assign` | Manual policy assignment |
-| GET | `/inv-planning/policy/compliance` | Policy compliance report |
+| GET | `/inv-planning/eoq/summary` | Portfolio EOQ summary with by-ABC breakdown |
+| GET | `/inv-planning/eoq/detail` | Paginated per-item-location EOQ detail (filter, sort) |
+| GET | `/inv-planning/eoq/sensitivity` | EOQ sensitivity curve as ordering cost varies +/- 20% |
+| GET | `/inv-planning/policies` | List all policy definitions with DFU assignment counts |
+| POST | `/inv-planning/policies` | Create a new policy definition (201, auth required) |
+| PUT | `/inv-planning/policies/{policy_id}` | Update an existing policy by ID (auth required) |
+| GET | `/inv-planning/policy-assignments` | Paginated DFU-to-policy assignments |
+| POST | `/inv-planning/policy-assignments/assign` | Assign a policy to one DFU, or bulk by segment (auth required) |
+| GET | `/inv-planning/policy-assignments/compliance` | Portfolio-level policy compliance metrics |
 | GET | `/inv-planning/health/summary` | Score distribution + worst performers |
 | GET | `/inv-planning/health/detail` | Per-DFU component breakdown |
 | GET | `/inv-planning/health/heatmap` | Location x category health heatmap |
 
 Routers: `inv_planning_eoq.py`, `inv_planning_policy.py`, `inv_planning_health.py`
+
+Policy endpoints span two resource families: `/inv-planning/policies` is CRUD on policy
+definitions (`dim_replenishment_policy`); `/inv-planning/policy-assignments` is DFU-to-policy
+assignment and compliance tracking (`fact_dfu_policy_assignment`). The assign endpoint accepts
+either an individual body (`item_id`, `loc`, `policy_id`, `override_reason`) or a bulk body
+(`segment`, `policy_id`) that assigns every DFU matching the ABC or variability segment.
 
 ---
 
@@ -132,16 +142,41 @@ File: `config/inventory/replenishment_policy_config.yaml`
 
 ```yaml
 policies:
-  - id: fixed_qty
-    name: Fixed Quantity (s,Q)
-    params: {reorder_point: ss+lt_demand, order_qty: eoq}
-  - id: min_max
-    name: Min/Max (s,S)
-    params: {min_level: rop, max_level: rop+eoq}
+  - id: A_continuous_v1
+    name: "A-Class Continuous Review (ROP/EOQ)"
+    type: continuous_rop
+    segment: "A"
+    service_level: 0.98
+    use_eoq: true
+    use_safety_stock: true
+  - id: B_periodic_v1
+    type: periodic_review
+    segment: "B"
+    review_cycle_days: 28
+    service_level: 0.95
+  - id: C_min_max_v1
+    type: min_max
+    segment: "C"
+    service_level: 0.90
+    use_eoq: false
+  - id: lumpy_manual_v1
+    type: manual
+    segment: "lumpy"
+    service_level: 0.85
+    use_eoq: false
+    use_safety_stock: false
+
 auto_assign:
-  AX: fixed_qty
-  AZ: min_max
-  BY: periodic_review
+  enabled: true
+  variability_override:      # overrides the ABC-based mapping above
+    lumpy: lumpy_manual_v1
+
+# Separate 9-cell ABC-XYZ policy matrix (DOS targets + service levels, consumed by
+# classify_abc_xyz.py rather than the policy assignment above):
+abc_xyz_policies:
+  AX: {dos_min: 14, dos_max: 21, service_level: 0.98}
+  AZ: {dos_min: 28, dos_max: 42, service_level: 0.95}
+  BY: {dos_min: 28, dos_max: 35, service_level: 0.93}
 ```
 
 ---

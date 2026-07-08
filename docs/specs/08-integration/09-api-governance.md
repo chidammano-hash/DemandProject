@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `common/services/rate_limiter.py`, `config/api_governance_config.yaml` |
+| **Key Files** | `common/services/rate_limiter.py`, `config/platform/auth_config.yaml` (`governance:` block) |
 
 ---
 
@@ -16,78 +16,69 @@ Without rate limiting, a single misbehaving client (or a script in a tight loop)
 
 ## Solution
 
-A token bucket rate limiter enforces per-client request limits at the middleware level. Usage tracking records request counts, latencies, and status codes by endpoint and client. API versioning via URL prefixes allows controlled rollout of breaking changes with deprecation notices.
+A sliding-window rate limiter enforces a per-IP request limit on write requests (POST/PUT/DELETE) at the middleware level. Usage tracking records request counts, latencies, and status codes by endpoint and client. API versioning is declared via config (current version `v1`) but is not enforced at runtime.
 
 ## How It Works
 
-1. Every API request passes through rate limit middleware before reaching the route handler
-2. The middleware identifies the client (by API key, IP address, or user ID) and the endpoint group
-3. The token bucket checks whether the client has remaining capacity for this endpoint group
-4. If allowed, the request proceeds; response headers show remaining quota and reset time
-5. If exceeded, the client receives 429 Too Many Requests with a `Retry-After` header
+1. Only POST, PUT, and DELETE requests pass through `rate_limit_middleware` in `api/main.py`; GET requests are never rate-limited
+2. The middleware identifies the client by IP address (`request.client.host`)
+3. The sliding-window limiter checks whether that IP has remaining capacity in the trailing 60-second window, against the hardcoded `standard` tier limit (see Rate Limit Tiers)
+4. If allowed, the request proceeds to the route handler
+5. If exceeded, the client receives 429 Too Many Requests with a `Retry-After: 60` header
 6. Usage counters are aggregated in memory every 5 minutes for monitoring
-7. Inactive client buckets are cleaned up after 1 hour
 
 ## Rate Limit Tiers
 
-| Tier | Requests/Minute | Applies To |
-|---|---|---|
-| Default | 100 | Most endpoints |
-| Heavy | 10 | Data loads, report generation, AI analysis, clustering scenarios |
-| Read-only | 200 | Dashboards, KPIs, inventory, forecasts |
-| Unlimited | No limit | Health checks, version info |
+There are no endpoint-group tiers - no "heavy", "read-only", or "unlimited" categories exist in the code. The middleware always checks a single hardcoded `standard` tier, regardless of which endpoint is called:
 
-The `burst_multiplier` (default 1.5x) allows short bursts above the sustained rate.
+| Tier (config) | Requests/Minute | Wired to the middleware? |
+|---|---|---|
+| `free` | 60 | No - declared in config, never read at runtime |
+| `standard` | 300 | Yes - the only tier `rate_limit_middleware` ever requests |
+| `premium` | 1000 | No - declared in config, never read at runtime |
+
+Every rate-limited request (POST/PUT/DELETE only) is checked against the same 300/minute ceiling, keyed by client IP address, in a rolling 60-second window.
 
 ## Response Headers
 
-Every response includes rate limit headers:
+`rate_limit_middleware` does not set `X-RateLimit-*` headers on any response. The only rate-limit-related header is `Retry-After`, sent solely on 429 responses:
 
-| Header | Description |
-|---|---|
-| `X-RateLimit-Limit` | Maximum requests per window |
-| `X-RateLimit-Remaining` | Requests remaining in current window |
-| `X-RateLimit-Reset` | Unix timestamp when the window resets |
-| `Retry-After` | Seconds to wait (only on 429 responses) |
+| Header | When | Description |
+|---|---|---|
+| `Retry-After` | Only on 429 responses | Hardcoded to `60` (seconds) |
 
 ## API Versioning
 
-| Aspect | Approach |
+Versioning is config-only today and has no runtime effect:
+
+| Aspect | Reality |
 |---|---|
-| Strategy | URL prefix versioning (`/v1/...`) |
-| Current version | `v1` |
-| Version header | `X-API-Version` in all responses |
-| Deprecation notice | `Deprecation: true` + `Sunset: <date>` headers |
-| Policy | 90 days deprecation notice, 180 days until sunset |
+| Config keys | `governance.versioning.current_version` (`v1`), `governance.versioning.supported_versions` (`[v1]`), `governance.deprecation.sunset_header` (boolean) in `config/platform/auth_config.yaml` |
+| Runtime enforcement | None - no router uses a `/v1` URL prefix, and no code path reads `governance.versioning.*` or `governance.deprecation.*` to reject a request, route by version, or add an `X-API-Version`, `Deprecation`, or `Sunset` response header |
+| Where it's actually used | Only as editable fields in the admin Config Manager UI (`api/routers/platform/config_manager.py`) - an operator can change the value, but nothing downstream consumes it |
 
 ## Configuration
 
-`config/api_governance_config.yaml`:
+`config/platform/auth_config.yaml`, `governance:` block (merged from the former standalone `api_governance_config.yaml` - the file documents this itself: "Merged from api_governance_config.yaml (Spec 08-09)"):
 
 ```yaml
-rate_limiting:
-  enabled: true
-  default_requests_per_minute: 100
-  endpoint_groups:
-    heavy:
-      pattern: ["/data-quality/run", "/reports/generate", "/ai-planner/portfolio-scan"]
-      requests_per_minute: 10
-    read_only:
-      pattern: ["/dashboard/*", "/inventory/*", "/forecast/*"]
-      requests_per_minute: 200
-    unlimited:
-      pattern: ["/health", "/api/versions"]
-      requests_per_minute: 0
-  burst_multiplier: 1.5
-  cleanup_ttl_seconds: 3600
-versioning:
-  current: "v1"
-  supported: ["v1"]
-usage_tracking:
-  enabled: true
-  retention_days: 90
-  aggregation_interval_minutes: 5
+governance:
+  rate_limit_tiers:
+    free:
+      requests_per_minute: 60
+    standard:
+      requests_per_minute: 300
+    premium:
+      requests_per_minute: 1000
+  deprecation:
+    sunset_header: true
+  versioning:
+    current_version: v1
+    supported_versions:
+      - v1
 ```
+
+Only `rate_limit_tiers.standard.requests_per_minute` is read at runtime, via `RateLimiter.get_tier_limit("standard")`. The remaining keys are not currently consumed by any code path.
 
 ## Usage Tracking
 
@@ -100,11 +91,10 @@ usage_tracking:
 
 - No external dependencies -- uses stdlib `threading`, `time`, `collections`
 - Rate limiter middleware added in `api/main.py` before route matching
-- Existing `api/auth.py` (`require_api_key`) provides client identification
-- [RBAC](./02-rbac.md) can override rate limits per role (e.g., admin = unlimited)
+- Client identification is the raw request IP (`request.client.host`); it does not call `api/auth.py`'s `require_api_key`
 
 ## See Also
 
 - [Caching](./03-caching.md) -- caching complements rate limiting for resource protection
-- [RBAC](./02-rbac.md) -- role-based rate limit overrides
+- [RBAC](./02-rbac.md) - role-based access control (rate limiting itself is IP-based and does not vary by role)
 - [Integration Architecture](./01-integration-architecture.md) -- API governance as Vector 2 component

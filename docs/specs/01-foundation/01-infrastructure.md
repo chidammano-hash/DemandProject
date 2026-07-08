@@ -32,7 +32,7 @@ Supply Chain Command Center is a full-stack analytics platform that ingests CSV 
 | Layer | Technology |
 |---|---|
 | Database | PostgreSQL 16 (via `pgvector/pgvector:pg16`) |
-| ML Tracking | MLflow v2.16.2 |
+| ML Tracking | MLflow v3.0.0 |
 | API | Python + FastAPI + Uvicorn |
 | Validation | Pydantic v2 |
 | DB Driver | psycopg v3 (sync `ConnectionPool` min=2 / max=20, plus async `AsyncConnectionPool` sibling and optional read-replica pools both sync + async) |
@@ -52,7 +52,9 @@ Supply Chain Command Center is a full-stack analytics platform that ingests CSV 
 | Service | Image | Port |
 |---|---|---|
 | postgres | pgvector/pgvector:pg16 | 5440 |
-| mlflow | ghcr.io/mlflow/mlflow:v2.16.2 | 5003 |
+| mlflow | ghcr.io/mlflow/mlflow:v3.0.0 | 5003 |
+| redis | redis:7-alpine | 6379 |
+| api | build: . (project root Dockerfile) | 8000 |
 
 Postgres tuning: `shared_buffers=512MB`, `work_mem=64MB`, `effective_cache_size=1536MB`.
 
@@ -75,7 +77,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Tree Model Implementations (LGBM, CatBoost, XGBoost) | [../02-forecasting/04-tree-models.md](../02-forecasting/04-tree-models.md) | Forecasting |
 | Champion Model Selection (5 strategies) | [../02-forecasting/07-champion-selection.md](../02-forecasting/07-champion-selection.md) | Forecasting |
 | Advanced Backtest (tuning, SHAP, recursive) | [../02-forecasting/05-advanced-backtest.md](../02-forecasting/05-advanced-backtest.md) | Forecasting |
-| Algorithm Config (YAML-driven) | [../02-forecasting/06-algorithm-config.md](../02-forecasting/06-algorithm-config.md) | Forecasting |
+| Forecast Pipeline Config (YAML-driven algorithm roster) | [../02-forecasting/19-forecast-pipeline-config.md](../02-forecasting/19-forecast-pipeline-config.md) | Forecasting |
 | Production Forecast Pipeline | [../02-forecasting/08-production-forecast.md](../02-forecasting/08-production-forecast.md) | Forecasting |
 | Bias Correction Engine | [../02-forecasting/09-bias-correction.md](../02-forecasting/09-bias-correction.md) | Forecasting |
 | SKU Clustering + What-If Scenarios | [../03-demand-intelligence/01-sku-clustering.md](../03-demand-intelligence/01-sku-clustering.md) | Demand Intelligence |
@@ -104,7 +106,6 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | UI Architecture + Theming | [../07-user-experience/02-ui-architecture.md](../07-user-experience/02-ui-architecture.md) | UI |
 | Job Scheduler (APScheduler) | [../07-user-experience/04-job-scheduler.md](../07-user-experience/04-job-scheduler.md) | UI |
 | Testing Strategy (pytest + Vitest + Playwright) | [../07-user-experience/05-testing.md](../07-user-experience/05-testing.md) | UI |
-| LGBM Tuning Tracker (experiment tracking, A/B comparison) | [../02-forecasting/10b-lgbm-tuning.md](../02-forecasting/10b-lgbm-tuning.md) | Forecasting |
 | Performance Profiling (decorator, suggestions, production-safe) | [05-performance-profiling.md](05-performance-profiling.md) | Foundation |
 | Unified Model Tuning Studio (LGBM, CatBoost, XGBoost) | [../02-forecasting/11-unified-model-tuning-v2.md](../02-forecasting/11-unified-model-tuning-v2.md) | Forecasting |
 | Unified Pipeline Orchestrator (full/incremental modes) | — | Integration |

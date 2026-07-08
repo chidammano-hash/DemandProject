@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | JobsTab |
-| **Key Files** | `JobsTab.tsx`, `api/routers/core/jobs.py`, `common/services/job_registry.py`, `common/services/job_scheduler.py`, `sql/020_create_job_history.sql` |
+| **Key Files** | `JobsTab.tsx`, `api/routers/core/jobs.py`, `common/services/job_registry.py`, `common/services/job_scheduler.py`, `sql/020_create_job_history.sql`, `common/services/pg_queue.py`, `scripts/ops/pg_queue_worker.py`, `sql/183_create_pg_queue.sql` |
 
 ---
 
@@ -103,6 +103,57 @@ On application restart, `recover_stale_jobs()` performs PID-aware recovery:
 |---|---|---|
 | `job_history` | Persistent job execution log | `job_id`, `job_type`, `group_name`, `status`, `params` (JSONB), `result` (JSONB), `error`, `pid` (INTEGER), `log` (TEXT), `started_at`, `completed_at`, `duration_seconds` |
 | `job_schedule` | Recurring schedule definitions | `schedule_id`, `job_type`, `cron_expression`, `interval_seconds`, `enabled`, `last_run_at`, `next_run_at` |
+
+---
+
+## Long-Running Jobs: pg-queue
+
+APScheduler hosts every job inside the API process's own `ThreadPoolExecutor`, which is fine for a job that finishes in minutes but becomes a liability for one that runs for hours: the API process has to stay up for the job's entire duration, and only one process can host that executor, so there's no way to add worker capacity horizontally. `common/services/pg_queue.py` is a minimal Postgres-backed job queue (Item 22 pilot) that decouples *scheduling* from *execution* for exactly that class of job. It is not a replacement for APScheduler - it is the cutover surface for long-running, restart-survivable, multi-instance-safe jobs, sitting alongside the `JobManager` documented above.
+
+### The Queue Table
+
+`job_queue` (`sql/183_create_pg_queue.sql`) holds one row per job. `status` moves through `pending` -> `claimed` -> `running` -> `completed`/`failed`, and workers claim the next due row with `SELECT ... FOR UPDATE SKIP LOCKED` - Postgres's canonical primitive for letting multiple workers race for work without blocking each other.
+
+| Column | Purpose |
+|---|---|
+| `status` | `pending` \| `claimed` \| `running` \| `completed` \| `failed` |
+| `priority` | Lower runs first (default 100) |
+| `run_at` | Job becomes eligible to be claimed at/after this time |
+| `attempts` / `max_attempts` | Retry bookkeeping (default `max_attempts=3`) |
+| `claimed_by` | `<hostname>:<pid>` of the claiming worker, overridable via `PG_QUEUE_WORKER_ID` |
+| `result` / `last_error` | JSONB result on success, truncated error text on failure |
+
+A failed job is re-enqueued with exponential backoff (`requeue_failed_with_backoff`: 60s, 120s, 240s... capped at 1 hour) until `attempts` reaches `max_attempts`, at which point it is a dead-letter.
+
+### The Worker
+
+`scripts/ops/pg_queue_worker.py` is a long-lived polling process that runs independently of the API:
+
+```
+uv run python scripts/ops/pg_queue_worker.py [--types TYPE ...] [--poll-interval SECONDS]
+```
+
+It polls `job_queue` (default every 5 seconds), claims the next due job, and dispatches it to a handler from its `HANDLERS` table. Handlers delegate to the same runner functions in `common/services/job_state.py` that APScheduler calls, so a job behaves identically regardless of which system runs it. `SIGTERM`/`SIGINT` trigger a graceful shutdown that lets the in-flight job finish before exiting. One worker process handles one job at a time; run multiple worker instances for parallelism, since `FOR UPDATE SKIP LOCKED` guarantees no two workers claim the same row.
+
+Pilot scope: today only `refresh_intramonth` (the intramonth stockout materialized-view refresh) is routed through pg-queue - its *recurring daily schedule* was cut over from APScheduler's persistent job store; the job type itself remains registered in APScheduler too, so it can still be triggered manually from the Jobs tab. A cron entry-point drops one row into `job_queue` per day; the long-lived worker claims and runs it whenever it is free. That decoupling matters because the refresh previously tied up an APScheduler thread for 7-20 hours.
+
+| Command | What It Does |
+|---|---|
+| `make pg-queue-worker` | Run a pg-queue worker (long-running; handles `refresh_intramonth`) |
+| `make pg-queue-enqueue-recurring` | Enqueue the recurring `refresh_intramonth` job (cron entry-point) |
+| `make pg-queue-depth` | Show queue depth grouped by status (diagnostic) |
+
+### Decision Rule: pg-queue vs. APScheduler
+
+APScheduler (the `JobManager` documented above) stays the default for new jobs - it is where the Jobs tab dashboard, live progress bars, log streaming, and per-group concurrency all live. Route a job to pg-queue instead when it needs any of the following, which APScheduler does not provide:
+
+| Requirement | Why pg-queue |
+|---|---|
+| Runs for hours, not minutes | The API process no longer has to stay alive for the job's whole duration |
+| Must survive an API restart/redeploy cleanly | Work lives in `job_queue`, not in-memory state PID-recovered by `recover_stale_jobs()` |
+| Needs multiple worker processes for throughput | `FOR UPDATE SKIP LOCKED` is safe for concurrent claims; APScheduler's executor is single-process |
+
+`_run_etl_pipeline`'s docstring in `common/services/job_state.py` states the rule directly: a `full` reload of large fact tables "can exceed the APScheduler comfort window," and for very large datasets should route to the pg-queue worker instead, while the incremental `refresh` mode stays on APScheduler because it is short. In short - if a new job is a quick, UI-triggered, monitorable task, it belongs on APScheduler; if it is a multi-hour batch job that must keep running whether or not the API process does, it belongs on pg-queue.
 
 ---
 

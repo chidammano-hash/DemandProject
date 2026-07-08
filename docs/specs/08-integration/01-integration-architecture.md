@@ -1,10 +1,10 @@
 # Integration Architecture
 
-> Connects Supply Chain Command Center to external systems through four integration vectors: notifications, REST API consumers, cloud data pipelines, and ERP/WMS adapters.
+> Connects Supply Chain Command Center to external systems through two shipped integration vectors - notifications and REST API consumers - plus two proposed vectors not yet implemented: cloud data pipelines and ERP/WMS adapters.
 
 | | |
 |---|---|
-| **Status** | Implemented |
+| **Status** | Partial - Vectors 1-2 (Notifications, REST API Consumers) implemented; Vectors 3-4 (Cloud Data Pipelines, ERP/WMS) proposed, not yet implemented |
 | **UI Tab** | N/A (infrastructure layer) |
 | **Key Files** | `common/services/notification_engine.py`, `common/services/rate_limiter.py`, `common/services/webhook_dispatcher.py`, `api/routers/platform/webhooks.py`, `api/routers/platform/notifications.py` |
 
@@ -16,7 +16,7 @@ Supply Chain Command Center runs as a standalone application. Planners cannot re
 
 ## Solution
 
-Four independently deployable integration vectors connect the platform to external systems. Each vector reuses the existing job scheduler, YAML config pattern, and API key auth. Notifications push alerts outbound. REST API governance controls external consumers. Cloud connectors replace CSV-based ETL. ERP adapters handle bidirectional data exchange with enterprise systems.
+Two integration vectors are shipped today; two more are proposed for a future phase. Each reuses (or would reuse) the existing job scheduler, YAML config pattern, and API key auth. Notifications push alerts outbound. REST API governance controls external consumers. The proposed cloud connectors would replace CSV-based ETL, and the proposed ERP adapters would handle bidirectional data exchange with enterprise systems - neither is implemented yet.
 
 ## How It Works
 
@@ -31,12 +31,14 @@ Four independently deployable integration vectors connect the platform to extern
 ### Vector 2 -- REST API Consumers
 
 1. External apps authenticate with API key (`X-API-Key` header)
-2. Token bucket rate limiter enforces per-client request limits (default 100 req/min)
+2. Sliding-window rate limiter enforces per-client-IP request limits on write endpoints (POST/PUT/DELETE; default 300 req/min for the standard tier)
 3. CORS origins loaded from config (localhost:5173 always included as baseline)
 4. Webhook registrations allow external systems to subscribe to platform events
 5. Outbound webhooks are signed with HMAC-SHA256 for payload verification
 
-### Vector 3 -- Cloud Data Pipeline Connectors
+### Vector 3 - Cloud Data Pipeline Connectors (Proposed, not yet implemented)
+
+**Status: proposed.** No `CloudConnector` base class or Snowflake/BigQuery/S3/Databricks integration exists in the codebase today. The steps below describe the intended design for a future phase, not shipped behavior.
 
 1. Abstract `CloudConnector` base class with concrete implementations per platform
 2. Supported: Snowflake, Google BigQuery, AWS S3 (Parquet/CSV), Databricks
@@ -45,7 +47,9 @@ Four independently deployable integration vectors connect the platform to extern
 5. Incremental load via watermark column avoids full reloads
 6. Cloud connectors are optional installs -- missing packages raise clear install instructions
 
-### Vector 4 -- ERP / WMS Integration
+### Vector 4 - ERP / WMS Integration (Proposed, not yet implemented)
+
+**Status: proposed.** No `ERPAdapter` base class or SAP/Oracle/NetSuite/Manhattan integration exists in the codebase today. The steps below describe the intended design for a future phase, not shipped behavior.
 
 1. Abstract `ERPAdapter` base class with per-system implementations
 2. Supported: SAP S/4HANA (OData), Oracle Fusion (REST/OAuth2), NetSuite (SuiteTalk), Manhattan WMS (REST/SFTP)
@@ -55,12 +59,12 @@ Four independently deployable integration vectors connect the platform to extern
 
 ## Priority Order
 
-| # | Vector | Effort | Rationale |
-|---|---|---|---|
-| 1 | Notifications & Alerting | Low | No infra deps; unblocks AI agent alerting |
-| 2 | REST API Consumers | Medium | Needs CORS + rate limiting; enables partner integrations |
-| 3 | Data Pipeline Connectors | Medium | Replaces CSV ETL; enables cloud-scale ingest/export |
-| 4 | ERP / WMS Integration | High | Adapter per system; depends on vectors 1-3 |
+| # | Vector | Status | Effort | Rationale |
+|---|---|---|---|---|
+| 1 | Notifications & Alerting | Implemented | Low | No infra deps; unblocks AI agent alerting |
+| 2 | REST API Consumers | Implemented | Medium | Needs CORS + rate limiting; enables partner integrations |
+| 3 | Data Pipeline Connectors | Proposed | Medium | Replaces CSV ETL; enables cloud-scale ingest/export |
+| 4 | ERP / WMS Integration | Proposed | High | Adapter per system; depends on vectors 1-3 |
 
 ## Event Types
 
@@ -77,14 +81,14 @@ Four independently deployable integration vectors connect the platform to extern
 
 ## Configuration
 
-Each vector has its own config file:
+Each implemented vector has its own config file. The proposed vectors (3 and 4) have no config file, since no code reads one yet:
 
 | Vector | Config File |
 |---|---|
 | Notifications | `config/platform/notification_config.yaml` |
-| API Consumers | `config/api_governance_config.yaml` |
-| Data Pipelines | `config/data_pipeline_config.yaml` |
-| ERP Integration | `config/erp_config.yaml` |
+| API Consumers | Rate limiting and versioning config lives in `config/platform/auth_config.yaml` under the `governance:` block - see [API Governance](./09-api-governance.md) |
+| Data Pipelines (proposed) | Not yet implemented - no config file exists |
+| ERP Integration (proposed) | Not yet implemented - no config file exists |
 
 All secrets use `${ENV_VAR}` references -- never stored in YAML.
 
@@ -97,15 +101,15 @@ All secrets use `${ENV_VAR}` references -- never stored in YAML.
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | Notifications | Email relay credentials |
 | `PAGERDUTY_INTEGRATION_KEY` | Notifications | PagerDuty Events API key |
 | `WEBHOOK_SIGNING_SECRET` | API Consumers | HMAC signing secret for outbound webhooks |
-| `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD` | Data Pipelines | Snowflake connection |
-| `SAP_ODATA_BASE_URL`, `SAP_USER`, `SAP_PASSWORD` | ERP | SAP S/4HANA connection |
+| `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD` | Data Pipelines (proposed) | Snowflake connection - not read by any code today |
+| `SAP_ODATA_BASE_URL`, `SAP_USER`, `SAP_PASSWORD` | ERP (proposed) | SAP S/4HANA connection - not read by any code today |
 
 ## Dependencies
 
 - Vector 1 (Notifications): No external deps beyond `httpx`
 - Vector 2 (API Consumers): No external deps (stdlib `threading`, `hmac`)
-- Vector 3 (Data Pipelines): Optional `snowflake-connector-python`, `google-cloud-bigquery`, `boto3`, `databricks-sql-connector`
-- Vector 4 (ERP): Optional `pyrfc` (SAP RFC), `requests-oauthlib` (NetSuite OAuth 1.0a)
+- Vector 3 (Data Pipelines, proposed): would require `snowflake-connector-python`, `google-cloud-bigquery`, `boto3`, `databricks-sql-connector` - none installed today
+- Vector 4 (ERP, proposed): would require `pyrfc` (SAP RFC), `requests-oauthlib` (NetSuite OAuth 1.0a) - none installed today
 
 ## See Also
 

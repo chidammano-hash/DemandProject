@@ -477,18 +477,22 @@ Templates define the data queries, layout, and output format (PDF/CSV/Excel).
 
 ### 8a.8 Rate limiting (Spec 08-09)
 
-Configure rate limits in `config/api_governance_config.yaml`:
+Configure rate limits in `config/platform/auth_config.yaml`'s `governance:` block
+(`api_governance_config.yaml` was merged into it - see that file's own comment). The middleware
+is sliding-window, not token-bucket, applies only to POST/PUT/DELETE (GETs are unlimited), and
+only ever reads the `standard` tier (`api/main.py` calls `get_tier_limit("standard")` -
+`free`/`premium` are defined in config but unused):
 
 ```yaml
-rate_limiting:
-  enabled: true
-  default_limit: "100/minute"
-  burst_limit: "20/second"
-  per_endpoint:
-    /ai-planner/portfolio-scan: "5/hour"
-  per_user: true          # Apply limits per authenticated user (vs global)
-  backend: "memory"       # "memory" or "redis" (for multi-worker deployments)
+governance:
+  rate_limit_tiers:                      # Per-tier request quotas; only "standard" is read at runtime
+    standard:
+      requests_per_minute: 300           # Enforced by IP, POST/PUT/DELETE only
 ```
+
+There are no per-endpoint overrides, no `X-RateLimit-*` response headers, and no per-user limiting
+today - limiting is per-IP only. `deprecation.sunset_header` and `versioning.current_version` are
+config-only fields with no enforcement code reading them yet.
 
 When rate limited, the API returns HTTP 429 with `Retry-After` header. Limits are applied per authenticated user when `per_user: true`; otherwise globally.
 

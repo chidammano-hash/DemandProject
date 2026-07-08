@@ -1,30 +1,30 @@
 # Role-Based Access Control
 
-> Controls who can do what in Supply Chain Command Center through JWT authentication (JSON Web Tokens) and role-permission mappings.
+> Controls who can do what in Supply Chain Command Center through JWT authentication (JSON Web Tokens) and a hierarchical role-level check (`require_role`).
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `api/routers/platform/auth_router.py`, `api/routers/platform/users.py`, `api/auth.py`, `config/platform/auth_config.yaml` |
+| **Key Files** | `api/routers/platform/auth_router.py`, `api/routers/platform/users.py`, `common/auth.py`, `api/auth.py`, `config/platform/auth_config.yaml` |
 
 ---
 
 ## Problem
 
-Without access control, every user can run jobs, change policies, and modify forecasts. There is no way to limit analyst access to read-only, restrict job execution to planners, or audit who changed what. In a multi-user planning team, this creates risk of accidental or unauthorized changes.
+Without access control, every user can run jobs, change policies, and modify forecasts. There is no way to limit viewers to read-only, restrict job execution to planners and above, or audit who changed what. In a multi-user planning team, this creates risk of accidental or unauthorized changes.
 
 ## Solution
 
-A JWT-based authentication layer with four predefined roles (admin, planner, analyst, viewer). Users log in with email and password, receive a token, and the system checks role-permission mappings on every request. All mutations (changes to data) are logged to an audit trail. The existing API key auth (`X-API-Key` header) remains for backward compatibility -- RBAC is additive.
+A JWT-based authentication layer with four hierarchical roles: `viewer` < `planner` < `manager` < `admin`. Users log in with email and password, receive a token, and the system checks the caller's role level against the minimum level required for the endpoint on every gated request. All mutations (changes to data) are logged to an audit trail. The existing API key auth (`X-API-Key` header) remains for backward compatibility - RBAC is additive.
 
 ## How It Works
 
 1. User submits email + password to `POST /auth/login`
 2. Server verifies password (bcrypt hash), issues a JWT access token (30 min) and refresh token (7 days)
 3. Client includes `Authorization: Bearer <token>` on subsequent requests
-4. FastAPI dependency extracts the token, checks role membership against the permission matrix
-5. If the user's role lacks the required permission, the request is rejected with 401
+4. `require_role(min_role)` (`common/auth.py`) decodes the token via the `get_current_user` dependency, looks up the caller's role level in `role_level` (`config/platform/auth_config.yaml`), and compares it against the minimum level required for the endpoint
+5. If the caller's role level is below the endpoint's minimum, the request is rejected with 403; a missing or invalid token is rejected with 401
 6. Refresh tokens allow seamless token renewal without re-entering credentials
 7. All mutations are written to `fact_audit_log` with user ID, action, resource, and timestamp
 
@@ -38,18 +38,12 @@ A JWT-based authentication layer with four predefined roles (admin, planner, ana
 | `email` | `TEXT UNIQUE` | Login email address |
 | `display_name` | `TEXT` | User's display name |
 | `password_hash` | `TEXT` | bcrypt-hashed password |
-| `role` | `TEXT` | Role name (default: `viewer`) |
+| `role` | `user_role` (ENUM) | One of `viewer`, `planner`, `manager`, `admin` (default: `viewer`) |
 | `is_active` | `BOOLEAN` | Soft-delete flag |
 | `created_at` | `TIMESTAMPTZ` | Account creation time |
 | `last_login_at` | `TIMESTAMPTZ` | Most recent login |
 
-### `dim_role`
-
-| Column | Type | Description |
-|---|---|---|
-| `role_name` | `TEXT PK` | Role identifier |
-| `permissions` | `TEXT[]` | Array of permission strings |
-| `description` | `TEXT` | Human-readable role description |
+There is no `dim_role` table. Roles are a fixed Postgres enum (`user_role`, defined in `sql/062_create_users_rbac.sql`), not a data-driven lookup table, and the hierarchy between them lives in `role_level` in `config/platform/auth_config.yaml` (see "Roles and Hierarchy" below) rather than in a `permissions` column.
 
 ### `fact_audit_log`
 
@@ -64,14 +58,18 @@ A JWT-based authentication layer with four predefined roles (admin, planner, ana
 | `ip_address` | `INET` | Client IP |
 | `created_at` | `TIMESTAMPTZ` | When the action occurred |
 
-## Roles and Permissions
+## Roles and Hierarchy
 
-| Role | Permissions | Typical User |
+Roles are ordered, not a flat permission-string array. Each role's numeric level is defined in `role_level` (`config/platform/auth_config.yaml`), and a role implicitly has access to everything a lower-level role has:
+
+| Role | Level | Typical User |
 |---|---|---|
-| `admin` | `*` (everything) | System administrator |
-| `planner` | `read`, `write:forecast`, `write:policy`, `write:exceptions`, `run:jobs` | Supply chain planner |
-| `analyst` | `read`, `run:jobs` | Supply chain analyst |
-| `viewer` | `read` | Executive, stakeholder |
+| `viewer` | 1 (lowest) | Executive, stakeholder - read-only access |
+| `planner` | 2 | Supply chain planner - can create/edit forecasts, policies, exceptions |
+| `manager` | 3 | Supply chain manager - can approve/delete, plus everything a planner can |
+| `admin` | 4 (highest) | System administrator - full access, including user management |
+
+Endpoints declare a minimum role with `require_role(min_role)` (`common/auth.py`). A caller passes only if their role's level is greater than or equal to the endpoint's minimum level; otherwise the request is rejected with 403. For example, `api/routers/intelligence/external_signals.py` gates its manual source-refresh endpoint with `Depends(require_role("manager"))`, so `manager` and `admin` users can trigger a refresh but `planner` and `viewer` users cannot.
 
 ## API
 
@@ -93,23 +91,18 @@ A JWT-based authentication layer with four predefined roles (admin, planner, ana
 
 ```yaml
 jwt:
-  secret_key_env: "JWT_SECRET_KEY"
-  algorithm: "HS256"
-  access_token_expires_minutes: 30
-  refresh_token_expires_days: 7
-roles:
-  admin:
-    permissions: ["*"]
-  planner:
-    permissions: ["read", "write:forecast", "write:policy", "write:exceptions", "run:jobs"]
-  analyst:
-    permissions: ["read", "run:jobs"]
-  viewer:
-    permissions: ["read"]
-default_role: viewer
+  algorithm: HS256
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+
+role_level:
+  viewer: 1                              # Level 1 - lowest privilege
+  planner: 2                             # Level 2 - can create/edit
+  manager: 3                             # Level 3 - can approve/delete
+  admin: 4                               # Level 4 - full system access
 ```
 
-JWT secret is loaded from the `JWT_SECRET_KEY` environment variable. In development, it is auto-generated if unset.
+JWT secret is loaded from the `JWT_SECRET` environment variable (`common/auth.py`). If `JWT_SECRET` is unset, `common/auth.py` falls back to a hardcoded insecure default and logs a warning - it is not auto-generated - so `JWT_SECRET` must be set explicitly in any non-dev environment.
 
 ## Dependencies
 

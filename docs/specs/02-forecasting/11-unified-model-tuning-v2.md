@@ -35,6 +35,7 @@
 15. [Acceptance Criteria](#acceptance-criteria)
 16. [Pre-Implementation Blockers](#pre-implementation-blockers)
 17. [Gap Report & Fixes (Expert Review)](#gap-report--fixes-expert-review)
+18. [Carried Forward from Feature 45 (10b-lgbm-tuning)](#carried-forward-from-feature-45-10b-lgbm-tuning)
 
 ---
 
@@ -2032,3 +2033,102 @@ The following test cases were identified as missing from Section 13 and must be 
 4. **Backward compatibility strategy** — Legacy endpoints preserved as aliases
 5. **Execution-lag as first-class dimension** — Global filter affecting all views
 6. **Promotion audit trail** — Full lineage with previous_run_id tracking
+
+---
+
+## Carried Forward from Feature 45 (10b-lgbm-tuning)
+
+This spec (Feature 11) replaced the pre-rewrite tuning spec (`10b-lgbm-tuning.md`, Feature 45),
+which has since been deleted. The sections below fold forward the parts of that spec that are
+still accurate and not otherwise covered above - most directly, Gap #17 above notes that the
+Cluster EDA and Feature Lab sub-tabs are "carried forward from Feature 45 - defer to existing
+implementation"; this section **is** that existing-implementation reference.
+
+### Running Multiple Tuning Experiments
+
+There are four ways to run tuning experiments, from simplest to most sophisticated:
+
+1. **Auto-Tune Campaign** (CLI, batch) - runs predefined strategies from
+   `config/forecasting/tune_strategies.yaml` (organized by model key: `lgbm`, `catboost`, `xgboost`).
+   Each strategy overrides specific params, runs a full backtest, registers the result, and prints a
+   leaderboard. `uv run python scripts/ml/auto_tune.py --model <lgbm|catboost|xgboost> --runs N`, or
+   `make lgbm-auto-tune RUNS=N` / `make lgbm-auto-tune-promote RUNS=N` for LGBM. Also seedable via
+   `uv run python scripts/ml/seed_model_tuning.py`.
+2. **Manual Single Run** (CLI) - edit `algorithms.<model_id>.params` in
+   `forecast_pipeline_config.yaml`, run the model's backtest, then register and compare via
+   `uv run python scripts/ml/compare_backtest_runs.py --register-latest --label "..."` and
+   `--compare --baseline <id> --candidate <id>`.
+3. **AI Tuning Advisor** (interactive, UI) - see below.
+4. **Sampled Fast Iteration** (API) - stratified DFU sampling runs a backtest in ~3 min instead of
+   ~25 min (±1-2pp deviation from a full backtest). `POST /lgbm-tuning/sampled/preview` previews the
+   sample allocation; `POST /lgbm-tuning/sampled/run` triggers a sampled run with optional
+   `param_overrides`; `GET /lgbm-tuning/sampled/strata` returns cluster-level DFU counts and demand
+   stats. Implemented in `api/routers/forecasting/sampled_backtest.py` (backed by
+   `common/ml/backtest_sampler.py`). Sampling methods: `proportional` (by cluster size), `equal`
+   (same per cluster), `sqrt` (square-root allocation).
+
+### AI Tuning Chat
+
+An interactive AI-powered chat panel embedded in the Model Tuning tab (the "AI Advisor Integration"
+referenced in Section 4.4.2). The advisor reviews previous runs, identifies patterns across clusters
+and timeframes, recommends parameter changes, and - with user confirmation - kicks off new backtest
+runs, all within a conversational interface.
+
+- **Agent:** `common/ai/tuning_advisor.py`, provider-agnostic (OpenAI/Anthropic via config), agentic
+  tool-use loop with `MAX_TURNS=20`, `TOKEN_BUDGET=50,000`, a 40-message sliding context window (first
+  3 + last 37), and per-turn logging to `ai_call_log`.
+- **Tools (7):** `list_tuning_runs`, `get_run_detail`, `compare_runs`, `analyze_cluster_patterns`,
+  `get_current_config`, `recommend_params`, `check_run_status`.
+- **Database:** `sql/096_create_tuning_chat.sql` - `tuning_chat_session` (session metadata, cached
+  run-summary context) and `tuning_chat_message` (role: user/assistant/system; message_type:
+  text/recommendation/run_started/run_completed/run_failed/analysis/error).
+- **API** (`api/routers/forecasting/tuning_chat.py`, still on the legacy `/lgbm-tuning/chat/*` prefix
+  - not migrated to `/model-tuning/{model}/*`):
+
+  | Method | Endpoint | Purpose |
+  |---|---|---|
+  | POST | `/lgbm-tuning/chat/sessions` | Create a new session, seeded with run-summary context |
+  | GET | `/lgbm-tuning/chat/sessions` | List sessions (active/archived) with message count |
+  | GET | `/lgbm-tuning/chat/sessions/{id}` | Get session + full message history |
+  | POST | `/lgbm-tuning/chat/sessions/{id}/messages` | Send a user message → synchronous AI response |
+  | POST | `/lgbm-tuning/chat/sessions/{id}/confirm-run` | Confirm a recommendation → trigger async backtest |
+  | GET | `/lgbm-tuning/chat/sessions/{id}/run-status/{run_id}` | Poll run completion status |
+
+  Safety guards: `max_concurrent_runs=1` (409 on conflict), `min_seconds_between_runs=300`,
+  `require_confirmation=true`.
+- **Frontend:** `TuningChatPanel` (session management, message list, input area), `RecommendationCard`
+  (parameter overrides + expected impact + risk, with Confirm & Run / Reject), `RunStatusCard` (polls
+  run status), `SessionList`. Integrated as a collapsible section in `LgbmTuningTab.tsx`, toggled by an
+  "AI Tuning Advisor" button.
+
+### Analysis Sub-Tabs (Cluster EDA, Feature Lab, Accuracy Budget, Sampled Backtest)
+
+Beyond the Experiments and Comparison sub-tabs specified above, the tab includes:
+
+- **Cluster EDA:** cluster profiles (mean demand, CV, zero %, seasonal amplitude, accuracy), error
+  concentration by cluster/month, demand-value histograms per cluster, a month-by-cluster accuracy
+  seasonality heatmap.
+- **Feature Lab:** SHAP-based feature-importance ranking (top 30), cross-fold feature-rank stability
+  (stable/moderate/unstable), a feature-correlation matrix (flags `|r| > 0.9`), per-cluster feature
+  importance.
+- **Accuracy Budget:** accuracy waterfall (naive baseline → ML model → oracle ceiling), gap
+  decomposition (intermittent demand, seasonality, new products), ABC-class accuracy vs. targets,
+  monthly accuracy trend, side-by-side model comparison.
+- **Sampled Backtest:** strata preview (cluster-level DFU counts/stats), sample-allocation preview,
+  and the "Quick Runs" trigger for the ~3-minute sampled backtests described above.
+
+### Verdict Logic
+
+The `improved` / `degraded` / `mixed` verdict returned by the compare endpoints:
+
+```
+IF delta_accuracy > 0.0 AND delta_wape < 0.0:
+    verdict = "improved"
+ELIF delta_accuracy < 0.0 AND delta_wape > 0.0:
+    verdict = "degraded"
+ELSE:
+    verdict = "mixed"
+```
+
+A "mixed" verdict occurs when, for example, accuracy improves but bias worsens significantly -
+review the per-timeframe/per-lag breakdown to make a judgment call.

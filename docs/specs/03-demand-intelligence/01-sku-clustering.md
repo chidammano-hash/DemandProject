@@ -915,7 +915,7 @@ scikit-learn, pandas, numpy, scipy, matplotlib, seaborn, MLflow
 ## See Also
 
 - [02-sku-feature-engineering](../03-demand-intelligence/02-sku-feature-engineering.md) -- Seasonality detection + demand variability profiling (complementary demand pattern analysis)
-- [../02-forecasting/06-algorithm-config](../02-forecasting/06-algorithm-config.md) -- `cluster_strategy` config key
+- [../02-forecasting/19-forecast-pipeline-config](../02-forecasting/19-forecast-pipeline-config.md) -- `cluster_strategy` config key
 - [../07-user-experience/04-job-scheduler](../07-user-experience/04-job-scheduler.md) -- Background scenario execution
 - [../02-forecasting/11-unified-model-tuning-v2](../02-forecasting/11-unified-model-tuning-v2.md) -- Algorithm tuning studio (cluster source selector)
 - [../02-forecasting/13-production-baseline-seeding](../02-forecasting/13-production-baseline-seeding.md) -- Auto-seeds production baselines

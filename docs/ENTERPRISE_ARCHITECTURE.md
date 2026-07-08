@@ -43,7 +43,7 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 
 | # | Strategic Goal | Platform Capability |
 |---|---|---|
-| SG-1 | Unify demand sensing, forecasting, and inventory planning into one analytical platform | 10 data domains, 6 dimension tables, 4 fact tables, 35+ materialized views serving 25 interactive UI tabs |
+| SG-1 | Unify demand sensing, forecasting, and inventory planning into one analytical platform | 10 data domains, 6 dimension tables, 4 fact tables, 28 materialized views serving 21 interactive UI tabs |
 | SG-2 | Replace manual Excel-based planning workflows with ML-driven decision support | 3 tree-based ML models (LightGBM, CatBoost, XGBoost) with automated champion selection across 5 strategies |
 | SG-3 | Reduce forecast error through automated model selection and ensemble methods | Expanding-window backtest (10 timeframes), 31-expert panel testing 30+ algorithms, champion accuracy 75.24% |
 | SG-4 | Optimize inventory investment by balancing service levels against working capital | Safety stock (Z-score + Monte Carlo), EOQ, 4 replenishment policy types, efficient frontier optimization |
@@ -55,17 +55,12 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | Metric | Value |
 |---|---|
 | Data Domains | 10 (item, location, customer, time, sku, sales, forecast, inventory, sourcing, purchase_order) |
-| Database Tables | ~87 (6 dimension, 4 fact, 35+ materialized views, 40+ planning/config, 2 candidate/promotion) |
 | Total Database Rows | 349.8M+ (198M in inventory snapshots alone) |
 | DFU Count | 112,000+ demand forecast units |
-| API Routers | 70+ mounted routers across 6 domain groups (includes `forecasting/tuning/` package — 15 sub-routers — and `intelligence/customer_analytics/` package — 5 sub-routers) |
-| UI Tabs | 25 lazy-loaded dashboard tabs |
 | ML Models | 3 tree-based + 30+ statistical algorithms |
-| Config Files | 57 YAML configuration files |
-| Design Specs | 75 specifications across 8 business domains |
-| DDL Migrations | 143 sequential SQL migration files (includes new MVs from ADR-016 and weekly-partitioning DDL prep) |
-| Automated Tests | 3,916 (3,042 backend + 874 frontend) |
 | Make Targets | 130+ build/deploy/test/pipeline targets |
+
+Database table/MV, router, UI tab, config-file, design-spec, SQL-migration, and automated-test counts move fast enough that restating them here just drifts out of sync - see ARCHITECTURE.md §25-26 for the current platform overview and feature catalog.
 
 ### 1.4 System Context Diagram
 
@@ -89,8 +84,8 @@ graph TB
     end
 
     subgraph Supply Chain Command Center
-        UI[React UI<br>25 Tabs]
-        API[FastAPI Backend<br>72 Routers]
+        UI[React UI<br>21 Tabs]
+        API[FastAPI Backend<br>83 Routers]
         ML[ML Pipeline<br>LGBM/CatBoost/XGBoost]
         ETL[ETL Pipeline<br>Normalize + Load]
         DB[(PostgreSQL 16<br>349M+ Rows)]
@@ -151,12 +146,12 @@ graph TB
 
 | # | Principle | Rationale | Implication | Codebase Evidence |
 |---|---|---|---|---|
-| AP-1 | **Configuration over Code** | Zero hardcoded thresholds; all parameters must be tunable without code changes | Every module has a corresponding YAML config file loaded via `load_config(name)` | 57 YAML files in `config/` |
+| AP-1 | **Configuration over Code** | Zero hardcoded thresholds; all parameters must be tunable without code changes | Every module has a corresponding YAML config file loaded via `load_config(name)` | 43 YAML files in `config/` |
 | AP-2 | **Domain-Driven Generic Design** | Reduce per-dataset duplication; single code path for new domains | All datasets extend `DomainSpec` dataclass (frozen, immutable) in `common/core/domain_specs.py` | 10 domain specs driving generic CRUD |
 | AP-3 | **Explicit over Implicit** | Planning date must be reproducible, not derived from system clock | All date-sensitive code uses `get_planning_date()`, never `date.today()` | `common/core/planning_date.py` |
-| AP-4 | **Test-First Development** | 3,916 tests ensure regression safety across 174 backend + 111 frontend test files | Every feature ships with tests; every removed feature removes its tests | `tests/` (pytest), `frontend/src/**/__tests__/` (vitest) |
+| AP-4 | **Test-First Development** | 5,597 tests ensure regression safety across 251 backend + 165 frontend test files | Every feature ships with tests; every removed feature removes its tests | `tests/` (pytest), `frontend/src/**/__tests__/` (vitest) |
 | AP-5 | **Raw SQL over ORM** | Full control over PostgreSQL features (partitions, MVs, CTEs, window functions) | psycopg3 with `%s` placeholders; no SQLAlchemy ORM layer | `api/core.py`, all router files |
-| AP-6 | **Separation of Compute and Serve** | Heavy ML pipelines must not block API request paths | Scripts populate tables; API reads from pre-computed tables and materialized views | `scripts/` (55+ scripts) vs `api/routers/` (72 routers) |
+| AP-6 | **Separation of Compute and Serve** | Heavy ML pipelines must not block API request paths | Scripts populate tables; API reads from pre-computed tables and materialized views | `scripts/` (55+ scripts) vs `api/routers/` (83 routers) |
 | AP-7 | **Graceful Degradation** | Optional features (GPU, Redis, AI APIs) must not crash the system when unavailable | Feature detection with fallback paths for every optional dependency | `DEMAND_GPU` env var, Redis optional in cache, Google Search fallback |
 | AP-8 | **Review + Refactor at Each Step** | Multi-step changes accumulate cruft (oversold ADRs, copy-paste config, drift between layers) when each step is only validated against "did it run?". Review the work product after every step and refactor on the spot before moving on. | Each step in a multi-step task ends with: re-read what was just produced, verify it captures the decision/rationale/tradeoffs honestly (no overselling), and refactor if it doesn't. Applies to ADRs, code edits, and config changes alike. | This session's perf roadmap edits — each ADR re-read after authoring; ADR-013 wording corrected mid-flight. |
 
@@ -172,7 +167,7 @@ graph TB
 | Inventory Planning | Safety stock, EOQ, 4 replenishment policies, exception queue, fill rate, rebalancing | 11 |
 | Operations | S&OP 6-stage cycle, financial planning, event calendar, scenario planning | 4 |
 | AI & Decision Support | Claude planning agent, market intelligence, control tower, storyboard | 4 |
-| User Experience | 25 lazy-loaded tabs, global filters, theming, job scheduler UI | 6 |
+| User Experience | 21 lazy-loaded tabs, global filters, theming, job scheduler UI | 6 |
 | Integration | JWT + RBAC, notifications (4 channels), webhooks (HMAC-SHA256), API governance | 10 |
 
 **Non-Functional Constraints**:
@@ -185,13 +180,15 @@ graph TB
 | Rate Limiting | Sliding window, 100 req/min standard tier | Protect API from abuse without impacting interactive use |
 | JWT Token Expiry | Access: 30 min, Refresh: 7 days | Balance security with user convenience |
 | AI Circuit Breakers | 40 turns, 100K tokens, $10M financial cap | Prevent runaway AI agent cost/latency |
-| Test Coverage | 3,916 tests mandatory passing | Every PR must pass `make test-all` |
+| Test Coverage | 5,597 tests mandatory passing | Every PR must pass `make test-all` |
 
 ---
 
 ## 3. Business Architecture (Phase B)
 
 ### 3.1 Business Capability Model
+
+The tree below groups platform capabilities by TOGAF Phase B business capability, not by implementation module - for current feature-level detail and counts, see ARCHITECTURE.md §25-26.
 
 ```
 Supply Chain Command Center
@@ -280,7 +277,7 @@ Supply Chain Command Center
 │
 ├── L1: USER EXPERIENCE
 │   ├── L2: Interactive Analytics
-│   │   └── 25 lazy-loaded tabs, Recharts + ECharts visualization
+│   │   └── 21 lazy-loaded tabs, Recharts + ECharts visualization
 │   ├── L2: Data Explorer
 │   │   └── Type-aware filtering, pagination, CSV export, full-text search
 │   ├── L2: Job Automation
@@ -732,8 +729,8 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 
 | # | Component | Technology | Purpose | Key Files |
 |---|---|---|---|---|
-| 1 | **FastAPI Backend** | Python, FastAPI, Uvicorn | REST API serving 72 routers | `api/main.py`, `api/routers/` |
-| 2 | **React Frontend** | React 18, Vite, TypeScript | 25 lazy-loaded interactive tabs | `frontend/src/` |
+| 1 | **FastAPI Backend** | Python, FastAPI, Uvicorn | REST API serving 83 routers | `api/main.py`, `api/routers/` |
+| 2 | **React Frontend** | React 18, Vite, TypeScript | 21 lazy-loaded interactive tabs | `frontend/src/` |
 | 3 | **ETL Pipeline** | Python scripts, Make | Data normalization + loading for 10 domains | `scripts/etl/` |
 | 4 | **ML Pipeline** | scikit-learn, LightGBM, CatBoost, XGBoost | Training, backtesting, champion selection | `scripts/ml/`, `common/ml/` |
 | 5 | **Forecasting Pipeline** | Python scripts | Production forecast, consensus, blended demand | `scripts/forecasting/` |
@@ -743,6 +740,8 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 | 9 | **Notification Engine** | Python adapters | Multi-channel alert delivery | `common/services/notification_engine.py` |
 | 10 | **Cache Layer** | In-memory LRU + Redis | Multi-tier response caching with TTL | `common/services/cache.py` |
 | 11 | **ML Tracking** | MLflow v3 | Experiment logging and artifact storage | Docker service, port 5003 |
+
+See ARCHITECTURE.md §25-26 for the current platform overview and feature catalog.
 
 ### 5.2 Application Interaction Matrix
 
@@ -761,7 +760,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 ### 5.3 Component Architecture
 
-#### API Layer (70+ Routers)
+#### API Layer (83 Routers)
 
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
@@ -822,8 +821,8 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 | Component | Purpose |
 |---|---|
-| `App.tsx` | 25 lazy-loaded tabs with ErrorBoundary + Suspense wrapping |
-| `AppSidebar.tsx` | 12-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System) |
+| `App.tsx` | 21 lazy-loaded tabs with ErrorBoundary + Suspense wrapping |
+| `AppSidebar.tsx` | 21-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System) |
 | `hooks/useUrlState.ts` | URL state management for tab + filters with history |
 | `hooks/useGlobalFilters.ts` | Global filter bar (brand, category, item, location, market, channel) |
 | `context/ThemeContext.tsx` | Light/dark mode with supply chain theme |
@@ -839,7 +838,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 | Pattern | Implementation | Details |
 |---|---|---|
-| **REST API** | Primary integration | 72 routers serve JSON; pagination offset/limit (50-1000 rows); JWT Bearer or X-API-Key auth |
+| **REST API** | Primary integration | 83 routers serve JSON; pagination offset/limit (50-1000 rows); JWT Bearer or X-API-Key auth |
 | **Webhooks (Outbound)** | HMAC-SHA256 signed | 8 event types: job_completed, forecast_published, insight_created, exception_generated, stockout_alert, threshold_breach, approval_required, data_loaded |
 | **Event-Driven** | Notification engine | Routes events to Slack/Teams/Email/PagerDuty based on severity rules |
 | **File-Based ETL** | CSV ingestion | Source CSVs from ERP dropped to `data/input/`, normalized into `data/staged/`, then loaded via Make targets |
@@ -918,8 +917,8 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | **Reverse Proxy** | Nginx | alpine | Production frontend + API proxy | Adopt |
 | **Package Manager** | uv | latest | Python dependency management | Adopt |
 | **Build System** | Make (GNU) | latest | Task runner (130+ targets) | Adopt |
-| **Backend Testing** | pytest | latest | 3,042 tests | Adopt |
-| **Frontend Testing** | Vitest | 4.0.18 | 874 tests | Adopt |
+| **Backend Testing** | pytest | latest | 4,426 tests | Adopt |
+| **Frontend Testing** | Vitest | 4.0.18 | 1,171 tests | Adopt |
 | **E2E Testing** | Playwright | 1.58.2 | Browser automation tests | Adopt |
 | **Linting** | Ruff | latest | Python linting + formatting | Adopt |
 | **Maps** | Leaflet | 1.9.4 | Geographic visualization | Adopt |
@@ -936,8 +935,8 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │  Vite Dev Server    │     │  FastAPI + Uvicorn   │           │
 │  │  localhost:5173     │────>│  localhost:8000      │           │
 │  │                     │proxy│                      │           │
-│  │  React App + HMR    │     │  72 routers          │           │
-│  │  25 lazy tabs       │     │  GZip + CORS + Auth  │           │
+│  │  React App + HMR    │     │  83 routers          │           │
+│  │  21 lazy tabs       │     │  GZip + CORS + Auth  │           │
 │  └─────────────────────┘     └──────────┬───────────┘           │
 │                                          │                       │
 │  ┌───────────────────────────────────────┼──────────────────┐   │
@@ -1077,7 +1076,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │  PRESENTATION LAYER                                        │  │
 │  │                                                             │  │
 │  │  React 18 + Vite + TypeScript + Tailwind + shadcn/ui       │  │
-│  │  25 lazy-loaded tabs, ErrorBoundary, Suspense              │  │
+│  │  21 lazy-loaded tabs, ErrorBoundary, Suspense              │  │
 │  │  Charts: Recharts (simple) + ECharts (complex)             │  │
 │  │  State: TanStack Query (server) + Context (UI) + URL       │  │
 │  └────────────────────────────────────────────────────────────┘  │
@@ -1094,7 +1093,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │  APPLICATION LAYER                                          │  │
 │  │                                                             │  │
-│  │  FastAPI + Uvicorn (:8000), 72 routers                     │  │
+│  │  FastAPI + Uvicorn (:8000), 83 routers                     │  │
 │  │  Middleware: GZip → CORS → Rate Limiting → Request Logging │  │
 │  │  Auth: JWT Bearer + API Key fallback + RBAC (4 roles)      │  │
 │  │  Validation: Pydantic v2 request/response models           │  │
@@ -1134,7 +1133,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │  INFRASTRUCTURE LAYER                                       │  │
 │  │                                                             │  │
-│  │  PostgreSQL 16 (pgvector) — 349M+ rows, 85+ tables        │  │
+│  │  PostgreSQL 16 (pgvector) — 349M+ rows, 169+ tables        │  │
 │  │  Redis 7 — 256MB cache, allkeys-lru eviction              │  │
 │  │  MLflow v3 — experiment tracking + artifact storage        │  │
 │  │  Docker Compose — service orchestration                    │  │
@@ -1299,7 +1298,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | Vector | Status | Components | Protocol |
 |---|---|---|---|
 | **1. Notifications & Alerting** | Implemented | Slack, Teams, Email, PagerDuty | HTTPS webhooks, SMTP |
-| **2. REST API Consumers** | Implemented | 72 routers, JWT auth, rate limiting | REST/JSON over HTTPS |
+| **2. REST API Consumers** | Implemented | 83 routers, JWT auth, rate limiting | REST/JSON over HTTPS |
 | **3. Cloud Data Pipelines** | Planned | Snowflake, BigQuery, S3, Databricks | Abstract `CloudConnector` |
 | **4. ERP/WMS Integration** | Planned | SAP S/4HANA, Oracle Fusion, NetSuite, Manhattan WMS | Abstract `ERPAdapter` |
 
@@ -1657,7 +1656,7 @@ Every new feature must complete this checklist before merge:
 #### Testing
 - [ ] Backend test in `tests/api/test_<feature>.py`
 - [ ] Frontend test in `src/tabs/__tests__/<Tab>.test.tsx`
-- [ ] Run `make test-all` to verify (3,916 tests must pass)
+- [ ] Run `make test-all` to verify (5,597 tests must pass)
 
 #### Documentation
 - [ ] Update `docs/ARCHITECTURE.md`
@@ -1700,21 +1699,21 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
                 ┌───┴──────────┴───┐
                 │   Integration     │  httpx AsyncClient
                 │   API Tests       │  + ASGITransport
-                │   (~1000 tests)   │  (fully mocked DB)
+                │   (~1,300 tests)  │  (fully mocked DB)
             ┌───┴──────────────────┴───┐
             │   Unit Tests              │  pytest (backend)
             │   + Component Tests       │  vitest (frontend)
-            │   (~2900 tests)           │
+            │   (~4,300 tests)          │
             └──────────────────────────┘
 ```
 
 | Layer | Framework | Count | Speed | Mock Strategy |
 |---|---|---|---|---|
-| Backend Unit | pytest | ~2,042 | ~0.7s total | `make_pool()` factory, `cursor.fetchall.return_value` |
-| Backend API | pytest + httpx | ~1,000 | Included above | `ASGITransport(app)`, `patch("api.core._get_pool")` |
-| Frontend Component | Vitest + RTL | 874 | ~1.5s total | `vi.mock("../api/queries")`, `TestQueryWrapper` |
+| Backend Unit | pytest | ~3,122 | ~0.7s total | `make_pool()` factory, `cursor.fetchall.return_value` |
+| Backend API | pytest + httpx | ~1,304 | Included above | `ASGITransport(app)`, `patch("api.core._get_pool")` |
+| Frontend Component | Vitest + RTL | 1,171 | ~8.6s total | `vi.mock("../api/queries")`, `TestQueryWrapper` |
 | E2E | Playwright | 8 suites | ~30s | Live API on :8000 required |
-| **Total** | | **3,916** | | |
+| **Total** | | **5,597** | | |
 
 **Execution Commands**:
 - `make test` -- Backend pytest (~0.7s, DB mocked)
@@ -1872,23 +1871,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 
 ### 12.3 Design Spec Index
 
-| Domain | Spec # | Title | File |
-|---|---|---|---|
-| **01 Foundation** | 01 | Infrastructure | `docs/specs/01-foundation/01-infrastructure.md` |
-| | 02 | Data Models | `docs/specs/01-foundation/02-data-models.md` |
-| | 03 | Data Quality | `docs/specs/01-foundation/03-data-quality.md` |
-| | 04 | Planning Date | `docs/specs/01-foundation/04-planning-date.md` |
-| | 05 | Performance Profiling | `docs/specs/01-foundation/05-performance-profiling.md` |
-| | 06 | Execution Lag | `docs/specs/01-foundation/06-execution-lag.md` |
-| **02 Forecasting** | 01-17 | Accuracy KPIs through Expert System Backtest | `docs/specs/02-forecasting/` (17 specs) |
-| **03 Demand Intelligence** | 01-05 | Clustering through Champion Experimentation | `docs/specs/03-demand-intelligence/` (5 specs) |
-| **04 Inventory** | 01-11 | Snapshot through Rebalancing | `docs/specs/04-inventory/` (11 specs) |
-| **05 Operations** | 01-04 | S&OP through Scenario Planning | `docs/specs/05-operations/` (4 specs) |
-| **06 AI Platform** | 01-04 | AI Agent through Storyboard | `docs/specs/06-ai-platform/` (4 specs) |
-| **07 User Experience** | 01-06 | Data Explorer through Backtest Cleanup | `docs/specs/07-user-experience/` (6 specs) |
-| **08 Integration** | 01-10 | Integration Architecture through Webhooks | `docs/specs/08-integration/` (10 specs) |
-
-**Total: 63 design specifications across 8 business domains.**
+The full per-domain spec index (90+ specs across 8 business domains) is maintained in `docs/specs/README.md`, not restated here -- a static appendix table drifts out of sync with the live spec count every time a spec is added. See that file for the current domain-by-domain listing.
 
 ### 12.4 Cross-Reference Matrix
 

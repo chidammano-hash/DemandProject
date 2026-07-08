@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (backend only) |
-| **Key Files** | `scripts/clean_backtest_models.py`, `scripts/clean_forecasts_by_date.py` |
+| **Key Files** | `scripts/ml/clean_backtest_models.py`, `scripts/ml/clean_forecasts_by_date.py` |
 
 ---
 

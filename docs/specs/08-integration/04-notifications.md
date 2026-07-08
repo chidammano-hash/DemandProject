@@ -1,11 +1,11 @@
 # Notification Engine
 
-> Sends alerts to planners across multiple channels (in-app, email, Slack, webhooks) when jobs complete, exceptions fire, or AI insights need attention.
+> Dispatches alerts to Slack, Teams, email, and PagerDuty via per-channel adapters, driven by event-type/severity routing rules, and logs every delivery attempt.
 
 | | |
 |---|---|
 | **Status** | Implemented |
-| **UI Tab** | N/A (sidebar badge for unread count) |
+| **UI Tab** | N/A |
 | **Key Files** | `common/services/notification_engine.py`, `api/routers/platform/notifications.py`, `config/platform/notification_config.yaml` |
 
 ---
@@ -16,109 +16,102 @@ When a backtest job fails at 2 AM or the AI planner flags a critical stockout ri
 
 ## Solution
 
-A multi-channel notification engine dispatches alerts based on event type and severity. Each channel (in-app, email, Slack, PagerDuty, webhook) has its own adapter. Routing rules in config map event-severity combinations to specific channels. Users can set per-event channel preferences. All sends are non-fatal -- a failed Slack webhook never crashes a job. Deduplication prevents the same alert from firing repeatedly within a 5-minute window.
+A notification engine dispatches alerts to Slack, Teams, email, and PagerDuty based on event type and severity. Each channel has its own adapter (webhook POST for Slack/Teams/PagerDuty, SMTP for email). Routing rules in `notification_config.yaml` map event-type + severity combinations to a channel list and a minimum-severity threshold. A cooldown window (default 5 minutes, keyed by event type + severity + subject) suppresses repeated sends of the same alert. All sends are best-effort - a failed webhook or SMTP call never crashes the caller. Every delivery attempt (success or failure) is logged to `fact_notification_log`.
+
+In the shipped codebase, only two call sites actually invoke the engine: the `mention` event fired when an annotation `@mentions` a user (see [Collaboration](./05-collaboration.md)), and the manual `test` event fired by `POST /notifications/test`. The `notification_config.yaml` routing rules also declare channels for job/exception/DQ/inventory/S&OP event types, but no job scheduler, storyboard, AI planner, DQ, or S&OP code currently calls `NotificationEngine.send()` for those - they are configured but not yet wired to a trigger source.
 
 ## How It Works
 
-1. A platform event occurs (job completes, exception detected, AI insight created)
-2. The source module calls `NotificationEngine.send(event_type, payload, recipients)`
-3. The engine looks up routing rules: which channels should receive this event at this severity?
-4. For each target channel, the engine renders a message from a Jinja2 template
-5. The adapter delivers the message (HTTP POST for Slack/Teams/PagerDuty, SMTP for email)
-6. Failed deliveries retry with exponential backoff (max 3 retries, base 30s)
-7. Duplicate events for the same recipient within 5 minutes are suppressed
-8. All delivery attempts are logged to `fact_notification_log`
+1. A caller invokes `NotificationEngine().send(event_type, severity, subject, body, recipient)` - today that's either the collaboration router (on an `@mention`) or the `POST /notifications/test` endpoint.
+2. The engine checks an in-process cooldown keyed by `event_type:severity:subject-prefix` (default 300s, from `rate_limits.cooldown_seconds`); a repeat within the window is skipped, regardless of recipient.
+3. It resolves which channels should receive the event from `routing_rules` in `notification_config.yaml` (event type + severity -> channel list, with a minimum-severity threshold per rule).
+4. For each target channel, the matching adapter sends the message once: `_send_slack`/`_send_teams` (webhook POST), `_send_email` (SMTP), or `_send_pagerduty` (Events API v2 POST). There is no retry or template-rendering layer - subject/body are passed through as-is from the caller.
+5. Every attempt is logged to `fact_notification_log`, best-effort - a logging failure never raises.
 
-## Event Types
+## Channels
 
-| Event | Trigger Source | Typical Channels |
+Declared in `dim_notification_channel.channel_type` and implemented by an adapter in `CHANNEL_SENDERS`:
+
+| Channel | Adapter | Transport |
 |---|---|---|
-| `job_completed` | Job scheduler | In-app, Slack |
-| `exception_detected` | Storyboard engine | Slack, PagerDuty (if critical) |
-| `ai_insight_created` | AI planner | In-app, Slack, Email |
-| `threshold_breach` | KPI monitoring | Slack, PagerDuty |
-| `data_quality_alert` | DQ engine | In-app, Slack |
-| `approval_required` | S&OP cycle | In-app, Email |
+| `slack` | `_send_slack` | Incoming webhook (HTTP POST) |
+| `teams` | `_send_teams` | Incoming webhook (HTTP POST) |
+| `email` | `_send_email` | SMTP |
+| `pagerduty` | `_send_pagerduty` | Events API v2 (HTTP POST) |
 
 ## Data Model
+
+### `dim_notification_channel`
+
+| Column | Type | Description |
+|---|---|---|
+| `channel_id` | `SERIAL PK` | Auto-increment ID |
+| `channel_type` | `TEXT` | `slack`, `teams`, `email`, or `pagerduty` |
+| `config` | `JSONB` | Channel-specific configuration (default `{}`) |
+| `enabled` | `BOOLEAN` | Whether the channel is active (default `TRUE`) |
+| `created_at` | `TIMESTAMPTZ` | When the channel was configured |
 
 ### `fact_notification_log`
 
 | Column | Type | Description |
 |---|---|---|
 | `notification_id` | `BIGSERIAL PK` | Auto-increment ID |
+| `channel_id` | `INT FK` | References `dim_notification_channel(channel_id)` |
 | `event_type` | `TEXT` | Event that triggered the notification |
-| `channel` | `TEXT` | Delivery channel (in_app, email, slack, webhook) |
-| `recipient` | `TEXT` | User ID or channel identifier |
+| `severity` | `TEXT` | Event severity |
+| `recipient` | `TEXT` | User ID, email, or channel identifier |
 | `subject` | `TEXT` | Notification subject line |
 | `body` | `TEXT` | Notification body |
-| `payload` | `JSONB` | Event-specific data |
-| `status` | `TEXT` | pending, sent, failed, suppressed |
-| `retry_count` | `INTEGER` | Number of retry attempts |
-| `sent_at` | `TIMESTAMPTZ` | When successfully delivered |
-| `created_at` | `TIMESTAMPTZ` | When the notification was created |
+| `status` | `TEXT` | `pending`, `sent`, `delivered`, or `failed` (default `pending`) |
+| `error` | `TEXT` | Error detail when delivery failed |
+| `created_at` | `TIMESTAMPTZ` | When the delivery attempt was logged |
+| `delivered_at` | `TIMESTAMPTZ` | When delivery succeeded |
 
-### `dim_notification_preference`
-
-| Column | Type | Description |
-|---|---|---|
-| `pref_id` | `SERIAL PK` | Auto-increment ID |
-| `user_id` | `INTEGER` | User (nullable for system defaults) |
-| `event_type` | `TEXT` | Event type this preference applies to |
-| `channels` | `TEXT[]` | Which channels to use (default: `{in_app}`) |
-| `is_enabled` | `BOOLEAN` | Whether notifications are enabled for this event |
-
-Unique constraint on `(user_id, event_type)`.
+There is no per-user preference table or unread/read state - this is a channel-config + delivery-log system, not an in-app inbox.
 
 ## API
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/notifications` | List notifications for current user (paginated) |
-| GET | `/notifications/unread-count` | Count of unread notifications |
-| PUT | `/notifications/{id}/read` | Mark a notification as read |
-| PUT | `/notifications/read-all` | Mark all notifications as read |
-| GET | `/notifications/preferences` | Get user notification preferences |
-| PUT | `/notifications/preferences` | Update channel preferences per event type |
+| GET | `/notifications/history` | View notification delivery history, filterable by `event_type` / `status`, paginated via `limit` (default 50, max 500) |
+| GET | `/notifications/channels` | List configured notification channels |
+| POST | `/notifications/test` | Send a test notification through the engine (manager role + API key required) |
 
 ## Configuration
 
-`config/platform/notification_config.yaml`:
+`config/platform/notification_config.yaml` defines per-channel settings, routing rules (event type + severity -> channels), and rate limits, e.g.:
 
 ```yaml
 channels:
-  in_app:
+  slack:
     enabled: true
+    webhook_url: ${SLACK_WEBHOOK_URL}
   email:
     enabled: false
-    smtp_host_env: SMTP_HOST
-    smtp_port: 587
-    from_address: "demand-studio@company.com"
-  slack:
+    smtp_host: ${SMTP_HOST:-localhost}
+    smtp_port: ${SMTP_PORT:-587}
+    from_address: ${SMTP_FROM:-noreply@demandstudio.local}
+  pagerduty:
     enabled: false
-    webhook_url_env: SLACK_WEBHOOK_URL
-  webhook:
-    enabled: false
-defaults:
-  retry_max: 3
-  retry_base_seconds: 30
-  dedup_window_minutes: 5
-templates:
-  job_completed: "Job '{job_type}' completed with status: {status}"
-  exception_detected: "New {severity} exception: {exception_type} for {item_id}/{loc}"
-  ai_insight_created: "AI insight ({severity}): {summary}"
+    routing_key: ${PAGERDUTY_ROUTING_KEY}
+
+routing_rules:
+  - event_type: stockout_alert
+    severity: [critical]
+    channels: [slack, pagerduty]
+
+rate_limits:
+  cooldown_seconds: 300
 ```
 
-Secrets use environment variable references (`SMTP_HOST`, `SLACK_WEBHOOK_URL`), never stored in YAML.
+Secrets use environment variable references (`SMTP_HOST`, `SLACK_WEBHOOK_URL`, `PAGERDUTY_ROUTING_KEY`), never stored in YAML.
 
 ## Dependencies
 
-- `jinja2>=3.1` for template rendering (already in deps)
-- Optional: `aiosmtplib` for async email, `httpx` for Slack/webhook delivery
-- Frontend polls `/notifications/unread-count` every 30s; badge shown in sidebar header
+- No external dependencies - channel adapters use stdlib `smtplib` (email) and `urllib.request` (Slack/Teams/PagerDuty webhooks)
 
 ## See Also
 
 - [Integration Architecture](./01-integration-architecture.md) -- notifications as Vector 1
 - [Webhooks](./10-webhooks.md) -- outbound event delivery to external systems
-- [Storyboard](../06-ai-platform/04-storyboard.md) -- exception events that trigger notifications
+- [Collaboration](./05-collaboration.md) - the only current caller of the notification engine, via `@mention` alerts

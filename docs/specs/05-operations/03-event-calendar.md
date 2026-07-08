@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (EventCalendarPanel) |
-| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/operations/events.py`, `scripts/apply_event_adjustments.py`, `config/operations/event_planning_config.yaml`, `sql/058_create_event_calendar.sql` |
+| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/operations/events.py`, `scripts/forecasting/apply_event_adjustments.py`, `config/operations/event_planning_config.yaml`, `sql/057_create_event_planning.sql` |
 
 ---
 
@@ -26,36 +26,36 @@ A centralized event calendar stores planned events with their affected scope (it
 
 ### Event Types
 
-| Type | Impact Direction | Typical Multiplier Range | Example |
+`event_type` is a free-text `VARCHAR(30)` on `fact_event_calendar` -- there is no DB-enforced enum. The
+documented convention (from `sql/057_create_event_planning.sql`) is:
+
+| Type | `event_type` value | Impact Direction | Example |
 |---|---|---|---|
-| Promotion | Uplift | 1.1 -- 2.0 | Buy-one-get-one campaign |
-| Product Launch | Uplift | Varies widely | New SKU introduction |
-| Phase-Out | Dampening | 0.0 -- 0.8 | End-of-life SKU wind-down |
-| Seasonal Peak | Uplift | 1.2 -- 1.8 | Back-to-school or holiday surge |
-| Seasonal Trough | Dampening | 0.5 -- 0.9 | Post-holiday slowdown |
-| Supply Disruption | Dampening | 0.0 -- 0.7 | Known supplier shutdown |
+| Promotion | `promo` | Uplift | Discount / buy-one-get-one campaign |
+| New Launch | `new_launch` | Uplift | New SKU introduction |
+| Phase-Out | `phase_out` | Dampening | End-of-life SKU wind-down |
+| Holiday | `holiday` | Uplift | Seasonal or holiday-driven surge |
+| Cannibalization | `cannibalization` | Dampening | Demand shifted to a replacing SKU (`cannibalized_item_id`) |
 
-### Adjustment Formula
+### Adjustment Model
 
-For each item-location-month covered by an event:
+Each event carries an `uplift_pct`, a `ramp_profile` (`linear`\|`s_curve`\|`immediate`) applied over `ramp_weeks`,
+an optional `pantry_loading_pct` over `pantry_loading_weeks` (pre-event stock-up demand), and an optional flat
+`override_multiplier`. Per item-location-month, `fact_event_adjusted_forecast` stores the resulting quantities:
+`base_forecast_qty`, `event_adjustment_qty` (the uplift), `post_promo_dip_qty` (post-promotion demand dip), and
+`adjusted_forecast_qty`.
 
-`adjusted_forecast = base_forecast x event_multiplier`
-
-When multiple events overlap the same item-location-month, multipliers are applied multiplicatively:
-
-`adjusted_forecast = base_forecast x multiplier_1 x multiplier_2 x ...`
+When events overlap the same item-location-month, `conflict_resolution` (default `highest_priority`) on the
+event row decides which one wins based on `priority`; overlaps are also logged as rows in `fact_event_conflicts`.
 
 ### Approval Workflow
 
 | Status | Meaning |
 |---|---|
-| `draft` | Event created but not yet reviewed |
-| `pending_approval` | Submitted for manager review |
-| `approved` | Adjustment will be applied in next pipeline run |
-| `rejected` | Adjustment will not be applied |
-| `expired` | Event end date has passed |
-
-Only events with `approved` status are applied by the adjustment pipeline.
+| `draft` | Event created but not yet approved |
+| `approved` | Approved via `PUT /events/calendar/{id}/approve` |
+| `active` | Event window is currently in progress |
+| `completed` | Event window has ended |
 
 ---
 
@@ -63,10 +63,13 @@ Only events with `approved` status are applied by the adjustment pipeline.
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `dim_event` | Event definitions | `event_id`, `event_type`, `name`, `start_date`, `end_date`, `status` |
-| `fact_event_scope` | Items and locations affected | `event_id`, `item_id`, `loc`, `multiplier` |
-| `fact_event_adjusted_forecast` | Adjusted forecast output | `item_id`, `loc`, `month`, `base_qty`, `adjusted_qty`, `event_ids` |
-| `fact_event_audit` | Change history | `event_id`, `changed_by`, `old_status`, `new_status`, `changed_at` |
+| `fact_event_calendar` | Event definitions, scope, and uplift parameters | `event_id`, `event_type`, `event_name`, `event_start`, `event_end`, `uplift_pct`, `ramp_profile`, `ramp_weeks`, `peak_qty_weekly`, `decay_rate`, `pantry_loading_pct`, `pantry_loading_weeks`, `last_order_date`, `cannibalized_item_id`, `override_multiplier`, `target_items`/`target_locations`/`target_categories` (JSONB), `status`, `conflict_resolution`, `priority` |
+| `fact_event_adjusted_forecast` | Adjusted forecast output per item-location-month | `item_id`, `loc`, `plan_month`, `event_id`, `base_forecast_qty`, `event_adjustment_qty`, `post_promo_dip_qty`, `adjusted_forecast_qty`, `adjustment_type`, `order_deadline` |
+| `fact_event_performance` | Post-event lift accuracy and calibration | `event_id`, `item_id`, `loc`, `plan_month`, `forecasted_lift_qty`, `actual_sales_qty`, `actual_lift_qty`, `lift_accuracy_pct`, `uplift_calibration_factor` |
+| `fact_event_conflicts` | Overlapping-event log | `conflict_id`, `event_id_a`, `event_id_b`, `overlap_start`, `overlap_end`, `resolution_status` |
+
+Event scope (which items/locations/categories an event applies to) is stored as JSONB arrays directly on
+`fact_event_calendar` -- there is no separate scope-fact table.
 
 ---
 
@@ -74,12 +77,12 @@ Only events with `approved` status are applied by the adjustment pipeline.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/events` | List events with filtering by type, status, date range |
-| POST | `/events` | Create a new event with scope and multipliers |
-| PUT | `/events/{id}` | Update event details or scope |
-| PUT | `/events/{id}/status` | Advance event through approval workflow |
-| POST | `/events/apply` | Run the adjustment pipeline for a given period |
-| GET | `/events/impact` | Preview aggregate impact of approved events on forecast |
+| GET | `/events/calendar` | List events, filterable by `event_type`, `status`, date range |
+| POST | `/events/calendar` | Create a new event with scope and uplift parameters (auth) |
+| GET | `/events/calendar/{event_id}` | Event detail |
+| PUT | `/events/calendar/{event_id}/approve` | Approve an event (auth) |
+| GET | `/events/impact-preview` | Adjusted-forecast rows for an event, item, or location |
+| GET | `/events/performance` | Post-event forecasted vs. actual lift and calibration factor |
 
 ---
 
@@ -89,9 +92,16 @@ Only events with `approved` status are applied by the adjustment pipeline.
 |---|---|---|
 | Schema | `make events-schema` | Creates event tables |
 | Apply | `make events-apply` | Runs adjustment pipeline for current planning period |
+| Apply (dry) | `make events-apply-dry` | Computes adjustments without writing |
 | Full | `make events-all` | Schema + apply |
 
-The adjustment script (`scripts/apply_event_adjustments.py`) reads approved events, joins with the base production forecast, computes adjusted quantities, and writes to `fact_event_adjusted_forecast`. Supports `--dry-run` for preview.
+The adjustment script (`scripts/forecasting/apply_event_adjustments.py`) reads approved events, joins with the
+base statistical forecast (`fact_external_forecast_monthly`, champion model), computes adjusted quantities, and
+writes to `fact_event_adjusted_forecast`. Supports `--event-id`, `--month`, and `--dry-run`.
+
+Caveat: the script's write path (`uplift_multiplier`, `additive_qty`, `uplift_delta_units`, `impact_value_usd`)
+does not match the columns on `fact_event_adjusted_forecast` in the Data Model above -- verify schema alignment
+before relying on `make events-apply` in production.
 
 ---
 
@@ -101,11 +111,17 @@ File: `config/operations/event_planning_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|
-| `max_multiplier` | Cap on any single event multiplier | `3.0` |
-| `overlap_strategy` | How to combine overlapping events | `multiplicative` |
-| `auto_expire_days` | Days after end date to mark expired | `7` |
-| `require_approval` | Whether events need manager approval | `true` |
-| `default_event_types` | Pre-defined event type list | 6 types as listed above |
+| `event_planning.event_types` | Allowed event type codes (uppercase; a separate convention from the lowercase `event_type` values written by the live router -- see caveat below) | `PROMOTION`, `HOLIDAY`, `PRODUCT_LAUNCH`, `PHASE_OUT`, `DISRUPTION`, `TRADE_SHOW` |
+| `event_planning.max_uplift_multiplier` | Guard rail on uplift multiplier | `5.0` |
+| `event_planning.min_uplift_multiplier` | Floor on uplift multiplier (0 = zero demand, e.g. phase-out) | `0.0` |
+| `event_planning.require_approval_above_impact_value` | USD impact above which an event requires approval | `5000.0` |
+| `event_planning.require_approval_above_uplift_pct` | Uplift % above which an event requires approval | `20.0` |
+| `event_planning.post_event_lag_weeks` | Weeks to wait after `event_end` before computing post-event accuracy | `2` |
+| `event_planning.min_advance_days` | Minimum advance notice required to create a new event | `3` |
+| `event_planning.conflict_window_days` | Window for flagging near-overlapping events for review | `7` |
+| `scheduler.cron` | Daily adjustment-pipeline schedule | `0 6 * * *` |
+
+Caveat: this config file's `event_types` list and its header comment (`Used by: scripts/apply_event_adjustments.py, api/routers/events.py`) reference the old, pre-move script/router paths and an uppercase event-type vocabulary that does not match the `event_type` values the live `events.py` router actually writes (see Event Types above). Treat the config as only loosely wired to the current implementation.
 
 ---
 

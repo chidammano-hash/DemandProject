@@ -43,10 +43,14 @@ selection and `get_forecastable_model_ids()` for production inference.
 | Family          | Model IDs                                                                                                | Notes                                                                  |
 |-----------------|----------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
 | Tree (core)     | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`                                                    | Per-cluster training, full SHAP feature selection, GPU when available  |
-| Tree (cust-enriched) | `lgbm_cust_enriched`, `catboost_cust_enriched`, `xgboost_cust_enriched`                             | Adds 34 customer-derived features (`make customer-features`)           |
-| Foundation      | `chronos` (T5 small), `chronos_bolt` (base), `chronos2`, `chronos2_enriched`, `bolt_hierarchical`        | Zero-shot or covariate-aware; always run globally (no clusters)        |
-| Statistical     | `seasonal_naive`, `rolling_mean`, `mstl`                                                                 | Lightweight baselines; `rolling_mean` is also the cold-start fallback  |
+| Foundation      | `chronos2_enriched`                                                                                       | Covariate-aware; always runs globally (no clusters)                    |
+| Statistical     | `seasonal_naive`, `rolling_mean`, `rolling_median`, `mstl`                                               | Lightweight baselines; `rolling_mean` is also the cold-start fallback  |
 | Deep learning   | `nbeats`, `nhits`                                                                                        | NeuralForecast NHITS / NBEATS; always global                           |
+
+> The Chronos (T5 small), Chronos Bolt, Chronos 2 zero-shot, and Bolt-Hierarchical
+> foundation-model variants, and the `lgbm_cust_enriched` / `catboost_cust_enriched` /
+> `xgboost_cust_enriched` tree variants, were removed in the deprecated-model cleanup
+> (`5ab8d593`). `chronos2_enriched` is the only remaining foundation model.
 
 The `chronos2_enriched` model is also designated as the platform's FM spine
 (`fm_spine.model_id`) and produces the P10 / P50 / P90 quantile bundle.
@@ -87,27 +91,23 @@ hyperparameters.
 
 ---
 
-## 4.2 Customer Features Pre-Compute (Required for Enriched Trees)
+## 4.2 Customer Features Pre-Compute
 
-Before running any of the `*_cust_enriched` backtests you must materialise
-the customer-derived feature pack. This produces 34 features (customer
-concentration, churn, lag patterns, customer-level seasonality, etc.) keyed
-on `(item_id, location_id, month)`.
+`lgbm_cust_enriched`, `catboost_cust_enriched`, and `xgboost_cust_enriched` - the tree
+variants that consumed customer-derived features - were removed from
+`config/forecasting/forecast_pipeline_config.yaml` in the deprecated-model cleanup
+(`5ab8d593`). No algorithm entry currently sets `customer_features: true`, so no
+backtest in the active roster reads the customer-features table.
+
+The pre-compute targets and the underlying `customer_features_monthly` table still
+exist for other consumers (customer analytics) and for a future re-introduction of an
+enriched tree variant - `common/ml/backtest_framework.py` still supports merging it into
+the training grid via `include_customer_features`:
 
 ```bash
 make customer-features          # SQL implementation (preferred, fast)
 make customer-features-python   # Python fallback (older path)
 ```
-
-The cust-enriched algorithm entries in
-`config/forecasting/forecast_pipeline_config.yaml` set `customer_features: true` in
-their `params:` block — `common/ml/backtest_framework.py` keys off this
-flag to merge the customer-features table into the training grid.
-
-If the customer-features table is stale or missing, the enriched backtests
-will silently degrade to the base feature set and produce metrics that are
-indistinguishable from the non-enriched variants. Always re-run
-`make customer-features` after a customer-demand reload.
 
 ---
 
@@ -155,12 +155,6 @@ make backtest-lgbm
 make backtest-catboost
 make backtest-xgboost
 
-# Tree models with customer features
-make backtest-lgbm-cust
-make backtest-catboost-cust
-make backtest-xgboost-cust
-make backtest-cust-enriched-all       # all three sequentially
-
 # Statistical baselines
 make backtest-seasonal-naive
 make backtest-rolling-mean
@@ -172,36 +166,29 @@ make backtest-nbeats
 make backtest-nhits
 
 # Foundation models
-make backtest-chronos                 # Chronos T5 small
-make backtest-bolt                    # Chronos Bolt base
-make backtest-chronos2                # Chronos 2 zero-shot
 make backtest-chronos2e               # Chronos 2 Enriched (31 covariates)
-make backtest-bolt-hier               # Bolt customer bottom-up + reconciliation
 ```
 
-Each foundation backtest also has a `*-full` companion target that runs
-the backtest and immediately loads the predictions
-(e.g. `make backtest-chronos-full`, `make backtest-bolt-full`,
-`make backtest-chronos2-full`, `make backtest-chronos2e-full`,
-`make backtest-bolt-hier-full`, `make backtest-mstl-full`,
-`make backtest-nbeats-full`, `make backtest-nhits-full`).
+Several backtest targets also have a `*-full` companion target that runs
+the backtest and immediately loads the predictions:
+`make backtest-chronos2e-full`, `make backtest-mstl-full`,
+`make backtest-nbeats-full`, `make backtest-nhits-full`.
 
 ### 4.3.2 Run-everything targets
 
 ```bash
-make backtest-all              # 7 backtests sequentially: lgbm, catboost, xgboost,
-                               # chronos, chronos_bolt, chronos2, chronos2_enriched
+make backtest-all              # 4 backtests sequentially: lgbm, catboost, xgboost,
+                               # chronos2_enriched
 
-make backtest-all-parallel     # Same models in parallel (logs in data/backtest/logs/)
+make backtest-all-parallel     # Same 4 models in parallel (logs in data/backtest/logs/)
 ```
 
-`backtest-all-parallel` launches the six core jobs concurrently and pipes
-each into a per-model log file under `data/backtest/logs/`. Use it only on
-machines with sufficient RAM and CPU; on a constrained host run
-`backtest-all` instead. Tree models use `n_jobs=-1` (all CPU cores) and
-foundation models use the GPU, so running tree + foundation in parallel is
-generally safe (CPU vs GPU); avoid running multiple foundation models
-simultaneously — they compete for GPU memory.
+`backtest-all-parallel` launches the 4 core jobs (3 cluster trees + Chronos2
+Enriched) concurrently and pipes each into a per-model log file under
+`data/backtest/logs/`. Use it only on machines with sufficient RAM and CPU;
+on a constrained host run `backtest-all` instead. Tree models use `n_jobs=-1`
+(all CPU cores) and the foundation model uses the GPU, so running tree +
+foundation jobs in parallel is generally safe (CPU vs GPU).
 
 ### 4.3.3 Approximate runtimes
 
@@ -213,19 +200,12 @@ on DFU count, history length, GPU availability and CPU core count.
 | LGBM cluster         | `make backtest-lgbm`         | 20–40 min       |
 | CatBoost cluster     | `make backtest-catboost`     | 30–60 min       |
 | XGBoost cluster      | `make backtest-xgboost`      | 25–50 min       |
-| LGBM cust-enriched   | `make backtest-lgbm-cust`    | 25–50 min       |
-| CatBoost cust-enrich | `make backtest-catboost-cust`| 35–70 min       |
-| XGBoost cust-enriched| `make backtest-xgboost-cust` | 30–60 min       |
 | Seasonal naive       | `make backtest-seasonal-naive` | 1–3 min       |
 | Rolling mean         | `make backtest-rolling-mean` | 1–3 min         |
 | MSTL                 | `make backtest-mstl`         | 5–15 min        |
 | NBEATS               | `make backtest-nbeats`       | 30–90 min       |
 | NHITS                | `make backtest-nhits`        | 30–90 min       |
-| Chronos T5 (small)   | `make backtest-chronos`      | ~2.5 h          |
-| Chronos Bolt (base)  | `make backtest-bolt`         | ~12 min         |
-| Chronos 2 zero-shot  | `make backtest-chronos2`     | ~5.5 h          |
 | Chronos 2 Enriched   | `make backtest-chronos2e`    | ~6 h            |
-| Bolt hierarchical    | `make backtest-bolt-hier`    | 30–90 min       |
 
 ### 4.3.4 Backtest framework settings
 
@@ -250,7 +230,6 @@ run (skipping already-completed timeframes), invoke the script module with
 `--resume` (where the script supports it):
 
 ```bash
-uv run python -m scripts.ml.run_backtest_chronos_bolt --resume
 uv run python -m scripts.ml.run_backtest_chronos2_enriched --resume
 ```
 
@@ -279,7 +258,7 @@ mutating the staging table — see
 make backtest-load-all            # loads every model_id present under data/backtest/
 make backtest-load-all-bulk       # same set, but drops & rebuilds indexes once → ~4× faster
 make backtest-load-bulk           # 4 core models: lgbm_cluster, catboost_cluster,
-                                  # xgboost_cluster, chronos
+                                  # xgboost_cluster, chronos2_enriched
 ```
 
 `--bulk` mode disables the per-model index cycle and instead drops the
@@ -290,8 +269,8 @@ time at the end. For full-pipeline reloads always prefer
 ### 4.4.2 Selective table loads
 
 ```bash
-make backtest-load-main-only MODELS="lgbm_cluster chronos2"
-make backtest-load-archive-only MODELS="lgbm_cluster chronos2"
+make backtest-load-main-only MODELS="lgbm_cluster chronos2_enriched"
+make backtest-load-archive-only MODELS="lgbm_cluster chronos2_enriched"
 ```
 
 * `--main-only` loads `fact_candidate_forecast` and skips
@@ -305,12 +284,7 @@ make backtest-load-archive-only MODELS="lgbm_cluster chronos2"
 
 ```bash
 make backtest-load MODEL=lgbm_cluster      # generic single-model loader
-make backtest-load-chronos                 # convenience wrappers
-make backtest-load-bolt
-make backtest-load-bolt-hier
-make backtest-load-chronos2
-make backtest-load-chronos2e
-make backtest-load-cust-enriched           # all three cust-enriched models
+make backtest-load-chronos2e               # convenience wrapper
 make backtest-load-seasonal-naive
 make backtest-load-rolling-mean
 make backtest-load-mstl
@@ -335,16 +309,16 @@ ad-hoc multi-model loads you can call the script directly:
 ```bash
 # Load 4 models with single index cycle (fastest):
 uv run python scripts/etl/load_backtest_forecasts.py \
-  --models lgbm_cluster catboost_cluster xgboost_cluster chronos \
+  --models lgbm_cluster catboost_cluster xgboost_cluster chronos2_enriched \
   --replace --bulk
 
 # Load main table only (skip archive):
 uv run python scripts/etl/load_backtest_forecasts.py \
-  --models lgbm_cluster chronos --replace --bulk --main-only
+  --models lgbm_cluster chronos2_enriched --replace --bulk --main-only
 
 # Load archive only:
 uv run python scripts/etl/load_backtest_forecasts.py \
-  --models lgbm_cluster chronos --replace --bulk --archive-only
+  --models lgbm_cluster chronos2_enriched --replace --bulk --archive-only
 ```
 
 > **Tip:** Use `--bulk` whenever loading 2+ models with `--replace`. It
@@ -480,7 +454,7 @@ and a warning is logged.
 ## 4.8 GPU Acceleration
 
 GPU usage is controlled by the `DEMAND_GPU` environment variable. Read by
-`scripts/run_backtest.py` and the foundation-model scripts.
+`scripts/ml/run_backtest.py` and the foundation-model scripts.
 
 | Value  | Behaviour                                                                  |
 |--------|----------------------------------------------------------------------------|
@@ -489,7 +463,7 @@ GPU usage is controlled by the `DEMAND_GPU` environment variable. Read by
 | `off`  | Disable GPU even when available; useful for reproducible benchmark runs    |
 
 ```bash
-DEMAND_GPU=on  make backtest-chronos2
+DEMAND_GPU=on  make backtest-chronos2e
 DEMAND_GPU=off make backtest-lgbm
 ```
 
@@ -560,25 +534,19 @@ mean baseline; lower `intermittent_threshold` (e.g. to 0.5) if your
 dataset is unusually sparse, or raise `baseline_intermittent_window` to
 smooth the baseline.
 
-**Cust-enriched backtest produces same metrics as base**
-*Symptom:* `lgbm_cust_enriched` accuracy is identical to `lgbm_cluster`.
-*Cause:* Customer-features table is empty or stale, so the join produces
-NULLs and the model degenerates to the base feature set.
-*Fix:* Run `make customer-features` and re-run the enriched backtest.
-
 **Loader errors on duplicate keys**
 *Symptom:* `duplicate key value violates unique constraint
 uq_backtest_lag_archive_ck`.
 *Cause:* Loader was invoked without `--replace` after a prior partial
 load.
 *Fix:* All `make backtest-load-*` targets pass `--replace` automatically;
-if you invoke `scripts/load_backtest_forecasts.py` directly, add the flag.
+if you invoke `scripts/etl/load_backtest_forecasts.py` directly, add the flag.
 
 **`backtest-all-parallel` runs out of memory**
 *Symptom:* OOM kill in `data/backtest/logs/<model>.log`.
-*Cause:* Six processes plus optional GPU contexts exceed host RAM.
+*Cause:* Four processes plus the foundation model's GPU context exceed host RAM.
 *Fix:* Run `make backtest-all` (sequential) instead, or stagger by
-running the foundation models separately from the tree models.
+running the foundation model separately from the tree models.
 
 **No predictions for cold-start DFUs**
 *Symptom:* DFU is missing from the candidate forecast table.
@@ -602,14 +570,12 @@ production stage skips.
   partitioning, SHAP integration
 * `common/ml/model_registry.py` — `build_model()`, `fit_model()`,
   `to_native_params()`, `compute_early_stop_patience()`
-* `scripts/run_backtest.py`, `scripts/run_backtest_catboost.py`,
-  `scripts/run_backtest_xgboost.py` — tree backtests
-* `scripts/run_backtest_chronos*.py`,
-  `scripts/run_backtest_chronos_bolt.py`,
-  `scripts/run_backtest_bolt_hierarchical.py` — foundation model backtests
-* `scripts/run_backtest_dl.py`, `scripts/run_backtest_mstl.py` — DL and
+* `scripts/ml/run_backtest.py`, `scripts/ml/run_backtest_catboost.py`,
+  `scripts/ml/run_backtest_xgboost.py` - tree backtests
+* `scripts/ml/run_backtest_chronos2_enriched.py` - foundation model backtest
+* `scripts/ml/run_backtest_dl.py`, `scripts/ml/run_backtest_mstl.py` - DL and
   statistical backtests
-* `scripts/load_backtest_forecasts.py` — unified loader (supports
+* `scripts/etl/load_backtest_forecasts.py` - unified loader (supports
   `--bulk`, `--main-only`, `--archive-only`, `--models`, `--all`)
 * `scripts/ml/generate_customer_features_sql.py` — customer features
   pre-compute

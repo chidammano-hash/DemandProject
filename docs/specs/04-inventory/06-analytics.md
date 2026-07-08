@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_demand_signals.py`, `api/routers/inventory/fill_rate.py`, `sql/028_create_fill_rate_monthly.sql`, `sql/034_create_intramonth_stockout.sql` |
+| **Key Files** | `scripts/inventory/compute_demand_signals.py`, `api/routers/operations/fill_rate.py`, `sql/028_create_fill_rate_monthly.sql`, `sql/034_create_intramonth_stockout.sql` |
 
 ---
 
@@ -38,7 +38,7 @@ Supports trending over time and slicing by location, category, ABC class.
 
 ### Demand Signals (IPfeature9)
 
-`scripts/compute_demand_signals.py` extracts short-horizon signals:
+`scripts/inventory/compute_demand_signals.py` extracts short-horizon signals:
 
 | Signal | Derivation | Purpose |
 |---|---|---|
@@ -82,27 +82,33 @@ Fill rate:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/fill-rate/summary` | Portfolio fill rate KPIs |
+| GET | `/fill-rate/summary` | Portfolio fill rate KPIs, by-ABC breakdown, worst items, trend |
 | GET | `/fill-rate/trend` | Monthly fill rate trend |
-| GET | `/fill-rate/detail` | Per-DFU fill rate detail |
+| GET | `/fill-rate/detail` | Per-DFU fill rate detail, paginated |
+| GET | `/fill-rate/gap-analysis` | Fill rate gap decomposition by cause (SS shortfall, demand spike, lead time delay) |
+| GET | `/inv-planning/service-level/waterfall` | Service-level target-to-actual bridge (waterfall) chart data |
 
 Demand signals:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/demand-signals/summary` | Signal distribution overview |
-| GET | `/inv-planning/demand-signals/detail` | Per-DFU signals |
-| GET | `/inv-planning/demand-signals/alerts` | DFUs with significant velocity changes |
+| GET | `/inv-planning/demand-signals/summary` | Signal distribution overview for a given date |
+| GET | `/inv-planning/demand-signals` | Paginated demand signals list, filterable and sortable |
+| GET | `/inv-planning/demand-signals/item` | Single item-location signal with daily MTD series |
 
 Intramonth stockouts:
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/inv-planning/intramonth/summary` | Hidden stockout frequency |
-| GET | `/inv-planning/intramonth/detail` | Per-DFU stockout events |
-| GET | `/inv-planning/intramonth/lost-sales` | Estimated lost sales from hidden stockouts |
+| GET | `/inv-planning/intramonth-stockouts/summary` | Hidden stockout frequency, portfolio-level |
+| GET | `/inv-planning/intramonth-stockouts/detail` | Per-DFU stockout events, paginated |
+| GET | `/inv-planning/intramonth-stockouts/daily` | Daily on-hand/sales drill-down for one item-location |
 
-Routers: `fill_rate.py`, `inv_planning_demand_signals.py`, `inv_planning_intramonth.py`
+Routers: `api/routers/operations/fill_rate.py`, `api/routers/inventory/inv_planning_demand_signals.py`, `api/routers/inventory/inv_planning_intramonth.py`
+
+Note: `/inv-planning/service-level/waterfall` is defined in `fill_rate.py` despite its
+`/inv-planning` path prefix -- it shares the fill-rate materialized view and service-level
+target logic, so it was kept in the same router rather than split out.
 
 ---
 

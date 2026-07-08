@@ -154,7 +154,7 @@ flowchart TD
 | Feature matrix | `build_feature_matrix()` merges `dfu_attrs` incl. `ml_cluster` into grid | `common/ml/feature_engineering.py` |
 | Tree model use | One model trained per `ml_cluster` value, predictions concatenated | `algorithm_testing/tree_models.py:179` |
 
-`ml_cluster` is used for **per-cluster model partitioning** only — it is no longer included as a model feature (removed to prevent leakage from full-history cluster assignments). See [spec 28](28-feature-selection-pipeline.md) and [Known Gaps §1](../01-foundation/08-known-gaps.md).
+`ml_cluster` is used for **per-cluster model partitioning** only - it is no longer included as a model feature (removed to prevent leakage from full-history cluster assignments). See [spec 28](28-feature-selection-pipeline.md).
 
 ## Algorithm Count Summary
 

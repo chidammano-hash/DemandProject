@@ -178,7 +178,7 @@ subagents per loop on disjoint file sets. Apparatus: `.claude/agents/design-deve
 **Constraints honored throughout:** no inline hex in `tabs/`/`components/`; charts read theme from
 context; all three modes covered; tab files < 600 LoC; tests updated alongside code (never weakened).
 
-**Status:** all changes **uncommitted** — left for human review. Screenshots in `screenshots/`.
+**Status:** shipped in commit `a0c83672` ("feat(design): global design-system hardening pass"). Screenshots in `screenshots/`.
 
 ---
 
@@ -202,4 +202,4 @@ reduced-motion-aware, no API breaks.
 
 **Verify:** full frontend suite **162 files, 1161 tests, 0 fail**.
 
-**Status:** uncommitted — left for human review alongside the design-pod changes above.
+**Status:** shipped in commit `a0c83672` alongside the design-pod changes above.

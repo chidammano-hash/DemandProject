@@ -46,10 +46,14 @@ Compare realized accuracy to `1 − demand_mad/demand_mean` (best any point fore
 vs **intrinsic noise** (realized ≈ floor → no point model helps → item 5). This decides which volatile
 work is worth doing. Read-only; ~1 query. **Do this first.**
 
-### 1. 🏗️ Fine-tune the foundation models on our own demand history  — *highest leverage*  → **spec'd + code landed: [32-finetuned-foundation-models.md](32-finetuned-foundation-models.md)** (Chronos-Bolt FT pipeline smoke-verified; full fine-tune run + causal-holdout gate pending)
-All foundation models (`chronos`, `chronos2`, `chronos2_enriched`, `bolt_hierarchical`) run **zero-shot**
-today (`tune: false` in `forecast_pipeline_config.yaml`). They already beat trees on low-volume
-zero-shot; fine-tuning / LoRA on the 41M-row history should raise the ceiling, esp. for low-volume.
+### 1. ⬜ Fine-tune the foundation models on our own demand history  - *highest leverage*
+The only remaining foundation model, `chronos2_enriched`, runs **zero-shot** today (`tune: false` in
+`forecast_pipeline_config.yaml`). It already beats trees on low-volume zero-shot; fine-tuning / LoRA on
+the 41M-row history should raise the ceiling, esp. for low-volume. **Not started** - an earlier
+`finetune_chronos_bolt.py` smoke-test pipeline and its spec (`32-finetuned-foundation-models.md`,
+a different number space than this domain's own spec 32) were both removed in commit `5ab8d593`
+along with the other zero-shot Chronos variants (`chronos`, `chronos2`, `bolt_hierarchical`); no
+fine-tuning work has landed.
 - **Test:** fine-tune on the train window, backtest the hard clusters on the holdout, check oracle
   ceiling movement. GPU via `DEMAND_GPU`. **Retrain-scale.**
 - **Where:** `common/ml/foundation_backtest.py`, foundation loaders; new `fine_tune` params per algo.
