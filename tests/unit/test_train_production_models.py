@@ -1,9 +1,11 @@
 """Tests for production tree model training orchestration."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from common.core.constants import MIN_CLUSTER_ROWS
 from common.core.utils import load_forecast_pipeline_config
@@ -150,3 +152,92 @@ def test_production_and_backtest_share_tree_default_params():
         assert _MODEL_LIBRARY[model_name]["default_params_fn"](algo_params, seed=7) == (
             MODEL_REGISTRY[model_name]["default_params"](algo_params, seed=7)
         )
+
+
+def test_apply_tuned_params_file_overlays_best_params_and_iterations(tmp_path):
+    """Production artifacts must use the same tuned params available to backtests."""
+    from scripts.ml.train_production_models import _apply_tuned_params_file
+
+    params_file = tmp_path / "best_params_lgbm_cluster.json"
+    params_file.write_text(json.dumps({
+        "model": "lgbm_cluster",
+        "best_params": {
+            "learning_rate": 0.02,
+            "num_leaves": 31,
+        },
+        "best_n_estimators": 375,
+    }))
+
+    params, source = _apply_tuned_params_file(
+        {"learning_rate": 0.1, "n_estimators": 2000, "num_leaves": 63},
+        params_file=params_file,
+        iter_param="n_estimators",
+        model_id="lgbm_cluster",
+        model_name="lgbm",
+    )
+
+    assert params["learning_rate"] == 0.02
+    assert params["num_leaves"] == 31
+    assert params["n_estimators"] == 375
+    assert source == f"tuning_file:{params_file}"
+
+
+def test_apply_tuned_params_file_accepts_legacy_base_model_name(tmp_path):
+    """Older tuning artifacts stored the base library name rather than pipeline id."""
+    from scripts.ml.train_production_models import _apply_tuned_params_file
+
+    params_file = tmp_path / "best_params_lgbm.json"
+    params_file.write_text(json.dumps({
+        "model": "lgbm",
+        "best_params": {"learning_rate": 0.03},
+        "best_n_estimators": 250,
+    }))
+
+    params, _source = _apply_tuned_params_file(
+        {"learning_rate": 0.1, "n_estimators": 2000},
+        params_file=params_file,
+        iter_param="n_estimators",
+        model_id="lgbm_cluster",
+        model_name="lgbm",
+    )
+
+    assert params == {"learning_rate": 0.03, "n_estimators": 250}
+
+
+def test_apply_tuned_params_file_rejects_wrong_model_artifact(tmp_path):
+    from scripts.ml.train_production_models import _apply_tuned_params_file
+
+    params_file = tmp_path / "best_params_catboost.json"
+    params_file.write_text(json.dumps({
+        "model": "catboost_cluster",
+        "best_params": {"learning_rate": 0.03},
+        "best_n_estimators": 250,
+    }))
+
+    with pytest.raises(ValueError, match="not 'lgbm_cluster'"):
+        _apply_tuned_params_file(
+            {"learning_rate": 0.1, "n_estimators": 2000},
+            params_file=params_file,
+            iter_param="n_estimators",
+            model_id="lgbm_cluster",
+            model_name="lgbm",
+        )
+
+
+def test_save_training_metadata_records_params_source(tmp_path):
+    from scripts.ml.train_production_models import _save_training_metadata
+
+    _save_training_metadata(
+        out_dir=tmp_path,
+        model_id="xgboost_cluster",
+        planning_date="2026-07-01",
+        params_source="tuning_file:data/tuning/best_params_xgboost.json",
+        cluster_results={"0": {"val_wape": 12.3}},
+        feature_cols_per_cluster={"0": ["month"]},
+        total_rows=10,
+        total_dfus=2,
+        elapsed_seconds=1.23,
+    )
+
+    metadata = json.loads((tmp_path / "training_metadata.json").read_text())
+    assert metadata["params_source"] == "tuning_file:data/tuning/best_params_xgboost.json"

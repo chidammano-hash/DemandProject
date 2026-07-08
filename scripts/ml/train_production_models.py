@@ -62,6 +62,7 @@ from common.ml.seasonal_naive import (  # noqa: E402
     build_seasonal_naive_model,
     make_dfu_key,
 )
+from common.ml.tuning import load_best_params  # noqa: E402
 from common.core.planning_date import get_planning_date  # noqa: E402
 from common.scripts_base import load_project_env, setup_logging  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
@@ -185,6 +186,44 @@ def _resolve_model_name(model_id: str) -> str:
         f"Cannot resolve model library from model_id={model_id!r}. "
         f"Expected prefix: lgbm, catboost, or xgboost."
     )
+
+
+def _resolve_params_file_path(params_file: str | Path) -> Path:
+    """Resolve a tuned-params file path relative to the project root."""
+    path = Path(params_file)
+    if path.is_absolute():
+        return path
+    return ROOT / path
+
+
+def _apply_tuned_params_file(
+    params: dict[str, Any],
+    *,
+    params_file: str | Path | None,
+    iter_param: str,
+    model_id: str,
+    model_name: str,
+) -> tuple[dict[str, Any], str]:
+    """Overlay a tuning artifact on production training params."""
+    if not params_file:
+        return dict(params), "config_defaults"
+
+    path = _resolve_params_file_path(params_file)
+    tuning_data = load_best_params(path)
+    artifact_model = tuning_data.get("model")
+    allowed_models = {model_id, model_name}
+    if artifact_model and artifact_model not in allowed_models:
+        raise ValueError(
+            f"Tuning artifact {path} is for model {artifact_model!r}, "
+            f"not {model_id!r}."
+        )
+
+    resolved = dict(params)
+    resolved.update(tuning_data.get("best_params", {}) or {})
+    n_est_tuned = tuning_data.get("best_n_estimators")
+    if n_est_tuned:
+        resolved[iter_param] = n_est_tuned
+    return resolved, f"tuning_file:{path}"
 
 
 # ── Single cluster training ─────────────────────────────────────────────────
@@ -456,6 +495,7 @@ def _save_training_metadata(
     out_dir: Path,
     model_id: str,
     planning_date: str,
+    params_source: str,
     cluster_results: dict[str, dict[str, Any]],
     feature_cols_per_cluster: dict[str, list[str]],
     total_rows: int,
@@ -471,6 +511,7 @@ def _save_training_metadata(
         "trained_at": datetime.now(UTC).isoformat(),
         "training_mode": "production",
         "planning_date": planning_date,
+        "params_source": params_source,
         "n_clusters": n_clusters_trained,
         "n_clusters_skipped": n_clusters_skipped,
         "n_dfus": total_dfus,
@@ -522,6 +563,14 @@ def train_production_model(model_id: str) -> None:
         # Build model hyperparameters from config
         params = lib_info["default_params_fn"](algo_params)
         iter_param = lib_info["iter_param"]
+        params, params_source = _apply_tuned_params_file(
+            params,
+            params_file=algo_params.get("params_file"),
+            iter_param=iter_param,
+            model_id=model_id,
+            model_name=model_name,
+        )
+        logger.info("Params source: %s", params_source)
         cat_dtype = lib_info["cat_dtype"]
 
         # Import model class and library
@@ -671,6 +720,7 @@ def train_production_model(model_id: str) -> None:
         out_dir=out_dir,
         model_id=model_id,
         planning_date=str(get_planning_date()),
+        params_source=params_source,
         cluster_results=cluster_results,
         feature_cols_per_cluster=feature_cols_per_cluster,
         total_rows=len(train_data),
