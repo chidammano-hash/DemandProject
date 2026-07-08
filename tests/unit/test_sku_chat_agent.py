@@ -100,6 +100,33 @@ def test_build_user_prompt_without_sku_notes_no_selection():
     assert "No specific SKU" in prompt
 
 
+def test_effective_sku_context_infers_missing_fields_from_text():
+    ctx = agent_module._effective_sku_context(
+        SkuChatContext("", "", ""),
+        "all",
+        [
+            {
+                "role": "assistant",
+                "content": "SKU selected: `item_id=11958`, `customer_group=ALL`, `loc=1401-BULK`.",
+            }
+        ],
+        max_history=20,
+    )
+
+    assert ctx == SkuChatContext("11958", "ALL", "1401-BULK")
+
+
+def test_effective_sku_context_keeps_explicit_fields_over_history():
+    ctx = agent_module._effective_sku_context(
+        SkuChatContext("100320", "", ""),
+        "What about SKU 11958 @ 1401-BULK?",
+        [],
+        max_history=20,
+    )
+
+    assert ctx == SkuChatContext("100320", "", "1401-BULK")
+
+
 def test_resolve_codex_binary_uses_path(monkeypatch):
     monkeypatch.setattr(agent_module.shutil, "which", lambda name: f"/bin/{name}")
     assert _resolve_codex_binary("codex") == "/bin/codex"
@@ -302,3 +329,61 @@ async def test_stream_turn_uses_codex_runtime_when_configured():
             "usage": None,
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_uses_history_sku_context_for_codex_runtime():
+    """Codex mode keeps selected SKU context across follow-up questions."""
+
+    def fake_context(pool, ctx, *, history_months, peer_limit):
+        assert pool == "pool"
+        assert ctx == SkuChatContext("11958", "ALL", "1401-BULK")
+        assert history_months == 24
+        assert peer_limit == 10
+        return {
+            "sku": {
+                "item_id": ctx.item_id,
+                "customer_group": ctx.customer_group,
+                "loc": ctx.loc,
+            },
+            "profile": {"found": True, "item_id": ctx.item_id},
+        }
+
+    async def fake_codex(prompt, *, model_id, cfg, env, timeout_s):
+        assert model_id == "gpt-5.4-mini"
+        assert "item_id=11958" in prompt
+        assert '"loc": "1401-BULK"' in prompt
+        return "Codex answer with loaded SKU facts."
+
+    agent = SkuChatAgent(
+        pool="pool",
+        config={
+            "runtime": {"provider": "codex"},
+            "auth": {"mode": "auto"},
+            "codex_models": {
+                "fast": "gpt-5.4-mini",
+                "standard": "gpt-5.5",
+                "deep": "gpt-5.5",
+            },
+        },
+    )
+    history = [
+        {
+            "role": "assistant",
+            "content": "SKU selected: `item_id=11958`, `customer_group=ALL`, `loc=1401-BULK`.",
+        }
+    ]
+    with (
+        patch("common.ai.sku_chat.agent._build_codex_context", fake_context),
+        patch("common.ai.sku_chat.agent._run_codex_exec", fake_codex),
+    ):
+        events = [
+            ev
+            async for ev in agent.stream_turn(
+                "all",
+                SkuChatContext("", "", ""),
+                history=history,
+            )
+        ]
+
+    assert events[-1]["text"] == "Codex answer with loaded SKU facts."

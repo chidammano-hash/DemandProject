@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -40,6 +41,85 @@ class SkuChatContext:
     item_id: str
     customer_group: str
     loc: str
+
+
+_SKU_FIELD_PATTERNS = {
+    "item_id": re.compile(
+        r"(?<![\w-])item[_\s-]?id\s*[:=]\s*`?([A-Za-z0-9_.-]+)",
+        re.IGNORECASE,
+    ),
+    "customer_group": re.compile(
+        r"(?<![\w-])customer[_\s-]?group\s*[:=]\s*`?([A-Za-z0-9_.-]+)",
+        re.IGNORECASE,
+    ),
+    "loc": re.compile(
+        r"(?<![\w-])loc(?:ation)?\s*[:=]\s*`?([A-Za-z0-9_.-]+)",
+        re.IGNORECASE,
+    ),
+}
+_SKU_AT_LOC_PATTERNS = (
+    re.compile(
+        r"(?<![\w.-])sku\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s*@\s*([A-Za-z0-9][A-Za-z0-9_.-]*)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?<![\w.-])([0-9][A-Za-z0-9_.-]*)\s*@\s*([A-Za-z0-9][A-Za-z0-9_.-]*)"),
+)
+
+
+def _clean_sku_context_value(value: str) -> str:
+    """Trim punctuation commonly attached to SKU values in chat text."""
+    return value.strip().strip("`'\".,;:()[]{}")
+
+
+def _overlay_sku_context(base: SkuChatContext, updates: SkuChatContext) -> SkuChatContext:
+    """Return ``base`` with non-empty fields from ``updates`` applied."""
+    return SkuChatContext(
+        updates.item_id or base.item_id,
+        updates.customer_group or base.customer_group,
+        updates.loc or base.loc,
+    )
+
+
+def _sku_context_from_text(text: str) -> SkuChatContext:
+    """Extract SKU context fields from a single chat message."""
+    found: dict[str, str] = {"item_id": "", "customer_group": "", "loc": ""}
+    for field, pattern in _SKU_FIELD_PATTERNS.items():
+        for match in pattern.finditer(text):
+            found[field] = _clean_sku_context_value(match.group(1))
+
+    for pattern in _SKU_AT_LOC_PATTERNS:
+        for match in pattern.finditer(text):
+            found["item_id"] = _clean_sku_context_value(match.group(1))
+            found["loc"] = _clean_sku_context_value(match.group(2))
+
+    return SkuChatContext(found["item_id"], found["customer_group"], found["loc"])
+
+
+def _effective_sku_context(
+    ctx: SkuChatContext,
+    question: str,
+    history: list[dict[str, str]] | None,
+    *,
+    max_history: int,
+) -> SkuChatContext:
+    """Fill missing request context from recent transcript text.
+
+    The UI can send follow-up turns like "all" after a selected-SKU message while
+    the structured item fields are blank. The explicit request body still wins;
+    transcript inference only fills gaps.
+    """
+    inferred = SkuChatContext("", "", "")
+    for msg in (history or [])[-max_history:]:
+        inferred = _overlay_sku_context(
+            inferred,
+            _sku_context_from_text(msg.get("content", "")),
+        )
+    inferred = _overlay_sku_context(inferred, _sku_context_from_text(question))
+    return SkuChatContext(
+        ctx.item_id or inferred.item_id,
+        ctx.customer_group or inferred.customer_group,
+        ctx.loc or inferred.loc,
+    )
 
 
 def _import_query():
@@ -361,6 +441,12 @@ class SkuChatAgent:
         history_months = int(context_cfg.get("history_lookback_months", 24))
         peer_limit = int(context_cfg.get("cluster_peer_limit", 10))
         champion_adjust_enabled = bool((cfg.get("champion_adjust") or {}).get("enabled", True))
+        effective_ctx = _effective_sku_context(
+            ctx,
+            question,
+            history,
+            max_history=max_history,
+        )
 
         try:
             provider = auth.runtime_provider(cfg)
@@ -379,7 +465,7 @@ class SkuChatAgent:
         if provider == "codex":
             async for event in self._stream_codex_turn(
                 question,
-                ctx,
+                effective_ctx,
                 cfg=cfg,
                 model_id=model_id,
                 history=history,
@@ -400,7 +486,7 @@ class SkuChatAgent:
                 history_months=history_months,
                 peer_limit=peer_limit,
                 session_id=session_id,
-                customer_group=ctx.customer_group,
+                customer_group=effective_ctx.customer_group,
                 champion_adjust_enabled=champion_adjust_enabled,
             )
         except (AgentSdkUnavailableError, auth.SkuChatAuthError) as exc:
@@ -409,7 +495,7 @@ class SkuChatAgent:
 
         system_prompt = cfg.get("system_prompt") or prompts.DEFAULT_SYSTEM_PROMPT
         user_prompt = prompts.build_user_prompt(
-            question, ctx, history=history, max_history=max_history, page_focus=page_focus
+            question, effective_ctx, history=history, max_history=max_history, page_focus=page_focus
         )
         allowed = (cfg.get("tools") or {}).get("allowed") or tools.SKU_TOOL_NAMES
 
@@ -434,8 +520,8 @@ class SkuChatAgent:
             log.warning(
                 "sku-chat turn timed out after %ss for %s@%s",
                 timeout_s,
-                ctx.item_id,
-                ctx.loc,
+                effective_ctx.item_id,
+                effective_ctx.loc,
             )
             yield {
                 "type": "error",
