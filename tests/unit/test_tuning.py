@@ -447,6 +447,33 @@ class TestPrepareFoldFeatures:
         assert X_tr["qty_lag_1"].iloc[1] == 0.0
         assert X_va["qty_lag_1"].iloc[0] == 0.0
 
+    def test_metadata_columns_are_removed_from_fold_features(self):
+        X_train = pd.DataFrame(
+            {
+                "ml_cluster": ["A", "B"],
+                "region": ["WEST", "EAST"],
+                "qty_lag_1": [10.0, 20.0],
+            }
+        )
+        X_val = pd.DataFrame(
+            {
+                "ml_cluster": ["A"],
+                "region": ["WEST"],
+                "qty_lag_1": [30.0],
+            }
+        )
+
+        X_tr, X_va, effective_cat_cols = prepare_fold_features(
+            "lgbm",
+            X_train,
+            X_val,
+            ["ml_cluster", "region"],
+        )
+
+        assert "ml_cluster" not in X_tr.columns
+        assert "ml_cluster" not in X_va.columns
+        assert effective_cat_cols == ["region"]
+
 
 # ── fixed params merge ────────────────────────────────────────────────────────
 
@@ -629,6 +656,9 @@ class TestTuneForTimeframe:
         def capturing_fold_fn(
             X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, es_rounds
         ):
+            assert "ml_cluster" not in X_train.columns
+            assert "ml_cluster" not in X_val.columns
+            assert "ml_cluster" not in cat_cols
             captured_params.append(dict(params))
             preds = np.full(len(y_val), float(np.mean(y_train)))
             return preds, 25

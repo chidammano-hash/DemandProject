@@ -18,10 +18,11 @@ import pickle
 import platform
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -31,12 +32,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.constants import FORECAST_QTY_COL, METADATA_COLS, compute_min_cluster_rows
+from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 from common.ml.backtest_framework import (
     compute_cluster_demand_stats,
     resolve_cluster_params,
     run_tree_backtest,
 )
-from common.core.constants import FORECAST_QTY_COL, compute_min_cluster_rows
 from common.ml.model_registry import (
     build_tree_model,
     fit_final_model,
@@ -45,12 +47,22 @@ from common.ml.model_registry import (
     get_tree_default_params,
     probe_tree_gpu_available,
 )
+from common.ml.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
 from common.scripts_base import load_project_env, setup_logging
 from common.services.perf_profiler import profiled_section
-from common.ml.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
-from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
+
+
+def _model_feature_cols(feature_cols: list[str]) -> list[str]:
+    """Return model input columns with metadata/target columns stripped."""
+    return [col for col in feature_cols if col not in METADATA_COLS]
+
+
+def _model_cat_cols(cat_cols: list[str], feature_cols: list[str]) -> list[str]:
+    """Return categorical columns that are valid model inputs."""
+    feature_set = set(feature_cols)
+    return [col for col in cat_cols if col in feature_set and col not in METADATA_COLS]
 
 
 # ── Demand pattern classification for Tweedie routing ─────────────────────────
@@ -522,6 +534,8 @@ def _train_single_cluster(
     if isinstance(lib_module, str):
         lib_module = importlib.import_module(lib_module)
 
+    feature_cols = _model_feature_cols(feature_cols)
+    cat_cols = _model_cat_cols(cat_cols, feature_cols)
     cat_cols_in_features = (
         [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
     )
@@ -1023,12 +1037,14 @@ def train_and_predict_global(
     model_class: type,
     lib_module: Any,
 ) -> tuple[pd.DataFrame, dict, dict[str, dict]]:
-    """Train a single global tree model on ALL data with ml_cluster as categorical feature."""
+    """Train a single global tree model on all data without metadata features."""
+    feature_cols = _model_feature_cols(feature_cols)
+    cat_cols = _model_cat_cols(cat_cols, feature_cols)
     iter_param = registry["iter_param"]
     label = model_name.upper()
 
     logger.info(
-        "Training global %s on %s rows, %d features (includes ml_cluster)...",
+        "Training global %s on %s rows, %d model features...",
         label,
         f"{len(train_df):,}",
         len(feature_cols),
@@ -1178,7 +1194,7 @@ def persist_cluster_models(
             "n_estimators_used": n_est_used,
             "train_rows": cluster_meta.get("train_rows"),
             "val_wape": cluster_meta.get("val_wape"),
-            "trained_at": datetime.now(timezone.utc).isoformat(),
+            "trained_at": datetime.now(UTC).isoformat(),
             "timeframe": timeframe_label,
             "feature_importance": importance_dict,
         }
@@ -1615,8 +1631,10 @@ def main() -> None:
     # Build SHAP feature selector closure (Feature 42)
     feature_selector_fn = None
     if shap_select:
-        from common.ml.shap_selector import compute_timeframe_shap_per_cluster
-        from common.ml.shap_selector import compute_timeframe_shap
+        from common.ml.shap_selector import (
+            compute_timeframe_shap,
+            compute_timeframe_shap_per_cluster,
+        )
 
         shap_extractor_name = registry["shap_extractor"]
         shap_extractor_fn = getattr(

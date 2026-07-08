@@ -50,7 +50,7 @@ pipeline - combining a pretrained foundation model with domain-specific signals.
 ## Covariate Details
 
 **Past-only covariates (14 numeric):** known only for history, cannot be projected forward -
-`qty_lag_1`..`qty_lag_12` (5 used), `qty_rolling_mean_3/6/12`, `mom_growth`, `demand_accel`,
+`qty_lag_1`..`qty_lag_12` (5 used), `rolling_mean_3m/6m/12m`, `mom_growth`, `demand_accel`,
 `volatility_ratio`, Croston decomposition (`croston_demand_size`, `croston_demand_interval`,
 `croston_probability`). Cross-DFU cluster aggregates are intentionally excluded to avoid
 `ml_cluster` leakage in backtests.
@@ -59,8 +59,9 @@ pipeline - combining a pretrained foundation model with domain-specific signals.
 `month`, `quarter`, `is_quarter_end`, `is_year_end`, `days_in_month`, and Fourier terms
 (`fourier_sin/cos_12/6/4/3`).
 
-**Categorical past covariates (4):** `ml_cluster`, `brand`, `region`, `abc_vol` - passed as numpy
-string arrays (Chronos 2 supports these natively).
+**Categorical past covariates (3):** `brand`, `region`, `abc_vol` - passed as numpy string
+arrays (Chronos 2 supports these natively). `ml_cluster` remains metadata only and is not
+passed as a model covariate.
 
 ## Configuration
 

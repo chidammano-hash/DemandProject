@@ -3,7 +3,7 @@ Unit tests for global training strategy in backtest scripts.
 
 Tests cover:
 - train_and_predict_global (LGBM, CatBoost, XGBoost):
-  - ml_cluster IS included in feature_cols (not stripped)
+  - ml_cluster is excluded from feature_cols and used only as metadata
   - val split uses 15% of rows (vs 20% for per-cluster)
   - result DataFrame has the expected output columns
   - models dict uses "global" as the single key
@@ -14,9 +14,9 @@ Tests cover:
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -46,8 +46,8 @@ def _make_grid(n_rows: int = 200, include_cluster: bool = True) -> pd.DataFrame:
     return df
 
 
-FEATURE_COLS = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
-CAT_COLS = ["ml_cluster"]
+FEATURE_COLS = ["qty_lag_1", "qty_rolling_3"]
+CAT_COLS: list[str] = []
 
 
 class TestGlobalValSplit:
@@ -201,27 +201,30 @@ class TestCatBoostGlobalCatIndices:
 
 
 class TestXGBoostGlobalCategoryDtype:
-    """XGBoost global applies category dtype to all cat_cols including ml_cluster."""
+    """XGBoost global applies category dtype only to model categorical features."""
 
-    def test_category_dtype_applied_to_ml_cluster(self):
+    def test_category_dtype_applied_to_non_metadata_cat_feature(self):
         df = _make_grid(20)
-        feature_cols = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
-        cat_cols = ["ml_cluster"]
+        df["region"] = ["north" if i % 2 == 0 else "south" for i in range(len(df))]
+        feature_cols = ["qty_lag_1", "qty_rolling_3", "region"]
+        cat_cols = ["region"]
         cat_cols_in_features = [c for c in cat_cols if c in feature_cols]
 
         X = df[feature_cols].copy()
         for col in cat_cols_in_features:
             X[col] = X[col].astype("category")
 
-        assert X["ml_cluster"].dtype.name == "category"
+        assert X["region"].dtype.name == "category"
         # Non-cat cols remain numeric
         assert pd.api.types.is_numeric_dtype(X["qty_lag_1"])
 
     def test_predict_df_also_gets_category_dtype(self):
         df_train = _make_grid(100)
         df_pred = _make_grid(20)
-        feature_cols = ["qty_lag_1", "ml_cluster"]
-        cat_cols = ["ml_cluster"]
+        df_train["region"] = ["north" if i % 2 == 0 else "south" for i in range(len(df_train))]
+        df_pred["region"] = ["north" if i % 2 == 0 else "south" for i in range(len(df_pred))]
+        feature_cols = ["qty_lag_1", "region"]
+        cat_cols = ["region"]
         cat_cols_in_features = [c for c in cat_cols if c in feature_cols]
 
         X_train = df_train[feature_cols].copy()
@@ -230,8 +233,8 @@ class TestXGBoostGlobalCategoryDtype:
             X_train[col] = X_train[col].astype("category")
             X_pred[col] = X_pred[col].astype("category")
 
-        assert X_train["ml_cluster"].dtype.name == "category"
-        assert X_pred["ml_cluster"].dtype.name == "category"
+        assert X_train["region"].dtype.name == "category"
+        assert X_pred["region"].dtype.name == "category"
 
 
 class TestGlobalFinalRefit:

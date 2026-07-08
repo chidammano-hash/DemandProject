@@ -20,8 +20,9 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -31,18 +32,18 @@ from common.core.constants import (
     ARCHIVE_COLS,
     CAT_FEATURES,
     FORECAST_QTY_COL,
-    LAG_RANGE,
     MAX_ARCHIVE_LAG,
+    METADATA_COLS,
     MIN_TRAINING_MONTHS,
     NUMERIC_ITEM_FEATURES,
     NUMERIC_SKU_FEATURES,
     OUTPUT_COLS,
 )
 from common.core.db import get_db_params
-from common.services.metrics import compute_accuracy_metrics
-from common.ml.mlflow_utils import log_backtest_run
 from common.core.planning_date import get_planning_date
 from common.core.utils import load_config
+from common.ml.mlflow_utils import log_backtest_run
+from common.services.metrics import compute_accuracy_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -937,6 +938,17 @@ _PREDICT_META_COLS = ["sku_ck", "item_id", "customer_group", "loc", "startdate"]
 # ── Recursive mode helpers ────────────────────────────────────────────────
 
 
+def _model_feature_cols(feature_cols: list[str]) -> list[str]:
+    """Return model input columns with metadata/target columns stripped."""
+    return [col for col in feature_cols if col not in METADATA_COLS]
+
+
+def _model_cat_cols(cat_cols: list[str], feature_cols: list[str]) -> list[str]:
+    """Return categorical columns that are valid model inputs."""
+    feature_set = set(feature_cols)
+    return [col for col in cat_cols if col in feature_set and col not in METADATA_COLS]
+
+
 def _inject_recursive_noise(
     qty_values: np.ndarray,
     noise_pct: float = 0.05,
@@ -1101,6 +1113,8 @@ def _fill_predict_nans(
     cat_cols: list[str],
 ) -> pd.DataFrame:
     """Fill NaN values in numeric feature columns of predict_data with 0."""
+    feature_cols = _model_feature_cols(feature_cols)
+    cat_cols = _model_cat_cols(cat_cols, feature_cols)
     for col in feature_cols:
         if col in predict_data.columns and col not in cat_cols:
             if pd.api.types.is_numeric_dtype(predict_data[col]):
@@ -1140,6 +1154,7 @@ def _predict_single_month(
             if per_cluster_feature_cols
             else feature_cols
         )
+        cluster_feats = _model_feature_cols(cluster_feats)
         # For baseline models (e.g., _RollingMeanModel, _SeasonalNaiveModel)
         # that need sku_ck mapping, set the DFU keys before calling predict
         # on feature-only DataFrames.
@@ -1189,7 +1204,6 @@ def run_tree_backtest(
         get_feature_columns,
         mask_future_sales,
         update_grid_incremental,
-        update_grid_with_predictions,
     )
 
     cluster_strategy = (algo_config or {}).get("cluster_strategy", "per_cluster")
@@ -1259,13 +1273,9 @@ def run_tree_backtest(
         cat_dtype=cat_dtype,
         customer_features=customer_features,
     )
-    feature_cols = get_feature_columns(full_grid)
-    # Global strategy uses ml_cluster as a categorical feature instead of partitioning
-    if cluster_strategy == "global" and "ml_cluster" in full_grid.columns and "ml_cluster" not in feature_cols:
-        feature_cols = feature_cols + ["ml_cluster"]
+    feature_cols = _model_feature_cols(get_feature_columns(full_grid))
     cat_cols = [c for c in CAT_FEATURES if c in feature_cols and c in full_grid.columns]
-    if cluster_strategy == "global" and "ml_cluster" not in cat_cols and "ml_cluster" in feature_cols:
-        cat_cols = cat_cols + ["ml_cluster"]
+    cat_cols = _model_cat_cols(cat_cols, feature_cols)
     logger.info("Features: %d columns, cat: %s", len(feature_cols), cat_cols)
 
     # ── Checkpoint manager for incremental saves ──────────────────────────────
@@ -1428,6 +1438,7 @@ def run_tree_backtest(
                 clusters_to_retrain: list[str] = []
 
                 for cluster_label, sel_feats in selected_features.items():
+                    sel_feats = _model_feature_cols(sel_feats)
                     features_dropped = len(feature_cols) - len(sel_feats)
                     drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
                     if drop_pct >= retrain_threshold and set(sel_feats) != set(feature_cols):
@@ -1539,6 +1550,7 @@ def run_tree_backtest(
 
             else:
                 # ── Legacy single-selection path (global strategy) ─────────────
+                selected_features = _model_feature_cols(selected_features)
                 features_dropped = len(feature_cols) - len(selected_features)
                 drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
                 if drop_pct >= retrain_threshold and set(selected_features) != set(feature_cols):

@@ -829,8 +829,8 @@ def update_grid_incremental(
                 (sub[existing_lag_cols] == 0).sum(axis=1).astype(np.float32)
             )
 
-    # Recompute Croston and cross-DFU cluster features (full grid, not incremental —
-    # these depend on rolling windows across all DFUs so partial update is unsafe)
+    # Recompute Croston features on the full grid; their rolling windows span
+    # each DFU's history, so partial updates are unsafe.
     if "croston_demand_size" in grid.columns:
         _compute_croston_features(grid)
     # Cross-DFU cluster aggregates intentionally stay removed to avoid ml_cluster leakage.

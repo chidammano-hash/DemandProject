@@ -3,15 +3,14 @@
 import datetime
 from unittest.mock import patch
 
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from common.ml.backtest_framework import (
+    _matches_profile,
     compute_cluster_demand_stats,
     generate_timeframes,
     resolve_cluster_params,
-    _matches_profile,
 )
 
 
@@ -86,10 +85,10 @@ class TestGenerateTimeframes:
 class TestPredictSingleMonth:
     """Verify _predict_single_month feature alignment."""
 
-    def test_predict_single_month_passes_all_feature_cols(self):
-        """_predict_single_month must pass all feature_cols to model.predict(),
-        including ml_cluster (since per-cluster models are trained with it)."""
+    def test_predict_single_month_strips_metadata_cols(self):
+        """_predict_single_month passes only model features to model.predict()."""
         from unittest.mock import MagicMock
+
         from common.ml.backtest_framework import _predict_single_month
 
         feature_cols = ["qty_lag_1", "qty_lag_2", "ml_cluster", "month"]
@@ -112,14 +111,15 @@ class TestPredictSingleMonth:
 
         result = _predict_single_month(models, predict_data, feature_cols)
 
-        # Model should have been called with ALL feature_cols (including ml_cluster)
+        # ml_cluster routes rows to models but must not be a model input.
         call_args = mock_model.predict.call_args[0][0]
-        assert list(call_args.columns) == feature_cols
+        assert list(call_args.columns) == ["qty_lag_1", "qty_lag_2", "month"]
         assert len(result) == 2
 
     def test_predict_single_month_routes_by_cluster(self):
         """Each cluster's rows go to the correct model."""
         from unittest.mock import MagicMock
+
         from common.ml.backtest_framework import _predict_single_month
 
         feature_cols = ["qty_lag_1", "ml_cluster"]
@@ -146,7 +146,6 @@ class TestPredictSingleMonth:
 
     def test_predict_single_month_missing_cluster_skips(self):
         """DFUs with no matching cluster model are silently skipped."""
-        from unittest.mock import MagicMock
         from common.ml.backtest_framework import _predict_single_month
 
         feature_cols = ["qty_lag_1", "ml_cluster"]
@@ -170,24 +169,27 @@ class TestPlanningDateCap:
 
     def test_load_backtest_data_sql_includes_planning_cutoff(self):
         """The SQL query in load_backtest_data must filter by planning date."""
-        from common.ml.backtest_framework import load_backtest_data
         import inspect
+
+        from common.ml.backtest_framework import load_backtest_data
         source = inspect.getsource(load_backtest_data)
         assert "planning_cutoff" in source
         assert "get_planning_date" in source
 
     def test_run_tree_backtest_caps_latest_month(self):
         """run_tree_backtest must cap latest_month at planning date."""
-        from common.ml.backtest_framework import run_tree_backtest
         import inspect
+
+        from common.ml.backtest_framework import run_tree_backtest
         source = inspect.getsource(run_tree_backtest)
         assert "planning_cutoff" in source or "planning_dt" in source
         assert "get_planning_date" in source
 
     def test_run_tree_backtest_threads_customer_features(self):
         """Customer-enriched algorithms must load and build with customer features."""
-        from common.ml.backtest_framework import run_tree_backtest
         import inspect
+
+        from common.ml.backtest_framework import run_tree_backtest
         source = inspect.getsource(run_tree_backtest)
         assert "include_customer_features" in source
         assert "load_backtest_data(" in source
@@ -196,7 +198,7 @@ class TestPlanningDateCap:
 
     def test_planning_date_honors_env_override(self, monkeypatch):
         """get_planning_date() must honor the PLANNING_DATE env var."""
-        from common.core.planning_date import get_planning_date, _reset_cache
+        from common.core.planning_date import _reset_cache, get_planning_date
         monkeypatch.setenv("PLANNING_DATE", "2026-02-24")
         _reset_cache()
         try:
@@ -206,7 +208,7 @@ class TestPlanningDateCap:
 
     def test_planning_cutoff_is_first_of_month(self, monkeypatch):
         """Cutoff derived from a pinned planning date is first-of-month."""
-        from common.core.planning_date import get_planning_date, _reset_cache
+        from common.core.planning_date import _reset_cache, get_planning_date
         monkeypatch.setenv("PLANNING_DATE", "2026-02-24")
         _reset_cache()
         try:

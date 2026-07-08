@@ -217,7 +217,7 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 
 #### Expert 6: LightGBM Specialist
 - **Strength signal:** Complex nonlinear interactions, categorical features, large training sets
-- **SHAP alignment:** When cross-DFU features and categorical features (`brand`, `region`) show high SHAP
+- **SHAP alignment:** When lag, rolling, derived-demand, and categorical features (`brand`, `region`) show high SHAP
 - **Specialization:** Fastest tree; best for high-cardinality categoricals via histogram binning
 
 #### Expert 7: CatBoost Specialist
@@ -299,7 +299,6 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 - **SHAP cluster types:**
   - **Lag-dominated** (lag features > 40% SHAP mass) → autoregressive models
   - **Seasonal-dominated** (fourier + month > 30%) → seasonal models
-  - **Cross-DFU-dominated** (cluster features > 20%) → tree models
   - **Attribute-dominated** (categorical features > 15%) → CatBoost, Random Forest
   - **Trend-dominated** (derived features > 25%) → Theta, damped trend
   - **Sparse-signal** (top 5 features < 50% mass) → ensemble

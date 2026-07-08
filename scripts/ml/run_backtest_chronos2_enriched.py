@@ -2,7 +2,7 @@
 Run Chronos 2 Enriched backtest — Chronos 2 with covariate features.
 
 Unlike the zero-shot Chronos 2 backtest, this version passes:
-  - past_covariates: lag/rolling/croston/cluster features + categoricals
+  - past_covariates: lag/rolling/croston features + categoricals
   - future_covariates: calendar/fourier features (known for any future date)
 
 Produces CSVs under data/backtest/chronos2_enriched/.
@@ -120,12 +120,11 @@ spec = FoundationModelSpec(
         "covariates": {
             "past_numeric": [
                 "qty_lag_1", "qty_lag_2", "qty_lag_3", "qty_lag_6", "qty_lag_12",
-                "qty_rolling_mean_3", "qty_rolling_mean_6", "qty_rolling_mean_12",
+                "rolling_mean_3m", "rolling_mean_6m", "rolling_mean_12m",
                 "mom_growth", "demand_accel", "volatility_ratio",
                 "croston_demand_size", "croston_demand_interval", "croston_probability",
-                "cluster_mean_lag1", "cluster_total_lag1", "cluster_demand_trend",
             ],
-            "past_categorical": ["ml_cluster", "brand", "region", "abc_vol"],
+            "past_categorical": ["brand", "region", "abc_vol"],
             "future": [
                 "month", "quarter", "is_quarter_end", "is_year_end", "days_in_month",
                 "fourier_sin_12", "fourier_cos_12", "fourier_sin_6", "fourier_cos_6",

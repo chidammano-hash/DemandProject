@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.core.constants import METADATA_COLS
 from common.core.utils import _ts
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,17 @@ ITERATION_PARAM_BY_MODEL = {
     "catboost": "iterations",
     "xgboost": "n_estimators",
 }
+
+
+def _model_feature_cols(feature_cols: list[str]) -> list[str]:
+    """Return model input columns with metadata/target columns stripped."""
+    return [col for col in feature_cols if col not in METADATA_COLS]
+
+
+def _model_cat_cols(cat_cols: list[str], feature_cols: list[str]) -> list[str]:
+    """Return categorical columns that are valid model inputs."""
+    feature_set = set(feature_cols)
+    return [col for col in cat_cols if col in feature_set and col not in METADATA_COLS]
 
 
 # ── CV splits ─────────────────────────────────────────────────────────────────
@@ -286,7 +298,12 @@ def prepare_fold_features(
     """
     X_tr = X_train.copy()
     X_va = X_val.copy()
+    metadata_cols = [col for col in X_tr.columns if col in METADATA_COLS]
+    if metadata_cols:
+        X_tr = X_tr.drop(columns=metadata_cols)
+        X_va = X_va.drop(columns=[col for col in metadata_cols if col in X_va.columns])
     feature_cols = list(X_tr.columns)
+    cat_cols = _model_cat_cols(cat_cols, feature_cols)
 
     discovered_cat_cols = list(
         X_tr.select_dtypes(include=["object", "string"]).columns.union(
@@ -551,6 +568,8 @@ def tune_for_timeframe(
     """
     t_cfg = config["tuning"]
     n_estimators_max = t_cfg["n_estimators_max"]
+    feature_cols = _model_feature_cols(feature_cols)
+    cat_cols = _model_cat_cols(cat_cols, feature_cols)
 
     try:
         import optuna

@@ -340,7 +340,7 @@ METADATA_COLS = {"sku_ck", "item_id", "customer_group", "loc",
 - **Per-cluster partitioning** when `cluster_strategy: per_cluster` (one model per cluster).
 - **Inventory planning + UI joins** that need the cluster label.
 
-The only exception is the `cluster_strategy: global` path in `backtest_framework.py` (lines 1214–1219), where `ml_cluster` is intentionally promoted to a categorical feature in lieu of partitioning.
+There is no global-strategy exception: `cluster_strategy: global` trains one model on all DFUs, but `ml_cluster` remains metadata and is still excluded from model inputs.
 
 ### 7.2 Intermittent cluster routing
 

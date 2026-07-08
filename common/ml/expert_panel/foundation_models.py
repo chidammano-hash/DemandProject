@@ -9,7 +9,6 @@ import gc
 import logging
 import os
 import time
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -115,7 +114,7 @@ def _check_chronos2() -> bool:
 # Past-only covariates: known for history, NOT known for future
 _C2E_PAST_ONLY_COVARIATES = [
     "qty_lag_1", "qty_lag_2", "qty_lag_3", "qty_lag_6", "qty_lag_12",
-    "qty_rolling_mean_3", "qty_rolling_mean_6", "qty_rolling_mean_12",
+    "rolling_mean_3m", "rolling_mean_6m", "rolling_mean_12m",
     "mom_growth", "demand_accel", "volatility_ratio",
     "croston_demand_size", "croston_demand_interval", "croston_probability",
 ]
@@ -127,8 +126,9 @@ _C2E_FUTURE_COVARIATES = [
     "fourier_sin_4", "fourier_cos_4", "fourier_sin_3", "fourier_cos_3",
 ]
 
-# Categorical past covariates (Chronos 2 supports these as numpy str arrays)
-_C2E_CAT_COVARIATES = ["ml_cluster", "brand", "region", "abc_vol"]
+# Categorical past covariates (Chronos 2 supports these as numpy str arrays).
+# ml_cluster stays metadata only; it is not passed as a model covariate.
+_C2E_CAT_COVARIATES = ["brand", "region", "abc_vol"]
 
 
 def _build_future_calendar(predict_months: list[pd.Timestamp]) -> dict[str, np.ndarray]:

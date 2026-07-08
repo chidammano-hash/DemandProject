@@ -21,7 +21,6 @@ from common.ml.feature_engineering import (
     update_grid_with_predictions,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -149,14 +148,27 @@ class TestPredictSingleMonth:
         assert len(result) == 0
         assert "basefcst_pref" in result.columns
 
-    def test_passes_all_feature_cols_including_ml_cluster(self, predict_data_one_month):
-        """ml_cluster is included in X passed to per-cluster models (trained with it)."""
+    def test_strips_metadata_feature_cols(self, predict_data_one_month):
+        """ml_cluster routes DFUs but is never passed as a model input."""
         feature_cols = ["qty_lag_1", "ml_cluster"]
         models = self._make_cluster_models()
         _predict_single_month(models, predict_data_one_month, feature_cols)
         call_arg = models["cluster_A"].predict.call_args[0][0]
-        assert "ml_cluster" in call_arg.columns
-        assert list(call_arg.columns) == feature_cols
+        assert "ml_cluster" not in call_arg.columns
+        assert list(call_arg.columns) == ["qty_lag_1"]
+
+    def test_strips_metadata_from_per_cluster_feature_overrides(self, predict_data_one_month):
+        """SHAP per-cluster overrides cannot reintroduce metadata columns."""
+        feature_cols = ["qty_lag_1"]
+        models = self._make_cluster_models()
+        _predict_single_month(
+            models,
+            predict_data_one_month,
+            feature_cols,
+            per_cluster_feature_cols={"cluster_A": ["qty_lag_1", "ml_cluster"]},
+        )
+        call_arg = models["cluster_A"].predict.call_args[0][0]
+        assert list(call_arg.columns) == ["qty_lag_1"]
 
 
 # ---------------------------------------------------------------------------
