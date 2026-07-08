@@ -1203,7 +1203,17 @@ def run_tree_backtest(
 
     # ── Step 1: Load data ────────────────────────────────────────────────────
     logger.info("Step 1: Loading data from Postgres...")
-    sales_df, dfu_attrs, item_attrs = load_backtest_data(db, algo_config=algo_config)
+    include_customer_features = bool((algo_config or {}).get("customer_features", False))
+    data_result = load_backtest_data(
+        db,
+        algo_config=algo_config,
+        include_customer_features=include_customer_features,
+    )
+    if include_customer_features:
+        sales_df, dfu_attrs, item_attrs, customer_features = data_result
+    else:
+        sales_df, dfu_attrs, item_attrs = data_result
+        customer_features = None
 
     # Execution lag lookup
     exec_lag_map = dfu_attrs.set_index("sku_ck")["execution_lag"].fillna(0).astype(int).to_dict()
@@ -1241,7 +1251,14 @@ def run_tree_backtest(
 
     # ── Step 3: Build feature matrix ONCE ────────────────────────────────────
     logger.info("Step 3: Building feature matrix (one-time)...")
-    full_grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months, cat_dtype=cat_dtype)
+    full_grid = build_feature_matrix(
+        sales_df,
+        dfu_attrs,
+        item_attrs,
+        all_months,
+        cat_dtype=cat_dtype,
+        customer_features=customer_features,
+    )
     feature_cols = get_feature_columns(full_grid)
     # Global strategy uses ml_cluster as a categorical feature instead of partitioning
     if cluster_strategy == "global" and "ml_cluster" in full_grid.columns and "ml_cluster" not in feature_cols:

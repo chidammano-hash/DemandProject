@@ -223,6 +223,83 @@ class TestMultiSeedIntegration:
     @patch("scripts.ml.run_backtest.run_tree_backtest")
     @patch("scripts.ml.run_backtest.profiled_section")
     @patch("scripts.ml.run_backtest._import_model_class")
+    def test_model_id_selects_matching_pipeline_config(
+        self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
+    ) -> None:
+        """--model-id must read that algorithm section, not the base tree section."""
+        mock_profiler.return_value.__enter__ = MagicMock()
+        mock_profiler.return_value.__exit__ = MagicMock(return_value=False)
+        mock_import.return_value = MagicMock
+        mock_backtest.return_value = None
+
+        config_data = {
+            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path), "n_seeds": 1},
+            "algorithms": {
+                "lgbm_cluster": {
+                    "type": "tree",
+                    "enabled": True,
+                    "backtest": True,
+                    "cluster_strategy": "per_cluster",
+                    "params": {
+                        "recursive": False,
+                        "shap_select": False,
+                        "tune_inline": False,
+                        "params_file": None,
+                        "n_estimators": 100,
+                        "learning_rate": 0.05,
+                    },
+                },
+                "lgbm_cust_enriched": {
+                    "type": "tree",
+                    "enabled": True,
+                    "backtest": True,
+                    "cluster_strategy": "per_cluster",
+                    "params": {
+                        "customer_features": True,
+                        "recursive": False,
+                        "shap_select": False,
+                        "tune_inline": False,
+                        "params_file": None,
+                        "n_estimators": 222,
+                        "learning_rate": 0.012,
+                    },
+                },
+            },
+        }
+        config_file = tmp_path / "forecast_pipeline_config.yaml"
+        import yaml
+
+        with open(config_file, "w") as f:
+            yaml.dump(config_data, f)
+
+        with patch(
+            "sys.argv",
+            [
+                "run_backtest.py",
+                "--model",
+                "lgbm",
+                "--model-id",
+                "lgbm_cust_enriched",
+                "--config",
+                str(config_file),
+            ],
+        ):
+            with patch("importlib.import_module") as mock_importlib:
+                mock_importlib.return_value = MagicMock()
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
+
+                    main()
+
+        call_kwargs = mock_backtest.call_args[1]
+        assert call_kwargs["model_id"] == "lgbm_cust_enriched"
+        assert call_kwargs["model_params"]["n_estimators"] == 222
+        assert call_kwargs["model_params"]["learning_rate"] == 0.012
+        assert call_kwargs["algo_config"]["customer_features"] is True
+
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_multi_seed_runs_multiple_times(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:

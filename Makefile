@@ -215,6 +215,7 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  backtest-lgbm        - run LGBM per-cluster backtest (settings from forecast_pipeline_config.yaml)"
 	@echo "  backtest-catboost    - run CatBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
 	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
+	@echo "  backtest-cust-enriched-all - run customer-feature-enriched LGBM/CatBoost/XGBoost backtests"
 	@echo "  backtest-chronos2e   - run Chronos 2 Enriched foundation model backtest"
 	@echo "  backtest-chronos2e-full - run Chronos 2 Enriched backtest + load predictions"
 	@echo "  backtest-all         - run all clean-rebuild backtests sequentially (cluster trees + foundation)"
@@ -222,7 +223,7 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
 	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after backtest-all)"
 	@echo "  backtest-load-all-bulk - load ALL models with single index cycle (~4x faster)"
-	@echo "  backtest-load-bulk   - load 4 core models (lgbm, catboost, xgboost, chronos2_enriched) in bulk"
+	@echo "  backtest-load-bulk   - load 7 core models (base/enriched trees + chronos2_enriched) in bulk"
 	@echo "  backtest-load-main-only - load specific models to main table only (MODELS='...')"
 	@echo "  backtest-load-archive-only - load specific models to archive only (MODELS='...')"
 	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_cluster catboost_cluster')"
@@ -689,6 +690,17 @@ backtest-catboost:
 backtest-xgboost:
 	$(UV) python scripts/ml/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
 
+backtest-lgbm-cust:
+	$(UV) python scripts/ml/run_backtest.py --model lgbm --model-id lgbm_cust_enriched --parallel --workers 8 $(ARGS)
+
+backtest-catboost-cust:
+	$(UV) python scripts/ml/run_backtest_catboost.py --model-id catboost_cust_enriched --parallel --workers 8 $(ARGS)
+
+backtest-xgboost-cust:
+	$(UV) python scripts/ml/run_backtest_xgboost.py --model-id xgboost_cust_enriched --parallel --workers 8 $(ARGS)
+
+backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
+
 customer-features:
 	$(UV) python -m scripts.ml.generate_customer_features_sql
 
@@ -743,21 +755,25 @@ backtest-baselines: backtest-seasonal-naive backtest-rolling-mean
 
 # backtest-all produces every compete:true model that runs on a clean rebuild:
 #   lgbm_cluster, catboost_cluster, xgboost_cluster (cluster trees),
+#   lgbm_cust_enriched, catboost_cust_enriched, xgboost_cust_enriched,
 #   chronos2_enriched (foundation).
 # Cheap/operator-gated baselines (mstl, nbeats, nhits, rolling_mean, rolling_median,
 # seasonal_naive) are run on demand via their own targets.
 # run_champion_selection.assert_competing_models_covered() fails loud if any
 # compete:true model is missing from fact_external_forecast_monthly after load.
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos2e  ## Run all clean-rebuild backtests sequentially (cluster trees + foundation)
+backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-cust-enriched-all backtest-chronos2e  ## Run all clean-rebuild backtests sequentially (cluster trees + foundation)
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
-	@echo "[parallel] Starting cluster trees + Chronos2-enriched concurrently — logs in data/backtest/logs/"
+	@echo "[parallel] Starting base/enriched cluster trees + Chronos2-enriched concurrently — logs in data/backtest/logs/"
 	$(UV) python scripts/ml/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
 	$(UV) python scripts/ml/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
 	$(UV) python scripts/ml/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest.py --model lgbm --model-id lgbm_cust_enriched $(ARGS) > data/backtest/logs/lgbm_cust_enriched.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest_catboost.py --model-id catboost_cust_enriched $(ARGS) > data/backtest/logs/catboost_cust_enriched.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest_xgboost.py --model-id xgboost_cust_enriched $(ARGS) > data/backtest/logs/xgboost_cust_enriched.log 2>&1 & \
 	$(UV) python -m scripts.ml.run_backtest_chronos2_enriched > data/backtest/logs/chronos2_enriched.log 2>&1 & \
-	wait && echo "[parallel] All clean-rebuild backtests complete (3 cluster trees + chronos2e). Check data/backtest/logs/ for output."
+	wait && echo "[parallel] All clean-rebuild backtests complete (base/enriched trees + chronos2e). Check data/backtest/logs/ for output."
 
 backtest-load:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --model $(MODEL) --replace
@@ -768,8 +784,8 @@ backtest-load-all:
 backtest-load-all-bulk:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --all --replace --bulk
 
-backtest-load-bulk:  ## Load 4 core models with single index cycle (~4x faster)
-	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster chronos2_enriched --replace --bulk
+backtest-load-bulk:  ## Load 7 core models with single index cycle (~4x faster)
+	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster lgbm_cust_enriched catboost_cust_enriched xgboost_cust_enriched chronos2_enriched --replace --bulk
 
 backtest-load-main-only:  ## Load specific models to main table only (skip archive). Usage: make backtest-load-main-only MODELS="lgbm_cluster chronos2_enriched"
 	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --main-only

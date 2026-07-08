@@ -184,6 +184,16 @@ class TestPlanningDateCap:
         assert "planning_cutoff" in source or "planning_dt" in source
         assert "get_planning_date" in source
 
+    def test_run_tree_backtest_threads_customer_features(self):
+        """Customer-enriched algorithms must load and build with customer features."""
+        from common.ml.backtest_framework import run_tree_backtest
+        import inspect
+        source = inspect.getsource(run_tree_backtest)
+        assert "include_customer_features" in source
+        assert "load_backtest_data(" in source
+        assert "include_customer_features=include_customer_features" in source
+        assert "customer_features=customer_features" in source
+
     def test_planning_date_honors_env_override(self, monkeypatch):
         """get_planning_date() must honor the PLANNING_DATE env var."""
         from common.core.planning_date import get_planning_date, _reset_cache

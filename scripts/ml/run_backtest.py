@@ -1257,11 +1257,18 @@ def main() -> None:
         # and params live under algorithms.<model_id>.params.
         # Also support legacy format where config_key maps model_name -> section.
         _config_key = registry["config_key"]
-        _config_section = registry.get("config_section", f"{_config_key}_cluster")
-        algo_entry = cfg.get("algorithms", {}).get(_config_section, {})
-        if not algo_entry:
-            # Fallback: try config_key directly (legacy format)
-            algo_entry = cfg.get("algorithms", {}).get(_config_key, {})
+        _default_config_section = registry.get("config_section", f"{_config_key}_cluster")
+        _algorithm_cfg = cfg.get("algorithms", {})
+        _candidate_sections = [
+            args.model_id,
+            _default_config_section,
+            _config_key,
+        ]
+        _selected_config_section = next(
+            (section for section in _candidate_sections if section and section in _algorithm_cfg),
+            _default_config_section,
+        )
+        algo_entry = _algorithm_cfg.get(_selected_config_section, {})
         # Extract params sub-dict if present (pipeline config format)
         if "params" in algo_entry:
             algo = dict(algo_entry["params"])
@@ -1289,17 +1296,16 @@ def main() -> None:
         # Match by config_section (pipeline model_id, e.g. "lgbm_cluster")
         # or by config_key (base name, e.g. "lgbm") as prefix of roster keys.
         try:
-            _config_section_id = registry.get("config_section", f"{_config_key}_cluster")
             roster = get_algorithm_roster(stage="backtest")
-            roster_entry = roster.get(_config_section_id)
+            roster_entry = roster.get(_selected_config_section)
             if roster_entry is None:
                 # Not in roster with backtest=true — check if explicitly disabled
                 all_roster = get_algorithm_roster()
-                disabled = _config_section_id not in all_roster
+                disabled = _selected_config_section not in all_roster
                 if disabled:
                     logger.warning(
                         "Model '%s' is disabled in forecast_pipeline_config.yaml — skipping",
-                        model_name,
+                        args.model_id or model_name,
                     )
                     return
         except FileNotFoundError:
@@ -1324,10 +1330,9 @@ def main() -> None:
     # Resolve cluster_strategy: pipeline config entry > algo dict > default
     _roster_cs = algo.get("cluster_strategy")
     if not _roster_cs and pipeline_cfg:
-        # Look up by config_section (pipeline model_id), then fall back to model_name
-        _section_id = registry.get("config_section", f"{model_name}_cluster")
-        _algo_entry = pipeline_cfg.get("algorithms", {}).get(_section_id)
-        if _algo_entry is None:
+        # Look up by the selected pipeline model_id first, then fall back to base model.
+        _algo_entry = pipeline_cfg.get("algorithms", {}).get(_selected_config_section)
+        if _algo_entry is None and _selected_config_section != model_name:
             _algo_entry = pipeline_cfg.get("algorithms", {}).get(model_name)
         if _algo_entry:
             _roster_cs = _algo_entry.get("cluster_strategy")
