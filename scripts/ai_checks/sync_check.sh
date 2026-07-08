@@ -14,9 +14,13 @@ pass() {
   echo "OK: $1"
 }
 
+[[ -f "AGENTS.md" ]] || fail "missing AGENTS.md"
+grep -Fq 'Supply Chain Command Center' AGENTS.md || fail "AGENTS.md does not look like the project guidance file"
+pass "Codex AGENTS.md exists"
+
 [[ -f ".codex/config.toml" ]] || fail "missing .codex/config.toml"
-grep -Fq 'project_doc_fallback_filenames = ["CLAUDE.md"]' .codex/config.toml || fail "Codex fallback file is not set to CLAUDE.md"
-pass "Codex project doc fallback points at CLAUDE.md"
+grep -Fq 'project_doc_fallback_filenames = ["AGENTS.md", "CLAUDE.md"]' .codex/config.toml || fail "Codex fallback files are not set to AGENTS.md then CLAUDE.md"
+pass "Codex project doc fallback points at AGENTS.md then CLAUDE.md"
 
 [[ -L ".agents/skills" ]] || fail ".agents/skills is not a symlink"
 [[ "$(readlink .agents/skills)" == "../.claude/skills" ]] || fail ".agents/skills does not point to ../.claude/skills"

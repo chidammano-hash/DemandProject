@@ -1,4 +1,4 @@
-# CLAUDE.md — Supply Chain Command Center
+# AGENTS.md — Supply Chain Command Center
 
 ## Project Overview
 
@@ -171,7 +171,7 @@ Still-here quick facts that don't belong to one skill:
 
 ## Commands Cheatsheet
 
-The targets Claude actually invokes. For the full operator command list (~130 targets — pipelines, ML, fresh-load, perf, setup-*), see `docs/operations-manual/` and `Makefile`.
+The targets Codex actually invokes. For the full operator command list (~130 targets — pipelines, ML, fresh-load, perf, setup-*), see `docs/operations-manual/` and `Makefile`.
 
 ```bash
 # Run services
@@ -237,17 +237,19 @@ Before declaring any change "done":
 3. **Refactor for clarity if messy.** Don't ship a working-but-ugly diff just because tests pass.
 4. **Then verify** (tests + lint + gates) and only then report complete.
 
-Multi-step plans: this pass happens at **each** step, not only the end. Multi-agent batches: each agent reviews + refactors its own diff before reporting; the orchestrator does a cross-cutting review of the merged result. The auto-trigger `code-reviewer` agent (below) backstops this for commits — but Claude must self-review before invoking the reviewer; otherwise the reviewer becomes a crutch.
+Multi-step plans: this pass happens at **each** step, not only the end. Multi-agent batches: each agent reviews + refactors its own diff before reporting; the orchestrator does a cross-cutting review of the merged result. The auto-trigger `code-reviewer` agent (below) backstops this for commits — but Codex must self-review before invoking the reviewer; otherwise the reviewer becomes a crutch.
 
-### Always-active automation (from `.claude/settings.json`)
-- **PostToolUse (Write/Edit)**: ruff on Python, anti-pattern checks on SQL, auto-runs edited test files.
-- **PreToolUse (Bash)**: blocks `git commit` if new CLAUDE.md rule violations detected.
+### Automation and shared gates
+- **Claude auto-hooks** live in `.claude/settings.json` and delegate to `scripts/ai_checks/`.
+- **Codex equivalent**: run the same shared gates directly when relevant, especially
+  `make ai-sync-check`, `make audit-routers`, and `make test-all`.
+- **Pre-commit protection** blocks `git commit` if new AGENTS.md/CLAUDE.md rule violations are detected.
 
 ### How hooks, skills, and agents work together
 
-**Hooks** (`.claude/hooks/` + `.pre-commit-config.yaml`) fire immediately on edit/commit — purely mechanical quality gates (type check, lint, secret scan, test run).
-**Skills** (`.claude/skills/`) are on-demand reference guides loaded when work context matches (e.g., "Writing a Python router" → `api-design` skill loads automatically).
-**Agents** (spawned via `Agent()` tool) are expert reviewers — must be invoked manually for deep analysis. Each agent loads relevant skills.
+**Hooks/gates** (`.claude/hooks/`, `.pre-commit-config.yaml`, and `scripts/ai_checks/`) are purely mechanical quality gates (type check, lint, secret scan, test run).
+**Skills** (`.agents/skills` symlinked to `.claude/skills/`) are on-demand reference guides loaded when work context matches (e.g., "Writing a Python router" → `api-design` skill loads automatically).
+**Reviewer roles** map to Codex subagents/tools when available; otherwise, apply the same checklists manually. Each reviewer role loads relevant skills.
 
 **Recommended agents by task** (manual invocation):
 - Python/FastAPI changes: `python-reviewer` (loads `python-patterns`, `api-design` for routers)
@@ -273,7 +275,7 @@ Multi-step plans: this pass happens at **each** step, not only the end. Multi-ag
 2. **Backend**: router in correct `api/routers/<domain>/`, `get_conn()`, `%s`, `app.include_router()` BEFORE `domains.py`, `Depends(require_api_key)` on writes, config in YAML.
 3. **Frontend**: query module in `src/api/queries/`, Vite proxy entry, queries barrel entry, theme via context.
 4. **Tests**: backend + frontend per the table above, then `make test-all`.
-5. **Docs**: update `docs/ARCHITECTURE.md` (incl. its Feature Catalog §26), the relevant `docs/specs/<domain>/<spec>.md`, `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features", and `docs/operations-manual/` when operational procedures change. `docs/ENTERPRISE_ARCHITECTURE.md` carries inline self-update rules — follow them. Update this `CLAUDE.md` only if a new critical rule applies.
+5. **Docs**: update `docs/ARCHITECTURE.md` (incl. its Feature Catalog §26), the relevant `docs/specs/<domain>/<spec>.md`, `docs/specs/01-foundation/01-infrastructure.md` "Implemented Features", and `docs/operations-manual/` when operational procedures change. `docs/ENTERPRISE_ARCHITECTURE.md` carries inline self-update rules — follow them. Update this `AGENTS.md` only if a new critical rule applies.
 6. **Verify**: `make audit-routers`, then `make test-all`.
 
 What does **not** require doc updates: bug fixes without interface changes, internal refactors, typo fixes.

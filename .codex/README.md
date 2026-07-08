@@ -2,9 +2,11 @@
 
 This directory holds repository-scoped Codex settings.
 
-- `config.toml` tells Codex to treat `CLAUDE.md` as the project instruction file.
+- `../AGENTS.md` is the Codex-facing project instruction file.
+- `config.toml` keeps `AGENTS.md` first and `CLAUDE.md` as a fallback for older/local tooling.
 - Repo skills are exposed via `.agents/skills`, which is symlinked to `.claude/skills`.
-- Shared lint/test gate scripts live in `scripts/ai_checks/` so Claude hooks, CI, and Codex guidance can reuse the same checks.
+- Shared lint/test gate scripts live in `scripts/ai_checks/` so Claude hooks, CI, and Codex guidance reuse the same checks.
+- Claude-style automatic hooks do not have a one-to-one Codex repo-file equivalent here; Codex should invoke the shared `scripts/ai_checks/` gates directly and through `make ai-sync-check`, `make audit-routers`, and `make test-all`.
 
 Recommended follow-up:
 
