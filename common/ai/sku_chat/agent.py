@@ -64,6 +64,10 @@ _SKU_AT_LOC_PATTERNS = (
     ),
     re.compile(r"(?<![\w.-])([0-9][A-Za-z0-9_.-]*)\s*@\s*([A-Za-z0-9][A-Za-z0-9_.-]*)"),
 )
+_CODEX_ACTION_RE = re.compile(
+    r"<sku_chat_action>\s*(\{.*?\})\s*</sku_chat_action>",
+    re.DOTALL,
+)
 
 
 def _clean_sku_context_value(value: str) -> str:
@@ -192,6 +196,23 @@ def sdk_message_to_events(msg: Any) -> list[dict[str, Any]]:
 def _json_context(data: dict[str, Any]) -> str:
     """Compact, deterministic JSON block for prompt context."""
     return json.dumps(data, default=str, indent=2, sort_keys=True)
+
+
+def _extract_codex_adjustment_action(answer: str) -> tuple[str, str | None]:
+    """Strip a Codex action block and return its adjustment rationale, if any."""
+    rationale: str | None = None
+    for match in _CODEX_ACTION_RE.finditer(answer):
+        try:
+            action = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            log.warning("sku-chat Codex returned malformed action JSON")
+            continue
+        adjustment = action.get("apply_champion_adjustment")
+        if isinstance(adjustment, dict) and isinstance(adjustment.get("rationale"), str):
+            rationale = adjustment["rationale"].strip() or None
+
+    clean_answer = _CODEX_ACTION_RE.sub("", answer).strip()
+    return clean_answer, rationale
 
 
 def _is_executable(path: str) -> bool:
@@ -337,19 +358,33 @@ def _build_codex_prompt(
     max_history: int,
     page_focus: str | None,
     context_data: dict[str, Any],
+    champion_adjust_enabled: bool,
 ) -> str:
     """Compose the non-interactive Codex prompt from system rules + data."""
     system_prompt = cfg.get("system_prompt") or prompts.DEFAULT_SYSTEM_PROMPT
     user_prompt = prompts.build_user_prompt(
         question, ctx, history=history, max_history=max_history, page_focus=page_focus
     )
+    if champion_adjust_enabled:
+        adjustment_note = (
+            "If the planner asks you to stage or apply a champion forecast adjustment, "
+            "first explain your evidence in normal text. If, and only if, an adjustment "
+            "is warranted, append exactly one final action block using this shape and no "
+            "extra text after it: "
+            '<sku_chat_action>{"apply_champion_adjustment":{"rationale":"short evidence-based '
+            'reason"}}</sku_chat_action>. The server will stage the proposal for planner '
+            "approval; it will not apply the forecast until approval."
+        )
+    else:
+        adjustment_note = (
+            "Champion-adjustment staging is disabled for this chat. Explain recommendations, "
+            "but do not request a staged adjustment."
+        )
     return (
         f"{system_prompt}\n\n"
         "Runtime note: you are running through Codex CLI in non-interactive mode. "
         "Use only the JSON context below for business facts. Do not edit files, run "
-        "commands, or claim to have called live tools. The champion-adjustment "
-        "approval tool is only available in the Claude runtime; in Codex mode, "
-        "explain recommendations but do not stage changes.\n\n"
+        f"commands, or claim to have called live tools. {adjustment_note}\n\n"
         f"SKU context JSON:\n{_json_context(context_data)}\n\n"
         f"{user_prompt}"
     )
@@ -472,6 +507,8 @@ class SkuChatAgent:
                 max_history=max_history,
                 history_months=history_months,
                 peer_limit=peer_limit,
+                session_id=session_id,
+                champion_adjust_enabled=champion_adjust_enabled,
                 page_focus=page_focus,
                 timeout_s=timeout_s,
             ):
@@ -540,10 +577,13 @@ class SkuChatAgent:
         max_history: int,
         history_months: int,
         peer_limit: int,
+        session_id: str | None,
+        champion_adjust_enabled: bool,
         page_focus: str | None,
         timeout_s: float,
     ) -> AsyncIterator[dict[str, Any]]:
         """Yield SSE events for a Codex CLI-backed turn."""
+        staged_event: dict[str, Any] | None = None
         try:
             env = auth.resolve_auth_env(cfg, provider="codex")
             try:
@@ -567,6 +607,7 @@ class SkuChatAgent:
                 max_history=max_history,
                 page_focus=page_focus,
                 context_data=context_data,
+                champion_adjust_enabled=champion_adjust_enabled,
             )
             answer = await _run_codex_exec(
                 prompt,
@@ -575,9 +616,49 @@ class SkuChatAgent:
                 env=env,
                 timeout_s=timeout_s,
             )
+            answer, rationale = _extract_codex_adjustment_action(answer)
+            if champion_adjust_enabled and rationale and ctx.item_id and ctx.loc:
+                from common.ai.sku_chat import champion_adjust
+
+                try:
+                    staged = await asyncio.to_thread(
+                        champion_adjust.stage_adjustment,
+                        self.pool,
+                        session_id=session_id,
+                        item_id=ctx.item_id,
+                        customer_group=ctx.customer_group,
+                        loc=ctx.loc,
+                        rationale=rationale,
+                    )
+                except champion_adjust.AdjustmentError as exc:
+                    staged_event = {
+                        "type": "tool",
+                        "name": "mcp__sku__apply_champion_adjustment",
+                        "input": {
+                            "item_id": ctx.item_id,
+                            "loc": ctx.loc,
+                            "rationale": rationale,
+                        },
+                        "staged": False,
+                        "error": str(exc),
+                    }
+                else:
+                    staged_event = {
+                        "type": "tool",
+                        "name": "mcp__sku__apply_champion_adjustment",
+                        "input": {
+                            "item_id": ctx.item_id,
+                            "loc": ctx.loc,
+                            "rationale": rationale,
+                        },
+                        "staged": True,
+                        "approval_id": staged["approval_id"],
+                    }
         except (auth.SkuChatAuthError, CodexRuntimeError) as exc:
             yield {"type": "error", "message": str(exc)}
             return
 
+        if staged_event is not None:
+            yield staged_event
         yield {"type": "text", "chunk": answer}
         yield {"type": "result", "text": answer, "cost_usd": None, "usage": None}

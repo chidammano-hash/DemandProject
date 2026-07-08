@@ -208,6 +208,29 @@ def test_build_codex_context_keeps_partial_data_when_source_fails(monkeypatch):
     assert context["context_errors"] == [{"section": "inventory", "status": "unavailable"}]
 
 
+def test_build_codex_prompt_allows_adjustment_action_block():
+    prompt = agent_module._build_codex_prompt(
+        "Review this SKU and stage an adjustment if needed.",
+        SkuChatContext("11958", "ALL", "1401-BULK"),
+        {},
+        history=None,
+        max_history=20,
+        page_focus=None,
+        context_data={
+            "sku": {
+                "item_id": "11958",
+                "customer_group": "ALL",
+                "loc": "1401-BULK",
+            }
+        },
+        champion_adjust_enabled=True,
+    )
+
+    assert "sku_chat_action" in prompt
+    assert "only available in the Claude runtime" not in prompt
+    assert "apply_champion_adjustment" in prompt
+
+
 @pytest.mark.asyncio
 async def test_run_codex_exec_uses_current_cli_flags(monkeypatch):
     calls = {}
@@ -387,3 +410,90 @@ async def test_stream_turn_uses_history_sku_context_for_codex_runtime():
         ]
 
     assert events[-1]["text"] == "Codex answer with loaded SKU facts."
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_stages_codex_champion_adjustment_action():
+    def fake_context(pool, ctx, *, history_months, peer_limit):
+        return {
+            "sku": {
+                "item_id": ctx.item_id,
+                "customer_group": ctx.customer_group,
+                "loc": ctx.loc,
+            }
+        }
+
+    async def fake_codex(prompt, *, model_id, cfg, env, timeout_s):
+        assert "sku_chat_action" in prompt
+        return (
+            "Adjustment is warranted based on the provided accuracy and bias data.\n\n"
+            '<sku_chat_action>{"apply_champion_adjustment": '
+            '{"rationale": "Benchmark the champion against ceiling due to high WAPE."}}'
+            "</sku_chat_action>"
+        )
+
+    staged = {
+        "approval_id": "approval-1",
+        "preview": {
+            "recommendation_code": "scale_up",
+            "rec_pct_change": 0.12,
+            "confidence": 0.74,
+            "months": ["2026-06"],
+            "rationale": "Guardrail-adjusted preview",
+        },
+    }
+
+    agent = SkuChatAgent(
+        pool="pool",
+        config={
+            "runtime": {"provider": "codex"},
+            "auth": {"mode": "auto"},
+            "codex_models": {
+                "fast": "gpt-5.4-mini",
+                "standard": "gpt-5.5",
+                "deep": "gpt-5.5",
+            },
+            "champion_adjust": {"enabled": True},
+        },
+    )
+    with (
+        patch("common.ai.sku_chat.agent._build_codex_context", fake_context),
+        patch("common.ai.sku_chat.agent._run_codex_exec", fake_codex),
+        patch(
+            "common.ai.sku_chat.champion_adjust.stage_adjustment",
+            return_value=staged,
+        ) as stage,
+    ):
+        events = [
+            ev
+            async for ev in agent.stream_turn(
+                "Review this SKU and stage an adjustment if needed.",
+                SkuChatContext("11958", "ALL", "1401-BULK"),
+                session_id="session-1",
+            )
+        ]
+
+    stage.assert_called_once_with(
+        "pool",
+        session_id="session-1",
+        item_id="11958",
+        customer_group="ALL",
+        loc="1401-BULK",
+        rationale="Benchmark the champion against ceiling due to high WAPE.",
+    )
+    assert events[1] == {
+        "type": "tool",
+        "name": "mcp__sku__apply_champion_adjustment",
+        "input": {
+            "item_id": "11958",
+            "loc": "1401-BULK",
+            "rationale": "Benchmark the champion against ceiling due to high WAPE.",
+        },
+        "staged": True,
+        "approval_id": "approval-1",
+    }
+    assert (
+        events[2]["chunk"]
+        == "Adjustment is warranted based on the provided accuracy and bias data."
+    )
+    assert "sku_chat_action" not in events[-1]["text"]
