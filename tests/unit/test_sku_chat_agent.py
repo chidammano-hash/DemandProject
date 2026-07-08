@@ -1,4 +1,5 @@
 """Unit tests for the SKU chat agent's SDK-message mapping and degradation path."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -134,6 +135,52 @@ def test_resolve_codex_binary_raises_for_missing_custom_path(tmp_path):
         _resolve_codex_binary(str(missing))
 
 
+def test_build_codex_context_keeps_partial_data_when_source_fails(monkeypatch):
+    def fail_inventory(*args):
+        raise RuntimeError("inventory MV unavailable")
+
+    monkeypatch.setattr(
+        agent_module.sku_data,
+        "fetch_sku_profile",
+        lambda *args: {"found": True, "item_id": args[1]},
+    )
+    monkeypatch.setattr(
+        agent_module.sku_data,
+        "fetch_sku_sales_history",
+        lambda *args: {"months": 1, "history": []},
+    )
+    monkeypatch.setattr(
+        agent_module.sku_data,
+        "fetch_sku_forecast",
+        lambda *args: {"horizon": 1, "forecast": []},
+    )
+    monkeypatch.setattr(agent_module.sku_data, "fetch_sku_inventory", fail_inventory)
+    monkeypatch.setattr(
+        agent_module.sku_data,
+        "fetch_sku_accuracy",
+        lambda *args: {"metrics": []},
+    )
+    monkeypatch.setattr(
+        agent_module.sku_data,
+        "fetch_sku_cluster_peers",
+        lambda *args: {"peer_count": 0, "peers": []},
+    )
+
+    context = agent_module._build_codex_context(
+        pool="pool",
+        ctx=SkuChatContext("11958", "ALL", "1401-BULK"),
+        history_months=24,
+        peer_limit=10,
+    )
+
+    assert context["profile"]["found"] is True
+    assert context["inventory"] == {
+        "available": False,
+        "error": "source unavailable",
+    }
+    assert context["context_errors"] == [{"section": "inventory", "status": "unavailable"}]
+
+
 @pytest.mark.asyncio
 async def test_run_codex_exec_uses_current_cli_flags(monkeypatch):
     calls = {}
@@ -154,9 +201,7 @@ async def test_run_codex_exec_uses_current_cli_flags(monkeypatch):
         return Proc()
 
     monkeypatch.setattr(agent_module, "_resolve_codex_binary", lambda binary: "/bin/codex")
-    monkeypatch.setattr(
-        agent_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
-    )
+    monkeypatch.setattr(agent_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     out = await agent_module._run_codex_exec(
         "hello",
@@ -176,7 +221,7 @@ async def test_run_codex_exec_uses_current_cli_flags(monkeypatch):
         "read-only",
         "-c",
     )
-    assert "approval_policy=\"never\"" in calls["cmd"]
+    assert 'approval_policy="never"' in calls["cmd"]
     assert calls["cmd"][-3:] == ("--model", "gpt-5.5", "-")
     assert calls["input"] == b"hello"
 
@@ -236,11 +281,13 @@ async def test_stream_turn_uses_codex_runtime_when_configured():
         },
     )
     ctx = SkuChatContext("100320", "RETAIL", "DC1")
-    with patch("common.ai.sku_chat.agent._build_codex_context", fake_context), patch(
-        "common.ai.sku_chat.agent._run_codex_exec", fake_codex
+    with (
+        patch("common.ai.sku_chat.agent._build_codex_context", fake_context),
+        patch("common.ai.sku_chat.agent._run_codex_exec", fake_codex),
     ):
         events = [
-            ev async for ev in agent.stream_turn(
+            ev
+            async for ev in agent.stream_turn(
                 "Provide a detailed summary of demand and forecast trends", ctx
             )
         ]

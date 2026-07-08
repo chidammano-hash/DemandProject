@@ -9,6 +9,7 @@ runtimes:
 Both runtimes are lazy. If their local CLI/SDK dependency is missing, the turn
 yields an ``error`` event instead of breaking API startup.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -125,9 +126,7 @@ def _resolve_codex_binary(binary: str) -> str:
     if os.sep in binary:
         if _is_executable(expanded):
             return expanded
-        raise CodexRuntimeError(
-            f"configured codex.binary is not executable: {expanded}"
-        )
+        raise CodexRuntimeError(f"configured codex.binary is not executable: {expanded}")
 
     found = shutil.which(binary)
     if found:
@@ -147,6 +146,21 @@ def _resolve_codex_binary(binary: str) -> str:
     )
 
 
+def _fetch_codex_context_section(
+    section: str,
+    errors: list[dict[str, str]],
+    fetcher: Any,
+    *args: Any,
+) -> dict[str, Any]:
+    """Fetch one context section without aborting the whole Codex turn."""
+    try:
+        return fetcher(*args)
+    except Exception:  # noqa: BLE001, RUF100 — unavailable sources should not abort chat
+        log.exception("sku-chat Codex context section %s failed", section)
+        errors.append({"section": section, "status": "unavailable"})
+        return {"available": False, "error": "source unavailable"}
+
+
 def _build_codex_context(
     pool: Any,
     ctx: SkuChatContext,
@@ -155,31 +169,83 @@ def _build_codex_context(
     peer_limit: int,
 ) -> dict[str, Any]:
     """Fetch the read-only SKU context Codex receives instead of live MCP tools."""
-    return {
+    errors: list[dict[str, str]] = []
+    data: dict[str, Any] = {
         "sku": {
             "item_id": ctx.item_id,
             "customer_group": ctx.customer_group,
             "loc": ctx.loc,
         },
-        "profile": sku_data.fetch_sku_profile(
-            pool, ctx.item_id, ctx.customer_group, ctx.loc
-        ) if ctx.item_id and ctx.loc else None,
-        "sales_history": sku_data.fetch_sku_sales_history(
-            pool, ctx.item_id, ctx.loc, history_months
-        ) if ctx.item_id and ctx.loc else None,
-        "forecast": sku_data.fetch_sku_forecast(
-            pool, ctx.item_id, ctx.loc
-        ) if ctx.item_id and ctx.loc else None,
-        "inventory": sku_data.fetch_sku_inventory(
-            pool, ctx.item_id, ctx.loc, history_months
-        ) if ctx.item_id and ctx.loc else None,
-        "accuracy": sku_data.fetch_sku_accuracy(
-            pool, ctx.item_id, ctx.customer_group, ctx.loc
-        ) if ctx.item_id and ctx.loc else None,
-        "cluster_peers": sku_data.fetch_sku_cluster_peers(
-            pool, ctx.item_id, ctx.customer_group, ctx.loc, peer_limit
-        ) if ctx.item_id and ctx.loc else None,
+        "context_errors": errors,
     }
+    if not (ctx.item_id and ctx.loc):
+        data.update(
+            {
+                "profile": None,
+                "sales_history": None,
+                "forecast": None,
+                "inventory": None,
+                "accuracy": None,
+                "cluster_peers": None,
+            }
+        )
+        return data
+
+    data["profile"] = _fetch_codex_context_section(
+        "profile",
+        errors,
+        sku_data.fetch_sku_profile,
+        pool,
+        ctx.item_id,
+        ctx.customer_group,
+        ctx.loc,
+    )
+    data["sales_history"] = _fetch_codex_context_section(
+        "sales_history",
+        errors,
+        sku_data.fetch_sku_sales_history,
+        pool,
+        ctx.item_id,
+        ctx.loc,
+        history_months,
+    )
+    data["forecast"] = _fetch_codex_context_section(
+        "forecast",
+        errors,
+        sku_data.fetch_sku_forecast,
+        pool,
+        ctx.item_id,
+        ctx.loc,
+    )
+    data["inventory"] = _fetch_codex_context_section(
+        "inventory",
+        errors,
+        sku_data.fetch_sku_inventory,
+        pool,
+        ctx.item_id,
+        ctx.loc,
+        history_months,
+    )
+    data["accuracy"] = _fetch_codex_context_section(
+        "accuracy",
+        errors,
+        sku_data.fetch_sku_accuracy,
+        pool,
+        ctx.item_id,
+        ctx.customer_group,
+        ctx.loc,
+    )
+    data["cluster_peers"] = _fetch_codex_context_section(
+        "cluster_peers",
+        errors,
+        sku_data.fetch_sku_cluster_peers,
+        pool,
+        ctx.item_id,
+        ctx.customer_group,
+        ctx.loc,
+        peer_limit,
+    )
+    return data
 
 
 def _build_codex_prompt(
@@ -257,9 +323,7 @@ async def _run_codex_exec(
     except TimeoutError as exc:
         proc.kill()
         await proc.communicate()
-        raise CodexRuntimeError(
-            f"Codex exceeded the {int(timeout_s)}s limit; truncated."
-        ) from exc
+        raise CodexRuntimeError(f"Codex exceeded the {int(timeout_s)}s limit; truncated.") from exc
 
     out = stdout.decode("utf-8", errors="replace").strip()
     err = stderr.decode("utf-8", errors="replace").strip()
