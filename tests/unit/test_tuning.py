@@ -1,10 +1,8 @@
 """Unit tests for common/tuning.py (Feature 41)."""
 
-import json
 import math
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -15,7 +13,9 @@ from common.ml.tuning import (
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
     generate_cv_month_splits,
+    get_fixed_params,
     load_best_params,
+    merge_fixed_params,
     save_best_params,
     tune_for_timeframe,
 )
@@ -342,6 +342,50 @@ class TestTrainFoldFnsRegistry:
             assert callable(fn), f"TRAIN_FOLD_FNS[{name!r}] is not callable"
 
 
+# ── fixed params merge ────────────────────────────────────────────────────────
+
+
+class TestFixedParams:
+    def test_get_fixed_params_returns_copy(self):
+        config = {
+            "xgboost": {
+                "fixed_params": {
+                    "objective": "reg:absoluteerror",
+                    "tree_method": "hist",
+                },
+            },
+        }
+
+        fixed = get_fixed_params("xgboost", config)
+        fixed["tree_method"] = "approx"
+
+        assert config["xgboost"]["fixed_params"]["tree_method"] == "hist"
+
+    def test_merge_fixed_params_keeps_trial_params_authoritative(self):
+        config = {
+            "catboost": {
+                "fixed_params": {
+                    "loss_function": "RMSE",
+                    "random_seed": 42,
+                    "depth": 4,
+                },
+            },
+        }
+
+        params = merge_fixed_params(
+            "catboost",
+            config,
+            {"depth": 8, "learning_rate": 0.05},
+        )
+
+        assert params == {
+            "loss_function": "RMSE",
+            "random_seed": 42,
+            "depth": 8,
+            "learning_rate": 0.05,
+        }
+
+
 # ── tune_for_timeframe (PL-002) ───────────────────────────────────────────────
 
 
@@ -407,6 +451,11 @@ _MINIMAL_CONFIG = {
             "learning_rate": {"type": "float", "low": 0.05, "high": 0.10, "log": False},
             "num_leaves": {"type": "int", "low": 15, "high": 20},
         },
+        "fixed_params": {
+            "objective": "regression_l1",
+            "verbosity": -1,
+            "random_state": 42,
+        },
     },
 }
 
@@ -461,6 +510,38 @@ class TestTuneForTimeframe:
         # Should contain the search space keys
         assert "learning_rate" in params
         assert "num_leaves" in params
+        assert params["objective"] == "regression_l1"
+        assert params["verbosity"] == -1
+
+    def test_fixed_params_are_passed_to_fold_training(self):
+        grid = _make_full_grid(48)
+        feature_cols = self._feature_cols(grid)
+        cat_cols = ["ml_cluster", "region", "brand", "abc_vol"]
+        cutoff = pd.Timestamp("2023-06-01")
+        captured_params: list[dict] = []
+
+        def capturing_fold_fn(X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, es_rounds):
+            captured_params.append(dict(params))
+            preds = np.full(len(y_val), float(np.mean(y_train)))
+            return preds, 25
+
+        params, n_est = tune_for_timeframe(
+            model_name="lgbm",
+            train_fold_fn=capturing_fold_fn,
+            full_grid=grid,
+            feature_cols=feature_cols,
+            cat_cols=cat_cols,
+            cutoff_date=cutoff,
+            config=_MINIMAL_CONFIG,
+            n_trials=1,
+        )
+
+        assert captured_params
+        assert all(p["objective"] == "regression_l1" for p in captured_params)
+        assert all(p["random_state"] == 42 for p in captured_params)
+        assert params["objective"] == "regression_l1"
+        assert params["random_state"] == 42
+        assert n_est == 50
 
     def test_only_causal_months_used(self):
         """Core PL-002 test: tuner must never see months after cutoff_date."""
@@ -492,7 +573,6 @@ class TestTuneForTimeframe:
         # Verify the grid was filtered: all months in the grid after cutoff should not
         # appear in any fold's training data. We verify by checking tune_for_timeframe
         # filtered the grid correctly (no rows after cutoff in causal_months).
-        future_months = [m for m in grid["startdate"].unique() if m > cutoff]
         all_grid_months = sorted(grid["startdate"].unique())
         causal_months = [m for m in all_grid_months if m <= cutoff]
         assert len(causal_months) < len(all_grid_months), "Test requires future months in grid"
@@ -546,8 +626,6 @@ class TestTuneForTimeframe:
         available for CV, which may yield fewer CV splits.
         """
         grid = _make_full_grid(60)
-        feature_cols = self._feature_cols(grid)
-        cat_cols = ["ml_cluster", "region", "brand", "abc_vol"]
 
         early_cutoff = pd.Timestamp("2021-12-01")  # ~24 months
         late_cutoff = pd.Timestamp("2023-12-01")   # ~48 months

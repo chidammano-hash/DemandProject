@@ -156,6 +156,35 @@ def suggest_params(
     return params
 
 
+def get_fixed_params(model_name: str, config: dict) -> dict[str, Any]:
+    """Return non-search model params from the tuning YAML.
+
+    ``hyperparameter_tuning.yaml`` separates trial search spaces from fixed
+    estimator settings such as objectives, categorical handling, and logging
+    flags. Keeping the merge explicit makes every tuning entry point use the
+    same resolved parameter set and avoids model behavior hidden in Python.
+    """
+    return dict(config.get(model_name, {}).get("fixed_params", {}) or {})
+
+
+def merge_fixed_params(
+    model_name: str,
+    config: dict,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge YAML fixed params with trial params; trial params win on conflict."""
+    return {**get_fixed_params(model_name, config), **params}
+
+
+def suggest_model_params(
+    trial: Any,  # optuna.Trial
+    model_name: str,
+    config: dict,
+) -> dict[str, Any]:
+    """Suggest trial params and merge YAML fixed params for model training."""
+    return merge_fixed_params(model_name, config, suggest_params(trial, model_name, config))
+
+
 # ── Best-params JSON I/O ──────────────────────────────────────────────────────
 
 
@@ -294,16 +323,11 @@ def train_lgbm_fold(
     """
     import lightgbm as lgb
 
-    constructor_extras = {
-        "verbosity": -1,
-        "random_state": 42,
-        "n_jobs": -1,
-    }
     return _train_fold(
         "lgbm",
         X_train, y_train, X_val, y_val,
         cat_cols, params, n_estimators_max, early_stopping_rounds,
-        constructor_extras, lib_module=lgb,
+        constructor_extras={}, lib_module=lgb,
     )
 
 
@@ -327,19 +351,11 @@ def train_catboost_fold(
     """
     import catboost as cb
 
-    # CatBoost uses ``iterations`` not ``n_estimators``.  Pass canonical
-    # ``estimators`` so to_native_params translates it correctly per backend.
-    constructor_extras = {
-        "random_seed": 42,
-        "verbose": 0,
-        "loss_function": "RMSE",
-    }
     # Build manually here to use 'iterations' kwarg directly (CatBoost native).
     from common.ml.model_registry import build_tree_model, fit_model, get_best_iteration
 
     full_params = {
         "iterations": n_estimators_max,
-        **constructor_extras,
         **params,
     }
     model = build_tree_model("catboost", full_params)
@@ -383,18 +399,11 @@ def train_xgboost_fold(
     """
     import xgboost as xgb
 
-    constructor_extras = {
-        "verbosity": 0,
-        "random_state": 42,
-        "n_jobs": -1,
-        "enable_categorical": True,
-        "tree_method": "hist",
-    }
     return _train_fold(
         "xgboost",
         X_train, y_train, X_val, y_val,
         cat_cols, params, n_estimators_max, early_stopping_rounds,
-        constructor_extras, lib_module=xgb,
+        constructor_extras={}, lib_module=xgb,
     )
 
 
@@ -450,7 +459,6 @@ def tune_for_timeframe(
         return {}, 500
 
     from common.ml.feature_engineering import mask_future_sales
-    from common.core.constants import LAG_RANGE
 
     t_cfg = config["tuning"]
     _n_trials = n_trials or t_cfg.get("inline_n_trials", 20)
@@ -473,7 +481,7 @@ def tune_for_timeframe(
         return {}, 500
 
     def _objective(trial: "optuna.Trial") -> float:
-        params = suggest_params(trial, model_name, config)
+        params = suggest_model_params(trial, model_name, config)
         fold_wapes: list[float] = []
         fold_best_rounds: list[int] = []
 
@@ -536,4 +544,4 @@ def tune_for_timeframe(
     best_n_estimators = best_rounds_to_n_estimators(
         [best_n_est_raw], buffer=t_cfg.get("n_estimators_buffer", 1.1)
     )
-    return best.params, best_n_estimators
+    return merge_fixed_params(model_name, config, best.params), best_n_estimators

@@ -42,7 +42,8 @@ from common.ml.tuning import (
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
     generate_cv_month_splits,
-    suggest_params,
+    merge_fixed_params,
+    suggest_model_params,
 )
 from common.core.utils import load_forecast_pipeline_config
 
@@ -67,7 +68,7 @@ def make_cluster_objective(
     train_fn = TRAIN_FOLD_FNS[model_name]
 
     def objective(trial: optuna.Trial) -> float:
-        params = suggest_params(trial, model_name, config)
+        params = suggest_model_params(trial, model_name, config)
 
         fold_wapes: list[float] = []
         fold_best_rounds: list[int] = []
@@ -454,7 +455,7 @@ def main() -> None:
                 continue
 
             best_trial = study.best_trial
-            best_params = dict(best_trial.params)
+            best_params = merge_fixed_params(model_name, config, best_trial.params)
             best_n_est_raw = best_trial.user_attrs.get("best_n_estimators", 500)
             best_n_estimators = best_rounds_to_n_estimators(
                 [best_n_est_raw],
