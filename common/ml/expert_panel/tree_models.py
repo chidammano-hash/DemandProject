@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common.core.constants import CAT_FEATURES, FORECAST_QTY_COL
+from common.core.constants import CAT_FEATURES, FORECAST_QTY_COL, METADATA_COLS
 from common.core.utils import load_forecast_pipeline_config
 from common.ml.feature_engineering import get_feature_columns
 from common.ml.model_registry import (
@@ -40,6 +40,17 @@ _MODEL_LIB: dict[str, dict[str, str]] = {
 
 # Minimum training rows per partition group before we skip it
 _MIN_GROUP_ROWS = 50
+
+
+def _model_feature_cols(feature_cols: list[str]) -> list[str]:
+    """Return model input columns with metadata/target columns stripped."""
+    return [col for col in feature_cols if col not in METADATA_COLS]
+
+
+def _model_cat_cols(cat_cols: list[str], feature_cols: list[str]) -> list[str]:
+    """Return categorical columns that are valid model inputs."""
+    feature_set = set(feature_cols)
+    return [col for col in cat_cols if col in feature_set and col not in METADATA_COLS]
 
 
 def _extract_model_params(model_name: str, algo_section: dict[str, Any]) -> dict[str, Any]:
@@ -79,7 +90,6 @@ def _extract_model_params(model_name: str, algo_section: dict[str, Any]) -> dict
         params.setdefault("random_state", 42)
         params.setdefault("n_jobs", -1)
         params.setdefault("enable_categorical", True)
-        params.setdefault("tree_method", "hist")
 
     return params
 
@@ -223,13 +233,13 @@ def run_tree_models(
         partition_label = "cluster"
         logger.info("Tree models: partitioning by ml_cluster (no classification_df provided)")
 
-    feature_cols = get_feature_columns(working_grid)
+    feature_cols = _model_feature_cols(get_feature_columns(working_grid))
     # Cat cols = known CAT_FEATURES + archetype (if present) + any object/string columns
     obj_cols = set(working_grid[feature_cols].select_dtypes(include=["object", "string"]).columns)
     cat_col_set = {c for c in feature_cols if c in CAT_FEATURES} | obj_cols
     if partition_col == "archetype" and "archetype" in working_grid.columns:
         cat_col_set.add("archetype")
-    cat_cols = list(cat_col_set)
+    cat_cols = _model_cat_cols(list(cat_col_set), feature_cols)
 
     # Temporal split
     train_mask = working_grid["startdate"] <= train_end
@@ -315,13 +325,27 @@ def run_tree_models(
                 )
                 continue
 
-            # Sort training data by date for temporal val split
+            # Sort training data by date for temporal validation split.
             train_g = train_g.sort_values("startdate")
 
-            # Time-aware train/val split — last 20% of months as validation
-            n_val = max(1, int(len(train_g) * 0.20))
-            train_part = train_g.iloc[:-n_val]
-            val_part = train_g.iloc[-n_val:]
+            # Time-aware train/val split: validate on complete calendar months,
+            # matching the main per-cluster backtest and production trainers.
+            unique_months = sorted(train_g["startdate"].unique())
+            n_val_months = max(1, int(len(unique_months) * 0.20))
+            val_months = set(unique_months[-n_val_months:])
+            val_mask = train_g["startdate"].isin(val_months)
+            train_part = train_g.loc[~val_mask]
+            val_part = train_g.loc[val_mask]
+            if len(train_part) == 0 or len(val_part) == 0:
+                logger.warning(
+                    "%s %s %d/%d '%s': skipped (insufficient calendar months for split)",
+                    model_name.upper(),
+                    partition_label,
+                    gi,
+                    len(groups),
+                    group_label,
+                )
+                continue
 
             X_tr = train_part[feature_cols]
             y_tr = train_part["qty"]

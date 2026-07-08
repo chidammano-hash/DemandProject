@@ -40,7 +40,7 @@ flowchart TD
         end
 
         subgraph ALG2["Step 7 · Baselines + Tree Models"]
-            BL["Baselines:\n• seasonal_naive\n• rolling_mean\n• ridge (ml_cluster as cat feature)"]
+            BL["Baselines:\n• seasonal_naive\n• rolling_mean\n• ridge (non-metadata categorical attrs)"]
             TREE["Tree Models — per ml_cluster ①:\n• lgbm_cluster → one model / cluster\n• catboost_cluster → one model / cluster\n• xgboost_cluster → one model / cluster"]
             BL --- TREE
         end
@@ -152,7 +152,7 @@ flowchart TD
 | DB write | Cluster labels stored in `dim_sku.ml_cluster` | `sql/` DDL |
 | Runtime load | `load_golden_set_data()` queries `dim_sku` → `dfu_attrs["ml_cluster"]` | `algorithm_testing/golden_set.py:168` |
 | Feature matrix | `build_feature_matrix()` merges `dfu_attrs` incl. `ml_cluster` into grid | `common/ml/feature_engineering.py` |
-| Tree model use | One model trained per `ml_cluster` value, predictions concatenated | `algorithm_testing/tree_models.py:179` |
+| Tree model use | One model trained per `ml_cluster` value, predictions concatenated | `common/ml/expert_panel/tree_models.py` |
 
 `ml_cluster` is used for **per-cluster model partitioning** only - it is no longer included as a model feature (removed to prevent leakage from full-history cluster assignments). See [spec 28](28-feature-selection-pipeline.md).
 

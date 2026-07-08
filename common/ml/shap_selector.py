@@ -372,10 +372,9 @@ def _weighted_pool_cluster_shap(
 
     When ``all_feature_cols`` is provided, the model is called with the full
     feature set (matching its training shape) and the result is sliced to
-    ``effective_feature_cols`` indices.  This avoids the LightGBM error
-    "train and valid dataset categorical_feature do not match" that occurs
-    when ``ml_cluster`` is stripped before calling a model that was trained
-    with it.
+    ``effective_feature_cols`` indices.  This avoids LightGBM shape/category
+    mismatches when a caller computes SHAP against a selected feature pool
+    rather than the model's original training columns.
 
     Returns:
         pooled: mean absolute SHAP values per feature, shape (n_features,).
@@ -788,9 +787,8 @@ def compute_timeframe_shap_per_cluster(
 
     # ── Per-cluster SHAP computation and selection ────────────────────
     # Use full feature_cols for SHAP extraction to match the trained model.
-    # The model may have been trained with features (e.g. ml_cluster) that
-    # are not in the effective selection pool — we must still call SHAP with
-    # the full set to avoid LightGBM shape mismatches.
+    # Pre-SHAP filters can remove columns from the effective selection pool,
+    # but SHAP still has to see the model's original training columns.
     model_feature_cols = feature_cols
     model_cat_cols = cat_cols
 

@@ -123,7 +123,7 @@ All algorithm options are in `config/forecasting/forecast_pipeline_config.yaml`.
 
 - [Backtest Framework](./03-backtest-framework.md) -- shared orchestrator
 - [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- controls all algorithm behavior
-- Clustering (in `03-demand-intelligence/`) -- provides `ml_cluster` feature
+- Clustering (in `03-demand-intelligence/`) -- provides `ml_cluster` partition metadata
 - Python packages: `lightgbm>=4.0`, `catboost>=1.2`, `xgboost>=2.0`
 
 ## See Also

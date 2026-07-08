@@ -1064,7 +1064,108 @@ class TestConstantTargetGuard:
 
 
 # ---------------------------------------------------------------------------
-# Test 8 — library import error skips model gracefully
+# Test 8 — feature hygiene and temporal validation split
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureAndSplitAlignment:
+    """Expert-panel tree models should match the main tree training contract."""
+
+    def test_strips_metadata_features_and_splits_by_full_calendar_months(self):
+        predict_month = pd.Timestamp("2025-01-01")
+        skus = _make_group_skus("G", n=5)
+        grid = _make_grid(
+            dict.fromkeys(skus, "C1"),
+            n_train_months=12,
+            predict_month=predict_month,
+        )
+
+        lib_module = _fake_lib_module()
+        final_model = MagicMock()
+        final_model.predict.side_effect = lambda X: np.full(len(X), _FIXED_PRED)
+        captured: dict[str, Any] = {}
+
+        def capture_fit(
+            model,
+            model_name,
+            X_tr,
+            y_tr,
+            X_val,
+            y_val,
+            cat_cols,
+            feature_cols,
+            lib_module_arg,
+            max_iterations,
+        ):
+            captured["train_rows"] = len(X_tr)
+            captured["val_rows"] = len(X_val)
+            captured["train_cols"] = list(X_tr.columns)
+            captured["val_cols"] = list(X_val.columns)
+            captured["feature_cols"] = list(feature_cols)
+            captured["cat_cols"] = list(cat_cols)
+
+        with (
+            patch(
+                "common.ml.expert_panel.tree_models.build_tree_model",
+                side_effect=[lib_module.model_instance, final_model],
+            ),
+            patch("common.ml.expert_panel.tree_models.fit_model", side_effect=capture_fit),
+            patch("common.ml.expert_panel.tree_models.fit_final_model") as final_fit,
+            patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
+            patch(
+                "common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS
+            ),
+            patch(
+                "common.ml.expert_panel.tree_models.importlib.import_module",
+                return_value=lib_module,
+            ),
+        ):
+            result = run_tree_models(
+                grid=grid,
+                train_end=pd.Timestamp("2024-12-01"),
+                predict_months=[predict_month],
+                enabled_models={"lgbm": {}},
+                classification_df=None,
+            )
+
+        assert len(result) == len(skus)
+        # 12 training months x 5 DFUs. Calendar-month split reserves the last
+        # two full months (10 rows), not an arbitrary trailing 20% of rows
+        # (which would be 12 rows).
+        assert captured["train_rows"] == 50
+        assert captured["val_rows"] == 10
+        assert "ml_cluster" not in captured["train_cols"]
+        assert "ml_cluster" not in captured["val_cols"]
+        assert "ml_cluster" not in captured["feature_cols"]
+        assert "ml_cluster" not in captured["cat_cols"]
+        final_fit.assert_called_once()
+        assert "ml_cluster" not in final_fit.call_args.args[5]
+
+    def test_xgboost_tree_method_must_come_from_yaml(self):
+        from common.ml.expert_panel.tree_models import (
+            _extract_model_params,
+            _missing_required_params,
+        )
+
+        params = _extract_model_params(
+            "xgboost",
+            {
+                "objective": "reg:absoluteerror",
+                "n_estimators": 200,
+                "learning_rate": 0.02,
+                "max_depth": 7,
+                "min_child_weight": 15,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+            },
+        )
+
+        assert "tree_method" not in params
+        assert _missing_required_params("xgboost", params) == ["tree_method"]
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — library import error skips model gracefully
 # ---------------------------------------------------------------------------
 
 

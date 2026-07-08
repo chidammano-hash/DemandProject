@@ -347,7 +347,7 @@ All models write to the same `data/backtest/<model_id>/` directory structure and
 ## Dependencies
 
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column in the forecast table
-- Clustering (in `03-demand-intelligence/`) -- provides `ml_cluster` feature and per-cluster training
+- Clustering (in `03-demand-intelligence/`) -- provides `ml_cluster` partition metadata for per-cluster training
 
 ## See Also
 
