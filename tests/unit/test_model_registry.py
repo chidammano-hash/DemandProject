@@ -15,6 +15,7 @@ from common.ml.model_registry import (
     compute_early_stop_patience,
     fit_final_model,
     fit_model,
+    fit_tree_classifier,
     from_native_params,
     get_best_iteration,
     get_tree_default_params,
@@ -52,6 +53,25 @@ class TestToNativeParams:
     def test_unknown_model_passes_through(self):
         result = to_native_params("prophet", {"estimators": 100})
         assert result == {"estimators": 100}
+
+
+class TestBuildTreeClassifier:
+    def test_build_lgbm_classifier(self):
+        lightgbm = pytest.importorskip("lightgbm")
+        from common.ml.model_registry import build_tree_classifier
+
+        model = build_tree_classifier("lgbm", {"n_estimators": 7})
+        assert isinstance(model, lightgbm.LGBMClassifier)
+        assert model.get_params()["n_estimators"] == 7
+
+    def test_fit_lgbm_classifier_uses_registry_boundary(self):
+        model = MagicMock()
+        X = np.array([[0.0], [1.0]])
+        y = np.array([0, 1])
+
+        fit_tree_classifier(model, "lgbm", X, y, categorical_feature=[0])
+
+        model.fit.assert_called_once_with(X, y, categorical_feature=[0])
 
     def test_all_canonical_keys_mapped(self):
         """Every canonical key should map to a native key for lgbm and xgboost."""

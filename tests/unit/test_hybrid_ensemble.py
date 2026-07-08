@@ -104,9 +104,7 @@ class TestBuildDfuAccuracyMatrix:
     def test_basic_wape_computation(self, simple_predictions, simple_actuals):
         """algo1 perfectly matches actuals (WAPE=0); algo2 is 20% over (WAPE=20)."""
         result = build_dfu_accuracy_matrix(simple_predictions, simple_actuals)
-        assert set(result.columns) == {
-            "sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"
-        }
+        assert set(result.columns) == {"sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"}
         algo1 = result[result["algorithm_id"] == "algo1"]
         assert (algo1["wape"] == 0.0).all()
         assert (algo1["accuracy_pct"] == 100.0).all()
@@ -139,19 +137,19 @@ class TestBuildDfuAccuracyMatrix:
         )
         assert result_strict.empty
 
-        result_loose = build_dfu_accuracy_matrix(
-            simple_predictions, simple_actuals, min_n_months=1
-        )
+        result_loose = build_dfu_accuracy_matrix(simple_predictions, simple_actuals, min_n_months=1)
         assert not result_loose.empty
 
     def test_empty_predictions(self, simple_actuals):
-        empty_preds = pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
-        )
+        empty_preds = pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
         result = build_dfu_accuracy_matrix(empty_preds, simple_actuals)
         assert result.empty
         assert list(result.columns) == [
-            "sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"
+            "sku_ck",
+            "algorithm_id",
+            "wape",
+            "accuracy_pct",
+            "n_months",
         ]
 
     def test_no_overlap(self):
@@ -177,16 +175,12 @@ class TestBuildDfuAccuracyMatrix:
 class TestComputeInverseWapeBlend:
     def test_output_schema(self, simple_predictions, dfu_accuracy_matrix_simple):
         result = compute_inverse_wape_blend(simple_predictions, dfu_accuracy_matrix_simple)
-        assert set(result.columns) == {
-            "sku_ck", "startdate", "basefcst_pref", "algorithm_id"
-        }
+        assert set(result.columns) == {"sku_ck", "startdate", "basefcst_pref", "algorithm_id"}
         assert (result["algorithm_id"] == "hybrid_blend").all()
 
     def test_better_algo_has_more_weight(self, simple_predictions, dfu_accuracy_matrix_simple):
         """The blend should be closer to algo1 (perfect) than algo2 (20% over)."""
-        result = compute_inverse_wape_blend(
-            simple_predictions, dfu_accuracy_matrix_simple, top_k=2
-        )
+        result = compute_inverse_wape_blend(simple_predictions, dfu_accuracy_matrix_simple, top_k=2)
         # algo1 pred=100, algo2 pred=120, algo1 has infinite weight (wape=0 → clipped to 1e-6)
         # blend ≈ 100 (algo1 dominates)
         assert (result["basefcst_pref"] < 110.0).all()
@@ -199,9 +193,7 @@ class TestComputeInverseWapeBlend:
             rows.append(("A", d, 100.0, "algo1"))
             rows.append(("A", d, 200.0, "algo2"))
             rows.append(("A", d, 300.0, "algo3"))
-        preds = pd.DataFrame(
-            rows, columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
-        )
+        preds = pd.DataFrame(rows, columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
         # Only algo1 and algo2 in matrix; algo1 wins
         matrix = pd.DataFrame(
             {
@@ -251,7 +243,6 @@ def _make_rich_dfu_data(n_dfus: int = 60) -> tuple[pd.DataFrame, pd.DataFrame, p
     rng = np.random.default_rng(42)
     skus = [f"sku_{i}" for i in range(n_dfus)]
     algos = ["algo_a", "algo_b", "algo_c"]
-    dates = pd.date_range("2022-01-01", periods=4, freq="MS")
 
     # Accuracy matrix: each DFU has a random best algorithm
     rows = []
@@ -308,6 +299,72 @@ class TestMetaRouter:
         assert isinstance(model, MetaRouterModel)
         assert len(model.feature_cols) > 0
         assert len(model.label_to_algorithm) >= 2
+
+    def test_train_uses_configured_registry_classifier_params(self, monkeypatch):
+        matrix, dfu_attrs, cls_df = _make_rich_dfu_data(60)
+        classifier = object()
+        captured: dict[str, object] = {}
+
+        def fake_build_tree_classifier(model_name, params):
+            captured["model_name"] = model_name
+            captured["params"] = params
+            return classifier
+
+        def fake_fit_tree_classifier(model, model_name, X, y, *, categorical_feature=None):
+            captured["fit_model"] = model
+            captured["fit_name"] = model_name
+            captured["categorical_feature"] = categorical_feature
+
+        monkeypatch.setattr(
+            "common.ml.expert_panel.meta_router.build_tree_classifier",
+            fake_build_tree_classifier,
+        )
+        monkeypatch.setattr(
+            "common.ml.expert_panel.meta_router.fit_tree_classifier",
+            fake_fit_tree_classifier,
+        )
+
+        model = train_meta_router(
+            matrix,
+            dfu_attrs,
+            cls_df,
+            hybrid_config={
+                "meta_n_estimators": 17,
+                "meta_learning_rate": 0.03,
+                "meta_num_leaves": 19,
+                "meta_min_child_samples": 4,
+                "meta_subsample": 0.7,
+                "meta_colsample_bytree": 0.6,
+                "meta_reg_lambda": 2.0,
+                "meta_class_weight": "balanced",
+                "meta_random_state": 11,
+                "meta_verbose": -1,
+                "meta_min_n_months_filter": 2,
+            },
+        )
+
+        assert model.model is classifier
+        assert captured["model_name"] == "lgbm"
+        assert captured["params"] == {
+            "n_estimators": 17,
+            "learning_rate": 0.03,
+            "num_leaves": 19,
+            "min_child_samples": 4,
+            "subsample": 0.7,
+            "colsample_bytree": 0.6,
+            "reg_lambda": 2.0,
+            "class_weight": "balanced",
+            "random_state": 11,
+            "verbose": -1,
+        }
+        assert captured["fit_model"] is classifier
+        assert captured["fit_name"] == "lgbm"
+        assert isinstance(captured["categorical_feature"], list)
+
+    def test_train_requires_meta_router_yaml_params(self):
+        matrix, dfu_attrs, cls_df = _make_rich_dfu_data(60)
+        with pytest.raises(ValueError, match="meta-router LightGBM params missing"):
+            train_meta_router(matrix, dfu_attrs, cls_df, hybrid_config={})
 
     def test_predict_schema(self):
         matrix, dfu_attrs, cls_df = _make_rich_dfu_data(60)
@@ -373,44 +430,30 @@ class TestComputeHybridPredictions:
 
     def test_output_schema(self):
         all_preds, matrix, dfu_attrs, cls_df, model = self._build_inputs()
-        result = compute_hybrid_predictions(
-            all_preds, matrix, dfu_attrs, cls_df, model
-        )
-        assert set(result.columns) == {
-            "sku_ck", "startdate", "basefcst_pref", "algorithm_id"
-        }
+        result = compute_hybrid_predictions(all_preds, matrix, dfu_attrs, cls_df, model)
+        assert set(result.columns) == {"sku_ck", "startdate", "basefcst_pref", "algorithm_id"}
         assert (result["algorithm_id"] == "hybrid").all()
 
     def test_non_negative_predictions(self):
         all_preds, matrix, dfu_attrs, cls_df, model = self._build_inputs()
-        result = compute_hybrid_predictions(
-            all_preds, matrix, dfu_attrs, cls_df, model
-        )
+        result = compute_hybrid_predictions(all_preds, matrix, dfu_attrs, cls_df, model)
         assert (result["basefcst_pref"] >= 0.0).all()
 
     def test_covers_all_dfus(self):
         all_preds, matrix, dfu_attrs, cls_df, model = self._build_inputs()
-        result = compute_hybrid_predictions(
-            all_preds, matrix, dfu_attrs, cls_df, model
-        )
+        result = compute_hybrid_predictions(all_preds, matrix, dfu_attrs, cls_df, model)
         expected_skus = set(all_preds["sku_ck"].unique())
         assert set(result["sku_ck"].unique()) == expected_skus
 
     def test_no_duplicate_dfu_months(self):
         all_preds, matrix, dfu_attrs, cls_df, model = self._build_inputs()
-        result = compute_hybrid_predictions(
-            all_preds, matrix, dfu_attrs, cls_df, model
-        )
+        result = compute_hybrid_predictions(all_preds, matrix, dfu_attrs, cls_df, model)
         assert not result.duplicated(subset=["sku_ck", "startdate"]).any()
 
     def test_empty_predictions_returns_empty(self):
         _, matrix, dfu_attrs, cls_df, model = self._build_inputs()
-        empty_preds = pd.DataFrame(
-            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
-        )
-        result = compute_hybrid_predictions(
-            empty_preds, matrix, dfu_attrs, cls_df, model
-        )
+        empty_preds = pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"])
+        result = compute_hybrid_predictions(empty_preds, matrix, dfu_attrs, cls_df, model)
         assert result.empty
 
     def test_high_confidence_threshold_uses_single_algo(self):
@@ -418,7 +461,11 @@ class TestComputeHybridPredictions:
         all_preds, matrix, dfu_attrs, cls_df, model = self._build_inputs()
         # With threshold=1.0 all DFUs go to single-algorithm path
         result = compute_hybrid_predictions(
-            all_preds, matrix, dfu_attrs, cls_df, model,
+            all_preds,
+            matrix,
+            dfu_attrs,
+            cls_df,
+            model,
             confidence_threshold=1.0,
         )
         assert not result.empty

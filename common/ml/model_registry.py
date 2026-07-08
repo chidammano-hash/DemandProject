@@ -498,6 +498,60 @@ def build_tree_model(base_name: str, params: dict | None = None) -> Any:
     )
 
 
+def build_tree_classifier(base_name: str, params: dict | None = None) -> Any:
+    """Construct a tree classifier through the same registry boundary as regressors.
+
+    Meta-routing and champion selection train tree classifiers rather than
+    demand regressors, but they still need the same centralized estimator
+    construction and parameter translation guarantees.
+    """
+    resolved = dict(params or {})
+    native = to_native_params(base_name, resolved)
+    if base_name == "lgbm":
+        from lightgbm import LGBMClassifier
+
+        return LGBMClassifier(**native)
+    if base_name == "catboost":
+        from catboost import CatBoostClassifier
+
+        return CatBoostClassifier(**native)
+    if base_name == "xgboost":
+        from xgboost import XGBClassifier
+
+        return XGBClassifier(**native)
+    raise UnknownAlgorithm(
+        f"Unknown tree classifier backend {base_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+    )
+
+
+def fit_tree_classifier(
+    model: Any,
+    model_name: str,
+    X: Any,
+    y: Any,
+    *,
+    categorical_feature: list[int] | str | None = None,
+) -> None:
+    """Fit a tree classifier through the model registry boundary."""
+    if model_name == "lgbm":
+        model.fit(
+            X,
+            y,
+            categorical_feature=categorical_feature if categorical_feature else "auto",
+        )
+        return
+    if model_name == "catboost":
+        cat_features = categorical_feature if isinstance(categorical_feature, list) else None
+        model.fit(X, y, cat_features=cat_features, verbose=False)
+        return
+    if model_name == "xgboost":
+        model.fit(X, y)
+        return
+    raise ValueError(
+        f"Unknown classifier model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+    )
+
+
 class _FoundationStub:
     """Lightweight stand-in for foundation / DL / statistical algorithms.
 

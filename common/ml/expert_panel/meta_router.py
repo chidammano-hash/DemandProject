@@ -8,10 +8,14 @@ Low-confidence DFUs are routed to the inverse-WAPE blend instead.
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Mapping
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import yaml
+
+from common.ml.model_registry import build_tree_classifier, fit_tree_classifier
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +31,27 @@ _CLS_NUMS = ["adi", "cv2", "mean_demand", "std_demand", "n_periods", "n_nonzero"
 # All categorical features (union)
 _ALL_CATS = _ATTRS_CATS + _CLS_CATS
 
+_REQUIRED_META_ROUTER_KEYS = {
+    "n_estimators": "meta_n_estimators",
+    "learning_rate": "meta_learning_rate",
+    "num_leaves": "meta_num_leaves",
+    "min_child_samples": "meta_min_child_samples",
+    "subsample": "meta_subsample",
+    "colsample_bytree": "meta_colsample_bytree",
+    "reg_lambda": "meta_reg_lambda",
+    "class_weight": "meta_class_weight",
+    "random_state": "meta_random_state",
+    "verbose": "meta_verbose",
+    "min_n_months_filter": "meta_min_n_months_filter",
+}
+
 
 @dataclass
 class MetaRouterModel:
     """Container for a trained meta-router classifier and its encoding metadata.
 
     Attributes:
-        model: Fitted LGBMClassifier.
+        model: Fitted tree classifier.
         feature_cols: Ordered list of feature column names used during training.
         cat_feature_idx: Indices into ``feature_cols`` that are categorical.
         cat_categories: Mapping from categorical column name → sorted category list,
@@ -42,7 +60,7 @@ class MetaRouterModel:
         algorithm_to_label: Reverse of label_to_algorithm (populated post-init).
     """
 
-    model: lgb.LGBMClassifier
+    model: Any
     feature_cols: list[str]
     cat_feature_idx: list[int]
     cat_categories: dict[str, list]
@@ -56,6 +74,52 @@ class MetaRouterModel:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _load_default_hybrid_config() -> dict[str, Any]:
+    cfg_path = Path(__file__).with_name("expert_panel_config.yaml")
+    with cfg_path.open() as f:
+        cfg = yaml.safe_load(f) or {}
+    hybrid_cfg = cfg.get("hybrid_ensemble", {})
+    if not isinstance(hybrid_cfg, dict):
+        raise ValueError("expert_panel_config.yaml hybrid_ensemble must be a mapping")
+    return hybrid_cfg
+
+
+def _resolve_meta_router_params(
+    hybrid_config: Mapping[str, Any] | None = None,
+    *,
+    n_estimators: int | None = None,
+    learning_rate: float | None = None,
+    num_leaves: int | None = None,
+    min_n_months_filter: int | None = None,
+) -> tuple[dict[str, Any], int]:
+    """Resolve meta-router classifier params from YAML-backed config."""
+    cfg = dict(_load_default_hybrid_config() if hybrid_config is None else hybrid_config)
+    overrides = {
+        "meta_n_estimators": n_estimators,
+        "meta_learning_rate": learning_rate,
+        "meta_num_leaves": num_leaves,
+        "meta_min_n_months_filter": min_n_months_filter,
+    }
+    cfg.update({key: value for key, value in overrides.items() if value is not None})
+
+    missing = [
+        config_key
+        for config_key in _REQUIRED_META_ROUTER_KEYS.values()
+        if config_key not in cfg or cfg[config_key] is None
+    ]
+    if missing:
+        raise ValueError(
+            "meta-router LightGBM params missing required YAML keys: " + ", ".join(sorted(missing))
+        )
+
+    model_params = {
+        param_key: cfg[config_key]
+        for param_key, config_key in _REQUIRED_META_ROUTER_KEYS.items()
+        if param_key != "min_n_months_filter"
+    }
+    return model_params, int(cfg["meta_min_n_months_filter"])
 
 
 def _join_features(
@@ -77,9 +141,7 @@ def _join_features(
     feat = dfu_attrs[attrs_cols].copy()
 
     # Classification subset
-    cls_cols = ["sku_ck"] + [
-        c for c in (_CLS_CATS + _CLS_NUMS) if c in classification_df.columns
-    ]
+    cls_cols = ["sku_ck"] + [c for c in (_CLS_CATS + _CLS_NUMS) if c in classification_df.columns]
     feat = feat.merge(classification_df[cls_cols], on="sku_ck", how="inner")
 
     if dfu_accuracy_matrix is not None:
@@ -105,10 +167,12 @@ def train_meta_router(
     dfu_accuracy_matrix: pd.DataFrame,
     dfu_attrs: pd.DataFrame,
     classification_df: pd.DataFrame,
-    n_estimators: int = 300,
-    learning_rate: float = 0.05,
-    num_leaves: int = 31,
-    min_n_months_filter: int = 2,
+    n_estimators: int | None = None,
+    learning_rate: float | None = None,
+    num_leaves: int | None = None,
+    min_n_months_filter: int | None = None,
+    *,
+    hybrid_config: Mapping[str, Any] | None = None,
 ) -> MetaRouterModel:
     """Train a LightGBM multiclass classifier to predict best algorithm per DFU.
 
@@ -124,11 +188,13 @@ def train_meta_router(
             Required columns: sku_ck, plus any subset of _ATTRS_CATS.
         classification_df: Output of ``classify_demand``.
             Required columns: sku_ck, plus any subset of _CLS_CATS + _CLS_NUMS.
-        n_estimators: LightGBM boosting rounds.
-        learning_rate: LightGBM learning rate.
-        num_leaves: Maximum leaves per tree.
+        n_estimators: Optional compatibility override for YAML meta_n_estimators.
+        learning_rate: Optional compatibility override for YAML meta_learning_rate.
+        num_leaves: Optional compatibility override for YAML meta_num_leaves.
         min_n_months_filter: Exclude DFUs where the winning algorithm has
             fewer matched months than this (noisy labels).
+        hybrid_config: Optional ``hybrid_ensemble`` config mapping. When omitted,
+            values are loaded from ``expert_panel_config.yaml``.
 
     Returns:
         Fitted ``MetaRouterModel``.
@@ -137,13 +203,19 @@ def train_meta_router(
         ValueError: If the resulting training set is too small (< 10 DFUs)
             or has only 1 unique class.
     """
-    reliable = dfu_accuracy_matrix[
-        dfu_accuracy_matrix["n_months"] >= min_n_months_filter
-    ]
+    model_params, resolved_min_n_months_filter = _resolve_meta_router_params(
+        hybrid_config,
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        num_leaves=num_leaves,
+        min_n_months_filter=min_n_months_filter,
+    )
+
+    reliable = dfu_accuracy_matrix[dfu_accuracy_matrix["n_months"] >= resolved_min_n_months_filter]
     if reliable.empty:
         raise ValueError(
             f"train_meta_router: dfu_accuracy_matrix has no rows with "
-            f"n_months >= {min_n_months_filter}. Cannot train."
+            f"n_months >= {resolved_min_n_months_filter}. Cannot train."
         )
 
     feat = _join_features(reliable, dfu_attrs, classification_df)
@@ -188,19 +260,10 @@ def train_meta_router(
     X = feat[feature_cols].to_numpy(dtype=float, na_value=np.nan)
     y = feat["_label"].values
 
-    clf = lgb.LGBMClassifier(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        num_leaves=num_leaves,
-        min_child_samples=5,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_lambda=1.0,
-        class_weight="balanced",
-        random_state=42,
-        verbose=-1,
-    )
-    clf.fit(
+    clf = build_tree_classifier("lgbm", model_params)
+    fit_tree_classifier(
+        clf,
+        "lgbm",
         X,
         y,
         categorical_feature=cat_feature_idx if cat_feature_idx else "auto",
@@ -248,20 +311,14 @@ def predict_meta_router(
     feat = _join_features(None, dfu_attrs, classification_df)
 
     if feat.empty:
-        logger.warning(
-            "predict_meta_router: no DFUs after joining dfu_attrs + classification_df"
-        )
-        return pd.DataFrame(
-            columns=["sku_ck", "predicted_algorithm", "confidence"]
-        )
+        logger.warning("predict_meta_router: no DFUs after joining dfu_attrs + classification_df")
+        return pd.DataFrame(columns=["sku_ck", "predicted_algorithm", "confidence"])
 
     sku_cks = feat["sku_ck"].values
 
     # Encode categoricals using the same category lists as training
     feat = feat.copy()
-    cat_cols_present = [
-        meta_model.feature_cols[i] for i in meta_model.cat_feature_idx
-    ]
+    cat_cols_present = [meta_model.feature_cols[i] for i in meta_model.cat_feature_idx]
     for c in cat_cols_present:
         if c in feat.columns:
             cats = meta_model.cat_categories.get(c, sorted(feat[c].dropna().unique().tolist()))
@@ -279,8 +336,7 @@ def predict_meta_router(
     confidences: np.ndarray = proba.max(axis=1)
 
     predicted_algorithms = [
-        meta_model.label_to_algorithm.get(int(lbl), "seasonal_naive")
-        for lbl in predicted_labels
+        meta_model.label_to_algorithm.get(int(lbl), "seasonal_naive") for lbl in predicted_labels
     ]
 
     result = pd.DataFrame(

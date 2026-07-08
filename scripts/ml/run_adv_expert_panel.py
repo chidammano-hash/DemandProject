@@ -189,7 +189,10 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     sales_df, dfu_attrs, item_attrs = load_golden_set_data(golden_skus)
     logger.info(
         "  Loaded %d sales rows, %d DFU attrs, %d item attrs in %.1fs",
-        len(sales_df), len(dfu_attrs), len(item_attrs), time.time() - t2,
+        len(sales_df),
+        len(dfu_attrs),
+        len(item_attrs),
+        time.time() - t2,
     )
 
     # -- Step 3: Classify demand -------------------------------------------
@@ -242,7 +245,9 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     feature_cols = get_feature_columns(grid)
     logger.info(
         "  Built grid: %d rows x %d features in %.1fs",
-        len(grid), len(feature_cols), time.time() - t5,
+        len(grid),
+        len(feature_cols),
+        time.time() - t5,
     )
 
     # -- Steps 6-11: Per-timeframe algorithms ------------------------------
@@ -250,25 +255,20 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     all_predictions: list[pd.DataFrame] = []
 
     stat_config = {
-        k: v for k, v in config.get("statistical_models", {}).items()
-        if v.get("enabled", False)
+        k: v for k, v in config.get("statistical_models", {}).items() if v.get("enabled", False)
     }
     tree_config = {
-        k: v for k, v in config.get("tree_models", {}).items()
-        if v.get("enabled", False)
+        k: v for k, v in config.get("tree_models", {}).items() if v.get("enabled", False)
     }
     baseline_config = config.get("baselines", {})
     stat_upgrade_config = {
-        k: v for k, v in config.get("statistical_upgrades", {}).items()
-        if v.get("enabled", False)
+        k: v for k, v in config.get("statistical_upgrades", {}).items() if v.get("enabled", False)
     }
     dl_config = {
-        k: v for k, v in config.get("deep_learning", {}).items()
-        if v.get("enabled", False)
+        k: v for k, v in config.get("deep_learning", {}).items() if v.get("enabled", False)
     }
     fm_config = {
-        k: v for k, v in config.get("foundation_models", {}).items()
-        if v.get("enabled", False)
+        k: v for k, v in config.get("foundation_models", {}).items() if v.get("enabled", False)
     }
 
     for tf_idx, tf in enumerate(timeframes):
@@ -282,8 +282,11 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
 
         logger.info(
             "  Timeframe %s (%d/%d): train_end=%s, predicting %d months...",
-            tf["label"], tf_idx + 1, len(timeframes),
-            train_end.strftime("%Y-%m-%d"), len(predict_months),
+            tf["label"],
+            tf_idx + 1,
+            len(timeframes),
+            train_end.strftime("%Y-%m-%d"),
+            len(predict_months),
         )
 
         train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
@@ -293,12 +296,16 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
             logger.info("    [6] Running %d base statistical models...", len(stat_config))
             ts = time.time()
             stat_preds = run_statistical_models(
-                train_sales, predict_months, stat_config,
+                train_sales,
+                predict_months,
+                stat_config,
                 n_workers=exp.get("n_workers", 8),
             )
             stat_preds["timeframe_idx"] = tf_idx
             all_predictions.append(stat_preds)
-            logger.info("    Base statistical: %d preds in %.1fs", len(stat_preds), time.time() - ts)
+            logger.info(
+                "    Base statistical: %d preds in %.1fs", len(stat_preds), time.time() - ts
+            )
 
         # Step 7: Base tree models + baselines
         if baseline_config.get("seasonal_naive", {}).get("enabled", False):
@@ -311,7 +318,8 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         if baseline_config.get("rolling_mean", {}).get("enabled", False):
             ts = time.time()
             rm_preds = predict_rolling_mean(
-                train_sales, predict_months,
+                train_sales,
+                predict_months,
                 window=baseline_config["rolling_mean"].get("window", 6),
             )
             rm_preds["timeframe_idx"] = tf_idx
@@ -323,7 +331,10 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
             ts = time.time()
             masked_grid = mask_future_sales(grid.copy(), train_end)
             tree_preds = run_tree_models(
-                masked_grid, train_end, predict_months, tree_config,
+                masked_grid,
+                train_end,
+                predict_months,
+                tree_config,
                 classification_df=classification_df,
             )
             tree_preds["timeframe_idx"] = tf_idx
@@ -335,9 +346,14 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
             masked_grid_ridge = mask_future_sales(grid.copy(), train_end)
             train_grid = masked_grid_ridge[masked_grid_ridge["startdate"] <= train_end]
             pred_grid = masked_grid_ridge[masked_grid_ridge["startdate"].isin(predict_months)]
-            cat_cols = [c for c in feature_cols if c in ["ml_cluster", "region", "brand", "abc_vol"]]
+            cat_cols = [
+                c for c in feature_cols if c in ["ml_cluster", "region", "brand", "abc_vol"]
+            ]
             ridge_preds = predict_ridge(
-                train_grid, pred_grid, feature_cols, cat_cols,
+                train_grid,
+                pred_grid,
+                feature_cols,
+                cat_cols,
                 alpha=baseline_config["ridge"].get("alpha", 1.0),
             )
             ridge_preds["timeframe_idx"] = tf_idx
@@ -349,12 +365,16 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
             logger.info("    [8] Running %d statistical upgrades...", len(stat_upgrade_config))
             ts = time.time()
             upgrade_preds = run_statistical_upgrades(
-                train_sales, predict_months, stat_upgrade_config,
+                train_sales,
+                predict_months,
+                stat_upgrade_config,
                 n_workers=exp.get("n_workers", 8),
             )
             upgrade_preds["timeframe_idx"] = tf_idx
             all_predictions.append(upgrade_preds)
-            logger.info("    Statistical upgrades: %d preds in %.1fs", len(upgrade_preds), time.time() - ts)
+            logger.info(
+                "    Statistical upgrades: %d preds in %.1fs", len(upgrade_preds), time.time() - ts
+            )
 
         # Step 9: DL baselines (NEW)
         if baseline_config.get("dlinear", {}).get("enabled", False):
@@ -393,7 +413,8 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
 
         logger.info(
             "  Timeframe %s complete in %.1fs",
-            tf["label"], time.time() - tf_start,
+            tf["label"],
+            time.time() - tf_start,
         )
 
     # Combine all predictions
@@ -419,7 +440,8 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
 
     external_df = load_external_forecast(golden_skus, all_predict_ts)
     existing_df = load_existing_predictions(
-        golden_skus, all_predict_ts,
+        golden_skus,
+        all_predict_ts,
         config["comparison"]["champion_model_ids"],
     )
     logger.info(
@@ -433,16 +455,19 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     logger.info("Step 13/14: Building affinity matrix and optimizing portfolio...")
     t13 = time.time()
 
-    actuals_df = sales_df[
-        sales_df["startdate"].isin(all_predict_ts)
-    ][["sku_ck", "startdate", "qty"]].copy()
+    actuals_df = sales_df[sales_df["startdate"].isin(all_predict_ts)][
+        ["sku_ck", "startdate", "qty"]
+    ].copy()
 
     affinity_matrix, affinity_detail = build_affinity_matrix(
-        all_predictions_df, actuals_df, classification_df,
+        all_predictions_df,
+        actuals_df,
+        classification_df,
     )
     logger.info(
         "  Affinity matrix: %d segments x %d algorithms",
-        affinity_matrix.shape[0], affinity_matrix.shape[1],
+        affinity_matrix.shape[0],
+        affinity_matrix.shape[1],
     )
     logger.info("\n%s", format_affinity_heatmap(affinity_matrix, affinity_detail))
 
@@ -455,16 +480,22 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     n_floor = opt_config.get("naive_floor", True)
     if max_algos:
         assignments_df = optimize_constrained(
-            affinity_matrix, affinity_detail,
-            max_algorithms=max_algos, min_segment_dfus=min_seg,
+            affinity_matrix,
+            affinity_detail,
+            max_algorithms=max_algos,
+            min_segment_dfus=min_seg,
             min_dfu_coverage_pct=min_cov,
-            coverage_weighted=cov_weighted, naive_floor=n_floor,
+            coverage_weighted=cov_weighted,
+            naive_floor=n_floor,
         )
     else:
         assignments_df = optimize_greedy(
-            affinity_matrix, affinity_detail, min_segment_dfus=min_seg,
+            affinity_matrix,
+            affinity_detail,
+            min_segment_dfus=min_seg,
             min_dfu_coverage_pct=min_cov,
-            coverage_weighted=cov_weighted, naive_floor=n_floor,
+            coverage_weighted=cov_weighted,
+            naive_floor=n_floor,
         )
 
     portfolio_stats = compute_portfolio_accuracy(assignments_df, affinity_detail)
@@ -473,33 +504,31 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     ceiling_df = compute_ceiling_accuracy(all_predictions_df, actuals_df, classification_df)
     logger.info(
         "  Ceiling accuracy computed for %d segments in %.1fs",
-        len(ceiling_df), time.time() - t13,
+        len(ceiling_df),
+        time.time() - t13,
     )
 
     # -- Step 13b: Per-DFU hybrid ensemble ---------------------------------
     hybrid_cfg = config.get("hybrid_ensemble", {})
-    hybrid_preds = pd.DataFrame(
-        columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"]
-    )
+    hybrid_preds = pd.DataFrame(columns=["sku_ck", "startdate", FORECAST_QTY_COL, "algorithm_id"])
     dfu_accuracy_matrix = pd.DataFrame(
         columns=["sku_ck", "algorithm_id", "wape", "accuracy_pct", "n_months"]
     )
-    hybrid_routing_df = pd.DataFrame(
-        columns=["sku_ck", "predicted_algorithm", "confidence"]
-    )
+    hybrid_routing_df = pd.DataFrame(columns=["sku_ck", "predicted_algorithm", "confidence"])
     if hybrid_cfg.get("enabled", True) and not all_predictions_df.empty:
         logger.info("Step 13b/14: Building per-DFU hybrid ensemble...")
         t13b = time.time()
         try:
             dfu_accuracy_matrix = build_dfu_accuracy_matrix(
-                all_predictions_df, actuals_df,
+                all_predictions_df,
+                actuals_df,
                 min_n_months=hybrid_cfg.get("min_n_months", 2),
             )
             meta_model = train_meta_router(
-                dfu_accuracy_matrix, dfu_attrs, classification_df,
-                n_estimators=hybrid_cfg.get("meta_n_estimators", 300),
-                learning_rate=hybrid_cfg.get("meta_learning_rate", 0.05),
-                num_leaves=hybrid_cfg.get("meta_num_leaves", 31),
+                dfu_accuracy_matrix,
+                dfu_attrs,
+                classification_df,
+                hybrid_config=hybrid_cfg,
             )
             hybrid_preds = compute_hybrid_predictions(
                 all_predictions_df=all_predictions_df,
@@ -525,12 +554,12 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     t14 = time.time()
 
     portfolio_preds = compute_portfolio_predictions(
-        all_predictions_df, assignments_df, classification_df,
+        all_predictions_df,
+        assignments_df,
+        classification_df,
     )
 
-    naive_preds_all = all_predictions_df[
-        all_predictions_df["algorithm_id"] == "seasonal_naive"
-    ]
+    naive_preds_all = all_predictions_df[all_predictions_df["algorithm_id"] == "seasonal_naive"]
 
     ext_for_compare = external_df if (external_df is not None and not external_df.empty) else None
     exist_for_compare = existing_df if (existing_df is not None and not existing_df.empty) else None
@@ -551,6 +580,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     if not hybrid_preds.empty:
         from common.ml.expert_panel.comparison import compute_baseline_accuracy  # noqa: E402
         import numpy as np  # noqa: E402
+
         hybrid_metrics = compute_baseline_accuracy(
             hybrid_preds, actuals_df, "hybrid", classification_df
         )
@@ -559,13 +589,9 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         hyb_acc = hybrid_metrics["accuracy_pct"]
         naive_acc = comparison["baselines"]["seasonal_naive"]["accuracy_pct"]
         if not (np.isnan(hyb_acc) or np.isnan(port_acc)):
-            comparison["lift"]["hybrid_vs_portfolio_bps"] = round(
-                (hyb_acc - port_acc) * 100
-            )
+            comparison["lift"]["hybrid_vs_portfolio_bps"] = round((hyb_acc - port_acc) * 100)
         if not (np.isnan(hyb_acc) or np.isnan(naive_acc)):
-            comparison["lift"]["hybrid_vs_naive_bps"] = round(
-                (hyb_acc - naive_acc) * 100
-            )
+            comparison["lift"]["hybrid_vs_naive_bps"] = round((hyb_acc - naive_acc) * 100)
         logger.info(
             "  Hybrid ensemble: Accuracy=%.2f%%  WAPE=%.2f%%  "
             "vs Portfolio=%+d bps  vs Naive=%+d bps",
@@ -585,9 +611,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     if exec_lag_map and not all_predictions_df.empty:
-        all_predictions_df = add_lag_columns(
-            all_predictions_df, tf_train_end_map, exec_lag_map
-        )
+        all_predictions_df = add_lag_columns(all_predictions_df, tf_train_end_map, exec_lag_map)
 
     # Monthly accuracy — execution-lag-matched, only months with full lag coverage
     monthly_accuracy = compute_monthly_accuracy(
@@ -604,9 +628,11 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
             "Monthly accuracy (exec-lag): %d months | Best overall: %s (%.1f%% mean-monthly)",
             len(monthly_accuracy),
             max(overall_monthly.items(), key=lambda x: x[1]["mean_monthly_accuracy"])[0]
-            if overall_monthly else "n/a",
+            if overall_monthly
+            else "n/a",
             max(v["mean_monthly_accuracy"] for v in overall_monthly.values())
-            if overall_monthly else 0.0,
+            if overall_monthly
+            else 0.0,
         )
 
     # -- Save outputs ------------------------------------------------------
@@ -638,12 +664,14 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     )
     (output_dir / "monthly_accuracy.json").write_text(
         json.dumps(
-            _make_serializable({
-                "monthly": monthly_accuracy,
-                "avg_3m": avg_3m,
-                "avg_6m": avg_6m,
-                "overall": overall_monthly,
-            }),
+            _make_serializable(
+                {
+                    "monthly": monthly_accuracy,
+                    "avg_3m": avg_3m,
+                    "avg_6m": avg_6m,
+                    "overall": overall_monthly,
+                }
+            ),
             indent=2,
         )
     )
@@ -651,29 +679,38 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     # Algorithm summary
     algo_counts = (
         all_predictions_df["algorithm_id"].value_counts().to_dict()
-        if not all_predictions_df.empty else {}
+        if not all_predictions_df.empty
+        else {}
     )
-    (output_dir / "metadata.json").write_text(json.dumps({
-        "experiment": "adv_expert_panel_v1",
-        "runtime_seconds": round(runtime, 1),
-        "n_dfus": len(golden_skus),
-        "n_predictions": len(all_predictions_df),
-        "n_algorithms": int(all_predictions_df["algorithm_id"].nunique())
-            if not all_predictions_df.empty else 0,
-        "n_archetypes": int(classification_df["archetype"].nunique())
-            if not classification_df.empty else 0,
-        "loc_filter": exp.get("loc_filter"),
-        "algorithm_prediction_counts": algo_counts,
-        "new_algorithms": {
-            "statistical_upgrades": list(stat_upgrade_config.keys()),
-            "deep_learning": list(dl_config.keys()) if dl_config else [],
-            "foundation_models": list(fm_config.keys()) if fm_config else [],
-            "dl_baselines": [
-                b for b in ["dlinear", "nlinear"]
-                if baseline_config.get(b, {}).get("enabled", False)
-            ],
-        },
-    }, indent=2))
+    (output_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "experiment": "adv_expert_panel_v1",
+                "runtime_seconds": round(runtime, 1),
+                "n_dfus": len(golden_skus),
+                "n_predictions": len(all_predictions_df),
+                "n_algorithms": int(all_predictions_df["algorithm_id"].nunique())
+                if not all_predictions_df.empty
+                else 0,
+                "n_archetypes": int(classification_df["archetype"].nunique())
+                if not classification_df.empty
+                else 0,
+                "loc_filter": exp.get("loc_filter"),
+                "algorithm_prediction_counts": algo_counts,
+                "new_algorithms": {
+                    "statistical_upgrades": list(stat_upgrade_config.keys()),
+                    "deep_learning": list(dl_config.keys()) if dl_config else [],
+                    "foundation_models": list(fm_config.keys()) if fm_config else [],
+                    "dl_baselines": [
+                        b
+                        for b in ["dlinear", "nlinear"]
+                        if baseline_config.get(b, {}).get("enabled", False)
+                    ],
+                },
+            },
+            indent=2,
+        )
+    )
 
     # Report
     report_lines = [
@@ -715,22 +752,21 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     report_lines.append("-" * 70)
     report_lines.append("PORTFOLIO ACCURACY")
     report_lines.append("-" * 70)
-    report_lines.append(f"  Overall accuracy:   {portfolio_stats.get('portfolio_accuracy', 0):.1f}%")
+    report_lines.append(
+        f"  Overall accuracy:   {portfolio_stats.get('portfolio_accuracy', 0):.1f}%"
+    )
     report_lines.append(f"  Overall WAPE:       {portfolio_stats.get('portfolio_wape', 0):.1f}%")
     report_lines.append(f"  Algorithms used:    {portfolio_stats.get('n_algorithms', 0)}")
     report_lines.append("")
 
     if monthly_accuracy:
         from common.ml.expert_panel.report import _format_monthly_accuracy_section
+
         report_lines.append("-" * 70)
-        report_lines.append(
-            "MONTHLY ACCURACY — execution-lag-matched, full-coverage months only"
-        )
+        report_lines.append("MONTHLY ACCURACY — execution-lag-matched, full-coverage months only")
         report_lines.append("-" * 70)
         report_lines.extend(
-            _format_monthly_accuracy_section(
-                monthly_accuracy, avg_3m, avg_6m, overall_monthly
-            )
+            _format_monthly_accuracy_section(monthly_accuracy, avg_3m, avg_6m, overall_monthly)
         )
         report_lines.append("")
 
@@ -749,9 +785,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Advanced Expert Panel Algorithm Selection Test"
-    )
+    parser = argparse.ArgumentParser(description="Advanced Expert Panel Algorithm Selection Test")
     parser.add_argument("--config", type=Path, help="Path to config.yaml")
     parser.add_argument("--n-dfus", type=int, help="Override number of DFUs")
     parser.add_argument("--n-timeframes", type=int, help="Override number of timeframes")
@@ -760,7 +794,7 @@ def main() -> None:
         "--loc",
         type=str,
         help="Run on all DFUs at a specific location (e.g. 1401-BULK). "
-             "Overrides --n-dfus and sampling; uses every DFU at that loc.",
+        "Overrides --n-dfus and sampling; uses every DFU at that loc.",
     )
     args = parser.parse_args()
 
@@ -786,10 +820,12 @@ def main() -> None:
     logger.info("ADVANCED EXPERT PANEL ALGORITHM SELECTION TEST")
     logger.info("=" * 60)
     if loc_filter:
-        logger.info("Loc filter: %s | Timeframes: %d | Seed: %d",
-                    loc_filter,
-                    config["experiment"]["n_timeframes"],
-                    config["experiment"]["seed"])
+        logger.info(
+            "Loc filter: %s | Timeframes: %d | Seed: %d",
+            loc_filter,
+            config["experiment"]["n_timeframes"],
+            config["experiment"]["seed"],
+        )
     else:
         logger.info(
             "DFUs: %d | Timeframes: %d | Seed: %d",
@@ -804,8 +840,11 @@ def main() -> None:
         sum(1 for v in config.get("statistical_upgrades", {}).values() if v.get("enabled")),
         sum(1 for v in config.get("deep_learning", {}).values() if v.get("enabled")),
         sum(1 for v in config.get("foundation_models", {}).values() if v.get("enabled")),
-        sum(1 for b in ["dlinear", "nlinear", "seasonal_naive", "rolling_mean", "ridge"]
-            if config.get("baselines", {}).get(b, {}).get("enabled")),
+        sum(
+            1
+            for b in ["dlinear", "nlinear", "seasonal_naive", "rolling_mean", "ridge"]
+            if config.get("baselines", {}).get(b, {}).get("enabled")
+        ),
     )
 
     run_experiment(config)
