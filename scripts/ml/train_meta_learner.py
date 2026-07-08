@@ -22,7 +22,7 @@ import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -38,12 +38,15 @@ if str(ROOT) not in sys.path:
 from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.sql_helpers import read_sql_chunked
-from common.services.perf_profiler import profiled_section
 from common.core.utils import load_forecast_pipeline_config, get_competing_model_ids
+from common.ml.model_registry import build_tree_classifier, fit_tree_classifier
+from common.services.perf_profiler import profiled_section
 
 
 def _load_monthly_errors(
-    db: dict[str, Any], models: list[str], lag_mode: str,
+    db: dict[str, Any],
+    models: list[str],
+    lag_mode: str,
 ) -> pd.DataFrame:
     placeholders = ",".join(["%s"] * len(models))
     params: list[Any] = list(models)
@@ -124,11 +127,12 @@ def build_training_data(
     # Step 1: Compute ceiling labels (ground truth)
     ranked = df.copy()
     ranked["_rank"] = ranked.groupby(_DFU_MONTH_COLS)["abs_err"].rank(
-        method="first", ascending=True,
+        method="first",
+        ascending=True,
     )
-    ceiling = ranked[ranked["_rank"] == 1][
-        _DFU_MONTH_COLS + ["model_id"]
-    ].rename(columns={"model_id": "ceiling_winner"})
+    ceiling = ranked[ranked["_rank"] == 1][_DFU_MONTH_COLS + ["model_id"]].rename(
+        columns={"model_id": "ceiling_winner"}
+    )
 
     # Step 2: Compute per-model rolling performance (strictly prior)
     g = df.groupby(_DFU_MODEL_COLS, sort=False)
@@ -142,9 +146,7 @@ def build_training_data(
     df["_roll_bias_num"] = g["_bias_raw"].transform(
         lambda x: x.shift(1).rolling(window=performance_window, min_periods=1).sum()
     )
-    df["_prior_count"] = g["abs_err"].transform(
-        lambda x: x.shift(1).expanding().count()
-    )
+    df["_prior_count"] = g["abs_err"].transform(lambda x: x.shift(1).expanding().count())
     df["_roll_wape"] = df["_roll_abs_err"] / df["_roll_actual"].abs().clip(lower=1e-6)
     df["_roll_bias"] = df["_roll_bias_num"] / df["_roll_actual"].abs().clip(lower=1e-6)
 
@@ -157,7 +159,10 @@ def build_training_data(
     pivot_src = df[_DFU_MONTH_COLS + ["model_id", "_roll_wape", "_roll_bias"]].copy()
     for col, prefix in [("_roll_wape", "roll_wape"), ("_roll_bias", "roll_bias")]:
         wide = pivot_src.pivot_table(
-            index=_DFU_MONTH_COLS, columns="model_id", values=col, aggfunc="first",
+            index=_DFU_MONTH_COLS,
+            columns="model_id",
+            values=col,
+            aggfunc="first",
         )
         wide.columns = [f"{prefix}_{m}" for m in wide.columns]
         pivoted = pivoted.merge(wide, on=_DFU_MONTH_COLS, how="left")
@@ -172,7 +177,8 @@ def build_training_data(
 
     pivoted = pivoted.merge(
         demand[_DFU_MONTH_COLS + ["mean_qty", "cv_demand"]],
-        on=_DFU_MONTH_COLS, how="left",
+        on=_DFU_MONTH_COLS,
+        how="left",
     )
 
     # Step 6: Calendar features (Fourier terms replace legacy month_sin/cos)
@@ -201,6 +207,59 @@ def build_training_data(
 # Training
 # ---------------------------------------------------------------------------
 
+_CLASSIFIER_PARAM_KEYS: dict[str, tuple[str, ...]] = {
+    "random_forest": (
+        "n_estimators",
+        "max_depth",
+        "min_samples_leaf",
+        "class_weight",
+        "random_state",
+        "n_jobs",
+    ),
+    "xgboost": (
+        "n_estimators",
+        "max_depth",
+        "learning_rate",
+        "random_state",
+        "n_jobs",
+        "eval_metric",
+    ),
+}
+
+
+def _load_meta_learner_config() -> dict[str, Any]:
+    pipeline_cfg = load_forecast_pipeline_config()
+    champion_cfg = pipeline_cfg.get("champion", {})
+    meta_cfg = champion_cfg.get("meta_learner", {})
+    if not isinstance(meta_cfg, dict):
+        raise ValueError("champion.meta_learner config must be a mapping")
+    return dict(meta_cfg)
+
+
+def _resolve_classifier_params(
+    model_type: str,
+    overrides: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve champion meta-learner params from forecast_pipeline_config.yaml."""
+    if model_type not in _CLASSIFIER_PARAM_KEYS:
+        raise ValueError(
+            f"Unknown meta-learner classifier {model_type!r}. "
+            "Expected 'random_forest' or 'xgboost'."
+        )
+
+    cfg = _load_meta_learner_config()
+    cfg.update({key: value for key, value in dict(overrides or {}).items() if value is not None})
+
+    required = _CLASSIFIER_PARAM_KEYS[model_type]
+    missing = [key for key in required if key not in cfg or cfg[key] is None]
+    if missing:
+        raise ValueError(
+            f"{model_type} meta-learner params missing required YAML keys: "
+            + ", ".join(sorted(missing))
+        )
+    return {key: cfg[key] for key in required}
+
+
 def train_classifier(
     X_train: pd.DataFrame,
     y_train: pd.Series,
@@ -212,34 +271,22 @@ def train_classifier(
     """Train and evaluate the meta-learner classifier."""
     from sklearn.metrics import accuracy_score, classification_report
 
+    classifier_params = _resolve_classifier_params(model_type, kwargs)
+
     if model_type == "xgboost":
-        from xgboost import XGBClassifier
         from sklearn.preprocessing import LabelEncoder
 
         le = LabelEncoder()
         y_train_enc = le.fit_transform(y_train)
         # y_test encoding not needed — evaluation uses string labels
-        clf = XGBClassifier(
-            n_estimators=kwargs.get("n_estimators", 200),
-            max_depth=kwargs.get("max_depth", 8),
-            learning_rate=kwargs.get("learning_rate", 0.1),
-            random_state=42,
-            n_jobs=-1,
-        )
-        clf.fit(X_train, y_train_enc)
+        clf = build_tree_classifier("xgboost", classifier_params)
+        fit_tree_classifier(clf, "xgboost", X_train, y_train_enc)
         y_pred_enc = clf.predict(X_test)
         y_pred = le.inverse_transform(y_pred_enc)
     else:
         from sklearn.ensemble import RandomForestClassifier
 
-        clf = RandomForestClassifier(
-            n_estimators=kwargs.get("n_estimators", 200),
-            max_depth=kwargs.get("max_depth", 15),
-            min_samples_leaf=kwargs.get("min_samples_leaf", 10),
-            class_weight="balanced",
-            random_state=42,
-            n_jobs=-1,
-        )
+        clf = RandomForestClassifier(**classifier_params)
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_test)
 
@@ -253,17 +300,24 @@ def train_classifier(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train meta-learner for champion selection")
     parser.add_argument(
-        "--config", type=str, default="config/forecasting/forecast_pipeline_config.yaml",
+        "--config",
+        type=str,
+        default="config/forecasting/forecast_pipeline_config.yaml",
     )
     parser.add_argument(
-        "--model-type", type=str, default=None,
+        "--model-type",
+        type=str,
+        default=None,
         help="Classifier type: random_forest or xgboost (overrides config)",
     )
     parser.add_argument(
-        "--output", type=str, default="data/champion/meta_learner.joblib",
+        "--output",
+        type=str,
+        default="data/champion/meta_learner.joblib",
     )
     args = parser.parse_args()
 
@@ -306,7 +360,9 @@ def main() -> None:
     t1 = time.time()
     with profiled_section("build_training_data"):
         features_df, target, feature_cols = build_training_data(
-            monthly_errors, dfu_features, models,
+            monthly_errors,
+            dfu_features,
+            models,
             performance_window=performance_window,
             min_prior_months=min_rows,
         )
@@ -344,11 +400,14 @@ def main() -> None:
     print(f"Training {model_type} classifier...")
     t2 = time.time()
     # Only pass classifier-relevant hyperparams (not config keys like test_months)
-    clf_keys = {"n_estimators", "max_depth", "min_samples_leaf", "learning_rate"}
+    clf_keys = set(_CLASSIFIER_PARAM_KEYS.get(model_type, ()))
     clf_params = {k: v for k, v in meta_cfg.items() if k in clf_keys}
     with profiled_section("train_classifier"):
         clf, accuracy, report = train_classifier(
-            X_train, y_train, X_test, y_test,
+            X_train,
+            y_train,
+            X_test,
+            y_test,
             model_type=model_type,
             **clf_params,
         )
@@ -356,9 +415,11 @@ def main() -> None:
     print("  Per-class F1:")
     for cls, metrics in report.items():
         if isinstance(metrics, dict) and "f1-score" in metrics:
-            print(f"    {cls}: F1={metrics['f1-score']:.3f}, "
-                  f"precision={metrics['precision']:.3f}, "
-                  f"recall={metrics['recall']:.3f}")
+            print(
+                f"    {cls}: F1={metrics['f1-score']:.3f}, "
+                f"precision={metrics['precision']:.3f}, "
+                f"recall={metrics['recall']:.3f}"
+            )
     print()
 
     # Feature importance
@@ -406,15 +467,21 @@ def main() -> None:
         # Save report
         report_path = output_path.parent / "meta_learner_report.json"
         with open(report_path, "w") as f:
-            json.dump({
-                "accuracy": round(accuracy, 4),
-                "classification_report": report,
-                "feature_importance": (
-                    {feat: round(float(imp), 6) for feat, imp in importance[:30]}
-                    if hasattr(clf, "feature_importances_") else {}
-                ),
-                **meta_artifact["training_metadata"],
-            }, f, indent=2, default=str)
+            json.dump(
+                {
+                    "accuracy": round(accuracy, 4),
+                    "classification_report": report,
+                    "feature_importance": (
+                        {feat: round(float(imp), 6) for feat, imp in importance[:30]}
+                        if hasattr(clf, "feature_importances_")
+                        else {}
+                    ),
+                    **meta_artifact["training_metadata"],
+                },
+                f,
+                indent=2,
+                default=str,
+            )
         print(f"Report saved to {report_path}")
     print("\nDone.")
 
