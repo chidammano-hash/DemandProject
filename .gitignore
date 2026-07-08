@@ -38,6 +38,7 @@ scripts/algorithm_testing/results/
 *.model
 
 # Playwright E2E test artifacts
+frontend/test-results/
 **/e2e/test-results/
 **/e2e/playwright-report/
 **/e2e/blob-report/
