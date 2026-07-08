@@ -34,11 +34,10 @@ import sys
 import time
 import uuid
 import warnings
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-
-from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
@@ -50,15 +49,15 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.core.db import get_db_params
+import psycopg
+
 from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.core.sql_helpers import read_sql_chunked
 from common.ml.forecast_ci import build_sigma_lookup, compute_ci_bounds
 from common.ml.seasonal_naive import make_dfu_key
-from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-
-import psycopg
 
 PIPELINE_CONFIG_PATH = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 CHAMPION_WINNERS_DIR = ROOT / "data" / "champion"
@@ -1696,6 +1695,36 @@ def _is_model_fallback_substitution(
     return loaded_models.get(fallback_model_id) is not None
 
 
+def _required_tree_model_ids(
+    *,
+    requested_model_id: str | None,
+    champion_month_df: pd.DataFrame,
+    fallback_model_id: str,
+    non_tree_models: set[str],
+) -> set[str]:
+    """Return tree model ids that must have artifacts before generation starts."""
+    if requested_model_id:
+        return set() if requested_model_id in non_tree_models else {requested_model_id}
+
+    required = {
+        str(model_id)
+        for model_id in champion_month_df.get("source_model_id", pd.Series(dtype=object)).dropna()
+        if str(model_id) not in non_tree_models
+    }
+    if "source_model_id" in champion_month_df.columns and champion_month_df["source_model_id"].isna().any():
+        if fallback_model_id not in non_tree_models:
+            required.add(fallback_model_id)
+    return required
+
+
+def _missing_required_tree_model_ids(
+    required_tree_model_ids: set[str],
+    loaded_models: dict[str, dict],
+) -> list[str]:
+    """Return required tree model ids without loaded cluster artifacts."""
+    return sorted(model_id for model_id in required_tree_model_ids if not loaded_models.get(model_id))
+
+
 def _cluster_assignments_wiped(
     champion_df: pd.DataFrame,
     loaded_models: dict[str, dict],
@@ -1841,6 +1870,24 @@ def main() -> None:
                 except FileNotFoundError as e:
                     logger.warning("%s", e)
 
+        required_tree_model_ids = _required_tree_model_ids(
+            requested_model_id=args.model_id,
+            champion_month_df=champion_month_df,
+            fallback_model_id=fallback_model_id,
+            non_tree_models=non_tree_models,
+        )
+        missing_tree_models = _missing_required_tree_model_ids(
+            required_tree_model_ids,
+            loaded_models,
+        )
+        if missing_tree_models:
+            raise RuntimeError(
+                "Required tree model artifact(s) missing for production generation: "
+                f"{', '.join(missing_tree_models)}. Train/persist those production "
+                "artifacts before generating forecasts so shipped rows match the "
+                "selected champion model."
+            )
+
         if not loaded_models:
             if args.model_id:
                 # Non-tree model: generate using statistical/direct inference from history
@@ -1931,20 +1978,9 @@ def main() -> None:
                 # they have no .pkl and must keep their TRUE model_id, never the lgbm
                 # fallback (F-11: displayed champion == shipped model).
                 statistical_routed: dict[str, list] = defaultdict(list)
-                # Gap-10 residual instrumentation: count any TREE champion source whose
-                # .pkl set is missing and is replaced by the production fallback. DISTINCT
-                # from cluster_fallback_count, which counts a missing CLUSTER label
-                # within an already-loaded model.
-                model_substitution_count = 0
-                model_substitution_sources: Counter = Counter()
-
                 def _resolve_artifact(model_id: str, cluster_id) -> dict | None:
                     nonlocal cluster_fallback_count
-                    nonlocal model_substitution_count
-                    if _is_model_fallback_substitution(model_id, fallback_model_id, loaded_models):
-                        model_substitution_count += 1
-                        model_substitution_sources[model_id] += 1
-                    cluster_models = loaded_models.get(model_id) or loaded_models.get(fallback_model_id)
+                    cluster_models = loaded_models.get(model_id)
                     if cluster_models is None:
                         return None
                     art = cluster_models.get(cluster_id)
@@ -2072,28 +2108,6 @@ def main() -> None:
                     "re-run. Re-run the backtest to persist models for the current labels.",
                     f"{cluster_fallback_count:,}",
                 )
-            if model_substitution_count:
-                # Residual Gap-10: a TREE champion source had no persisted .pkl set and
-                # was replaced by the production fallback, so the displayed champion does
-                # NOT match the model that generated these rows. Non-tree champions
-                # (statistical / foundation / DL) are routed to the statistical path
-                # above and are unaffected — a count here means a tree model's weights
-                # were never persisted. Re-run that model's backtest.
-                breakdown = ", ".join(
-                    f"{src}={cnt:,}"
-                    for src, cnt in model_substitution_sources.most_common()
-                )
-                logger.warning(
-                    "DATA INTEGRITY (Gap-10): %s DFU(s) had a TREE champion source "
-                    "silently substituted by the production fallback '%s' because its "
-                    ".pkl artifacts are missing — the displayed champion does NOT match "
-                    "the model that generated these forecasts. Per-source breakdown: %s. "
-                    "Re-run that model's backtest to persist its cluster weights.",
-                    f"{model_substitution_count:,}",
-                    fallback_model_id,
-                    breakdown,
-                )
-
             # Batch-predict per cluster group — parallelise across independent groups.
             # Guarded: when every champion routes to the statistical path (no tree
             # groups), ThreadPoolExecutor(max_workers=0) would raise — skip it.

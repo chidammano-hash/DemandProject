@@ -5,23 +5,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock, patch
 
+from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.ml.seasonal_naive import SeasonalNaiveModel, make_dfu_key
 
 # ---------------------------------------------------------------------------
 # Helpers to import functions under test
 # ---------------------------------------------------------------------------
-
 from scripts.forecasting.generate_production_forecasts import (
     _is_model_fallback_substitution,
-    build_inference_grid,
-    build_sales_index,
+    _missing_required_tree_model_ids,
+    _required_tree_model_ids,
     build_attrs_index,
     build_cat_encoders,
+    build_inference_grid,
     build_month_routing,
+    build_sales_index,
     collapse_to_dfu,
     filter_rows_to_champion_months,
     generate_forecast_recursive,
@@ -29,9 +33,6 @@ from scripts.forecasting.generate_production_forecasts import (
     generate_forecasts_statistical,
     get_champion_assignments,
 )
-from common.core.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
-from common.ml.seasonal_naive import SeasonalNaiveModel, make_dfu_key
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -556,6 +557,7 @@ def test_generate_forecasts_batch_18_months():
 def test_load_recent_sales_uses_planning_date():
     """load_recent_sales must use get_planning_date(), not Timestamp.now()."""
     import inspect
+
     from scripts.forecasting.generate_production_forecasts import load_recent_sales
     source = inspect.getsource(load_recent_sales)
     assert "get_planning_date" in source, "load_recent_sales must use get_planning_date()"
@@ -565,6 +567,7 @@ def test_load_recent_sales_uses_planning_date():
 def test_main_plan_version_uses_planning_date():
     """plan_version generation must use get_planning_date(), not datetime.now()."""
     import inspect
+
     from scripts.forecasting.generate_production_forecasts import main
     source = inspect.getsource(main)
     assert "get_planning_date" in source, "plan_version must use get_planning_date()"
@@ -891,22 +894,75 @@ def test_no_substitution_when_fallback_also_absent():
     ) is False
 
 
-def test_resolve_artifact_routing_unchanged_under_substitution():
-    """Instrumentation must NOT alter routing: when the source model is absent,
-    _resolve_artifact still returns the production fallback artifact (byte-identical
-    to pre-instrumentation behavior)."""
-    fallback_art = {"model": MagicMock(), "feature_cols": ["a"]}
-    loaded_models = {"lgbm_cluster": {0: fallback_art}}
+def test_required_tree_models_from_champion_routing_exclude_non_tree_models():
+    """Only tree champion sources require .pkl artifacts; statistical models route separately."""
+    champion_df = pd.DataFrame([
+        {"source_model_id": "catboost_cluster"},
+        {"source_model_id": "rolling_mean"},
+        {"source_model_id": "xgboost_cust_enriched"},
+    ])
 
-    # Mirror the closure's resolution: requested producer absent → fallback model used,
-    # then look up the cluster artifact. The detection predicate is True, but the
-    # returned artifact is the fallback's cluster-0 model — unchanged.
-    assert _is_model_fallback_substitution(
-        "catboost_cluster", "lgbm_cluster", loaded_models
-    ) is True
-    cluster_models = loaded_models.get("catboost_cluster") or loaded_models.get("lgbm_cluster")
-    assert cluster_models is loaded_models["lgbm_cluster"]
-    assert cluster_models.get(0) is fallback_art
+    required = _required_tree_model_ids(
+        requested_model_id=None,
+        champion_month_df=champion_df,
+        fallback_model_id="lgbm_cluster",
+        non_tree_models={"rolling_mean", "seasonal_naive"},
+    )
+
+    assert required == {"catboost_cluster", "xgboost_cust_enriched"}
+
+
+def test_required_tree_models_include_fallback_for_null_source_model():
+    """NULL champion source falls back by config, so the fallback tree artifact is required."""
+    champion_df = pd.DataFrame([
+        {"source_model_id": None},
+        {"source_model_id": "rolling_mean"},
+    ])
+
+    required = _required_tree_model_ids(
+        requested_model_id=None,
+        champion_month_df=champion_df,
+        fallback_model_id="lgbm_cluster",
+        non_tree_models={"rolling_mean", "seasonal_naive"},
+    )
+
+    assert required == {"lgbm_cluster"}
+
+
+def test_required_tree_models_for_explicit_tree_model_override():
+    champion_df = pd.DataFrame([{"source_model_id": "rolling_mean"}])
+
+    required = _required_tree_model_ids(
+        requested_model_id="catboost_cluster",
+        champion_month_df=champion_df,
+        fallback_model_id="lgbm_cluster",
+        non_tree_models={"rolling_mean", "seasonal_naive"},
+    )
+
+    assert required == {"catboost_cluster"}
+
+
+def test_required_tree_models_for_explicit_non_tree_model_override():
+    champion_df = pd.DataFrame([{"source_model_id": "catboost_cluster"}])
+
+    required = _required_tree_model_ids(
+        requested_model_id="rolling_mean",
+        champion_month_df=champion_df,
+        fallback_model_id="lgbm_cluster",
+        non_tree_models={"rolling_mean", "seasonal_naive"},
+    )
+
+    assert required == set()
+
+
+def test_missing_required_tree_models_fail_before_fallback_substitution():
+    """A winning tree model with no artifacts must fail instead of shipping fallback rows."""
+    missing = _missing_required_tree_model_ids(
+        {"catboost_cluster", "lgbm_cluster"},
+        loaded_models={"lgbm_cluster": {0: {"model": MagicMock()}}},
+    )
+
+    assert missing == ["catboost_cluster"]
 
 
 # ---------------------------------------------------------------------------
