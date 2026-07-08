@@ -162,13 +162,6 @@ PERCENTILE_MEDIAN = 0.5              # M7
 PERCENTILE_Q1 = 0.25                 # M7
 PERCENTILE_Q3 = 0.75                 # M7
 
-# MV refresh lists (D5) -------------------------------------------------------
-
-MV_REFRESH_ARCHIVE = [
-    "agg_accuracy_lag_archive",
-    "agg_dfu_coverage_lag_archive",
-]
-
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------

@@ -22,6 +22,12 @@ if str(ROOT) not in sys.path:
 
 from common.core.db import get_db_params
 from common.core.domain_specs import get_spec
+from common.core.etl_helpers import tables_written_for_domain  # noqa: E402
+from common.core.mv_refresh import (  # noqa: E402
+    mvs_for_tables,
+    refresh_materialized_views,
+    refresh_materialized_views_parallel,
+)
 from common.core.utils import load_config
 from common.engines.medallion import file_hash
 from common.services.perf_profiler import profiled_section
@@ -230,66 +236,29 @@ def load_customer_demand() -> dict:
 # ---------------------------------------------------------------------------
 
 def get_mvs_for_domains(domains: list[str]) -> list[str]:
-    """Return deduplicated list of MVs to refresh for given domains."""
-    cfg = _cfg()
-    mv_map = cfg.get("mv_refresh", {})
-    always = cfg.get("always_refresh", [])
+    """Dependent MVs for the tables the given domain loads write.
 
-    mvs = list(always)
+    Derived from the central dependency map (common/core/mv_refresh.py) via
+    each domain's written tables — the per-domain lists that used to live in
+    etl_config.yaml are gone.
+    """
+    tables: list[str] = []
     for domain in domains:
-        mvs.extend(mv_map.get(domain, []))
-    # Deduplicate preserving order
-    seen = set()
-    result = []
-    for mv in mvs:
-        if mv not in seen:
-            seen.add(mv)
-            result.append(mv)
-    return result
-
-
-def refresh_views(cur, mv_list: list[str]) -> None:
-    """Refresh materialized views sequentially on the given cursor."""
-    if not mv_list:
-        return
-    cur.execute("SET max_parallel_workers_per_gather = 0")
-    for mv in mv_list:
-        logger.info("  Refreshing %s ...", mv)
-        t0 = time.time()
         try:
-            cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-            logger.info("    done (%s)", _elapsed(t0))
-        except psycopg.Error as exc:
-            logger.warning("    FAILED: %s", exc)
+            tables.extend(tables_written_for_domain(domain))
+        except ValueError:
+            logger.warning("Unknown domain %r — no MVs derived for it", domain)
+    return mvs_for_tables(tables)
 
 
-def _refresh_one_mv(mv: str) -> tuple[str, bool, str]:
-    """Refresh a single MV using its own connection. Returns (name, success, elapsed)."""
-    t0 = time.time()
-    try:
-        db = get_db_params()
-        with psycopg.connect(**db) as conn, conn.cursor() as cur:
-            cur.execute("SET max_parallel_workers_per_gather = 0")
-            cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-            conn.commit()
-        return mv, True, _elapsed(t0)
-    except psycopg.Error as exc:
-        logger.warning("  FAILED to refresh %s: %s", mv, exc)
-        return mv, False, _elapsed(t0)
+def refresh_views(mv_list: list[str]) -> None:
+    """Refresh materialized views sequentially (dedicated autocommit connection)."""
+    refresh_materialized_views(mv_list)
 
 
 def refresh_views_parallel(mv_list: list[str], max_workers: int = 3) -> None:
-    """Refresh materialized views in parallel using separate connections."""
-    if not mv_list:
-        return
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_refresh_one_mv, mv): mv for mv in mv_list}
-        for future in as_completed(futures):
-            mv, ok, elapsed = future.result()
-            if ok:
-                logger.info("  Refreshed %s (%s)", mv, elapsed)
-            else:
-                logger.warning("  FAILED: %s (%s)", mv, elapsed)
+    """Refresh materialized views tier-parallel using separate connections."""
+    refresh_materialized_views_parallel(mv_list, max_workers=max_workers)
 
 
 def _load_domains_parallel(
@@ -458,10 +427,7 @@ def run_full(domains: list[str], source_dir: Path,
                                      par_cfg.get("max_workers", 3))
             refresh_views_parallel(all_mvs, max_workers=mv_workers)
         else:
-            db = get_db_params()
-            with psycopg.connect(**db) as conn, conn.cursor() as cur:
-                refresh_views(cur, all_mvs)
-                conn.commit()
+            refresh_views(all_mvs)
 
     return results
 
@@ -592,8 +558,7 @@ def run_refresh(domains: list[str], source_dir: Path,
                 for mv in mvs:
                     logger.info("  [DRY-RUN] Would refresh: %s", mv)
             else:
-                refresh_views(cur, mvs)
-                conn.commit()
+                refresh_views(mvs)
 
     return results
 

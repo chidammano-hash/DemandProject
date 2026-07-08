@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
@@ -306,21 +307,14 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
 
                 conn.commit()
 
-                # Refresh accuracy MVs so Accuracy Comparison reflects new clusters
-                logger.info("Refreshing accuracy materialized views after cluster promotion ...")
-                for mv in (
-                    "agg_accuracy_by_dim",
-                    "agg_accuracy_lag_archive",
-                    "agg_dfu_coverage",
-                    "agg_dfu_coverage_lag_archive",
-                ):
-                    try:
-                        cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
-                    except psycopg.Error:
-                        conn.rollback()
-                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-                conn.commit()
-                logger.info("Accuracy MVs refreshed.")
+        # Refresh every MV that embeds dim_sku attributes (accuracy slices,
+        # coverage, fill rate, inventory bridge, ...) so dashboards reflect the
+        # new clusters. Runs on its own autocommit connection (CONCURRENTLY is
+        # illegal inside a transaction block). include_heavy=False: a label
+        # change does not justify the 10-30 min mv_intramonth_stockout rebuild
+        # — the scheduled refresh_all_mvs safety net covers it.
+        logger.info("Refreshing dim_sku-dependent materialized views after cluster promotion ...")
+        refresh_for_tables(["dim_sku"], db_params=db, include_heavy=False)
 
     # Build distribution
     distribution: dict[str, int] = {}

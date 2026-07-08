@@ -23,6 +23,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables
 from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 from common.core.utils import load_config as _load_config
@@ -571,9 +572,9 @@ def write_all_projection_rows(all_rows: list[dict], dry_run: bool, conn) -> int:
 
 
 def refresh_summary_view(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_projection_summary")
-    conn.commit()
+    # conn unused: the service opens its own autocommit connection
+    # (CONCURRENTLY is illegal inside a transaction block).
+    refresh_for_tables(["fact_inventory_projection"])
 
 
 # ---------------------------------------------------------------------------

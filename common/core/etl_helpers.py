@@ -543,3 +543,28 @@ def record_load_batch(cur, domain: str, *, source_file: str | None = None,
     else:
         complete_batch(cur, batch_id, rows_in, rows_out)
     return batch_id
+
+
+# ---------------------------------------------------------------------------
+# Domain → written tables (for MV refresh derivation)
+# ---------------------------------------------------------------------------
+
+# Derived tables populated by post-load hooks in load_dataset_postgres.py
+# beyond the domain's primary DomainSpec table.
+_DOMAIN_EXTRA_TABLES: dict[str, tuple[str, ...]] = {
+    "purchase_order": ("fact_lead_time_actuals", "fact_open_purchase_orders"),
+    "sourcing": ("dim_item_supplier",),
+}
+
+
+def tables_written_for_domain(domain: str) -> list[str]:
+    """All tables a domain load writes: the DomainSpec table + post-load hooks.
+
+    Feed this to common.core.mv_refresh.mvs_for_tables()/refresh_for_tables()
+    so the dependent-MV set is derived from the dependency map instead of a
+    hand-maintained per-domain list.
+    """
+    from common.core.domain_specs import get_spec
+
+    spec = get_spec(domain)
+    return [spec.table, *(_DOMAIN_EXTRA_TABLES.get(domain, ()))]

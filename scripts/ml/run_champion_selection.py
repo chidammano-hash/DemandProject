@@ -44,6 +44,7 @@ from common.ml.champion import (
 )
 from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
 from common.core.sql_helpers import read_sql_chunked  # noqa: E402 — after sys.path bootstrap
 from common.services.perf_profiler import profiled_section
 from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
@@ -835,28 +836,13 @@ def generate_summary(
 # ---------------------------------------------------------------------------
 
 def refresh_views(db_params: dict[str, Any]) -> None:
-    """Refresh accuracy materialized views."""
-    print("Refreshing materialized views...")
-    t0 = time.time()
-    with psycopg.connect(**db_params) as conn, conn.cursor() as cur:
-        cur.execute("SET maintenance_work_mem = '512MB'")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
-        print(f"  agg_forecast_monthly ({time.time() - t0:.1f}s)")
-        t1 = time.time()
-        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
-        print(f"  agg_accuracy_by_dim ({time.time() - t1:.1f}s)")
-        t_dfu = time.time()
-        # agg_accuracy_by_dfu (sql/193) backs the accuracy-decomposition and
-        # error-contributor endpoints and reads fact_external_forecast_monthly —
-        # which this champion run just wrote. Without this refresh those diagnostics
-        # serve pre-run data. Matches the refresh-mvs-tiered ordering in the Makefile.
-        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dfu")
-        print(f"  agg_accuracy_by_dfu ({time.time() - t_dfu:.1f}s)")
-        t2 = time.time()
-        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
-        print(f"  agg_dfu_coverage ({time.time() - t2:.1f}s)")
-        conn.commit()
-    print(f"  All views refreshed in {time.time() - t0:.1f}s")
+    """Refresh every MV reading fact_external_forecast_monthly.
+
+    The champion run just rewrote champion/ceiling rows there; the central
+    dependency map (common/core/mv_refresh.py) covers the full dependent set,
+    including agg_dfu_naive_scale and the previously skipped lag-archive MVs.
+    """
+    refresh_for_tables(["fact_external_forecast_monthly"], db_params=db_params)
 
 
 # ---------------------------------------------------------------------------

@@ -176,29 +176,29 @@ class TestDetectInventoryChanges:
 # ---------------------------------------------------------------------------
 
 class TestGetMvsForDomains:
-    @patch("scripts.etl.run_pipeline._cfg")
-    def test_deduplicates_mvs(self, mock_cfg):
-        mock_cfg.return_value = {
-            "mv_refresh": {
-                "sales": ["agg_sales_monthly"],
-                "forecast": ["agg_forecast_monthly"],
-            },
-            "always_refresh": ["mv_dq_dashboard", "agg_sales_monthly"],
-        }
-        result = get_mvs_for_domains(["sales", "forecast"])
-        # agg_sales_monthly appears in both always_refresh and sales but should be deduplicated
+    def test_sales_domain_derives_full_dependent_set(self):
+        result = get_mvs_for_domains(["sales"])
+        assert "agg_sales_monthly" in result
+        assert "mv_fill_rate_monthly" in result
+        # agg_dfu_naive_scale (MASE scale) was silently missed by the old
+        # per-domain config lists — the central map must include it.
+        assert "agg_dfu_naive_scale" in result
         assert result.count("agg_sales_monthly") == 1
-        assert "mv_dq_dashboard" in result
-        assert "agg_forecast_monthly" in result
 
-    @patch("scripts.etl.run_pipeline._cfg")
-    def test_empty_domains(self, mock_cfg):
-        mock_cfg.return_value = {
-            "mv_refresh": {"item": []},
-            "always_refresh": ["mv_dq_dashboard"],
-        }
-        result = get_mvs_for_domains(["item"])
-        assert result == ["mv_dq_dashboard"]
+    def test_multiple_domains_deduplicate(self):
+        result = get_mvs_for_domains(["sales", "forecast"])
+        # agg_dfu_naive_scale reads both fact tables but appears once.
+        assert result.count("agg_dfu_naive_scale") == 1
+        assert "agg_forecast_monthly" in result
+        assert "agg_accuracy_by_dfu" in result
+
+    def test_purchase_order_covers_post_load_hook_tables(self):
+        result = get_mvs_for_domains(["purchase_order"])
+        assert "mv_supplier_po_performance" in result
+        assert "mv_po_lead_time_analysis" in result
+
+    def test_unknown_domain_yields_nothing(self):
+        assert get_mvs_for_domains(["not_a_domain"]) == []
 
 
 # ---------------------------------------------------------------------------

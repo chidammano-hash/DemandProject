@@ -1,0 +1,5 @@
+# Rule 7 allowlist — files still issuing REFRESH MATERIALIZED VIEW directly.
+# These two are dedicated single-MV refresh utilities that predate the central
+# service; migrate them to common.core.mv_refresh and delete these lines.
+scripts/inventory/refresh_health_scores.py
+scripts/inventory/refresh_intramonth_stockout.py

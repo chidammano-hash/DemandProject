@@ -158,7 +158,7 @@ This is the canonical "load everything from the clean CSVs in dependency order" 
 10. `purchase_order` -> `fact_purchase_orders`
 11. `customer_demand` -> `fact_customer_demand_monthly` (full replace; per-month partitions auto-created)
 
-After all loads, `make load-all` chains `make refresh-agg` (refreshes `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`). Non-tier MVs are still stale until you run `make refresh-mvs-tiered` — see Section 2.4.
+After all loads, `make load-all` chains `make refresh-agg`, which refreshes the full dependent-MV closure of the three core fact tables via the central dependency map (`common/core/mv_refresh.py`) — see Section 2.4. Only `mv_intramonth_stockout` is deferred (heavy; nightly safety net).
 
 ### Per-domain loads
 
@@ -235,55 +235,42 @@ The `make load-all` ordering and the parallel two-wave dispatch in `scripts/etl/
 
 ## 2.4 Materialized View Refresh
 
-Materialized views are refreshed in **dependency tiers**: base aggregates first, then the derived MVs that join on them. The `etl_config.yaml` `mv_refresh:` block maps each domain to the MVs it directly affects, and `always_refresh:` lists cross-domain MVs (`mv_dq_dashboard`, `mv_control_tower_kpis`) that run after any pipeline.
+All MV refreshes are driven by **one dependency map**: `common/core/mv_refresh.py` `MV_SOURCES` (MV → the tables and upstream MVs it reads, declared in refresh order).
+Writers call `refresh_for_tables([tables written])` after committing, so the dependent set is derived, never hand-picked.
+`tests/unit/test_mv_refresh.py` diffs the map against the `sql/` DDL — a new MV that is not registered fails the suite, and the pre-commit gate (rule 7) blocks any new inline `REFRESH MATERIALIZED VIEW` outside the module.
 
 ### Single command: tiered refresh
 
 ```bash
-make refresh-mvs-tiered
+make refresh-mvs-tiered        # = python -m scripts.db.refresh_mvs --all
 ```
 
-This iterates the following list in order, attempting `REFRESH MATERIALIZED VIEW CONCURRENTLY` first and falling back to a non-concurrent refresh on first run (when the MV has no data and no unique index populated yet):
-
-```
-Tier 1 (base aggregates)
-  agg_sales_monthly
-  agg_forecast_monthly
-  agg_inventory_monthly
-
-Tier 2 (inventory derivatives)
-  mv_inventory_forecast_monthly
-  mv_fill_rate_monthly
-  mv_intramonth_stockout
-  mv_supplier_performance
-  mv_supplier_po_performance
-  mv_po_lead_time_analysis
-
-Tier 3 (accuracy & coverage)
-  agg_accuracy_by_dim
-  agg_dfu_coverage
-
-Tier 4 (composite cross-domain)
-  mv_inventory_health_score
-  mv_control_tower_kpis
-  mv_integrated_planning_targets
-```
-
-Missing MVs are reported and skipped — the target tolerates partial schemas during incremental rollouts.
+This refreshes every registered MV in dependency order, attempting `REFRESH MATERIALIZED VIEW CONCURRENTLY` first and falling back to a non-concurrent refresh on first run (when the MV is not yet populated).
+Missing MVs are reported and skipped — the script tolerates partial schemas during incremental rollouts.
 
 ### Targeted refreshes
 
 ```bash
-make refresh-agg               # Tier 1 only (sales + forecast + inventory aggregates)
-make refresh-agg-sales
-make refresh-agg-forecast
-make refresh-agg-inventory
-make refresh-accuracy-mvs      # post-backtest accuracy MVs
+make refresh-agg               # dependent closure of the 3 core fact tables
+make refresh-agg-sales         # closure of fact_sales_monthly
+make refresh-agg-forecast     # closure of fact_external_forecast_monthly + backtest_lag_archive
+make refresh-agg-inventory    # closure of fact_inventory_snapshot (--skip-heavy: intramonth excluded)
+make refresh-accuracy-mvs      # post-backtest accuracy MVs (same closure as refresh-agg-forecast)
 make refresh-inv-backtest      # mv_inventory_forecast_monthly only
 make refresh-customer-mv       # MVs depending on customer_demand
 ```
 
-After ANY pipeline run that mutates source tables, run `make refresh-mvs-tiered` once at the end. The KPI dashboards and Control Tower read from MVs, not from the base tables — stale MVs are the most common cause of "the data loaded but the UI shows old numbers" reports.
+Or directly, for any table set:
+
+```bash
+uv run python -m scripts.db.refresh_mvs --tables fact_sales_monthly,dim_sku
+uv run python -m scripts.db.refresh_mvs --mvs agg_sales_monthly
+```
+
+### Safety net
+
+The `refresh_all_mvs` job is scheduled nightly by default (`config/platform/jobs_config.yaml`), so no MV stays stale longer than a day even if a writer path missed its refresh.
+ETL loaders, backtest loads, champion selection, DQ auto-fix, cluster promotion, and forecast promotion all refresh their dependents automatically through the central service, so a manual `refresh-mvs-tiered` after a pipeline run is a belt-and-braces step, not a requirement.
 
 ---
 

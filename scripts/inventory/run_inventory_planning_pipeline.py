@@ -166,20 +166,17 @@ def run_step(
 
 
 def _refresh_integrated_mv() -> None:
-    """Refresh the integrated targets MV after SS + EOQ are computed."""
+    """Refresh the planning-target MVs after SS + EOQ are computed."""
     import psycopg
 
-    from common.core.db import get_db_params
+    from common.core.mv_refresh import refresh_for_tables
 
     try:
-        with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
-            cur.execute(
-                "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_integrated_planning_targets"
-            )
-            conn.commit()
-        logger.info("Refreshed mv_integrated_planning_targets")
+        # SS/EOQ target writes also feed mv_network_balance and
+        # mv_inventory_health_score — refresh the full dependent set.
+        refresh_for_tables(["fact_safety_stock_targets", "fact_eoq_targets"])
     except psycopg.Error as exc:
-        logger.warning("Failed to refresh integrated targets MV: %s", exc)
+        logger.warning("Failed to refresh planning-target MVs: %s", exc)
 
 
 # ---------------------------------------------------------------------------

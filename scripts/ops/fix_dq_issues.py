@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
 from common.services.perf_profiler import profiled_section
 from common.core.utils import _ts, load_config
 
@@ -160,7 +161,9 @@ def fix_range_outliers(conn, dry_run: bool = True) -> list[dict]:
 
             fix_desc = f"Clamp {table}.{col} to [{lo}, {hi}]"
             if dry_run:
-                results.append({"fix": fix_desc, "affected_rows": outlier_count, "applied": False})
+                results.append(
+                    {"fix": fix_desc, "table": table,
+                     "affected_rows": outlier_count, "applied": False})
                 print(f"  [DRY-RUN] {fix_desc}: {outlier_count:,} rows")
             else:
                 # Log corrections audit trail before applying
@@ -183,7 +186,9 @@ def fix_range_outliers(conn, dry_run: bool = True) -> list[dict]:
                     for sql in updates:
                         cur.execute(sql)
                         total_fixed += cur.rowcount
-                results.append({"fix": fix_desc, "affected_rows": total_fixed, "applied": True})
+                results.append(
+                    {"fix": fix_desc, "table": table,
+                     "affected_rows": total_fixed, "applied": True})
                 print(f"  [APPLIED] {fix_desc}: {total_fixed:,} rows clamped")
 
     return results
@@ -257,13 +262,17 @@ def fix_null_completeness(conn, dry_run: bool = True) -> list[dict]:
                     continue
                 fix_desc = f"Impute {table}.{col} NULLs with median ({median_val})"
                 if dry_run:
-                    results.append({"fix": fix_desc, "affected_rows": null_count, "applied": False})
+                    results.append(
+                        {"fix": fix_desc, "table": table,
+                         "affected_rows": null_count, "applied": False})
                     print(f"  [DRY-RUN] {fix_desc}: {null_count:,} rows")
                 else:
                     with conn.cursor() as cur:
                         cur.execute(f"UPDATE {table} SET {col} = %s WHERE {col} IS NULL", (median_val,))
                         fixed = cur.rowcount
-                    results.append({"fix": fix_desc, "affected_rows": fixed, "applied": True})
+                    results.append(
+                        {"fix": fix_desc, "table": table,
+                         "affected_rows": fixed, "applied": True})
                     print(f"  [APPLIED] {fix_desc}: {fixed:,} rows imputed")
 
         # Categorical columns: get null_count + mode (still per-column since mode requires GROUP BY)
@@ -286,13 +295,17 @@ def fix_null_completeness(conn, dry_run: bool = True) -> list[dict]:
             mode_val = mode_row[0]
             fix_desc = f"Impute {table}.{col} NULLs with mode ('{mode_val}')"
             if dry_run:
-                results.append({"fix": fix_desc, "affected_rows": null_count, "applied": False})
+                results.append(
+                {"fix": fix_desc, "table": table,
+                 "affected_rows": null_count, "applied": False})
                 print(f"  [DRY-RUN] {fix_desc}: {null_count:,} rows")
             else:
                 with conn.cursor() as cur:
                     cur.execute(f"UPDATE {table} SET {col} = %s WHERE {col} IS NULL", (mode_val,))
                     fixed = cur.rowcount
-                results.append({"fix": fix_desc, "affected_rows": fixed, "applied": True})
+                results.append(
+                {"fix": fix_desc, "table": table,
+                 "affected_rows": fixed, "applied": True})
                 print(f"  [APPLIED] {fix_desc}: {fixed:,} rows imputed")
 
     return results
@@ -341,6 +354,7 @@ def fix_orphan_keys(conn, dry_run: bool = True) -> list[dict]:
         recommendation = "Reload dimension: make normalize-all && make load-all"
         results.append({
             "fix": fix_desc,
+            "table": src_table,
             "affected_rows": orphan_count,
             "applied": False,
             "recommendation": recommendation,
@@ -406,12 +420,15 @@ def apply_selected_fixes(fix_ids: list[int]) -> dict:
         else:
             rejected.append({**item, "status": "skipped"})
 
+    corrected_tables: set[str] = set()
     with psycopg.connect(**get_db_params(), autocommit=False) as conn:
         for fix_type, items in selected_by_type.items():
             fn = FIX_REGISTRY[fix_type]
             results = fn(conn, dry_run=False)
             # Match applied results back to selected items
             for i, r in enumerate(results):
+                if r.get("applied") and r.get("table"):
+                    corrected_tables.add(r["table"])
                 # Find the matching preview item by description
                 for item in items:
                     if item["description"] == r["fix"]:
@@ -422,13 +439,9 @@ def apply_selected_fixes(fix_ids: list[int]) -> dict:
                         })
                         break
         conn.commit()
-        # Refresh MVs so charts reflect corrected data
-        with conn.cursor() as cur:
-            for mv in ("agg_sales_monthly", "agg_forecast_monthly"):
-                try:
-                    cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-                except Exception:
-                    logger.warning("Could not refresh %s", mv, exc_info=True)
+    # Refresh every MV reading the corrected tables so charts reflect the fixes
+    if corrected_tables:
+        refresh_for_tables(sorted(corrected_tables))
 
     return {
         "applied": applied,
@@ -452,15 +465,17 @@ def run_all_fixes(fix_type: str | None = None, dry_run: bool = True) -> dict:
 
         if not dry_run:
             conn.commit()
-            # Refresh materialized views so charts reflect corrected data
+
+    if not dry_run:
+        corrected_tables = sorted({
+            r["table"]
+            for fixes in all_results.values()
+            for r in fixes
+            if r.get("applied") and r.get("table")
+        })
+        if corrected_tables:
             logger.info("Refreshing materialized views after DQ fixes…")
-            with conn.cursor() as cur:
-                for mv in ("agg_sales_monthly", "agg_forecast_monthly"):
-                    try:
-                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-                        logger.info("  Refreshed %s", mv)
-                    except Exception:
-                        logger.warning("  Could not refresh %s", mv, exc_info=True)
+            refresh_for_tables(corrected_tables)
 
     total_affected = sum(r["affected_rows"] for fixes in all_results.values() for r in fixes)
     total_applied = sum(1 for fixes in all_results.values() for r in fixes if r.get("applied"))

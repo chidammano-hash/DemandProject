@@ -44,7 +44,6 @@ from common.core.planning_date import get_planning_date
 from common.core.sql_helpers import (
     EXTERNAL_MODEL_ID,
     HASH_CHUNK_SIZE,
-    MV_REFRESH_ARCHIVE,
     NULL_SQL,
     _elapsed,
     business_key_expr,
@@ -681,12 +680,9 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     recreate_indexes(cur, saved_indexes)
                     logger.info("  Indexes rebuilt (%s)", _elapsed(t0))
 
-            # Forecast: refresh archive views
-            with profiled_section("refresh_views"):
-                if is_forecast and not skip_archive:
-                    logger.info("  Refreshing archive views ...")
-                    for mv in MV_REFRESH_ARCHIVE:
-                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+            # MV refresh is the orchestrator's job (run_pipeline / load.py /
+            # the chained refresh-agg-* Make targets), all via the central
+            # dependency map — never inline in the load transaction.
 
             # Complete batch + commit
             complete_batch(cur, batch_id, stg_rows, row_count)

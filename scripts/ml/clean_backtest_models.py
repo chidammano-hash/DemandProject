@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
 from common.core.utils import _ts
 
 
@@ -106,25 +107,9 @@ def clean_models(
 
     print(f"\n[{_ts()}] Deleted total: {total_forecast:,} forecast + {total_archive:,} archive rows")
 
-    # Refresh materialized views
-    views = [
-        "agg_forecast_monthly",
-        "agg_accuracy_by_dim",
-        "agg_accuracy_by_dfu",
-        "agg_dfu_coverage",
-        "agg_accuracy_lag_archive",
-        "agg_dfu_coverage_lag_archive",
-    ]
+    # Refresh every MV reading the tables rows were deleted from
     print(f"[{_ts()}] Refreshing materialized views...")
-    for view in views:
-        try:
-            t0 = time.time()
-            conn.execute(f"REFRESH MATERIALIZED VIEW {view}")
-            conn.commit()
-            print(f"  {view} ({time.time() - t0:.1f}s)")
-        except Exception as e:
-            print(f"  {view} — skipped ({e})")
-            conn.rollback()
+    refresh_for_tables(["fact_external_forecast_monthly", "backtest_lag_archive"])
 
     print(f"\n[{_ts()}] Done.")
 

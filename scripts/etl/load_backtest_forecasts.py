@@ -31,6 +31,7 @@ from common.core.etl_helpers import (
     recreate_forecast_archive_indexes_and_constraints,
     recreate_forecast_indexes_and_constraints,
 )
+from common.core.mv_refresh import refresh_for_tables
 from common.core.utils import get_competing_model_ids, get_forecastable_model_ids  # noqa: E402
 from common.services.perf_profiler import profiled_section
 
@@ -329,16 +330,8 @@ def _load_one(
         _load_archive(db, archive_path, csv_model_ids, replace, model_id_filter,
                       skip_index_ops=skip_index_ops)
         if not skip_index_ops:
-            logger.info("  Refreshing archive accuracy views...")
             with profiled_section("refresh_archive_views"):
-                t0 = time.time()
-                with psycopg.connect(**db) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SET maintenance_work_mem = '512MB'")
-                        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
-                        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
-                    conn.commit()
-                logger.info(f"  Archive views refreshed in {time.time() - t0:.1f}s")
+                refresh_for_tables([_ARCHIVE_TABLE], db_params=db)
         logger.info(f"  Done (archive only): {csv_path.parent.name}")
         return
 
@@ -473,38 +466,11 @@ def _load_one(
         logger.info(f"  Done (bulk mode — skipping MV refresh): {csv_path.parent.name}")
         return
 
-    # Refresh forecast materialized views
-    logger.info("  Refreshing forecast materialized views...")
+    # Refresh every MV that reads the tables just written (dependency map in
+    # common/core/mv_refresh.py — includes agg_dfu_naive_scale, the MASE scale).
+    tables = [_TABLE] + ([] if main_only else [_ARCHIVE_TABLE])
     with profiled_section("refresh_forecast_views"):
-        t0 = time.time()
-        with psycopg.connect(**db) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SET maintenance_work_mem = '512MB'")
-                cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
-                logger.info(f"    agg_forecast_monthly refreshed ({time.time() - t0:.1f}s)")
-                t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
-                logger.info(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
-                t1a = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dfu")
-                logger.info(f"    agg_accuracy_by_dfu refreshed ({time.time() - t1a:.1f}s)")
-                t2 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
-                logger.info(f"    agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
-            conn.commit()
-        logger.info(f"  Forecast views refreshed in {time.time() - t0:.1f}s")
-
-    # Refresh archive accuracy views
-    logger.info("  Refreshing archive accuracy views...")
-    with profiled_section("refresh_archive_views"):
-        t0 = time.time()
-        with psycopg.connect(**db) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SET maintenance_work_mem = '512MB'")
-                cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
-                cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
-            conn.commit()
-        logger.info(f"  Archive views refreshed in {time.time() - t0:.1f}s")
+        refresh_for_tables(tables, db_params=db)
     logger.info(f"  Done: {csv_path.parent.name}")
 
 
@@ -602,26 +568,10 @@ Examples:
                     recreate_forecast_archive_indexes_and_constraints(cur)
             conn.commit()
 
-        main_mvs = ["agg_forecast_monthly", "agg_accuracy_by_dim", "agg_accuracy_by_dfu", "agg_dfu_coverage"]
-        archive_mvs = ["agg_accuracy_lag_archive", "agg_dfu_coverage_lag_archive"]
-        mvs = []
-        if load_main:
-            mvs.extend(main_mvs)
-        if load_archive:
-            mvs.extend(archive_mvs)
-
+        tables = ([_TABLE] if load_main else []) + ([_ARCHIVE_TABLE] if load_archive else [])
         logger.info("[bulk] Refreshing materialized views once...")
         with profiled_section("bulk_refresh_views"):
-            t0 = time.time()
-            with psycopg.connect(**db) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SET maintenance_work_mem = '512MB'")
-                    for mv in mvs:
-                        t1 = time.time()
-                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-                        logger.info(f"    {mv} refreshed ({time.time() - t1:.1f}s)")
-                conn.commit()
-            logger.info(f"  All views refreshed in {time.time() - t0:.1f}s")
+            refresh_for_tables(tables, db_params=db)
     else:
         for csv_path in csv_files:
             _load_one(db, csv_path, args.replace, args.model_id,

@@ -32,6 +32,7 @@ from common.core.etl_helpers import (
     recreate_forecast_archive_indexes_and_constraints,
     recreate_forecast_indexes_and_constraints,
 )
+from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
 from common.core.utils import load_config
 from common.services.perf_profiler import profiled_section
 
@@ -391,41 +392,10 @@ def _load_one(db: dict, csv_path: Path, model_id: str, replace: bool, batch_size
         conn.commit()
         logger.info(f"  Committed. model_id='{model_id}' loaded successfully.")
 
-    # Refresh downstream materialized views (separate connection after commit).
-    # All five MVs have unique indexes (sql/119_concurrent_mv_refresh.sql), so
-    # CONCURRENTLY refresh is safe and avoids taking AccessExclusive locks
-    # against the read-side. Note: REFRESH MATERIALIZED VIEW CONCURRENTLY
-    # requires the MV to already be populated; for first-time refresh after
-    # CREATE MATERIALIZED VIEW WITH NO DATA, drop the CONCURRENTLY keyword.
-    logger.info("  Refreshing forecast materialized views...")
+    # Refresh downstream materialized views (separate autocommit connection
+    # after commit; dependency map in common/core/mv_refresh.py).
     with profiled_section("refresh_forecast_views"):
-        t0 = time.time()
-        with psycopg.connect(**db) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SET maintenance_work_mem = '512MB'")
-
-                t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly")
-                logger.info(f"    agg_forecast_monthly refreshed ({time.time() - t1:.1f}s)")
-
-                t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim")
-                logger.info(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
-
-                t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage")
-                logger.info(f"    agg_dfu_coverage refreshed ({time.time() - t1:.1f}s)")
-
-                t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive")
-                logger.info(f"    agg_accuracy_lag_archive refreshed ({time.time() - t1:.1f}s)")
-
-                t1 = time.time()
-                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive")
-                logger.info(f"    agg_dfu_coverage_lag_archive refreshed ({time.time() - t1:.1f}s)")
-
-            conn.commit()
-        logger.info(f"  All views refreshed in {time.time() - t0:.1f}s")
+        refresh_for_tables([_TABLE, _ARCHIVE_TABLE], db_params=db)
 
     logger.info(f"  Done: model_id='{model_id}'")
 

@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
 from common.core.utils import _ts
 
 VALID_DATE_COLUMNS = ("startdate", "fcstdate")
@@ -37,14 +38,6 @@ VALID_DATE_COLUMNS = ("startdate", "fcstdate")
 TABLES_FORECAST = ["fact_external_forecast_monthly"]
 TABLES_ARCHIVE = ["backtest_lag_archive"]
 TABLES_ALL = TABLES_FORECAST + TABLES_ARCHIVE
-
-REFRESH_VIEWS = [
-    "agg_forecast_monthly",
-    "agg_accuracy_by_dim",
-    "agg_dfu_coverage",
-    "agg_accuracy_lag_archive",
-    "agg_dfu_coverage_lag_archive",
-]
 
 
 def parse_date(value: str) -> date:
@@ -173,15 +166,7 @@ def clean_by_date(
     print(f"\n[{_ts()}] Deleted total: {total_deleted:,} rows")
 
     print(f"[{_ts()}] Refreshing materialized views...")
-    for view in REFRESH_VIEWS:
-        try:
-            t0 = time.time()
-            conn.execute(f"REFRESH MATERIALIZED VIEW {view}")
-            conn.commit()
-            print(f"  {view} ({time.time() - t0:.1f}s)")
-        except Exception as e:
-            print(f"  {view} — skipped ({e})")
-            conn.rollback()
+    refresh_for_tables(TABLES_ALL)
 
     print(f"\n[{_ts()}] Done.")
 

@@ -17,7 +17,6 @@ from common.core.sql_helpers import (
     PERCENTILE_Q1,
     PERCENTILE_Q3,
     DEFAULT_CHUNK_SIZE,
-    MV_REFRESH_ARCHIVE,
     _elapsed,
     qident,
     typed_expr,
@@ -57,11 +56,6 @@ class TestConstants:
         assert PERCENTILE_MEDIAN == 0.5
         assert PERCENTILE_Q1 == 0.25
         assert PERCENTILE_Q3 == 0.75
-
-    def test_mv_refresh_list(self):
-        assert isinstance(MV_REFRESH_ARCHIVE, list)
-        assert len(MV_REFRESH_ARCHIVE) == 2
-        assert "agg_accuracy_lag_archive" in MV_REFRESH_ARCHIVE
 
 
 # ---------------------------------------------------------------------------

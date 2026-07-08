@@ -481,17 +481,19 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	$(MAKE) refresh-agg
 	$(MAKE) db-analyze  # refresh planner statistics after bulk load — without this the planner seq-scans (slow even at small scale)
 
+# The refresh-agg-* targets refresh the full dependent-MV closure of the tables a
+# domain load writes (dependency map: common/core/mv_refresh.py). CONCURRENTLY when
+# populated; plain refresh on first run.
 refresh-agg-sales:
-	# CONCURRENTLY when populated (unique idx uq_agg_sales_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_sales_monthly;" >/dev/null
+	$(UV) python -m scripts.db.refresh_mvs --tables fact_sales_monthly
 
 refresh-agg-forecast:
-	# CONCURRENTLY when populated (unique idx uq_agg_forecast_item_loc_month_model, sql/119); plain refresh on first run when the MV is not yet populated.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
+	$(UV) python -m scripts.db.refresh_mvs --tables fact_external_forecast_monthly,backtest_lag_archive
 
 refresh-agg-inventory:
-	# CONCURRENTLY when populated (unique idx uq_agg_inv_item_loc_month, sql/119); plain refresh on first run when the MV is not yet populated.
-	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;" >/dev/null 2>&1 || $(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_inventory_monthly;" >/dev/null
+	# --skip-heavy: mv_intramonth_stockout (10-30 min full refresh) is covered by
+	# 'make intramonth-refresh' and the scheduled refresh_all_mvs safety net.
+	$(UV) python -m scripts.db.refresh_mvs --tables fact_inventory_snapshot --skip-heavy
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
@@ -833,14 +835,8 @@ forecast-clean:
 forecast-clean-list:
 	$(UV) python scripts/ml/clean_forecasts_by_date.py --list
 
-accuracy-slice-refresh:
-	# CONCURRENTLY safe: uq_agg_accuracy_dim, uq_agg_accuracy_lag_archive,
-	# uq_dfu_coverage_model_lag_dfu, uq_dfu_coverage_lag_archive (sql/119),
-	# uq_agg_accuracy_by_dfu (sql/193) and uq_agg_dfu_naive_scale (sql/194) back the
-	# six MVs respectively. agg_dfu_naive_scale = per-DFU in-sample seasonal-naive MAE
-	# (the MASE scale); refreshed on the same backtest-load cadence as the others.
-	$(PSQL) -v ON_ERROR_STOP=1 \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive; REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_naive_scale;"
+accuracy-slice-refresh:                ## Alias of refresh-accuracy-mvs (kept for operator muscle memory)
+	$(UV) python -m scripts.db.refresh_mvs --tables fact_external_forecast_monthly,backtest_lag_archive
 
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
@@ -1054,10 +1050,11 @@ abc-xyz-all: abc-xyz-schema abc-xyz-classify
 # IPfeature12: Supplier Performance
 # ---------------------------------------------------------------------------
 supplier-perf-schema:
-	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/032_create_supplier_performance.sql').read()); conn.close(); print('Supplier performance DDL applied')"
+	@echo "mv_supplier_performance was retired by sql/143 (mv_supplier_po_performance replaces it)."
+	@echo "Apply migrations via 'make db-apply-sql' instead of re-running sql/032."
 
 supplier-perf-refresh:
-	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; populated=conn.execute("SELECT relispopulated FROM pg_class WHERE relname='mv_supplier_performance'").fetchone(); conn.execute('REFRESH MATERIALIZED VIEW ' + ('CONCURRENTLY ' if populated and populated[0] else '') + 'mv_supplier_performance'); conn.close(); print('mv_supplier_performance refreshed')"
+	$(UV) python -m scripts.db.refresh_mvs --mvs mv_supplier_po_performance
 
 supplier-perf-all: supplier-perf-schema supplier-perf-refresh
 
@@ -1667,33 +1664,12 @@ clean-artifacts:                       ## Remove stale intermediate files (clean
 	rm -rf data/backtest data/tuning data/perf_reports data/clustering data/champion data/models  # whole generated dirs (no glob); recreated by the pipeline
 	@echo "✓ Intermediate artifacts cleaned."
 
-refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers, auto-detects first run)
-	@echo "Refreshing materialized views (tier-ordered)..."
-	@for mv in \
-	  agg_sales_monthly agg_forecast_monthly agg_inventory_monthly \
-	  mv_inventory_forecast_monthly mv_fill_rate_monthly mv_intramonth_stockout \
-	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
-	  agg_accuracy_by_dim agg_accuracy_by_dfu agg_dfu_coverage agg_dfu_naive_scale \
-	  mv_inventory_health_score mv_control_tower_kpis \
-	  mv_integrated_planning_targets \
-	  mv_customer_activity_monthly \
-	  mv_ca_segment_trends mv_ca_demand_at_risk mv_ca_order_patterns mv_ca_item_state; do \
-	  echo "  Refreshing $$mv ..."; \
-	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
-	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \
-	    || echo "    ⚠ $$mv skipped (does not exist)"; \
-	done
+refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (map in common/core/mv_refresh.py)
+	$(UV) python -m scripts.db.refresh_mvs --all
 	@echo "✓ All materialized views refreshed."
 
 refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest load)
-	$(PSQL) -v ON_ERROR_STOP=1 -c " \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dfu; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage_lag_archive; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_naive_scale; \
-	"
+	$(UV) python -m scripts.db.refresh_mvs --tables fact_external_forecast_monthly,backtest_lag_archive
 	@echo "✓ Accuracy materialized views refreshed."
 
 fresh-load: normalize-all load-all refresh-mvs-tiered  ## Normalize + load + refresh MVs (from input CSVs)

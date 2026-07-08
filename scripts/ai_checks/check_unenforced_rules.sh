@@ -178,6 +178,29 @@ while IFS= read -r f; do
 done <<< "$RULE6_RAW"
 
 # ---------------------------------------------------------------------------
+# Rule 7: REFRESH MATERIALIZED VIEW in Python outside common/core/mv_refresh.py.
+# All MV refreshes go through the central dependency map (refresh_for_tables /
+# refresh_materialized_views) — hand-picked inline lists are how MVs silently
+# went stale. tests/ excepted (mock SQL assertions).
+# ---------------------------------------------------------------------------
+echo "[Rule 7] REFRESH MATERIALIZED VIEW only inside common/core/mv_refresh.py"
+RULE7_ALLOW=$(read_allowlist "$ALLOW_DIR/rule7_mv_refresh.txt")
+RULE7_HITS=$(grep -rln "REFRESH MATERIALIZED VIEW" --include="*.py" . 2>/dev/null \
+  | normalize \
+  | grep -v "^\.venv/" | grep -v "^archive/" | grep -v "^data/" | grep -v "^node_modules/" | grep -v "^tmp/" \
+  | grep -v "^common/core/mv_refresh\.py$" \
+  | grep -v "^tests/" \
+  | sort -u || true)
+
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if ! echo "$RULE7_ALLOW" | grep -Fxq "$f"; then
+    LN=$(grep -n "REFRESH MATERIALIZED VIEW" "$f" 2>/dev/null | head -1)
+    violation "$f:$LN  route through common.core.mv_refresh (refresh_for_tables / refresh_materialized_views)"
+  fi
+done <<< "$RULE7_HITS"
+
+# ---------------------------------------------------------------------------
 echo
 if [[ "$FAIL" -gt 0 ]]; then
   echo "BLOCKED: $FAIL new violation(s) of unenforced CLAUDE.md rules."
@@ -185,5 +208,5 @@ if [[ "$FAIL" -gt 0 ]]; then
   echo "         $ALLOW_DIR/ pin EXISTING violations only and are not for new code."
   exit 1
 fi
-echo "OK: no new violations of the 6 CLAUDE.md unenforced rules."
+echo "OK: no new violations of the 7 CLAUDE.md unenforced rules."
 exit 0

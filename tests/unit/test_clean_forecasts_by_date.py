@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from scripts.ml.clean_forecasts_by_date import (
     parse_date,
@@ -12,7 +12,6 @@ from scripts.ml.clean_forecasts_by_date import (
     TABLES_ALL,
     TABLES_FORECAST,
     TABLES_ARCHIVE,
-    REFRESH_VIEWS,
 )
 
 
@@ -246,15 +245,24 @@ class TestCleanByDate:
             "fact_external_forecast_monthly": 100,
             "backtest_lag_archive": 50,
         })
-        clean_by_date(
-            conn, "WHERE startdate < %s", [date(2025, 4, 1)],
-            TABLES_ALL, dry_run=False,
-        )
-        refresh_calls = [
-            c for c in conn.execute.call_args_list
-            if isinstance(c[0][0], str) and c[0][0].startswith("REFRESH")
-        ]
-        assert len(refresh_calls) == len(REFRESH_VIEWS)
+        with patch("scripts.ml.clean_forecasts_by_date.refresh_for_tables") as refresh:
+            clean_by_date(
+                conn, "WHERE startdate < %s", [date(2025, 4, 1)],
+                TABLES_ALL, dry_run=False,
+            )
+        refresh.assert_called_once_with(TABLES_ALL)
+
+    def test_no_view_refresh_on_dry_run(self):
+        conn = self._mock_conn({
+            "fact_external_forecast_monthly": 100,
+            "backtest_lag_archive": 50,
+        })
+        with patch("scripts.ml.clean_forecasts_by_date.refresh_for_tables") as refresh:
+            clean_by_date(
+                conn, "WHERE startdate < %s", [date(2025, 4, 1)],
+                TABLES_ALL, dry_run=True,
+            )
+        refresh.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -272,15 +280,12 @@ class TestConstants:
         assert "fact_external_forecast_monthly" in TABLES_ALL
         assert "backtest_lag_archive" in TABLES_ALL
 
-    def test_refresh_views_count(self):
-        assert len(REFRESH_VIEWS) == 5
+    def test_central_map_covers_cleaned_tables(self):
+        # The refresh set now comes from the central dependency map — assert
+        # the tables this script deletes from actually have registered
+        # dependents there (else a cleanup would silently refresh nothing).
+        from common.core.mv_refresh import mvs_for_tables
 
-    def test_refresh_views_matches_clean_backtest(self):
-        expected = {
-            "agg_forecast_monthly",
-            "agg_accuracy_by_dim",
-            "agg_dfu_coverage",
-            "agg_accuracy_lag_archive",
-            "agg_dfu_coverage_lag_archive",
-        }
-        assert set(REFRESH_VIEWS) == expected
+        dependents = mvs_for_tables(TABLES_ALL)
+        assert "agg_forecast_monthly" in dependents
+        assert "agg_accuracy_lag_archive" in dependents

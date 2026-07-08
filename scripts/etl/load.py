@@ -35,7 +35,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import subprocess
 import sys
 import time
@@ -174,57 +173,25 @@ def _delete_slice_rows(domain: str, slice_str: str) -> int:
     return deleted
 
 
-def _refresh_mvs(domain: str, cfg: dict | None) -> None:
-    """Refresh materialized views configured for the domain in mv_refresh_map.
+def _refresh_mvs(domain: str) -> None:
+    """Refresh every MV depending on the tables the domain load wrote.
 
-    Uses ``REFRESH MATERIALIZED VIEW CONCURRENTLY`` for already-populated MVs
-    (allows readers during refresh) and falls back to plain ``REFRESH`` for
-    empty/never-populated MVs (PG rejects CONCURRENTLY on those).
-
-    Falls back to legacy `mv_refresh` mapping if `mv_refresh_map` is absent.
+    The dependent set comes from the central dependency map
+    (common/core/mv_refresh.py) keyed on the domain's written tables —
+    including post-load hook tables — instead of a per-domain config list.
     """
-    if not cfg:
-        logger.warning("Skipping MV refresh for %s — no etl_config", domain)
-        return
-    mv_map = cfg.get("mv_refresh_map") or cfg.get("mv_refresh") or {}
-    mvs = mv_map.get(domain) or []
-    if not mvs:
+    from common.core.etl_helpers import tables_written_for_domain
+    from common.core.mv_refresh import refresh_for_tables
+
+    try:
+        tables = tables_written_for_domain(domain)
+    except ValueError:
+        logger.warning("Skipping MV refresh — unknown domain %r", domain)
         return
     try:
-        with psycopg.connect(**get_db_params(), autocommit=True) as conn, conn.cursor() as cur:
-            for mv in mvs:
-                ident = _safe_ident(mv)
-                if not ident:
-                    logger.warning("Skipping unsafe MV name: %r", mv)
-                    continue
-                # Check if MV is populated — required for CONCURRENTLY.
-                try:
-                    cur.execute(
-                        "SELECT ispopulated FROM pg_matviews "
-                        "WHERE schemaname = 'public' AND matviewname = %s",
-                        (ident,),
-                    )
-                    row = cur.fetchone()
-                except psycopg.Error as exc:
-                    logger.warning("ispopulated lookup failed for %s: %s", ident, exc)
-                    row = None
-                concurrent = bool(row and row[0])
-                kw = "CONCURRENTLY " if concurrent else ""
-                logger.info("REFRESH MATERIALIZED VIEW %s%s", kw, ident)
-                try:
-                    cur.execute(f'REFRESH MATERIALIZED VIEW {kw}"{ident}"')
-                except psycopg.Error as exc:
-                    logger.warning("MV refresh failed for %s: %s", ident, exc)
+        refresh_for_tables(tables)
     except psycopg.Error as exc:
         logger.warning("MV refresh connection failed: %s", exc)
-
-
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _safe_ident(name: str) -> str | None:
-    """Return name if it is a safe SQL identifier, else None."""
-    return name if isinstance(name, str) and _IDENT_RE.match(name) else None
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +713,7 @@ def process_domain(
                 record["rows_loaded"] = ins + upd
             else:
                 record["rows_loaded"] = _last_row_count(domain)
-            _refresh_mvs(domain, cfg)
+            _refresh_mvs(domain)
     except (subprocess.CalledProcessError, psycopg.Error,
             ValueError, FileNotFoundError) as exc:
         record["status"] = "failed"

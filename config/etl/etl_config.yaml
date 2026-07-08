@@ -1,9 +1,12 @@
-# ETL Pipeline Configuration — Data loading and MV refresh
+# ETL Pipeline Configuration — Data loading
 # Used by scripts/etl/run_pipeline.py
 # Renamed from pipeline_config.yaml for clarity (distinct from forecast_pipeline_config.yaml)
 #
 # Consumed by: scripts/etl/run_pipeline.py (_cfg), Makefile (pipeline-full, pipeline-refresh)
-# Provides: domain load ordering, parallelization settings, MV refresh mapping
+# Provides: domain load ordering, parallelization settings.
+# MV refresh is NOT configured here: the dependent-MV set per domain is derived
+# from the central dependency map in common/core/mv_refresh.py via
+# common/core/etl_helpers.tables_written_for_domain().
 
 # Domain processing order (dimensions first, then facts).
 # run_pipeline.py processes domains in this order. Dimensions (item, location,
@@ -33,45 +36,6 @@ parallel:
   normalize_workers: 4                  # Max concurrent normalize subprocesses (CSV cleaning)
   load_workers: 4                       # Max concurrent DB loads per wave (dims then facts)
   mv_refresh_workers: 3                 # Max concurrent MV refreshes (each uses its own DB connection)
-
-# Materialized views to refresh after each domain is loaded.
-# run_pipeline.py collects MVs for all loaded domains, deduplicates,
-# and refreshes them (sequentially or in parallel).
-mv_refresh:
-  sales:
-    - agg_sales_monthly                 # Pre-aggregated monthly sales for KPI queries
-  forecast:
-    - agg_forecast_monthly              # Pre-aggregated monthly forecast for accuracy dashboard
-    - agg_accuracy_by_dim               # Accuracy broken down by item/location/customer dimensions
-    - agg_accuracy_lag_archive          # Accuracy metrics across execution lags 0-4
-    - agg_dfu_coverage                  # DFU forecast coverage (% of DFUs with forecast)
-    - agg_dfu_coverage_lag_archive      # DFU coverage across execution lags
-  inventory:
-    - agg_inventory_monthly             # EOM on-hand, sales, DOS, lead time aggregates
-    - mv_inventory_forecast_monthly     # Inventory-forecast bridge for root cause attribution
-    - mv_inventory_health_score         # Composite health score per SKU
-    - mv_supplier_performance           # Supplier on-time delivery and quality metrics
-    - mv_fill_rate_monthly              # Monthly fill rate by item+location
-    - mv_intramonth_stockout            # Intra-month stockout detection
-  customer_demand:                      # fact_customer_demand_monthly (customer analytics MVs)
-    - mv_customer_activity_monthly      # Monthly customer activity (sql/169, geo cols sql/174)
-    - mv_ca_segment_trends              # Customer segment trends (sql/180)
-    - mv_ca_demand_at_risk              # Demand-at-risk by customer (sql/181)
-    - mv_ca_order_patterns              # Order pattern analytics (sql/182)
-    - mv_ca_item_state                  # Customer item-state matrix (sql/187)
-  item: []                              # No MVs depend solely on dim_item
-  location: []                          # No MVs depend solely on dim_location
-  customer: []                          # No MVs depend solely on dim_customer
-  time: []                              # No MVs depend solely on dim_time
-  sku: []                               # No MVs depend solely on dim_sku
-  sourcing: []                          # No MVs depend solely on dim_sourcing
-  purchase_order: []                    # No MVs depend solely on fact_purchase_orders
-
-# Always refresh after any pipeline run, regardless of which domains changed.
-# These cross-domain MVs depend on multiple source tables.
-always_refresh:
-  - mv_dq_dashboard                     # Data quality dashboard aggregate (all domains)
-  - mv_control_tower_kpis               # Cross-domain control tower KPIs
 
 # ═══ FILTERS ═══
 # Staging-row filtering thresholds applied during load.

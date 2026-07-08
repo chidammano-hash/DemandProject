@@ -433,7 +433,7 @@ Follow CLAUDE.md "Feature Integration Checklist". Inventory-specific reminders:
 
 1. New script → `scripts/inventory/` (create the directory; CLAUDE.md mandates this placement for new files)
 2. New table → DDL in `sql/`, add `TRUNCATE` to `db-truncate-data`, add to RUNBOOK cleanup
-3. New MV → add `REFRESH MATERIALIZED VIEW` to the correct tier in `refresh-mvs-tiered`
+3. New MV → register it in `MV_SOURCES` in `common/core/mv_refresh.py` (dependency order; `tests/unit/test_mv_refresh.py` fails until you do)
 4. New router → place in `api/routers/inventory/`, use `get_conn()`, add Vite proxy if new prefix
 5. New UI panel → `frontend/src/tabs/inv-planning/`, register in `InvPlanningTab.tsx`, co-located test
 6. Backend test in `tests/api/`, frontend test in `src/tabs/__tests__/`
