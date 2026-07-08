@@ -39,6 +39,7 @@ from common.ml.backtest_framework import (
 from common.core.constants import FORECAST_QTY_COL, compute_min_cluster_rows
 from common.ml.model_registry import (
     build_tree_model,
+    fit_final_model,
     fit_model,
     get_best_iteration,
     get_tree_default_params,
@@ -180,7 +181,9 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "gpu_test_platform_check": False,
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
-        "default_params": lambda algo, seed=42: get_tree_default_params("catboost", algo, seed=seed),
+        "default_params": lambda algo, seed=42: get_tree_default_params(
+            "catboost", algo, seed=seed
+        ),
         "cat_dtype": "str",
         "model_params_key": "catboost_params",
         "model_type_tag": "catboost_backtest",
@@ -286,8 +289,7 @@ def _predict_seasonal_naive(
     # For each DFU+month, get the most recent year value
     train_sorted = train.sort_values("_year", ascending=False)
     latest_by_dfu_month = (
-        train_sorted
-        .groupby(dfu_key + ["_month"])["qty"]
+        train_sorted.groupby(dfu_key + ["_month"])["qty"]
         .first()
         .reset_index()
         .rename(columns={"qty": "_seasonal_qty"})
@@ -295,21 +297,13 @@ def _predict_seasonal_naive(
 
     # Per-DFU overall mean as fallback
     dfu_means = (
-        train
-        .groupby(dfu_key)["qty"]
-        .mean()
-        .reset_index()
-        .rename(columns={"qty": "_dfu_mean"})
+        train.groupby(dfu_key)["qty"].mean().reset_index().rename(columns={"qty": "_dfu_mean"})
     )
 
     merged = pred.merge(latest_by_dfu_month, on=dfu_key + ["_month"], how="left")
     merged = merged.merge(dfu_means, on=dfu_key, how="left")
 
-    merged[FORECAST_QTY_COL] = (
-        merged["_seasonal_qty"]
-        .fillna(merged["_dfu_mean"])
-        .fillna(0.0)
-    )
+    merged[FORECAST_QTY_COL] = merged["_seasonal_qty"].fillna(merged["_dfu_mean"]).fillna(0.0)
     merged[FORECAST_QTY_COL] = np.maximum(merged[FORECAST_QTY_COL].values, 0.0)
 
     result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
@@ -342,8 +336,7 @@ def _predict_rolling_mean(
 
     train_sorted = train.sort_values("_startdate_ts", ascending=False)
     rolling_means = (
-        train_sorted
-        .groupby(dfu_key)
+        train_sorted.groupby(dfu_key)
         .apply(lambda g: g.head(window)["qty"].mean(), include_groups=False)
         .reset_index()
         .rename(columns={0: "_rolling_mean"})
@@ -388,8 +381,7 @@ def _predict_rolling_median(
 
     train_sorted = train.sort_values("_startdate_ts", ascending=False)
     rolling_medians = (
-        train_sorted
-        .groupby(dfu_key)
+        train_sorted.groupby(dfu_key)
         .apply(lambda g: g.head(window)["qty"].median(), include_groups=False)
         .reset_index()
         .rename(columns={0: "_rolling_median"})
@@ -532,13 +524,22 @@ def _train_single_cluster(
     if isinstance(lib_module, str):
         lib_module = importlib.import_module(lib_module)
 
-    cat_cols_in_features = [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
+    cat_cols_in_features = (
+        [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
+    )
 
     min_rows = compute_min_cluster_rows(len(feature_cols))
     if len(train_c) < min_rows or len(pred_c) == 0:
         if len(pred_c) > 0:
-            logger.info("Cluster %d/%d '%s': skipped (train=%d < %d), marking %d predictions for fallback",
-                        ci, n_clusters, cluster_label, len(train_c), min_rows, len(pred_c))
+            logger.info(
+                "Cluster %d/%d '%s': skipped (train=%d < %d), marking %d predictions for fallback",
+                ci,
+                n_clusters,
+                cluster_label,
+                len(train_c),
+                min_rows,
+                len(pred_c),
+            )
             result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
             result[FORECAST_QTY_COL] = 0.0  # placeholder — overwritten by fallback
             return cluster_label, result, None, "fallback_needed"
@@ -572,8 +573,14 @@ def _train_single_cluster(
     # Guard: some models crash on constant targets
     if constant_target_guard and y_tr.nunique() <= 1:
         const_val = float(y_tr.iloc[0]) if len(y_tr) > 0 else 0.0
-        logger.info("Cluster %d/%d '%s': skipped (constant target=%.0f), using constant for %d predictions",
-                    ci, n_clusters, cluster_label, const_val, len(pred_c))
+        logger.info(
+            "Cluster %d/%d '%s': skipped (constant target=%.0f), using constant for %d predictions",
+            ci,
+            n_clusters,
+            cluster_label,
+            const_val,
+            len(pred_c),
+        )
         result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
         result[FORECAST_QTY_COL] = const_val
         return cluster_label, result, None, None
@@ -582,15 +589,22 @@ def _train_single_cluster(
     # overrides based on demand characteristics (sparse, volatile, stable, etc.)
     cluster_stats = compute_cluster_demand_stats(train_c, cluster_label)
     resolved_params, profile_name = resolve_cluster_params(
-        cluster_label, cluster_stats, params,
+        cluster_label,
+        cluster_stats,
+        params,
     )
     if profile_name not in ("none", "default"):
         logger.info(
             "Cluster %d/%d '%s': matched profile '%s' (mean_demand=%.1f, cv=%.2f, "
             "zero_pct=%.2f, seasonal_amp=%.2f)",
-            ci, n_clusters, cluster_label, profile_name,
-            cluster_stats["mean_demand"], cluster_stats["cv_demand"],
-            cluster_stats["zero_demand_pct"], cluster_stats["seasonal_amplitude"],
+            ci,
+            n_clusters,
+            cluster_label,
+            profile_name,
+            cluster_stats["mean_demand"],
+            cluster_stats["cv_demand"],
+            cluster_stats["zero_demand_pct"],
+            cluster_stats["seasonal_amplitude"],
         )
 
     # Filter resolved params to only include keys valid for this model
@@ -617,7 +631,10 @@ def _train_single_cluster(
     if demand_pattern != "continuous":
         logger.info(
             "Cluster %d/%d '%s': demand_pattern=%s (zero_pct=%.2f), objective=%s",
-            ci, n_clusters, cluster_label, demand_pattern,
+            ci,
+            n_clusters,
+            cluster_label,
+            demand_pattern,
             cluster_stats["zero_demand_pct"],
             fit_params.get("objective", fit_params.get("loss_function", "default")),
         )
@@ -662,15 +679,24 @@ def _train_single_cluster(
             rm_by_sku = dict(zip(rm_merged["sku_ck"], rm_merged["_rm"].fillna(0.0)))
         model = _SeasonalNaiveModel(seasonal_map, rm_by_sku)
         val_wape = round(
-            float(100.0 * abs(result_df[FORECAST_QTY_COL].sum() - y_train.sum()) / max(abs(y_train.sum()), 1.0)),
+            float(
+                100.0
+                * abs(result_df[FORECAST_QTY_COL].sum() - y_train.sum())
+                / max(abs(y_train.sum()), 1.0)
+            ),
             2,
         )
         val_accuracy = round(100.0 - val_wape, 2)
         logger.info(
             "Cluster %d/%d '%s': routed to seasonal_naive baseline (zero_pct=%.2f), "
             "val_accuracy=%.1f%%, %s predictions (%.1fs)",
-            ci, n_clusters, cluster_label, cluster_stats["zero_demand_pct"],
-            val_accuracy, f"{len(pred_c):,}", time.time() - t0,
+            ci,
+            n_clusters,
+            cluster_label,
+            cluster_stats["zero_demand_pct"],
+            val_accuracy,
+            f"{len(pred_c):,}",
+            time.time() - t0,
         )
         meta = {
             "val_wape": val_wape,
@@ -693,12 +719,18 @@ def _train_single_cluster(
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()
     fit_model(
-        model, model_name, X_tr, y_tr, X_val, y_val,
-        cat_cols, feature_cols, lib_module, max_iters,
+        model,
+        model_name,
+        X_tr,
+        y_tr,
+        X_val,
+        y_val,
+        cat_cols,
+        feature_cols,
+        lib_module,
+        max_iters,
         demand_pattern=demand_pattern,
     )
-
-    preds = model.predict(X_pred)
 
     # Per-cluster validation WAPE — use scaled floor for sparse clusters to avoid
     # division instability when val actuals sum near zero
@@ -708,20 +740,34 @@ def _train_single_cluster(
     val_denom = max(val_abs_sum, val_floor)
     val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2)
 
+    n_est_used = get_best_iteration(model, model_name)
+    if n_est_used is None:
+        n_est_used = fit_params[iter_param]
+
+    # Refit on every row available at this backtest cutoff before predicting.
+    # The split model is only for early-stopping and validation telemetry; using
+    # it for forecasts discards the newest validation months from training.
+    final_params = dict(fit_params)
+    final_params[iter_param] = n_est_used
+    final_model = build_tree_model(model_name, final_params)
+    fit_final_model(final_model, model_name, X_train, y_train, cat_cols, feature_cols)
+    preds = final_model.predict(X_pred)
+
     result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
     # Always clip predictions to non-negative (MAE/RMSE can produce negatives
     # and negative forecasts are nonsensical)
     result[FORECAST_QTY_COL] = np.maximum(preds, 0)
-    n_est_used = get_best_iteration(model, model_name)
-    if n_est_used is None:
-        n_est_used = fit_params[iter_param]
+
     # val_wape and train_rows are consumed by persist_cluster_models().
     # cluster_profile, demand_pattern, and cluster_stats are diagnostic — they
     # ride along in model_meta for inspection/logging but are not read back
     # by any downstream function.
     meta = {
         "val_wape": val_wape,
-        "train_rows": len(X_tr),
+        "train_rows": len(X_train),
+        "early_stop_train_rows": len(X_tr),
+        "val_rows": len(X_val),
+        "n_estimators_used": n_est_used,
         "cluster_profile": profile_name,
         "demand_pattern": demand_pattern,
         "cluster_stats": cluster_stats,
@@ -730,11 +776,20 @@ def _train_single_cluster(
     logger.info(
         "Cluster %d/%d '%s': train=%s, pred=%s, best_iter=%s, "
         "val_accuracy=%.1f%%, val_wape=%.1f%%, profile=%s, pattern=%s (%.1fs)",
-        ci, n_clusters, cluster_label, f"{len(train_c):,}", f"{len(pred_c):,}",
-        n_est_used, val_accuracy, val_wape, profile_name, demand_pattern, time.time() - t0,
+        ci,
+        n_clusters,
+        cluster_label,
+        f"{len(train_c):,}",
+        f"{len(pred_c):,}",
+        n_est_used,
+        val_accuracy,
+        val_wape,
+        profile_name,
+        demand_pattern,
+        time.time() - t0,
     )
 
-    return cluster_label, result, model, meta
+    return cluster_label, result, final_model, meta
 
 
 # ── Naive fallback for small clusters ─────────────────────────────────────────
@@ -839,7 +894,9 @@ def train_and_predict_per_cluster(
         "fit_extras": registry["fit_extras_per_cluster"](params, registry["iter_param"]),
     }
 
-    def _collect_result(cl: str, result: pd.DataFrame | None, model: Any, meta: dict | str | None) -> None:
+    def _collect_result(
+        cl: str, result: pd.DataFrame | None, model: Any, meta: dict | str | None
+    ) -> None:
         """Collect training result, separating fallback-needed clusters."""
         if meta == "fallback_needed":
             fallback_clusters.append(cl)
@@ -853,8 +910,9 @@ def train_and_predict_per_cluster(
 
     use_parallel = parallel and n_clusters > 4
     if use_parallel:
-        logger.info("Parallel cluster training enabled: %d workers for %d clusters",
-                    max_workers, n_clusters)
+        logger.info(
+            "Parallel cluster training enabled: %d workers for %d clusters", max_workers, n_clusters
+        )
         futures = {}
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             for ci, cluster_label in enumerate(clusters, 1):
@@ -872,9 +930,14 @@ def train_and_predict_per_cluster(
                 )
                 future = executor.submit(
                     _train_single_cluster,
-                    cluster_label, ci, n_clusters,
-                    train_c, pred_c,
-                    cluster_feature_cols, cluster_cat_cols, params,
+                    cluster_label,
+                    ci,
+                    n_clusters,
+                    train_c,
+                    pred_c,
+                    cluster_feature_cols,
+                    cluster_cat_cols,
+                    params,
                     **_worker_kwargs,
                 )
                 futures[future] = cluster_label
@@ -884,8 +947,9 @@ def train_and_predict_per_cluster(
                 _collect_result(cl, result, model, meta)
     else:
         if parallel:
-            logger.info("Parallel mode requested but only %d clusters (<= 4), using sequential",
-                        n_clusters)
+            logger.info(
+                "Parallel mode requested but only %d clusters (<= 4), using sequential", n_clusters
+            )
         for ci, cluster_label in enumerate(clusters, 1):
             train_c = train_df[train_df["ml_cluster"] == cluster_label]
             pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
@@ -900,31 +964,42 @@ def train_and_predict_per_cluster(
                 else cat_cols
             )
             cl, result, model, meta = _train_single_cluster(
-                cluster_label, ci, n_clusters,
-                train_c, pred_c,
-                cluster_feature_cols, cluster_cat_cols, params,
+                cluster_label,
+                ci,
+                n_clusters,
+                train_c,
+                pred_c,
+                cluster_feature_cols,
+                cluster_cat_cols,
+                params,
                 **_worker_kwargs,
             )
             _collect_result(cl, result, model, meta)
 
     # Apply naive fallback for small clusters
     if fallback_clusters:
-        logger.info("Computing naive fallback for %d small cluster(s): %s",
-                    len(fallback_clusters), fallback_clusters)
+        logger.info(
+            "Computing naive fallback for %d small cluster(s): %s",
+            len(fallback_clusters),
+            fallback_clusters,
+        )
         for cl in fallback_clusters:
             train_c = train_df[train_df["ml_cluster"] == cl]
             pred_c = predict_df[predict_df["ml_cluster"] == cl]
             if len(pred_c) > 0:
                 fb_result = _compute_naive_fallback(train_c, pred_c)
                 all_results.append(fb_result)
-                logger.info("Cluster '%s': naive fallback applied to %d predictions "
-                            "(mean basefcst_pref=%.2f)",
-                            cl, len(fb_result), float(fb_result[FORECAST_QTY_COL].mean()))
+                logger.info(
+                    "Cluster '%s': naive fallback applied to %d predictions "
+                    "(mean basefcst_pref=%.2f)",
+                    cl,
+                    len(fb_result),
+                    float(fb_result[FORECAST_QTY_COL].mean()),
+                )
 
     no_cluster = predict_df[
-        predict_df["ml_cluster"].isna() | (
-            (predict_df["ml_cluster"] == "__unknown__") & ("__unknown__" not in models)
-        )
+        predict_df["ml_cluster"].isna()
+        | ((predict_df["ml_cluster"] == "__unknown__") & ("__unknown__" not in models))
     ]
     if len(no_cluster) > 0:
         logger.info("%d predict rows with no cluster -> zeroing", len(no_cluster))
@@ -954,8 +1029,12 @@ def train_and_predict_global(
     iter_param = registry["iter_param"]
     label = model_name.upper()
 
-    logger.info("Training global %s on %s rows, %d features (includes ml_cluster)...",
-                label, f"{len(train_df):,}", len(feature_cols))
+    logger.info(
+        "Training global %s on %s rows, %d features (includes ml_cluster)...",
+        label,
+        f"{len(train_df):,}",
+        len(feature_cols),
+    )
 
     # Sort by startdate so last 15% = most recent months (not last DFUs alphabetically)
     sorted_idx = train_df["startdate"].argsort(kind="mergesort")
@@ -980,23 +1059,48 @@ def train_and_predict_global(
     model = build_tree_model(model_name, fit_params)
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()
-    fit_model(model, model_name, X_tr, y_tr, X_val, y_val, cat_cols, feature_cols, lib_module, max_iters)
-
-    preds = model.predict(X_pred)
+    fit_model(
+        model, model_name, X_tr, y_tr, X_val, y_val, cat_cols, feature_cols, lib_module, max_iters
+    )
 
     val_preds = model.predict(X_val)
     val_denom = float(abs(y_val.sum()))
-    val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
+    val_wape = (
+        round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2)
+        if val_denom > 0
+        else 0.0
+    )
     n_est_used = get_best_iteration(model, model_name)
     if not n_est_used:
         n_est_used = fit_params[iter_param]
-    logger.info("Global %s: val_WAPE=%.1f%%, best_iter=%s, train=%s, pred=%s",
-                label, val_wape, n_est_used, f"{len(train_df):,}", f"{len(predict_df):,}")
+
+    final_params = dict(fit_params)
+    final_params[iter_param] = n_est_used
+    final_model = build_tree_model(model_name, final_params)
+    fit_final_model(final_model, model_name, X_train, y_train, cat_cols, feature_cols)
+    preds = final_model.predict(X_pred)
+
+    logger.info(
+        "Global %s: val_WAPE=%.1f%%, best_iter=%s, train=%s, pred=%s",
+        label,
+        val_wape,
+        n_est_used,
+        f"{len(train_df):,}",
+        f"{len(predict_df):,}",
+    )
 
     result = predict_df[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
     result[FORECAST_QTY_COL] = np.clip(preds, 0, None)
-    global_meta = {"global": {"val_wape": val_wape, "train_rows": len(X_tr)}}
-    return result, {"global": model}, global_meta
+    global_meta = {
+        "global": {
+            "val_wape": val_wape,
+            "train_rows": len(X_train),
+            "early_stop_train_rows": len(X_tr),
+            "val_rows": len(X_val),
+            "n_estimators_used": n_est_used,
+        }
+    }
+    return result, {"global": final_model}, global_meta
 
 
 # ── Model persistence ─────────────────────────────────────────────────────────
@@ -1055,13 +1159,19 @@ def persist_cluster_models(
         else:
             cluster_features = feature_cols
 
-        n_est_used = get_best_iteration(model, model_name) or 0
+        cluster_meta = _meta.get(cluster_label, {})
+        n_est_used = (
+            get_best_iteration(model, model_name) or cluster_meta.get("n_estimators_used") or 0
+        )
         try:
             importance_raw = _get_importance(model)
         except AttributeError:
             importance_raw = []
-        importance_dict = dict(zip(cluster_features, [float(v) for v in importance_raw])) if len(importance_raw) == len(cluster_features) else {}
-        cluster_meta = _meta.get(cluster_label, {})
+        importance_dict = (
+            dict(zip(cluster_features, [float(v) for v in importance_raw]))
+            if len(importance_raw) == len(cluster_features)
+            else {}
+        )
         artifact = {
             "model": model,
             "feature_cols": cluster_features,
@@ -1100,8 +1210,13 @@ def persist_cluster_models(
             with open(fi_dir / f"cluster_{cluster_label}.json", "w") as f:
                 json.dump(fi_sorted, f, indent=2)
 
-    logger.info("Persisted %d %s cluster models to %s/ (timeframe=%s)",
-                saved, model_id, out_dir, timeframe_label)
+    logger.info(
+        "Persisted %d %s cluster models to %s/ (timeframe=%s)",
+        saved,
+        model_id,
+        out_dir,
+        timeframe_label,
+    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -1117,31 +1232,58 @@ def main() -> None:
     # regression column. Scaffold-only today — the config key is live
     # but not yet consumed by the fit loop.
     import argparse
+
     parser = argparse.ArgumentParser(
         description="Run tree-model per-cluster backtest (settings from forecast_pipeline_config.yaml)",
     )
-    parser.add_argument("--model", type=str, default="lgbm",
-                        choices=list(MODEL_REGISTRY.keys()),
-                        help="Model type to run (default: lgbm)")
-    parser.add_argument("--config", type=str, default=None,
-                        help="Path to config YAML (default: config/forecasting/forecast_pipeline_config.yaml)")
-    parser.add_argument("--model-id", type=str, default=None,
-                        help="Override model_id from config")
-    parser.add_argument("--n-timeframes", type=int, default=None,
-                        help="Override n_timeframes from config")
-    parser.add_argument("--cluster-override", type=str, default=None,
-                        help="CSV path with sku_ck,cluster_label columns to override dim_sku.ml_cluster")
-    parser.add_argument("--clusters", type=str, default=None,
-                        help="Comma-separated cluster labels to restrict training to (e.g. '0' or '0,1,2'). "
-                             "Filters both DFU attrs and sales to matching clusters only.")
-    parser.add_argument("--parallel", action="store_true",
-                        help="Train clusters in parallel (only when >4 clusters)")
-    parser.add_argument("--workers", type=int, default=4,
-                        help="Max parallel workers (default: 4, requires --parallel)")
-    parser.add_argument("--n-seeds", type=int, default=None,
-                        help="Number of random seeds for variance estimation (default from config, fallback 1)")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume from checkpoints if a previous run crashed")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="lgbm",
+        choices=list(MODEL_REGISTRY.keys()),
+        help="Model type to run (default: lgbm)",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to config YAML (default: config/forecasting/forecast_pipeline_config.yaml)",
+    )
+    parser.add_argument("--model-id", type=str, default=None, help="Override model_id from config")
+    parser.add_argument(
+        "--n-timeframes", type=int, default=None, help="Override n_timeframes from config"
+    )
+    parser.add_argument(
+        "--cluster-override",
+        type=str,
+        default=None,
+        help="CSV path with sku_ck,cluster_label columns to override dim_sku.ml_cluster",
+    )
+    parser.add_argument(
+        "--clusters",
+        type=str,
+        default=None,
+        help="Comma-separated cluster labels to restrict training to (e.g. '0' or '0,1,2'). "
+        "Filters both DFU attrs and sales to matching clusters only.",
+    )
+    parser.add_argument(
+        "--parallel", action="store_true", help="Train clusters in parallel (only when >4 clusters)"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Max parallel workers (default: 4, requires --parallel)",
+    )
+    parser.add_argument(
+        "--n-seeds",
+        type=int,
+        default=None,
+        help="Number of random seeds for variance estimation (default from config, fallback 1)",
+    )
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume from checkpoints if a previous run crashed"
+    )
     args = parser.parse_args()
 
     load_project_env()
@@ -1190,10 +1332,20 @@ def main() -> None:
         if "params" in algo_entry:
             algo = dict(algo_entry["params"])
             # Merge lifecycle/meta keys the script needs
-            for mk in ("enabled", "model_id", "cluster_strategy", "recursive",
-                        "shap_select", "shap_threshold", "shap_top_n",
-                        "shap_sample_size", "tune_inline", "params_file",
-                        "customer_features", "cluster_override_path"):
+            for mk in (
+                "enabled",
+                "model_id",
+                "cluster_strategy",
+                "recursive",
+                "shap_select",
+                "shap_threshold",
+                "shap_top_n",
+                "shap_sample_size",
+                "tune_inline",
+                "params_file",
+                "customer_features",
+                "cluster_override_path",
+            ):
                 if mk in algo_entry:
                     algo.setdefault(mk, algo_entry[mk])
         else:
@@ -1230,9 +1382,18 @@ def main() -> None:
 
         # Propagate backtest-level noise/smoothing settings into algo dict so run_tree_backtest
         # can access them via algo_config (algo only holds the per-algorithm sub-dict).
-        algo.setdefault("recursive_noise_enabled", backtest_cfg.get("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False)))
-        algo.setdefault("recursive_noise_pct", backtest_cfg.get("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05)))
-        algo.setdefault("recursive_lag_smooth", backtest_cfg.get("recursive_lag_smooth", cfg.get("recursive_lag_smooth", 0.0)))
+        algo.setdefault(
+            "recursive_noise_enabled",
+            backtest_cfg.get("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False)),
+        )
+        algo.setdefault(
+            "recursive_noise_pct",
+            backtest_cfg.get("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05)),
+        )
+        algo.setdefault(
+            "recursive_lag_smooth",
+            backtest_cfg.get("recursive_lag_smooth", cfg.get("recursive_lag_smooth", 0.0)),
+        )
 
     # Resolve cluster override: CLI flag takes priority, then algo_config key
     cluster_override = args.cluster_override or algo.get("cluster_override_path")
@@ -1255,7 +1416,11 @@ def main() -> None:
             _roster_cs = _algo_entry.get("cluster_strategy")
     cluster_strategy = _roster_cs or "per_cluster"
     # Guard: if clustering is disabled but strategy is per_cluster, fall back to global
-    if pipeline_cfg and not pipeline_cfg.get("clustering", {}).get("enabled", True) and cluster_strategy == "per_cluster":
+    if (
+        pipeline_cfg
+        and not pipeline_cfg.get("clustering", {}).get("enabled", True)
+        and cluster_strategy == "per_cluster"
+    ):
         logger.warning("Clustering disabled in pipeline config — falling back to global strategy")
         cluster_strategy = "global"
 
@@ -1296,7 +1461,11 @@ def main() -> None:
 
         def train_fn(train_df, predict_df, feature_cols, cat_cols, params):
             result, models, meta = _inner_train_fn(
-                train_df, predict_df, feature_cols, cat_cols, params,
+                train_df,
+                predict_df,
+                feature_cols,
+                cat_cols,
+                params,
                 **_model_kwargs,
             )
             _model_meta_registry.update(meta)
@@ -1312,8 +1481,7 @@ def main() -> None:
 
     if is_baseline:
         # Baseline models: no GPU, no SHAP, no tuning, no persistence, single seed
-        logger.info("%s config: model_id=%s, n_timeframes=%d",
-                    label, model_id, n_timeframes)
+        logger.info("%s config: model_id=%s, n_timeframes=%d", label, model_id, n_timeframes)
 
         with profiled_section("run_backtest"):
             run_tree_backtest(
@@ -1351,9 +1519,17 @@ def main() -> None:
     params_file = algo.get("params_file", None)
     iter_param = registry["iter_param"]
 
-    logger.info("%s config: model_id=%s, cluster_strategy=%s, recursive=%s, shap_select=%s, "
-                "tune_inline=%s, n_timeframes=%d",
-                label, model_id, cluster_strategy, recursive, shap_select, tune_inline, n_timeframes)
+    logger.info(
+        "%s config: model_id=%s, cluster_strategy=%s, recursive=%s, shap_select=%s, "
+        "tune_inline=%s, n_timeframes=%d",
+        label,
+        model_id,
+        cluster_strategy,
+        recursive,
+        shap_select,
+        tune_inline,
+        n_timeframes,
+    )
 
     # GPU detection with env-var override: DEMAND_GPU=on|off|auto (default: auto)
     with profiled_section("detect_gpu"):
@@ -1392,8 +1568,12 @@ def main() -> None:
         if n_est_tuned:
             model_params[iter_param] = n_est_tuned
         params_source = f"tuning_file:{params_file}"
-        logger.info("Loaded tuned params from %s (best_wape=%s%%, n_est=%s)",
-                    params_file, tuning_data.get('best_wape'), model_params[iter_param])
+        logger.info(
+            "Loaded tuned params from %s (best_wape=%s%%, n_est=%s)",
+            params_file,
+            tuning_data.get("best_wape"),
+            model_params[iter_param],
+        )
 
     if _use_gpu:
         model_params.update(registry["gpu_params"]())
@@ -1421,14 +1601,17 @@ def main() -> None:
             if not tuned:
                 return _base_params.copy()
             result = {**_base_params, **tuned, iter_param: n_est}
-            logger.info("Inline tuned: %s=%s, lr=%.4f",
-                        iter_param, n_est, tuned.get('learning_rate', 0))
+            logger.info(
+                "Inline tuned: %s=%s, lr=%.4f", iter_param, n_est, tuned.get("learning_rate", 0)
+            )
             return result
 
         params_source = "inline_tuning"
-        logger.info("Inline tuning enabled (inline_n_trials=%s, inline_n_splits=%s)",
-                    _tune_config['tuning'].get('inline_n_trials', 20),
-                    _tune_config['tuning'].get('inline_n_splits', 3))
+        logger.info(
+            "Inline tuning enabled (inline_n_trials=%s, inline_n_splits=%s)",
+            _tune_config["tuning"].get("inline_n_trials", 20),
+            _tune_config["tuning"].get("inline_n_splits", 3),
+        )
 
     logger.info("Params source: %s", params_source)
 
@@ -1437,6 +1620,7 @@ def main() -> None:
     if shap_select:
         from common.ml.shap_selector import compute_timeframe_shap_per_cluster
         from common.ml.shap_selector import compute_timeframe_shap
+
         shap_extractor_name = registry["shap_extractor"]
         shap_extractor_fn = getattr(
             importlib.import_module("common.ml.shap_selector"),
@@ -1446,8 +1630,12 @@ def main() -> None:
         def feature_selector_fn(model_or_dict, train_data, feature_cols, cat_cols, tf_idx, cutoff):
             if isinstance(model_or_dict, dict):
                 return compute_timeframe_shap_per_cluster(
-                    model_or_dict, train_data, feature_cols, cat_cols,
-                    tf_idx, cutoff,
+                    model_or_dict,
+                    train_data,
+                    feature_cols,
+                    cat_cols,
+                    tf_idx,
+                    cutoff,
                     shap_extractor_fn=shap_extractor_fn,
                     sample_size=shap_sample_size,
                     cumulative_threshold=shap_threshold,
@@ -1459,8 +1647,12 @@ def main() -> None:
                     variance_threshold=_var_threshold,
                 )
             return compute_timeframe_shap(
-                model_or_dict, train_data, feature_cols, cat_cols,
-                tf_idx, cutoff,
+                model_or_dict,
+                train_data,
+                feature_cols,
+                cat_cols,
+                tf_idx,
+                cutoff,
                 shap_extractor_fn=shap_extractor_fn,
                 cluster_strategy="per_cluster",
                 sample_size=shap_sample_size,
@@ -1473,8 +1665,14 @@ def main() -> None:
                 variance_threshold=_var_threshold,
             )
 
-        logger.info("Feature selection enabled (shap=%.2f, corr_filter=%s/%.2f, var_filter=%s/%.3f)",
-                    shap_threshold, _corr_filter, _corr_threshold, _var_filter, _var_threshold)
+        logger.info(
+            "Feature selection enabled (shap=%.2f, corr_filter=%s/%.2f, var_filter=%s/%.3f)",
+            shap_threshold,
+            _corr_filter,
+            _corr_threshold,
+            _var_filter,
+            _var_threshold,
+        )
 
     # Load production forecast config for model persistence (F1.1)
     pipeline_config_path = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
@@ -1486,9 +1684,15 @@ def main() -> None:
 
     _fi_fn = registry["feature_importance_fn"]
 
-    def _persistence_fn(models: dict, feature_cols: list[str] | dict[str, list[str]], timeframe_label: str) -> None:
+    def _persistence_fn(
+        models: dict, feature_cols: list[str] | dict[str, list[str]], timeframe_label: str
+    ) -> None:
         persist_cluster_models(
-            models, feature_cols, model_id, timeframe_label, prod_config,
+            models,
+            feature_cols,
+            model_id,
+            timeframe_label,
+            prod_config,
             _model_meta_registry,
             feature_importance_fn=_fi_fn,
             model_name=model_name,
@@ -1506,8 +1710,13 @@ def main() -> None:
         if n_seeds > 1:
             seed_extra_meta["seed"] = seed_value
             seed_extra_meta["n_seeds"] = n_seeds
-            logger.info("Seed %d/%d (random_%s=%d)", seed_idx + 1, n_seeds,
-                        _seed_param_key.split("_")[-1], seed_value)
+            logger.info(
+                "Seed %d/%d (random_%s=%d)",
+                seed_idx + 1,
+                n_seeds,
+                _seed_param_key.split("_")[-1],
+                seed_value,
+            )
 
         with profiled_section("run_backtest"):
             run_tree_backtest(
@@ -1547,7 +1756,9 @@ def main() -> None:
         std_acc = float(np.std(seed_accuracies))
         logger.info(
             "Multi-seed accuracy: %.2f%% +/- %.2f%% (n=%d seeds)",
-            mean_acc, std_acc, n_seeds,
+            mean_acc,
+            std_acc,
+            n_seeds,
         )
         # Write seed summary to metadata
         meta_path = output_dir / model_id / "backtest_metadata.json"

@@ -34,19 +34,21 @@ def _make_train_df(
             qty_values.append(base_qty + d.month * 10)
         else:
             qty_values.append(base_qty)
-    return pd.DataFrame({
-        "sku_ck": [f"SKU_{i:03d}" for i in range(n_rows)],
-        "item_id": [f"ITEM_{i:03d}" for i in range(n_rows)],
-        "customer_group": ["CG1"] * n_rows,
-        "loc": ["L1"] * n_rows,
-        "startdate": dates,
-        "qty": qty_values,
-        "ml_cluster": [cluster_label] * n_rows,
-        "month": [d.month for d in dates],
-        "region": ["R1"] * n_rows,
-        "brand": ["BR1"] * n_rows,
-        "abc_vol": ["A"] * n_rows,
-    })
+    return pd.DataFrame(
+        {
+            "sku_ck": [f"SKU_{i:03d}" for i in range(n_rows)],
+            "item_id": [f"ITEM_{i:03d}" for i in range(n_rows)],
+            "customer_group": ["CG1"] * n_rows,
+            "loc": ["L1"] * n_rows,
+            "startdate": dates,
+            "qty": qty_values,
+            "ml_cluster": [cluster_label] * n_rows,
+            "month": [d.month for d in dates],
+            "region": ["R1"] * n_rows,
+            "brand": ["BR1"] * n_rows,
+            "abc_vol": ["A"] * n_rows,
+        }
+    )
 
 
 def _make_pred_df(
@@ -56,18 +58,20 @@ def _make_pred_df(
 ) -> pd.DataFrame:
     """Build a prediction DataFrame for a single cluster."""
     dates = pd.date_range(start_date, periods=n_rows, freq="MS")
-    return pd.DataFrame({
-        "sku_ck": [f"PRED_{i:03d}" for i in range(n_rows)],
-        "item_id": [f"PITEM_{i:03d}" for i in range(n_rows)],
-        "customer_group": ["CG1"] * n_rows,
-        "loc": ["L1"] * n_rows,
-        "startdate": dates,
-        "ml_cluster": [cluster_label] * n_rows,
-        "month": [d.month for d in dates],
-        "region": ["R1"] * n_rows,
-        "brand": ["BR1"] * n_rows,
-        "abc_vol": ["A"] * n_rows,
-    })
+    return pd.DataFrame(
+        {
+            "sku_ck": [f"PRED_{i:03d}" for i in range(n_rows)],
+            "item_id": [f"PITEM_{i:03d}" for i in range(n_rows)],
+            "customer_group": ["CG1"] * n_rows,
+            "loc": ["L1"] * n_rows,
+            "startdate": dates,
+            "ml_cluster": [cluster_label] * n_rows,
+            "month": [d.month for d in dates],
+            "region": ["R1"] * n_rows,
+            "brand": ["BR1"] * n_rows,
+            "abc_vol": ["A"] * n_rows,
+        }
+    )
 
 
 # ── _compute_naive_fallback tests ────────────────────────────────────────────
@@ -88,7 +92,12 @@ class TestComputeNaiveFallback:
         result = _compute_naive_fallback(train, pred)
 
         assert list(result.columns) == [
-            "sku_ck", "item_id", "customer_group", "loc", "startdate", "basefcst_pref",
+            "sku_ck",
+            "item_id",
+            "customer_group",
+            "loc",
+            "startdate",
+            "basefcst_pref",
         ]
         # Jan mean = 100 + 1*10 = 110, Feb = 120, Mar = 130
         assert result["basefcst_pref"].iloc[0] == pytest.approx(110.0)
@@ -180,9 +189,14 @@ class TestTrainSingleClusterFallback:
         pred = _make_pred_df("tiny", 3)
 
         cl, result, model, meta = _train_single_cluster(
-            "tiny", 1, 1,
-            train, pred,
-            ["month"], [], {},
+            "tiny",
+            1,
+            1,
+            train,
+            pred,
+            ["month"],
+            [],
+            {},
             model_name="lgbm",
             model_class=MagicMock,
             lib_module=MagicMock(),
@@ -202,38 +216,60 @@ class TestTrainSingleClusterFallback:
         train = _make_train_df("normal", n, base_qty=100.0, seasonal=True)
         pred = _make_pred_df("normal", 3)
 
-        # 20% of 50 = 10 val rows, 3 pred rows => predict called twice
+        # 20% of 50 = 10 val rows. The split model scores validation; the
+        # final refit model predicts the future rows.
         n_val = max(1, int(n * 0.20))  # 10
-        mock_model_instance = MagicMock()
-        mock_model_instance.predict.side_effect = [
-            np.array([100.0] * 3),       # X_pred (3 rows)
-            np.array([100.0] * n_val),    # X_val (10 rows)
-        ]
-        mock_model_class = MagicMock(return_value=mock_model_instance)
+        eval_model = MagicMock()
+        eval_model.predict.return_value = np.array([100.0] * n_val)
+        final_model = MagicMock()
+        final_model.predict.return_value = np.array([100.0] * 3)
+        mock_model_class = MagicMock(return_value=eval_model)
 
-        with patch("scripts.ml.run_backtest.build_tree_model", return_value=mock_model_instance):
+        with patch(
+            "scripts.ml.run_backtest.build_tree_model",
+            side_effect=[eval_model, final_model],
+        ):
             with patch("scripts.ml.run_backtest.fit_model"):
-                with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
-                    with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
-                        "mean_demand": 100.0, "cv_demand": 0.1,
-                        "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
-                    }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
-                            cl, result, model, meta = _train_single_cluster(
-                                "normal", 1, 1,
-                                train, pred,
-                                ["month"], [], {"n_estimators": 100},
-                                model_name="lgbm",
-                                model_class=mock_model_class,
-                                lib_module=MagicMock(),
-                                **self._worker_kwargs(),
-                            )
+                with patch("scripts.ml.run_backtest.fit_final_model") as final_fit:
+                    with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
+                        with patch(
+                            "scripts.ml.run_backtest.compute_cluster_demand_stats",
+                            return_value={
+                                "mean_demand": 100.0,
+                                "cv_demand": 0.1,
+                                "zero_demand_pct": 0.0,
+                                "seasonal_amplitude": 0.0,
+                            },
+                        ):
+                            with patch(
+                                "scripts.ml.run_backtest.resolve_cluster_params",
+                                return_value=({"n_estimators": 100}, "default"),
+                            ):
+                                cl, result, model, meta = _train_single_cluster(
+                                    "normal",
+                                    1,
+                                    1,
+                                    train,
+                                    pred,
+                                    ["month"],
+                                    [],
+                                    {"n_estimators": 100},
+                                    model_name="lgbm",
+                                    model_class=mock_model_class,
+                                    lib_module=MagicMock(),
+                                    **self._worker_kwargs(),
+                                )
 
         assert cl == "normal"
         assert result is not None
-        assert model is not None
+        assert model is final_model
         assert isinstance(meta, dict)
         assert meta != "fallback_needed"
+        assert meta["train_rows"] == n
+        assert meta["early_stop_train_rows"] == n - n_val
+        assert meta["val_rows"] == n_val
+        final_fit.assert_called_once()
+        assert len(final_fit.call_args.args[2]) == n
 
     def test_tree_model_built_through_model_registry(self):
         """Estimator construction must route through model_registry.build_tree_model."""
@@ -244,36 +280,48 @@ class TestTrainSingleClusterFallback:
         pred = _make_pred_df("normal", 3)
         n_val = max(1, int(n * 0.20))
 
-        mock_model_instance = MagicMock()
-        mock_model_instance.predict.side_effect = [
-            np.array([100.0] * 3),
-            np.array([100.0] * n_val),
-        ]
+        eval_model = MagicMock()
+        eval_model.predict.return_value = np.array([100.0] * n_val)
+        final_model = MagicMock()
+        final_model.predict.return_value = np.array([100.0] * 3)
 
-        with patch("scripts.ml.run_backtest.build_tree_model", return_value=mock_model_instance) as build:
+        with patch(
+            "scripts.ml.run_backtest.build_tree_model",
+            side_effect=[eval_model, final_model],
+        ) as build:
             with patch("scripts.ml.run_backtest.fit_model"):
-                with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
-                    with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
-                        "mean_demand": 100.0,
-                        "cv_demand": 0.1,
-                        "zero_demand_pct": 0.0,
-                        "seasonal_amplitude": 0.0,
-                    }):
+                with patch("scripts.ml.run_backtest.fit_final_model"):
+                    with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
                         with patch(
-                            "scripts.ml.run_backtest.resolve_cluster_params",
-                            return_value=({"n_estimators": 100}, "default"),
+                            "scripts.ml.run_backtest.compute_cluster_demand_stats",
+                            return_value={
+                                "mean_demand": 100.0,
+                                "cv_demand": 0.1,
+                                "zero_demand_pct": 0.0,
+                                "seasonal_amplitude": 0.0,
+                            },
                         ):
-                            _train_single_cluster(
-                                "normal", 1, 1,
-                                train, pred,
-                                ["month"], [], {"n_estimators": 100},
-                                model_name="lgbm",
-                                model_class=MagicMock,
-                                lib_module=MagicMock(),
-                                **self._worker_kwargs(),
-                            )
+                            with patch(
+                                "scripts.ml.run_backtest.resolve_cluster_params",
+                                return_value=({"n_estimators": 100}, "default"),
+                            ):
+                                _train_single_cluster(
+                                    "normal",
+                                    1,
+                                    1,
+                                    train,
+                                    pred,
+                                    ["month"],
+                                    [],
+                                    {"n_estimators": 100},
+                                    model_name="lgbm",
+                                    model_class=MagicMock,
+                                    lib_module=MagicMock(),
+                                    **self._worker_kwargs(),
+                                )
 
-        build.assert_called_once_with("lgbm", {"n_estimators": 100})
+        assert build.call_args_list[0].args == ("lgbm", {"n_estimators": 100})
+        assert build.call_args_list[1].args == ("lgbm", {"n_estimators": 100})
 
     def test_empty_pred_returns_none(self):
         """Cluster with no prediction rows should return None result."""
@@ -283,9 +331,14 @@ class TestTrainSingleClusterFallback:
         pred = _make_pred_df("empty_pred", 0)
 
         cl, result, model, meta = _train_single_cluster(
-            "empty_pred", 1, 1,
-            train, pred,
-            ["month"], [], {},
+            "empty_pred",
+            1,
+            1,
+            train,
+            pred,
+            ["month"],
+            [],
+            {},
             model_name="lgbm",
             model_class=MagicMock,
             lib_module=MagicMock(),
@@ -339,14 +392,25 @@ class TestPerClusterWithFallback:
         with patch("scripts.ml.run_backtest.build_tree_model", return_value=mock_model_instance):
             with patch("scripts.ml.run_backtest.fit_model"):
                 with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
-                    with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
-                        "mean_demand": 200.0, "cv_demand": 0.1,
-                        "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
-                    }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
+                    with patch(
+                        "scripts.ml.run_backtest.compute_cluster_demand_stats",
+                        return_value={
+                            "mean_demand": 200.0,
+                            "cv_demand": 0.1,
+                            "zero_demand_pct": 0.0,
+                            "seasonal_amplitude": 0.0,
+                        },
+                    ):
+                        with patch(
+                            "scripts.ml.run_backtest.resolve_cluster_params",
+                            return_value=({"n_estimators": 100}, "default"),
+                        ):
                             result, models, meta = train_and_predict_per_cluster(
-                                train_df, pred_df,
-                                ["month"], [], {"n_estimators": 100},
+                                train_df,
+                                pred_df,
+                                ["month"],
+                                [],
+                                {"n_estimators": 100},
                                 model_name="lgbm",
                                 registry=registry,
                                 model_class=mock_model_class,
@@ -387,14 +451,25 @@ class TestPerClusterWithFallback:
         with patch("scripts.ml.run_backtest.build_tree_model", return_value=mock_model_instance):
             with patch("scripts.ml.run_backtest.fit_model"):
                 with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
-                    with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
-                        "mean_demand": 200.0, "cv_demand": 0.1,
-                        "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
-                    }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
+                    with patch(
+                        "scripts.ml.run_backtest.compute_cluster_demand_stats",
+                        return_value={
+                            "mean_demand": 200.0,
+                            "cv_demand": 0.1,
+                            "zero_demand_pct": 0.0,
+                            "seasonal_amplitude": 0.0,
+                        },
+                    ):
+                        with patch(
+                            "scripts.ml.run_backtest.resolve_cluster_params",
+                            return_value=({"n_estimators": 100}, "default"),
+                        ):
                             result, models, meta = train_and_predict_per_cluster(
-                                train_df, pred_df,
-                                ["month"], [], {"n_estimators": 100},
+                                train_df,
+                                pred_df,
+                                ["month"],
+                                [],
+                                {"n_estimators": 100},
                                 model_name="lgbm",
                                 registry=registry,
                                 model_class=mock_model_class,
@@ -432,14 +507,25 @@ class TestPerClusterWithFallback:
         with patch("scripts.ml.run_backtest.build_tree_model", return_value=mock_model_instance):
             with patch("scripts.ml.run_backtest.fit_model"):
                 with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
-                    with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
-                        "mean_demand": 150.0, "cv_demand": 0.1,
-                        "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
-                    }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
+                    with patch(
+                        "scripts.ml.run_backtest.compute_cluster_demand_stats",
+                        return_value={
+                            "mean_demand": 150.0,
+                            "cv_demand": 0.1,
+                            "zero_demand_pct": 0.0,
+                            "seasonal_amplitude": 0.0,
+                        },
+                    ):
+                        with patch(
+                            "scripts.ml.run_backtest.resolve_cluster_params",
+                            return_value=({"n_estimators": 100}, "default"),
+                        ):
                             result, models, meta = train_and_predict_per_cluster(
-                                train_df, pred_df,
-                                ["month"], [], {"n_estimators": 100},
+                                train_df,
+                                pred_df,
+                                ["month"],
+                                [],
+                                {"n_estimators": 100},
                                 model_name="lgbm",
                                 registry=registry,
                                 model_class=mock_model_class,

@@ -10,6 +10,7 @@ Tests cover:
   - predictions are clipped to >= 0
 - cluster_strategy config dispatch logic
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,19 +25,22 @@ if str(ROOT) not in sys.path:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_grid(n_rows: int = 200, include_cluster: bool = True) -> pd.DataFrame:
     """Build a minimal feature grid matching the backtest framework schema."""
     rng = np.random.default_rng(42)
-    df = pd.DataFrame({
-        "sku_ck": range(n_rows),
-        "item_id": [f"ITEM{i % 10}" for i in range(n_rows)],
-        "customer_group": ["GRP1"] * n_rows,
-        "loc": [f"LOC{i % 5}" for i in range(n_rows)],
-        "startdate": pd.date_range("2024-01-01", periods=n_rows, freq="ME"),
-        "qty": rng.integers(0, 100, n_rows).astype(float),
-        "qty_lag_1": rng.integers(0, 100, n_rows).astype(float),
-        "qty_rolling_3": rng.integers(0, 100, n_rows).astype(float),
-    })
+    df = pd.DataFrame(
+        {
+            "sku_ck": range(n_rows),
+            "item_id": [f"ITEM{i % 10}" for i in range(n_rows)],
+            "customer_group": ["GRP1"] * n_rows,
+            "loc": [f"LOC{i % 5}" for i in range(n_rows)],
+            "startdate": pd.date_range("2024-01-01", periods=n_rows, freq="ME"),
+            "qty": rng.integers(0, 100, n_rows).astype(float),
+            "qty_lag_1": rng.integers(0, 100, n_rows).astype(float),
+            "qty_rolling_3": rng.integers(0, 100, n_rows).astype(float),
+        }
+    )
     if include_cluster:
         df["ml_cluster"] = ["clusterA" if i % 2 == 0 else "clusterB" for i in range(n_rows)]
     return df
@@ -77,6 +81,7 @@ class TestClusterExcludedFromFeatures:
 
     def test_ml_cluster_excluded_from_feature_cols(self):
         from common.core.constants import METADATA_COLS
+
         assert "ml_cluster" in METADATA_COLS
 
     def test_ml_cluster_not_in_get_feature_columns(self):
@@ -84,6 +89,7 @@ class TestClusterExcludedFromFeatures:
         grid = _make_grid(10)
         grid["ml_cluster"] = "A"
         from common.ml.feature_engineering import get_feature_columns
+
         feat_cols = get_feature_columns(grid)
         assert "ml_cluster" not in feat_cols
 
@@ -226,3 +232,53 @@ class TestXGBoostGlobalCategoryDtype:
 
         assert X_train["ml_cluster"].dtype.name == "category"
         assert X_pred["ml_cluster"].dtype.name == "category"
+
+
+class TestGlobalFinalRefit:
+    """Global tree backtests use validation only to select rounds, then refit."""
+
+    def test_global_predictions_use_final_refit_model(self):
+        from scripts.ml.run_backtest import train_and_predict_global
+
+        train_df = _make_grid(100)
+        predict_df = _make_grid(5)
+        eval_model = MagicMock()
+        eval_model.predict.return_value = np.full(15, 42.0)
+        final_model = MagicMock()
+        final_model.predict.return_value = np.full(len(predict_df), 77.0)
+
+        registry = {
+            "iter_param": "n_estimators",
+            "fit_extras_global": lambda p, i: {},
+        }
+
+        with (
+            patch(
+                "scripts.ml.run_backtest.build_tree_model",
+                side_effect=[eval_model, final_model],
+            ) as build,
+            patch("scripts.ml.run_backtest.fit_model"),
+            patch("scripts.ml.run_backtest.fit_final_model") as final_fit,
+            patch("scripts.ml.run_backtest.get_best_iteration", return_value=17),
+        ):
+            result, models, meta = train_and_predict_global(
+                train_df,
+                predict_df,
+                FEATURE_COLS,
+                CAT_COLS,
+                {"n_estimators": 100},
+                model_name="lgbm",
+                registry=registry,
+                model_class=MagicMock,
+                lib_module=MagicMock(),
+            )
+
+        assert build.call_args_list[0].args == ("lgbm", {"n_estimators": 100})
+        assert build.call_args_list[1].args == ("lgbm", {"n_estimators": 17})
+        assert len(final_fit.call_args.args[2]) == len(train_df)
+        assert models["global"] is final_model
+        assert set(result["basefcst_pref"]) == {77.0}
+        assert meta["global"]["train_rows"] == len(train_df)
+        assert meta["global"]["early_stop_train_rows"] == 85
+        assert meta["global"]["val_rows"] == 15
+        assert meta["global"]["n_estimators_used"] == 17

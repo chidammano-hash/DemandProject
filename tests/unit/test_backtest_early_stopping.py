@@ -4,11 +4,15 @@ Unit tests for backtest training improvements:
 - Feature importance logging path creation
 - Artifact enrichment keys
 """
+
 import sys
 from pathlib import Path
 import pickle
 import json
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -79,14 +83,21 @@ class TestArtifactEnrichment:
     """Verify the enriched artifact dict keys are present."""
 
     REQUIRED_KEYS = {
-        "model", "feature_cols", "model_id",
-        "cluster_label", "n_estimators_used",
-        "val_wape", "trained_at", "timeframe", "feature_importance",
+        "model",
+        "feature_cols",
+        "model_id",
+        "cluster_label",
+        "n_estimators_used",
+        "val_wape",
+        "trained_at",
+        "timeframe",
+        "feature_importance",
     }
 
     def _make_artifact(self, model_stub):
         """Build a minimal enriched artifact as the backtest scripts would."""
         from datetime import datetime, timezone
+
         n_est_used = getattr(model_stub, "best_iteration_", None) or 0
         feature_cols = ["f1", "f2", "f3"]
         imp = getattr(model_stub, "feature_importances_", np.array([0.5, 0.3, 0.2]))
@@ -105,6 +116,7 @@ class TestArtifactEnrichment:
 
     def test_all_required_keys_present(self):
         from unittest.mock import MagicMock
+
         stub = MagicMock()
         stub.feature_importances_ = np.array([0.5, 0.3, 0.2])
         stub.best_iteration_ = 42
@@ -116,6 +128,7 @@ class TestArtifactEnrichment:
     def test_trained_at_is_iso_string(self):
         from unittest.mock import MagicMock
         from datetime import datetime
+
         stub = MagicMock()
         stub.feature_importances_ = np.array([0.5, 0.3, 0.2])
         artifact = self._make_artifact(stub)
@@ -125,6 +138,7 @@ class TestArtifactEnrichment:
 
     def test_feature_importance_keys_match_feature_cols(self):
         from unittest.mock import MagicMock
+
         stub = MagicMock()
         stub.feature_importances_ = np.array([0.5, 0.3, 0.2])
         artifact = self._make_artifact(stub)
@@ -132,6 +146,7 @@ class TestArtifactEnrichment:
 
     def test_artifact_is_picklable(self):
         from unittest.mock import MagicMock
+
         stub = MagicMock()
         stub.feature_importances_ = np.array([0.5, 0.3, 0.2])
         stub.best_iteration_ = 42
@@ -139,13 +154,52 @@ class TestArtifactEnrichment:
         artifact = self._make_artifact(stub)
         # Remove model and val_wape (val_wape attribute access returns a MagicMock
         # which is not picklable); keep only plain-data keys
-        picklable_keys = {"feature_cols", "model_id", "cluster_label",
-                          "n_estimators_used", "trained_at", "timeframe", "feature_importance"}
+        picklable_keys = {
+            "feature_cols",
+            "model_id",
+            "cluster_label",
+            "n_estimators_used",
+            "trained_at",
+            "timeframe",
+            "feature_importance",
+        }
         artifact_subset = {k: v for k, v in artifact.items() if k in picklable_keys}
         data = pickle.dumps(artifact_subset)
         restored = pickle.loads(data)
         assert restored["cluster_label"] == "A"
         assert restored["timeframe"] == "J"
+
+    def test_persistence_uses_meta_iteration_for_final_refit_model(self):
+        """Final refit models may not expose best_iteration; preserve selected round."""
+        from scripts.ml.run_backtest import persist_cluster_models
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model = SimpleNamespace()
+            with patch("scripts.ml.run_backtest.get_best_iteration", return_value=None):
+                persist_cluster_models(
+                    {"A": model},
+                    ["f1"],
+                    "lgbm_cluster",
+                    "J",
+                    prod_config={"model_registry": {"base_path": tmpdir}},
+                    model_meta={
+                        "A": {
+                            "n_estimators_used": 123,
+                            "train_rows": 50,
+                            "val_wape": 10.5,
+                        }
+                    },
+                    feature_importance_fn=lambda _model: np.array([1.0]),
+                    model_name="lgbm",
+                )
+
+            artifact_path = Path(tmpdir) / "lgbm_cluster" / "cluster_A.pkl"
+            with open(artifact_path, "rb") as f:
+                artifact = pickle.load(f)
+
+        assert artifact["n_estimators_used"] == 123
+        assert artifact["train_rows"] == 50
+        assert artifact["val_wape"] == 10.5
 
 
 class TestGpuEnvVar:
@@ -154,6 +208,7 @@ class TestGpuEnvVar:
     def _resolve_gpu(self, pref, dummy_gpu_works):
         """Replicate the GPU detection logic."""
         import os
+
         _use_gpu = False
         if pref == "on":
             _use_gpu = True
