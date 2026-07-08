@@ -4,7 +4,6 @@ Verifies that clusters with fewer than MIN_CLUSTER_ROWS use a seasonal
 naive baseline (per-month historical mean) instead of zeroing predictions.
 """
 
-import logging
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -219,7 +218,7 @@ class TestTrainSingleClusterFallback:
                         "mean_demand": 100.0, "cv_demand": 0.1,
                         "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                     }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
                             cl, result, model, meta = _train_single_cluster(
                                 "normal", 1, 1,
                                 train, pred,
@@ -344,7 +343,7 @@ class TestPerClusterWithFallback:
                         "mean_demand": 200.0, "cv_demand": 0.1,
                         "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                     }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
                             result, models, meta = train_and_predict_per_cluster(
                                 train_df, pred_df,
                                 ["month"], [], {"n_estimators": 100},
@@ -358,7 +357,6 @@ class TestPerClusterWithFallback:
         assert len(result) == 6  # 3 from big + 3 from tiny
 
         # Small cluster predictions should NOT be zero
-        tiny_preds = result[result["sku_ck"].str.startswith("PRED_")].copy()
         # Get the tiny_cluster's predictions by merging with pred_df
         tiny_pred_skus = pred_df[pred_df["ml_cluster"] == "tiny_cluster"]["sku_ck"].tolist()
         tiny_results = result[result["sku_ck"].isin(tiny_pred_skus)]
@@ -393,7 +391,7 @@ class TestPerClusterWithFallback:
                         "mean_demand": 200.0, "cv_demand": 0.1,
                         "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                     }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
                             result, models, meta = train_and_predict_per_cluster(
                                 train_df, pred_df,
                                 ["month"], [], {"n_estimators": 100},
@@ -438,7 +436,7 @@ class TestPerClusterWithFallback:
                         "mean_demand": 150.0, "cv_demand": 0.1,
                         "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                     }):
-                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                        with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({"n_estimators": 100}, "default")):
                             result, models, meta = train_and_predict_per_cluster(
                                 train_df, pred_df,
                                 ["month"], [], {"n_estimators": 100},

@@ -287,7 +287,7 @@ def _train_cluster(
     )
     fit_params = _apply_tweedie_objective(fit_params, model_name, demand_pattern)
 
-    max_iters = fit_params.get(iter_param, 1000)
+    max_iters = fit_params[iter_param]
     model = build_tree_model(model_name, fit_params)
 
     # Fit with early stopping using validation set
@@ -314,7 +314,7 @@ def _train_cluster(
 
     n_est_used = get_best_iteration(model, model_name)
     if n_est_used is None:
-        n_est_used = fit_params.get(iter_param, max_iters)
+        n_est_used = fit_params[iter_param]
 
     meta = {
         "val_wape": val_wape,

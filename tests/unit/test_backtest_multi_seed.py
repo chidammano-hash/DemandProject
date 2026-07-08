@@ -8,7 +8,6 @@ Validates:
 """
 
 import json
-import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -26,6 +25,83 @@ if str(ROOT) not in sys.path:
 from scripts.ml.run_backtest import MODEL_REGISTRY
 
 
+def _complete_tree_params() -> dict[str, Any]:
+    """Union of required tree params for seed/default-param unit tests."""
+    params = _complete_lgbm_params()
+    params.update(_complete_catboost_params())
+    params.update(_complete_xgboost_params())
+    return params
+
+
+def _complete_lgbm_params(**overrides) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "model_id": "lgbm_cluster",
+        "cluster_strategy": "per_cluster",
+        "recursive": False,
+        "shap_select": False,
+        "tune_inline": False,
+        "params_file": None,
+        "objective": "regression_l1",
+        "n_estimators": 100,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "min_child_samples": 20,
+        "max_depth": 6,
+        "min_gain_to_split": 0.01,
+        "subsample": 0.8,
+        "bagging_freq": 1,
+        "colsample_bytree": 0.8,
+        "feature_fraction_bynode": 0.8,
+        "reg_lambda": 0.8,
+        "reg_alpha": 0.1,
+        "path_smooth": 0.5,
+        "max_bin": 255,
+    }
+    params.update(overrides)
+    return params
+
+
+def _complete_catboost_params(**overrides) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "model_id": "catboost_cluster",
+        "cluster_strategy": "per_cluster",
+        "recursive": False,
+        "shap_select": False,
+        "tune_inline": False,
+        "params_file": None,
+        "loss_function": "RMSE",
+        "iterations": 100,
+        "learning_rate": 0.05,
+        "depth": 5,
+        "l2_leaf_reg": 3.0,
+        "border_count": 32,
+        "max_ctr_complexity": 1,
+    }
+    params.update(overrides)
+    return params
+
+
+def _complete_xgboost_params(**overrides) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "model_id": "xgboost_cluster",
+        "cluster_strategy": "per_cluster",
+        "recursive": False,
+        "shap_select": False,
+        "tune_inline": False,
+        "params_file": None,
+        "objective": "reg:absoluteerror",
+        "n_estimators": 100,
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "min_child_weight": 5,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "tree_method": "hist",
+    }
+    params.update(overrides)
+    return params
+
+
 # ── default_params lambda tests ───────────────────────────────────────────────
 
 
@@ -35,20 +111,7 @@ class TestDefaultParamsLambda:
     @pytest.fixture
     def algo_config(self) -> dict[str, Any]:
         """Minimal algo config dict matching what algorithm_config.yaml provides."""
-        return {
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-            "num_leaves": 31,
-            "min_child_samples": 20,
-            "max_depth": -1,
-            "subsample": 0.8,
-            "iterations": 300,
-            "depth": 5,
-            "l2_leaf_reg": 3.0,
-            "max_depth": 6,
-            "min_child_weight": 5,
-            "colsample_bytree": 0.8,
-        }
+        return _complete_tree_params()
 
     def test_lgbm_default_params_accepts_seed(self, algo_config: dict) -> None:
         """LGBM default_params lambda accepts seed parameter."""
@@ -89,17 +152,7 @@ class TestSeedValues:
 
     @pytest.fixture
     def algo_config(self) -> dict[str, Any]:
-        return {
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-            "iterations": 300,
-            "depth": 5,
-            "l2_leaf_reg": 3.0,
-            "max_depth": 6,
-            "min_child_weight": 5,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-        }
+        return _complete_tree_params()
 
     @pytest.mark.parametrize("seed_value", [0, 1, 42, 100, 999])
     @pytest.mark.parametrize("model_name", ["lgbm", "catboost", "xgboost"])
@@ -186,16 +239,7 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = {
-            "model_id": "lgbm_cluster",
-            "cluster_strategy": "per_cluster",
-            "recursive": False,
-            "shap_select": False,
-            "tune_inline": False,
-            "params_file": None,
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-        }
+        algo_config = _complete_lgbm_params()
         config_data = {
             "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path), "n_seeds": 1},
             "algorithms": {"lgbm": algo_config},
@@ -240,29 +284,19 @@ class TestMultiSeedIntegration:
                     "enabled": True,
                     "backtest": True,
                     "cluster_strategy": "per_cluster",
-                    "params": {
-                        "recursive": False,
-                        "shap_select": False,
-                        "tune_inline": False,
-                        "params_file": None,
-                        "n_estimators": 100,
-                        "learning_rate": 0.05,
-                    },
+                    "params": _complete_lgbm_params(),
                 },
                 "lgbm_cust_enriched": {
                     "type": "tree",
                     "enabled": True,
                     "backtest": True,
                     "cluster_strategy": "per_cluster",
-                    "params": {
-                        "customer_features": True,
-                        "recursive": False,
-                        "shap_select": False,
-                        "tune_inline": False,
-                        "params_file": None,
-                        "n_estimators": 222,
-                        "learning_rate": 0.012,
-                    },
+                    "params": _complete_lgbm_params(
+                        model_id="lgbm_cust_enriched",
+                        customer_features=True,
+                        n_estimators=222,
+                        learning_rate=0.012,
+                    ),
                 },
             },
         }
@@ -309,16 +343,7 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = {
-            "model_id": "lgbm_cluster",
-            "cluster_strategy": "per_cluster",
-            "recursive": False,
-            "shap_select": False,
-            "tune_inline": False,
-            "params_file": None,
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-        }
+        algo_config = _complete_lgbm_params()
         config_data = {
             "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
             "algorithms": {"lgbm": algo_config},
@@ -371,16 +396,7 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = {
-            "model_id": "lgbm_cluster",
-            "cluster_strategy": "per_cluster",
-            "recursive": False,
-            "shap_select": False,
-            "tune_inline": False,
-            "params_file": None,
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-        }
+        algo_config = _complete_lgbm_params()
         config_data = {
             "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
             "algorithms": {"lgbm": algo_config},
@@ -434,16 +450,7 @@ class TestMultiSeedIntegration:
         mock_profiler.return_value.__exit__ = MagicMock(return_value=False)
         mock_import.return_value = MagicMock
 
-        algo_config = {
-            "model_id": "lgbm_cluster",
-            "cluster_strategy": "per_cluster",
-            "recursive": False,
-            "shap_select": False,
-            "tune_inline": False,
-            "params_file": None,
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-        }
+        algo_config = _complete_lgbm_params()
         config_data = {
             "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
             "algorithms": {"lgbm": algo_config},
@@ -490,16 +497,7 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = {
-            "model_id": "lgbm_cluster",
-            "cluster_strategy": "per_cluster",
-            "recursive": False,
-            "shap_select": False,
-            "tune_inline": False,
-            "params_file": None,
-            "n_estimators": 100,
-            "learning_rate": 0.05,
-        }
+        algo_config = _complete_lgbm_params()
         config_data = {
             "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path), "n_seeds": 2},
             "algorithms": {"lgbm": algo_config},
@@ -543,18 +541,7 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = {
-            "model_id": "catboost_cluster",
-            "cluster_strategy": "per_cluster",
-            "recursive": False,
-            "shap_select": False,
-            "tune_inline": False,
-            "params_file": None,
-            "iterations": 100,
-            "learning_rate": 0.05,
-            "depth": 5,
-            "l2_leaf_reg": 3.0,
-        }
+        algo_config = _complete_catboost_params()
         config_data = {
             "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
             "algorithms": {"catboost": algo_config},

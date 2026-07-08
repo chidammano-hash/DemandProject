@@ -46,7 +46,7 @@ from common.ml.model_registry import (
 from common.scripts_base import load_project_env, setup_logging
 from common.services.perf_profiler import profiled_section
 from common.ml.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
-from common.core.utils import get_algorithm_roster, load_config, load_forecast_pipeline_config
+from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -688,7 +688,7 @@ def _train_single_cluster(
         n_cpus = os.cpu_count() or 8
         fit_params[thread_key] = max(2, n_cpus // 4)
 
-    max_iters = fit_params.get(iter_param, 1000)
+    max_iters = fit_params[iter_param]
     model = build_tree_model(model_name, fit_params)
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()
@@ -951,11 +951,8 @@ def train_and_predict_global(
     lib_module: Any,
 ) -> tuple[pd.DataFrame, dict, dict[str, dict]]:
     """Train a single global tree model on ALL data with ml_cluster as categorical feature."""
-    needs_cat_dtype_cast = registry["needs_cat_dtype_cast"]
     iter_param = registry["iter_param"]
     label = model_name.upper()
-
-    cat_cols_in_features = [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
 
     logger.info("Training global %s on %s rows, %d features (includes ml_cluster)...",
                 label, f"{len(train_df):,}", len(feature_cols))
@@ -979,7 +976,7 @@ def train_and_predict_global(
     y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
 
     fit_params = {**params, **registry["fit_extras_global"](params, iter_param)}
-    max_iters = fit_params.get(iter_param, 1000)
+    max_iters = fit_params[iter_param]
     model = build_tree_model(model_name, fit_params)
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()

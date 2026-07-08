@@ -124,6 +124,7 @@ algorithms:
       gamma: 0.1
       colsample_bylevel: 0.8
       booster: gbtree
+      tree_method: hist
   lgbm_cust_enriched:
     type: tree
     enabled: true
@@ -244,6 +245,7 @@ algorithms:
       gamma: 0.1
       colsample_bylevel: 0.8
       booster: gbtree
+      tree_method: hist
   chronos:
     type: foundation
     enabled: false

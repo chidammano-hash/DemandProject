@@ -47,7 +47,7 @@ BACKTEST_TUNABLE_KEYS: dict[str, set[str]] = {
     },
     "xgboost": {
         "n_estimators", "learning_rate", "max_depth", "min_child_weight",
-        "subsample", "colsample_bytree",
+        "subsample", "colsample_bytree", "tree_method",
     },
 }
 
@@ -153,6 +153,7 @@ _SAMPLE_PROMOTED_PARAMS = {
     "xgboost": {
         "n_estimators": 2800, "learning_rate": 0.009, "max_depth": 10,
         "min_child_weight": 3, "subsample": 0.85, "colsample_bytree": 0.75,
+        "tree_method": "hist",
     },
 }
 

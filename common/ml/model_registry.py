@@ -243,6 +243,55 @@ def _base_model_name(model_id: str, algo_type: str) -> str:
     return model_id
 
 
+REQUIRED_TREE_PARAM_KEYS: dict[str, tuple[str, ...]] = {
+    "lgbm": (
+        "objective",
+        "n_estimators",
+        "learning_rate",
+        "num_leaves",
+        "min_child_samples",
+        "max_depth",
+        "min_gain_to_split",
+        "subsample",
+        "bagging_freq",
+        "colsample_bytree",
+        "feature_fraction_bynode",
+        "reg_lambda",
+        "reg_alpha",
+        "path_smooth",
+        "max_bin",
+    ),
+    "catboost": (
+        "loss_function",
+        "iterations",
+        "learning_rate",
+        "depth",
+        "l2_leaf_reg",
+        "border_count",
+        "max_ctr_complexity",
+    ),
+    "xgboost": (
+        "objective",
+        "n_estimators",
+        "learning_rate",
+        "max_depth",
+        "min_child_weight",
+        "subsample",
+        "colsample_bytree",
+        "tree_method",
+    ),
+}
+
+
+def _require_tree_params(model_name: str, algo: dict, keys: tuple[str, ...]) -> None:
+    """Fail loud when YAML omits tree hyperparameters used by training."""
+    missing = [key for key in keys if key not in algo or algo[key] is None]
+    if missing:
+        raise ValueError(
+            f"{model_name} tree params missing required YAML keys: {', '.join(missing)}"
+        )
+
+
 def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict[str, Any]:
     """Build default tree estimator params from a YAML algorithm params section.
 
@@ -251,24 +300,25 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
     belongs in :func:`fit_model`.
     """
     if model_name == "lgbm":
+        _require_tree_params(model_name, algo, REQUIRED_TREE_PARAM_KEYS[model_name])
         return {
             k: v for k, v in {
-                "objective": algo.get("objective", "regression_l1"),
-                "alpha": algo.get("huber_delta", None),
-                "n_estimators": algo.get("n_estimators", 1500),
-                "learning_rate": algo.get("learning_rate", 0.02),
-                "num_leaves": algo.get("num_leaves", 63),
-                "min_child_samples": algo.get("min_child_samples", 20),
-                "max_depth": algo.get("max_depth", 8),
-                "min_gain_to_split": algo.get("min_gain_to_split", 0.005),
-                "subsample": algo.get("subsample", 0.70),
-                "bagging_freq": algo.get("bagging_freq", 1),
-                "colsample_bytree": algo.get("colsample_bytree", 0.80),
-                "feature_fraction_bynode": algo.get("feature_fraction_bynode", 0.7),
-                "reg_lambda": algo.get("reg_lambda", 1.0),
-                "reg_alpha": algo.get("reg_alpha", 0.1),
-                "path_smooth": algo.get("path_smooth", 1.0),
-                "max_bin": algo.get("max_bin", 255),
+                "objective": algo["objective"],
+                "alpha": algo.get("huber_delta"),
+                "n_estimators": algo["n_estimators"],
+                "learning_rate": algo["learning_rate"],
+                "num_leaves": algo["num_leaves"],
+                "min_child_samples": algo["min_child_samples"],
+                "max_depth": algo["max_depth"],
+                "min_gain_to_split": algo["min_gain_to_split"],
+                "subsample": algo["subsample"],
+                "bagging_freq": algo["bagging_freq"],
+                "colsample_bytree": algo["colsample_bytree"],
+                "feature_fraction_bynode": algo["feature_fraction_bynode"],
+                "reg_lambda": algo["reg_lambda"],
+                "reg_alpha": algo["reg_alpha"],
+                "path_smooth": algo["path_smooth"],
+                "max_bin": algo["max_bin"],
                 "feature_pre_filter": True,
                 "verbosity": -1,
                 "random_state": seed,
@@ -277,15 +327,16 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
         }
 
     if model_name == "catboost":
+        _require_tree_params(model_name, algo, REQUIRED_TREE_PARAM_KEYS[model_name])
         return {
             k: v
             for k, v in {
-                "iterations": algo.get("iterations", 300),
-                "learning_rate": algo.get("learning_rate", 0.08),
-                "depth": algo.get("depth", 5),
-                "l2_leaf_reg": algo.get("l2_leaf_reg", 3.0),
-                "border_count": algo.get("border_count", 64),
-                "max_ctr_complexity": algo.get("max_ctr_complexity", 1),
+                "iterations": algo["iterations"],
+                "learning_rate": algo["learning_rate"],
+                "depth": algo["depth"],
+                "l2_leaf_reg": algo["l2_leaf_reg"],
+                "border_count": algo["border_count"],
+                "max_ctr_complexity": algo["max_ctr_complexity"],
                 "grow_policy": algo.get("grow_policy"),
                 "max_leaves": algo.get("max_leaves"),
                 "subsample": algo.get("subsample"),
@@ -303,7 +354,7 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
                 "langevin": algo.get("langevin"),
                 "diffusion_temperature": algo.get("diffusion_temperature"),
                 "random_seed": seed,
-                "loss_function": algo.get("loss_function", "RMSE"),
+                "loss_function": algo["loss_function"],
                 "verbose": 0,
                 "thread_count": -1,
             }.items()
@@ -311,16 +362,17 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
         }
 
     if model_name == "xgboost":
+        _require_tree_params(model_name, algo, REQUIRED_TREE_PARAM_KEYS[model_name])
         return {
             k: v
             for k, v in {
-                "objective": algo.get("objective", "reg:absoluteerror"),
-                "n_estimators": algo.get("n_estimators", 500),
-                "learning_rate": algo.get("learning_rate", 0.05),
-                "max_depth": algo.get("max_depth", 6),
-                "min_child_weight": algo.get("min_child_weight", 5),
-                "subsample": algo.get("subsample", 0.8),
-                "colsample_bytree": algo.get("colsample_bytree", 0.8),
+                "objective": algo["objective"],
+                "n_estimators": algo["n_estimators"],
+                "learning_rate": algo["learning_rate"],
+                "max_depth": algo["max_depth"],
+                "min_child_weight": algo["min_child_weight"],
+                "subsample": algo["subsample"],
+                "colsample_bytree": algo["colsample_bytree"],
                 "grow_policy": algo.get("grow_policy"),
                 "max_leaves": algo.get("max_leaves"),
                 "max_bin": algo.get("max_bin"),
@@ -343,7 +395,7 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
                 "random_state": seed,
                 "n_jobs": -1,
                 "enable_categorical": True,
-                "tree_method": algo.get("tree_method", "hist"),
+                "tree_method": algo["tree_method"],
             }.items()
             if v is not None
         }

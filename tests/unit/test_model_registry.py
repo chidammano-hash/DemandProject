@@ -1,14 +1,14 @@
 """Tests for common.ml.model_registry — canonical param mapping, fit abstraction, best_iteration, WAPE eval."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from common.ml.model_registry import (
     CANONICAL_TO_NATIVE,
+    REQUIRED_TREE_PARAM_KEYS,
     SPARSE_EARLY_STOP_FLOOR,
-    SPARSE_EARLY_STOP_PCT,
     WapeMetric,
     _wape_lgbm,
     _wape_xgb,
@@ -16,6 +16,7 @@ from common.ml.model_registry import (
     fit_model,
     from_native_params,
     get_best_iteration,
+    get_tree_default_params,
     to_native_params,
 )
 
@@ -162,6 +163,38 @@ class TestComputeEarlyStopPatience:
         """Non-sparse mode always uses the standard 5% default."""
         assert compute_early_stop_patience(1500) == 75
         assert compute_early_stop_patience(1500, sparse=False) == 75
+
+
+# ---------------------------------------------------------------------------
+# get_tree_default_params
+# ---------------------------------------------------------------------------
+
+
+class TestGetTreeDefaultParams:
+    @pytest.mark.parametrize("model_name", ["lgbm", "catboost", "xgboost"])
+    def test_missing_yaml_params_raise(self, model_name):
+        """Tree params must come from YAML, not Python fallback defaults."""
+        with pytest.raises(ValueError, match="missing required YAML keys"):
+            get_tree_default_params(model_name, {})
+
+    def test_live_config_covers_every_forecastable_tree_model(self):
+        """Every enabled forecastable tree model has the required YAML params."""
+        from common.core.utils import get_algorithm_roster
+
+        tree_algos = {
+            model_id: entry
+            for model_id, entry in get_algorithm_roster(stage="forecast").items()
+            if entry.get("type") == "tree"
+        }
+        assert tree_algos
+
+        for model_id, entry in tree_algos.items():
+            base = model_id.split("_", 1)[0]
+            params = entry.get("params", {})
+            missing = set(REQUIRED_TREE_PARAM_KEYS[base]) - set(params)
+            assert not missing, f"{model_id} missing required tree params: {sorted(missing)}"
+            resolved = get_tree_default_params(base, params, seed=13)
+            assert resolved
 
 
 # ---------------------------------------------------------------------------
