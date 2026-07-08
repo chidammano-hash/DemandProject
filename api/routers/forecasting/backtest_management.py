@@ -13,7 +13,6 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -44,6 +43,9 @@ MODEL_TO_JOB_TYPE: dict[str, str] = {
     "lgbm_cluster": "backtest_lgbm",
     "catboost_cluster": "backtest_catboost",
     "xgboost_cluster": "backtest_xgboost",
+    "lgbm_cust_enriched": "backtest_lgbm",
+    "catboost_cust_enriched": "backtest_catboost",
+    "xgboost_cust_enriched": "backtest_xgboost",
     "chronos2_enriched": "backtest_chronos2_enriched",
     "mstl": "backtest_mstl",
     "seasonal_naive": "backtest_seasonal_naive",
@@ -58,6 +60,9 @@ MODEL_TO_DIR: dict[str, str] = {
     "lgbm_cluster": "lgbm_cluster",
     "catboost_cluster": "catboost_cluster",
     "xgboost_cluster": "xgboost_cluster",
+    "lgbm_cust_enriched": "lgbm_cust_enriched",
+    "catboost_cust_enriched": "catboost_cust_enriched",
+    "xgboost_cust_enriched": "xgboost_cust_enriched",
     "chronos2_enriched": "chronos2_enriched",
     "mstl": "mstl",
     "seasonal_naive": "seasonal_naive",
@@ -490,7 +495,7 @@ def submit_backtest_run(model_id: str, response: Response, parallel: bool = Fals
     try:
         job_id = jm.submit_job(
             job_type=job_type,
-            params={"backtest_run_id": run_id},
+            params={"backtest_run_id": run_id, "model_id": model_id},
             label=f"Backtest: {model_id}",
             # Per-job-type group → different families run in parallel; the shared
             # default "backtest" group → strictly sequential.

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import signal
 from threading import Event
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -131,7 +131,7 @@ class TestRunSubprocess:
         with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
              patch("common.services.job_state._store_pid") as m_store, \
              patch("common.services.job_state._clear_pid") as m_clear, \
-             patch("common.services.job_state._append_log") as m_log:
+             patch("common.services.job_state._append_log"):
             result = _run_subprocess(["echo", "hi"], job_id="j1")
 
         assert "line1" in result
@@ -475,6 +475,18 @@ class TestAutoLoadBacktest:
             _auto_load_backtest("chronos_bolt", 1)
         assert m_load.call_args[0][0] == {"model_id": "chronos_bolt", "run_id": 1}
 
+    def test_customer_enriched_tree_model_uses_own_output_dir(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("xgboost_cust_enriched", 11)
+        assert m_load.call_args[0][0] == {
+            "model_id": "xgboost_cust_enriched",
+            "run_id": 11,
+        }
+
 
 class TestRunBacktestAutoLoadsBeforeCompletion:
     """_run_backtest auto-loads BEFORE marking the run completed, so the UI sees
@@ -500,3 +512,21 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         # ordering: auto-load before completion update
         names = [c[0] for c in manager.mock_calls]
         assert names.index("auto") < names.index("update")
+
+    def test_customer_enriched_tree_model_id_threads_to_subprocess_and_outputs(self):
+        from common.services.job_state import _run_backtest
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok") as m_run,
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}._auto_load_backtest") as m_auto,
+            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
+        ):
+            _run_backtest(
+                "catboost",
+                {"backtest_run_id": 8, "model_id": "catboost_cust_enriched"},
+            )
+
+        cmd = m_run.call_args[0][0]
+        assert cmd[cmd.index("--model-id") + 1] == "catboost_cust_enriched"
+        assert m_auto.call_args[0][0] == "catboost_cust_enriched"
+        assert m_update.call_args[0][1] == "catboost_cust_enriched"

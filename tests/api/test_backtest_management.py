@@ -69,6 +69,9 @@ def _mock_roster():
     return {
         "lgbm_cluster": {"type": "tree", "enabled": True},
         "catboost_cluster": {"type": "tree", "enabled": True},
+        "lgbm_cust_enriched": {"type": "tree", "enabled": True},
+        "catboost_cust_enriched": {"type": "tree", "enabled": True},
+        "xgboost_cust_enriched": {"type": "tree", "enabled": True},
         "chronos_bolt": {"type": "foundation", "enabled": True},
     }
 
@@ -101,10 +104,13 @@ async def test_get_summary_returns_all_models():
 
     assert resp.status_code == 200
     data = resp.json()
-    # Should have entries for all 3 roster models
-    assert len(data) == 3
+    # Should have entries for the full configured roster, including enriched trees.
+    assert len(data) == len(_mock_roster())
     assert "lgbm_cluster" in data
     assert "catboost_cluster" in data
+    assert data["lgbm_cust_enriched"]["has_job_type"] is True
+    assert data["catboost_cust_enriched"]["has_job_type"] is True
+    assert data["xgboost_cust_enriched"]["has_job_type"] is True
     assert "chronos_bolt" in data
     # lgbm_cluster has a latest_run
     assert data["lgbm_cluster"]["latest_run"] is not None
@@ -230,7 +236,40 @@ async def test_submit_run_success():
     assert data["model_id"] == "lgbm_cluster"
     assert data["status"] == "queued"
     # Sequential (default): no per-family group override.
-    assert mock_jm.return_value.submit_job.call_args.kwargs["group_override"] is None
+    kwargs = mock_jm.return_value.submit_job.call_args.kwargs
+    assert kwargs["params"] == {"backtest_run_id": 42, "model_id": "lgbm_cluster"}
+    assert kwargs["group_override"] is None
+
+
+@pytest.mark.asyncio
+async def test_submit_run_customer_enriched_tree_uses_base_family_job():
+    """Configured enriched tree variants must be runnable from the product API."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [None, (52,)]
+
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-bt-enriched"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/catboost_cust_enriched/run?parallel=true")
+
+    assert resp.status_code == 201
+    assert resp.json()["model_id"] == "catboost_cust_enriched"
+    kwargs = mock_jm.return_value.submit_job.call_args.kwargs
+    assert kwargs["job_type"] == "backtest_catboost"
+    assert kwargs["params"] == {
+        "backtest_run_id": 52,
+        "model_id": "catboost_cust_enriched",
+    }
+    assert kwargs["group_override"] == "backtest_catboost"
 
 
 @pytest.mark.asyncio

@@ -88,6 +88,12 @@ _BACKTEST_OUTPUT_DIRS: dict[str, str] = {
     "lgbm": "lgbm_cluster",
     "catboost": "catboost_cluster",
     "xgboost": "xgboost_cluster",
+    "lgbm_cluster": "lgbm_cluster",
+    "catboost_cluster": "catboost_cluster",
+    "xgboost_cluster": "xgboost_cluster",
+    "lgbm_cust_enriched": "lgbm_cust_enriched",
+    "catboost_cust_enriched": "catboost_cust_enriched",
+    "xgboost_cust_enriched": "xgboost_cust_enriched",
     "chronos2_enriched": "chronos2_enriched",
     "mstl": "mstl",
     "nbeats": "nbeats",
@@ -508,6 +514,9 @@ def _run_backtest(
 
     if model in tree_scripts:
         cmd = [*run_prefix, "python", tree_scripts[model]]
+        model_id = params.get("model_id")
+        if model_id:
+            cmd.extend(["--model-id", str(model_id)])
     elif model in foundation_modules:
         cmd = [*run_prefix, "python", "-m", foundation_modules[model]]
     elif model in special_scripts:
@@ -548,10 +557,11 @@ def _run_backtest(
     # successful backtest as 'running' — at worst it stays completed-but-unloaded,
     # which the panel's recovery "Load to DB" button handles.
     if backtest_run_id:
+        output_model = str(params.get("model_id") or model)
         try:
-            _auto_load_backtest(model, backtest_run_id, progress_cb, cancel_event, job_id)
+            _auto_load_backtest(output_model, backtest_run_id, progress_cb, cancel_event, job_id)
         finally:
-            _update_backtest_run_on_completion(backtest_run_id, model)
+            _update_backtest_run_on_completion(backtest_run_id, output_model)
 
     if progress_cb:
         progress_cb(pct=100, msg=f"{model} backtest complete (results loaded)")
@@ -1495,7 +1505,7 @@ def _run_load_backtest_results(
     if progress_cb:
         progress_cb(pct=5, msg=f"Loading {model.upper()} predictions into database")
 
-    output = _run_subprocess(
+    _run_subprocess(
         cmd, progress_cb, f"Loading {model.upper()} results",
         cancel_event=cancel_event, job_id=job_id,
     )
