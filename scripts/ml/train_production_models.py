@@ -58,6 +58,10 @@ from common.ml.model_registry import (  # noqa: E402
     get_best_iteration,
     get_tree_default_params,
 )
+from common.ml.seasonal_naive import (  # noqa: E402
+    build_seasonal_naive_model,
+    make_dfu_key,
+)
 from common.core.planning_date import get_planning_date  # noqa: E402
 from common.scripts_base import load_project_env, setup_logging  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
@@ -287,6 +291,46 @@ def _train_cluster(
     )
     fit_params = _apply_tweedie_objective(fit_params, model_name, demand_pattern)
 
+    baseline_intermittent = backtest_cfg.get("baseline_intermittent", True)
+    if baseline_intermittent and demand_pattern == "intermittent":
+        window = int(backtest_cfg.get("baseline_intermittent_window", 12))
+        eval_model = build_seasonal_naive_model(train_c.loc[~val_mask], window=window)
+        val_rows = train_c.loc[val_mask]
+        val_keys = [
+            make_dfu_key(row.item_id, row.customer_group, row.loc)
+            for row in val_rows.itertuples(index=False)
+        ]
+        eval_model._sku_cks = val_keys
+        eval_model._months = pd.to_datetime(val_rows["startdate"]).dt.month.tolist()
+        val_preds = eval_model.predict(val_rows)
+        val_abs_sum = float(abs(y_val.sum()))
+        val_floor = max(len(y_val) * 0.01, 1.0)
+        val_denom = max(val_abs_sum, val_floor)
+        val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2)
+        model = build_seasonal_naive_model(train_c, window=window)
+        meta = {
+            "val_wape": val_wape,
+            "train_rows": len(X_tr),
+            "total_rows": len(X_all),
+            "val_rows": len(X_val),
+            "n_estimators_used": 0,
+            "cluster_profile": "seasonal_naive_baseline",
+            "demand_pattern": demand_pattern,
+            "cluster_stats": cluster_stats,
+            "n_val_months": n_val_months,
+            "n_train_months": len(unique_months) - n_val_months,
+        }
+        logger.info(
+            "Cluster %d/%d '%s': routed to seasonal_naive production artifact "
+            "(zero_pct=%.2f, val_wape=%.1f%%)",
+            ci,
+            n_clusters,
+            cluster_label,
+            cluster_stats["zero_demand_pct"],
+            val_wape,
+        )
+        return cluster_label, model, meta
+
     max_iters = fit_params[iter_param]
     model = build_tree_model(model_name, fit_params)
 
@@ -370,7 +414,10 @@ def _save_cluster_artifact(
     _get_importance = _MODEL_LIBRARY[model_name]["feature_importance_fn"]
     n_est_used = get_best_iteration(model, model_name) or 0
 
-    importance_raw = _get_importance(model)
+    try:
+        importance_raw = _get_importance(model)
+    except AttributeError:
+        importance_raw = []
     importance_dict = (
         dict(zip(feature_cols, [float(v) for v in importance_raw], strict=True))
         if len(importance_raw) == len(feature_cols)

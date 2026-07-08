@@ -30,6 +30,7 @@ from scripts.forecasting.generate_production_forecasts import (
     get_champion_assignments,
 )
 from common.core.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
+from common.ml.seasonal_naive import SeasonalNaiveModel, make_dfu_key
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +474,41 @@ def test_generate_forecasts_batch_nonneg_qty():
     )
     for row in rows:
         assert row["forecast_qty"] >= 0.0
+
+
+def test_generate_forecasts_batch_sets_seasonal_naive_context():
+    """Seasonal-naive artifacts need DFU/month context outside the feature matrix."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
+    model = SeasonalNaiveModel(
+        {
+            (make_dfu_key("ITEM001", "GROUP1", "LOC1"), grid.iloc[0]["_forecast_month"].month): 17.0,
+            (make_dfu_key("ITEM001", "GROUP1", "LOC1"), grid.iloc[1]["_forecast_month"].month): 23.0,
+        },
+        {make_dfu_key("ITEM001", "GROUP1", "LOC1"): 11.0},
+    )
+    artifact = {"model": model, "feature_cols": [c for c in grid.columns if not c.startswith("_")]}
+    enc = build_cat_encoders(attrs)
+
+    rows = generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[
+            ({
+                "item_id": "ITEM001",
+                "customer_group": "GROUP1",
+                "loc": "LOC1",
+                "cluster_id": 2,
+            }, grid),
+        ],
+        horizon=2,
+        forecast_month_generated="2026-03",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=enc,
+    )
+
+    assert [row["forecast_qty"] for row in rows] == [17.0, 23.0]
 
 
 # ---------------------------------------------------------------------------

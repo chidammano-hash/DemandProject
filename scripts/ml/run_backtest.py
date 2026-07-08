@@ -1056,7 +1056,10 @@ def persist_cluster_models(
             cluster_features = feature_cols
 
         n_est_used = get_best_iteration(model, model_name) or 0
-        importance_raw = _get_importance(model)
+        try:
+            importance_raw = _get_importance(model)
+        except AttributeError:
+            importance_raw = []
         importance_dict = dict(zip(cluster_features, [float(v) for v in importance_raw])) if len(importance_raw) == len(cluster_features) else {}
         cluster_meta = _meta.get(cluster_label, {})
         artifact = {
@@ -1087,7 +1090,10 @@ def persist_cluster_models(
         else:
             cluster_features = feature_cols
 
-        imp = _get_importance(model)
+        try:
+            imp = _get_importance(model)
+        except AttributeError:
+            imp = []
         if len(imp) == len(cluster_features):
             fi_dict = dict(zip(cluster_features, [float(v) for v in imp]))
             fi_sorted = dict(sorted(fi_dict.items(), key=lambda x: x[1], reverse=True))

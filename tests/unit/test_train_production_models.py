@@ -76,6 +76,63 @@ def test_train_cluster_builds_tree_model_through_registry():
     build.assert_called_once_with("lgbm", {"n_estimators": 100})
 
 
+def test_train_cluster_routes_intermittent_to_seasonal_naive_artifact():
+    """Production training must deploy the same sparse-cluster fallback used in backtests."""
+    from common.ml.seasonal_naive import SeasonalNaiveModel
+    from scripts.ml.train_production_models import _train_cluster
+
+    train = _make_train_df("sparse", 60)
+    train["qty"] = [0.0 if i % 5 else 10.0 for i in range(len(train))]
+
+    with patch(
+        "scripts.ml.train_production_models.build_tree_model",
+        side_effect=AssertionError("intermittent clusters should not fit a tree"),
+    ) as build:
+        with patch("scripts.ml.train_production_models.fit_model") as fit:
+            with patch(
+                "scripts.ml.train_production_models.compute_cluster_demand_stats",
+                return_value={
+                    "mean_demand": 2.0,
+                    "cv_demand": 2.0,
+                    "zero_demand_pct": 0.8,
+                    "seasonal_amplitude": 0.0,
+                },
+            ):
+                with patch(
+                    "scripts.ml.train_production_models.resolve_cluster_params",
+                    return_value=({"n_estimators": 100}, "default"),
+                ):
+                    label, model, meta = _train_cluster(
+                        "sparse",
+                        1,
+                        1,
+                        train,
+                        ["month"],
+                        [],
+                        {"n_estimators": 100},
+                        model_name="lgbm",
+                        model_class=MagicMock,
+                        lib_module=MagicMock(),
+                        iter_param="n_estimators",
+                        needs_cat_dtype_cast=False,
+                        constant_target_guard=True,
+                        backtest_cfg={
+                            "baseline_intermittent": True,
+                            "baseline_intermittent_window": 12,
+                            "intermittent_threshold": 0.7,
+                            "lumpy_threshold": 0.3,
+                        },
+                    )
+
+    assert label == "sparse"
+    assert isinstance(model, SeasonalNaiveModel)
+    assert meta["cluster_profile"] == "seasonal_naive_baseline"
+    assert meta["demand_pattern"] == "intermittent"
+    assert meta["n_estimators_used"] == 0
+    build.assert_not_called()
+    fit.assert_not_called()
+
+
 def test_production_and_backtest_share_tree_default_params():
     """Backtest and production training must resolve identical tree params."""
     from scripts.ml.run_backtest import MODEL_REGISTRY

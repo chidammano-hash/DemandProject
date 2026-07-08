@@ -54,6 +54,7 @@ from common.core.db import get_db_params
 from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 from common.core.sql_helpers import read_sql_chunked
 from common.ml.forecast_ci import build_sigma_lookup, compute_ci_bounds
+from common.ml.seasonal_naive import make_dfu_key
 from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
@@ -742,8 +743,6 @@ def build_inference_grid(
     Returns DataFrame with `horizon` rows ready for model.predict(), or None if
     insufficient history.
     """
-    max_lag = max(LAG_RANGE)
-
     if sales_index is not None:
         # Fast O(1) path — used by production main loop
         entry = sales_index.get((item_id, loc))
@@ -1118,6 +1117,20 @@ def generate_forecasts_batch(
     for h in range(horizon):
         # Batch predict on current feature matrix
         try:
+            if hasattr(model, "_sku_cks"):
+                model._sku_cks = [
+                    make_dfu_key(
+                        champ.get("item_id"),
+                        champ.get("customer_group", "__unknown__"),
+                        champ.get("loc"),
+                    )
+                    for champ in valid_champs
+                ]
+            if hasattr(model, "_months"):
+                model._months = [
+                    pd.Timestamp(forecast_months[j][h]).month
+                    for j in range(len(valid_champs))
+                ]
             if is_catboost:
                 import catboost as cb
                 # Rebuild dataframe: numeric features (updated) + string categoricals (static)
@@ -1745,7 +1758,6 @@ def main() -> None:
     config = load_config()
     pipeline_cfg = config.get("_pipeline", {})
     horizon = args.horizon or config["inference"]["horizon_months"]
-    keep_n = config["plan_version"]["keep_last_n_versions"]
     fallback_model_id = config["model_selection"]["fallback_model_id"]
     lookback_months = pipeline_cfg.get("lookback_months", 36)
     min_history_months = pipeline_cfg.get("min_history_months", 12)
