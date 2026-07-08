@@ -171,14 +171,6 @@ deploy-smoke:
 # Developer tooling
 # ---------------------------------------------------------------------------
 audit-routers:  ## Verify router files match main.py mounts and vite proxy entries
-	@echo "=== Router Audit ==="
-	@echo "Router files in api/routers/:"
-	@find api/routers -name '*.py' ! -name '__init__.py' | wc -l
-	@echo "include_router() calls in main.py:"
-	@grep -c 'app.include_router' api/main.py
-	@echo ""
-	@echo "=== Vite Proxy Check ==="
-	@echo "Checking for API prefixes missing from vite.config.ts..."
 	@python3 scripts/tools/audit_routes.py 2>/dev/null || echo "Run: python3 scripts/tools/audit_routes.py"
 
 new-router:

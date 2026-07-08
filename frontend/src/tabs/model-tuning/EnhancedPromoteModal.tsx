@@ -20,7 +20,16 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatPct, formatFixed } from "@/lib/formatters";
-import { MODEL_PREFIX, type ModelType, type TuningRun } from "@/api/queries";
+import {
+  fetchModelLagAccuracy,
+  fetchPromoteResultsStatus,
+  modelTuningKeys,
+  promoteModelExperiment,
+  promoteModelResults,
+  type ModelLagAccuracy,
+  type ModelType,
+  type TuningRun,
+} from "@/api/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,13 +40,6 @@ export interface EnhancedPromoteModalProps {
   open: boolean;
   onClose: () => void;
   onPromoted: () => void;
-}
-
-interface LagAccuracy {
-  exec_lag: number;
-  accuracy_pct: number | null;
-  wape: number | null;
-  bias: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,62 +66,6 @@ const RESULTS_STEPS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Fetchers
-// ---------------------------------------------------------------------------
-async function fetchLagAccuracy(
-  model: ModelType,
-  runId: number,
-): Promise<LagAccuracy[]> {
-  const res = await fetch(
-    `${MODEL_PREFIX[model]}/experiments/${runId}/lags`,
-  );
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.lags ?? [];
-}
-
-async function promoteParams(
-  model: ModelType,
-  runId: number,
-): Promise<{ promoted: boolean }> {
-  const res = await fetch(
-    `${MODEL_PREFIX[model]}/experiments/${runId}/promote`,
-    { method: "POST" },
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Promote failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-async function promoteResults(
-  model: ModelType,
-  runId: number,
-): Promise<{ job_id: string }> {
-  const res = await fetch(
-    `${MODEL_PREFIX[model]}/experiments/${runId}/promote-results`,
-    { method: "POST" },
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Results load failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-async function fetchResultsStatus(
-  model: ModelType,
-  runId: number,
-): Promise<{ status: string; progress_pct?: number; progress_msg?: string; error?: string | null }> {
-  const res = await fetch(
-    `${MODEL_PREFIX[model]}/experiments/${runId}/promote-results/status`,
-  );
-  if (!res.ok) return { status: "unknown" };
-  return res.json();
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function EnhancedPromoteModal({
@@ -134,20 +80,20 @@ export function EnhancedPromoteModal({
   const [resultsConfirmed, setResultsConfirmed] = useState(false);
 
   const isParamsPromoted = run.is_promoted ?? false;
-  const isResultsPromoted = (run as Record<string, unknown>).is_results_promoted === true;
+  const isResultsPromoted = run.is_results_promoted === true;
 
   // Fetch per-lag accuracy
-  const { data: lagData } = useQuery({
-    queryKey: ["model-tuning-lag-accuracy", model, run.run_id],
-    queryFn: () => fetchLagAccuracy(model, run.run_id),
+  const { data: lagData } = useQuery<ModelLagAccuracy[]>({
+    queryKey: modelTuningKeys.lags(model, run.run_id),
+    queryFn: () => fetchModelLagAccuracy(model, run.run_id),
     enabled: open,
     staleTime: 60_000,
   });
 
   // Poll results promotion status while job is running
   const { data: resultsStatus } = useQuery({
-    queryKey: ["promote-results-status", model, run.run_id],
-    queryFn: () => fetchResultsStatus(model, run.run_id),
+    queryKey: modelTuningKeys.promoteResultsStatus(model, run.run_id),
+    queryFn: () => fetchPromoteResultsStatus(model, run.run_id),
     enabled: open && !isResultsPromoted,
     refetchInterval: (query) => {
       const st = query.state.data?.status;
@@ -163,7 +109,7 @@ export function EnhancedPromoteModal({
 
   // Promote params mutation
   const paramsMut = useMutation({
-    mutationFn: () => promoteParams(model, run.run_id),
+    mutationFn: () => promoteModelExperiment(model, run.run_id),
     onSuccess: () => {
       invalidateAll();
       onPromoted();
@@ -172,7 +118,7 @@ export function EnhancedPromoteModal({
 
   // Promote results mutation
   const resultsMut = useMutation({
-    mutationFn: () => promoteResults(model, run.run_id),
+    mutationFn: () => promoteModelResults(model, run.run_id),
     onSuccess: () => {
       invalidateAll();
     },

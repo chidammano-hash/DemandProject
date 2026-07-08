@@ -29,7 +29,8 @@ import {
 
 import {
   STALE,
-  MODEL_PREFIX,
+  fetchUnifiedModelTuningComparison,
+  type ModelLagComparison,
   type ModelType,
   type TuningComparison,
   type ClusterComparison,
@@ -63,33 +64,6 @@ export interface EnhancedComparisonPanelProps {
   candidateId: number;
   execLag?: number;
   onPromote: (run: TuningRun) => void;
-}
-
-interface LagBreakdown {
-  exec_lag: number;
-  baseline_accuracy: number | null;
-  candidate_accuracy: number | null;
-  delta_accuracy: number | null;
-  baseline_wape: number | null;
-  candidate_wape: number | null;
-}
-
-// ---------------------------------------------------------------------------
-// Fetchers
-// ---------------------------------------------------------------------------
-async function fetchComparison(
-  model: ModelType,
-  baselineId: number,
-  candidateId: number,
-  execLag?: number,
-): Promise<TuningComparison & { per_lag?: LagBreakdown[] }> {
-  const sp = new URLSearchParams();
-  sp.set("baseline_id", String(baselineId));
-  sp.set("candidate_id", String(candidateId));
-  if (execLag !== undefined) sp.set("exec_lag", String(execLag));
-  const res = await fetch(`${MODEL_PREFIX[model]}/compare?${sp}`);
-  if (!res.ok) throw new Error(`Failed to fetch comparison: ${res.status}`);
-  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -391,10 +365,10 @@ export function EnhancedComparisonPanel({
   const [view, setView] = useState<ComparisonView>("summary");
 
   const { data, isLoading, isError, error } = useQuery<
-    TuningComparison & { per_lag?: LagBreakdown[] }
+    TuningComparison & { per_lag?: ModelLagComparison[] }
   >({
     queryKey: ["model-tuning-compare", model, baselineId, candidateId, execLag],
-    queryFn: () => fetchComparison(model, baselineId, candidateId, execLag),
+    queryFn: () => fetchUnifiedModelTuningComparison(model, baselineId, candidateId, execLag),
     staleTime: STALE.FIVE_MIN,
     enabled: baselineId > 0 && candidateId > 0,
   });
@@ -434,8 +408,8 @@ export function EnhancedComparisonPanel({
   const per_lag = data.per_lag ?? [];
 
   // Synthesize cluster source diff from baseline/candidate metadata if present
-  const baselineRec = baseline as Record<string, unknown>;
-  const candidateRec = candidate as Record<string, unknown>;
+  const baselineRec = baseline as unknown as Record<string, unknown>;
+  const candidateRec = candidate as unknown as Record<string, unknown>;
   const baseClusterSource = (baselineRec.cluster_source as string) ?? "production";
   const candClusterSource = (candidateRec.cluster_source as string) ?? "production";
   const clusterSourceDiffers = baseClusterSource !== candClusterSource;
@@ -901,7 +875,7 @@ export function EnhancedComparisonPanel({
         {view === "ml_cluster" && ml_clusters.length > 0 && (
           <div className="space-y-3">
             <ComparisonBarChart
-              data={ml_clusters}
+              data={ml_clusters as unknown as Array<Record<string, unknown>>}
               xKey="cluster"
               baselineLabel={baselineLabel}
               candidateLabel={candidateLabel}
@@ -924,7 +898,7 @@ export function EnhancedComparisonPanel({
         {view === "business_cluster" && biz_clusters.length > 0 && (
           <div className="space-y-3">
             <ComparisonBarChart
-              data={biz_clusters}
+              data={biz_clusters as unknown as Array<Record<string, unknown>>}
               xKey="cluster"
               baselineLabel={baselineLabel}
               candidateLabel={candidateLabel}

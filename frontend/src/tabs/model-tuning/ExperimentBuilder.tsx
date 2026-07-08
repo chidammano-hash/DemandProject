@@ -30,7 +30,7 @@ import type { ModelType } from "@/api/queries";
 import {
   clusterExperimentKeys,
   fetchCompletedClusterExperiments,
-  MODEL_PREFIX,
+  submitModelExperiment,
   type ClusterExperiment,
 } from "@/api/queries";
 
@@ -64,34 +64,6 @@ const MODEL_LABELS: Record<ModelType, string> = {
   catboost: "CatBoost",
   xgboost: "XGBoost",
 };
-
-// ---------------------------------------------------------------------------
-// Fetcher
-// ---------------------------------------------------------------------------
-async function submitExperiment(
-  model: ModelType,
-  payload: {
-    run_label: string;
-    notes: string;
-    template: string;
-    params: Record<string, unknown>;
-    config: TrainingConfig & {
-      cluster_source?: "production" | "experimental";
-      cluster_experiment_id?: number | null;
-    };
-  },
-): Promise<{ run_id: number; status: string }> {
-  const res = await fetch(`${MODEL_PREFIX[model]}/experiments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Submit failed: ${res.status}`);
-  }
-  return res.json();
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -177,7 +149,7 @@ export function ExperimentBuilder({
   // Submit mutation
   const submitMut = useMutation({
     mutationFn: () =>
-      submitExperiment(model, {
+      submitModelExperiment(model, {
         run_label: runLabel.trim(),
         notes: notes.trim(),
         template: selectedTemplate,

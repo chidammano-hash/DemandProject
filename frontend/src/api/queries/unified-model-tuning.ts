@@ -6,6 +6,8 @@
  * parametrized `/model-tuning/{model}/` prefix.
  */
 
+import type { TuningComparison } from "./lgbm-tuning";
+import { fetchJson } from "./core";
 import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------
@@ -131,7 +133,10 @@ export interface UnifiedTuningComparison {
   delta_bias: number;
   verdict: "improved" | "degraded" | "neutral";
   per_lag: TuningLagComparison[];
-  per_cluster: UnifiedClusterComparison[];
+  per_cluster: {
+    ml_cluster: UnifiedClusterComparison[];
+    business_cluster: UnifiedClusterComparison[];
+  };
   per_month: UnifiedMonthComparison[];
   per_timeframe: UnifiedTimeframeComparison[];
   param_diffs: UnifiedParamDiff[];
@@ -176,9 +181,30 @@ export interface CreateExperimentResponse {
 
 export interface ExperimentLogsResponse {
   run_id: number;
+  model?: string;
   log: string;
+  offset: number;
   next_offset: number;
-  status: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "unknown";
+  has_more?: boolean;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ModelLagAccuracy {
+  exec_lag: number;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+}
+
+export interface ModelLagComparison {
+  exec_lag: number;
+  baseline_accuracy: number | null;
+  candidate_accuracy: number | null;
+  delta_accuracy: number | null;
+  baseline_wape: number | null;
+  candidate_wape: number | null;
 }
 
 export interface PromotionLogEntry {
@@ -251,12 +277,7 @@ function prefix(model: ModelType): string {
 }
 
 async function fetchOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-    throw new Error(body.detail ?? `Request failed: ${res.status}`);
-  }
-  return res.json();
+  return fetchJson<T>(url, init);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +370,36 @@ export async function fetchTuningComparison2(
     exec_lag: execLag,
   });
   return fetchOrThrow(`${prefix(model)}/compare?${sp}`);
+}
+
+/** Compare runs with the lag shape expected by the model-tuning panels. */
+export async function fetchUnifiedModelTuningComparison(
+  model: ModelType,
+  baselineId: number,
+  candidateId: number,
+  execLag?: number,
+): Promise<TuningComparison & { per_lag?: ModelLagComparison[] }> {
+  const data = await fetchTuningComparison2(model, baselineId, candidateId, execLag);
+  return ({
+    ...data,
+    per_lag: data.per_lag?.map((lag) => ({
+      exec_lag: lag.exec_lag,
+      baseline_accuracy: lag.baseline_acc,
+      candidate_accuracy: lag.candidate_acc,
+      delta_accuracy: lag.delta_acc,
+      baseline_wape: lag.baseline_wape,
+      candidate_wape: lag.candidate_wape,
+    })),
+  } as unknown) as TuningComparison & { per_lag?: ModelLagComparison[] };
+}
+
+/** Convenience fetcher for panels that only need lag accuracy rows. */
+export async function fetchModelLagAccuracy(
+  model: ModelType,
+  runId: number,
+): Promise<ModelLagAccuracy[]> {
+  const data = await fetchModelExperimentLags(model, runId);
+  return data.lags;
 }
 
 /** Get available experiment templates for a model. */
@@ -522,17 +573,16 @@ export const pipelineConfigKeys = {
 };
 
 export async function fetchPipelineConfig(): Promise<PipelineConfig> {
-  const res = await fetch("/config/forecast_pipeline_config");
-  if (!res.ok) throw new Error(`Failed to fetch pipeline config: ${res.status}`);
-  const data = await res.json();
+  const data = await fetchJson<{ raw?: PipelineConfig; values?: PipelineConfig } & PipelineConfig>(
+    "/config/forecast_pipeline_config",
+  );
   return data.raw || data.values || data;
 }
 
 export async function updatePipelineConfig(values: Record<string, unknown>): Promise<void> {
-  const res = await fetch("/config/forecast_pipeline_config", {
+  await fetchJson<unknown>("/config/forecast_pipeline_config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values }),
   });
-  if (!res.ok) throw new Error(`Failed to update pipeline config: ${res.status}`);
 }

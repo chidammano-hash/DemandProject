@@ -25,6 +25,10 @@ const WATCHED = [
   "SopTab.tsx",
   "lgbm-tuning/FeatureLabPanel.tsx",
   "clusters/ClusterExperimentBuilder.tsx",
+  "model-tuning/ExperimentBuilder.tsx",
+  "model-tuning/LogViewer.tsx",
+  "model-tuning/EnhancedComparisonPanel.tsx",
+  "model-tuning/EnhancedPromoteModal.tsx",
 ];
 
 // Matches a bare `fetch(` that is NOT preceded by an identifier char or `.`

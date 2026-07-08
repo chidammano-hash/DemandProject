@@ -19,7 +19,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { MODEL_PREFIX, type ModelType } from "@/api/queries";
+import {
+  fetchModelExperimentLogs,
+  modelTuningKeys,
+  type ExperimentLogsResponse,
+  type ModelType,
+} from "@/api/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,15 +34,6 @@ export interface LogViewerProps {
   runId: number;
   open: boolean;
   onClose: () => void;
-}
-
-interface LogResponse {
-  run_id: number;
-  status: "running" | "completed" | "failed" | "queued";
-  log: string;
-  offset: number;
-  started_at: string | null;
-  completed_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,19 +50,6 @@ function formatDuration(startedAt: string | null): string {
   return `${sec}s`;
 }
 
-async function fetchLogs(
-  model: ModelType,
-  runId: number,
-): Promise<LogResponse> {
-  const res = await fetch(
-    `${MODEL_PREFIX[model]}/experiments/${runId}/logs`,
-  );
-  if (!res.ok) {
-    throw new Error(`Failed to fetch logs: ${res.status}`);
-  }
-  return res.json();
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -77,9 +60,9 @@ export function LogViewer({ model, runId, open, onClose }: LogViewerProps) {
   const [durationStr, setDurationStr] = useState("--");
 
   // Fetch logs with polling
-  const { data, isLoading, isError, error } = useQuery<LogResponse>({
-    queryKey: ["model-tuning-logs", model, runId],
-    queryFn: () => fetchLogs(model, runId),
+  const { data, isLoading, isError, error } = useQuery<ExperimentLogsResponse>({
+    queryKey: modelTuningKeys.logs(model, runId),
+    queryFn: () => fetchModelExperimentLogs(model, runId),
     enabled: open,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
@@ -102,9 +85,9 @@ export function LogViewer({ model, runId, open, onClose }: LogViewerProps) {
   // Duration counter while running
   useEffect(() => {
     if (!isRunning || !data?.started_at) return;
-    setDurationStr(formatDuration(data.started_at));
+    setDurationStr(formatDuration(data.started_at ?? null));
     const timer = setInterval(() => {
-      setDurationStr(formatDuration(data.started_at));
+      setDurationStr(formatDuration(data.started_at ?? null));
     }, 1000);
     return () => clearInterval(timer);
   }, [isRunning, data?.started_at]);

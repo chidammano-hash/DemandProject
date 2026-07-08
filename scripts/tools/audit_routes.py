@@ -6,11 +6,35 @@ Detects:
 2. API prefixes missing from vite.config.ts proxy
 3. domains.py not mounted last
 """
+import ast
 import re
 import sys
 from pathlib import Path
 
 from common.core.paths import PROJECT_ROOT as ROOT
+
+
+def _collect_package_subrouters(init_file: Path) -> set[str]:
+    """Find sibling router modules aggregated by a package router."""
+    text = init_file.read_text()
+    imported_modules: dict[str, str] = {}
+
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module is None:
+            for alias in node.names:
+                imported_modules[alias.asname or alias.name] = alias.name
+
+    included_aliases = set(
+        re.findall(r"router\.include_router\((\w+)\.router\)", text)
+    )
+    return {
+        str(init_file.parent / f"{imported_modules[alias]}.py")
+        for alias in included_aliases
+        if alias in imported_modules
+    }
+
+
 def get_router_files():
     """Find all router .py files (excluding __init__.py).
 
@@ -28,6 +52,7 @@ def get_router_files():
     abs_pat = re.compile(r"from\s+api\.routers\.[\w.]+\.(\w+)\s+import\s+router")
     for init in router_dir.rglob("__init__.py"):
         text = init.read_text()
+        reexported.update(_collect_package_subrouters(init))
         for m in rel_pat.finditer(text):
             reexported.add(str(init.parent / f"{m.group(1)}.py"))
         for m in abs_pat.finditer(text):
@@ -46,7 +71,9 @@ def get_router_files():
 
     return sorted(
         p for p in router_dir.rglob("*.py")
-        if p.name != "__init__.py" and str(p) not in reexported
+        if p.name != "__init__.py"
+        and not p.name.startswith("_")
+        and str(p) not in reexported
     )
 
 def get_mounted_routers():
