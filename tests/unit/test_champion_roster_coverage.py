@@ -88,7 +88,7 @@ class TestBacktestAllRosterParity:
         "nbeats",              # deep-learning baseline — backtest-nbeats on demand
         "nhits",               # deep-learning baseline — backtest-nhits on demand
         "rolling_mean",        # cheap baseline — backtest-rolling-mean on demand
-        "rolling_median",      # cheap baseline — backtest-rolling-mean sibling
+        "rolling_median",      # cheap baseline — backtest-rolling-median on demand
         "seasonal_naive",      # cheap baseline — backtest-seasonal-naive on demand
     }
 
@@ -127,7 +127,18 @@ class TestBacktestAllRosterParity:
             "backtest-lgbm-cust": "lgbm_cust_enriched",
             "backtest-catboost-cust": "catboost_cust_enriched",
             "backtest-xgboost-cust": "xgboost_cust_enriched",
+            "backtest-rolling-median": "rolling_median",
         }
+
+    def test_gated_competing_models_have_explicit_make_targets(self):
+        from common.core.paths import PROJECT_ROOT
+
+        text = (PROJECT_ROOT / "Makefile").read_text()
+        for model in sorted(self._GATED_OUT):
+            if model == "bolt_hierarchical":
+                continue
+            target = f"backtest-{model.replace('_', '-')}:"
+            assert target in text, f"{model} is gated out but has no explicit {target}"
 
     def test_backtest_all_covers_every_non_gated_competing_model(self):
         from common.core.utils import get_competing_model_ids

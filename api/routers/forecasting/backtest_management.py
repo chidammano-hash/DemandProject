@@ -23,6 +23,7 @@ from api.core import get_conn
 from common.ai.decision_ledger import DecisionRecord, append_decision
 from common.ai.lineage import emit_event as emit_lineage_event
 from common.core.constants import CHAMPION_MODEL_ID
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,6 @@ router = APIRouter(prefix="/backtest-management", tags=["backtest-management"])
 # Constants
 # ---------------------------------------------------------------------------
 
-from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 _BACKTEST_DIR = _PROJECT_ROOT / "data" / "backtest"
 
 # Map pipeline config model_id → job registry type_id.
@@ -50,6 +50,7 @@ MODEL_TO_JOB_TYPE: dict[str, str] = {
     "mstl": "backtest_mstl",
     "seasonal_naive": "backtest_seasonal_naive",
     "rolling_mean": "backtest_rolling_mean",
+    "rolling_median": "backtest_rolling_median",
     "nhits": "backtest_nhits",
     "nbeats": "backtest_nbeats",
 }
@@ -67,6 +68,7 @@ MODEL_TO_DIR: dict[str, str] = {
     "mstl": "mstl",
     "seasonal_naive": "seasonal_naive",
     "rolling_mean": "rolling_mean",
+    "rolling_median": "rolling_median",
     "nhits": "nhits",
     "nbeats": "nbeats",
 }

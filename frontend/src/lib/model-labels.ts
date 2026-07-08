@@ -10,6 +10,7 @@ export const MODEL_LABELS: Record<string, string> = {
   nhits: "N-HiTS",
   seasonal_naive: "Seasonal Naive",
   rolling_mean: "Rolling Mean",
+  rolling_median: "Rolling Median",
 };
 
 export const MODEL_TYPE_COLORS: Record<string, string> = {

@@ -26,6 +26,7 @@ export const STAGING_COLORS: Record<string, string> = {
   mstl: "#ca8a04",
   seasonal_naive: "#64748b",
   rolling_mean: "#78716c",
+  rolling_median: "#57534e",
 };
 export const STAGING_FALLBACK_COLOR = "#6b7280";
 

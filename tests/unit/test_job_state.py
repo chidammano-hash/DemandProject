@@ -487,6 +487,18 @@ class TestAutoLoadBacktest:
             "run_id": 11,
         }
 
+    def test_rolling_median_model_uses_own_output_dir(self):
+        from common.services.job_state import _auto_load_backtest
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(f"{_MOD}._run_load_backtest_model") as m_load,
+        ):
+            _auto_load_backtest("rolling_median", 12)
+        assert m_load.call_args[0][0] == {
+            "model_id": "rolling_median",
+            "run_id": 12,
+        }
+
 
 class TestRunBacktestAutoLoadsBeforeCompletion:
     """_run_backtest auto-loads BEFORE marking the run completed, so the UI sees
@@ -530,3 +542,18 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         assert cmd[cmd.index("--model-id") + 1] == "catboost_cust_enriched"
         assert m_auto.call_args[0][0] == "catboost_cust_enriched"
         assert m_update.call_args[0][1] == "catboost_cust_enriched"
+
+    def test_rolling_median_invokes_registered_baseline_script(self):
+        from common.services.job_state import _run_backtest
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok") as m_run,
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}._auto_load_backtest") as m_auto,
+            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
+        ):
+            _run_backtest("rolling_median", {"backtest_run_id": 13})
+
+        cmd = m_run.call_args[0][0]
+        assert cmd[-2:] == ["--model", "rolling_median"]
+        assert m_auto.call_args[0][0] == "rolling_median"
+        assert m_update.call_args[0][1] == "rolling_median"

@@ -96,6 +96,7 @@ class TestJobTypeRegistry:
         expected = {
             "cluster_scenario", "cluster_pipeline", "seasonality_pipeline",
             "backtest_lgbm", "backtest_catboost", "backtest_xgboost",
+            "backtest_rolling_median",
             "champion_select", "generate_ai_insights",
             "generate_production_forecast", "compute_replenishment_plan",
             "generate_storyboard", "compute_safety_stock", "compute_eoq",

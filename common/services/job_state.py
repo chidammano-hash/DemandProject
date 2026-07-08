@@ -100,6 +100,7 @@ _BACKTEST_OUTPUT_DIRS: dict[str, str] = {
     "nhits": "nhits",
     "seasonal_naive": "seasonal_naive",
     "rolling_mean": "rolling_mean",
+    "rolling_median": "rolling_median",
 }
 
 
@@ -485,6 +486,7 @@ def _run_backtest(
         "mstl": "scripts/ml/run_backtest_mstl.py",
         "seasonal_naive": ("scripts/ml/run_backtest.py", ["--model", "seasonal_naive"]),
         "rolling_mean": ("scripts/ml/run_backtest.py", ["--model", "rolling_mean"]),
+        "rolling_median": ("scripts/ml/run_backtest.py", ["--model", "rolling_median"]),
         "nhits": ("scripts/ml/run_backtest_dl.py", ["--model", "nhits"]),
         "nbeats": ("scripts/ml/run_backtest_dl.py", ["--model", "nbeats"]),
     }
@@ -589,6 +591,7 @@ _run_backtest_chronos2_enriched = _make_backtest_runner("chronos2_enriched")
 _run_backtest_mstl = _make_backtest_runner("mstl")
 _run_backtest_seasonal_naive = _make_backtest_runner("seasonal_naive")
 _run_backtest_rolling_mean = _make_backtest_runner("rolling_mean")
+_run_backtest_rolling_median = _make_backtest_runner("rolling_median")
 _run_backtest_nhits = _make_backtest_runner("nhits")
 _run_backtest_nbeats = _make_backtest_runner("nbeats")
 

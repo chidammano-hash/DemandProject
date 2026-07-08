@@ -73,6 +73,7 @@ def _mock_roster():
         "catboost_cust_enriched": {"type": "tree", "enabled": True},
         "xgboost_cust_enriched": {"type": "tree", "enabled": True},
         "chronos_bolt": {"type": "foundation", "enabled": True},
+        "rolling_median": {"type": "statistical", "enabled": True},
     }
 
 
@@ -270,6 +271,37 @@ async def test_submit_run_customer_enriched_tree_uses_base_family_job():
         "model_id": "catboost_cust_enriched",
     }
     assert kwargs["group_override"] == "backtest_catboost"
+
+
+@pytest.mark.asyncio
+async def test_submit_run_rolling_median_is_runnable():
+    """Configured competing rolling_median must be runnable from the product API."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [None, (62,)]
+
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-bt-median"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/rolling_median/run?parallel=true")
+
+    assert resp.status_code == 201
+    assert resp.json()["model_id"] == "rolling_median"
+    kwargs = mock_jm.return_value.submit_job.call_args.kwargs
+    assert kwargs["job_type"] == "backtest_rolling_median"
+    assert kwargs["params"] == {
+        "backtest_run_id": 62,
+        "model_id": "rolling_median",
+    }
+    assert kwargs["group_override"] == "backtest_rolling_median"
 
 
 @pytest.mark.asyncio

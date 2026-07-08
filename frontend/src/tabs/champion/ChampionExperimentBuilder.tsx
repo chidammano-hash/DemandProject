@@ -82,7 +82,7 @@ const META_DEFAULTS = {
 const DEFAULT_MODELS = [
   "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
   "chronos2_enriched",
-  "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean",
+  "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean", "rolling_median",
 ];
 
 const STRATEGY_LABELS: Record<string, string> = {

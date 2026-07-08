@@ -46,6 +46,7 @@ from common.services.job_state import (
     _run_backtest_nbeats,
     _run_backtest_nhits,
     _run_backtest_rolling_mean,
+    _run_backtest_rolling_median,
     _run_backtest_seasonal_naive,
     _run_backtest_xgboost,
     _run_champion_experiment,
@@ -182,6 +183,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         description="Run Rolling Mean statistical baseline backtest (~5 min)",
         group="backtest",
         callable=_run_backtest_rolling_mean,
+        params_schema={},
+    ),
+    "backtest_rolling_median": JobTypeDef(
+        type_id="backtest_rolling_median",
+        label="Rolling Median Backtest",
+        description="Run Rolling Median statistical baseline backtest (~5 min)",
+        group="backtest",
+        callable=_run_backtest_rolling_median,
         params_schema={},
     ),
     "backtest_mstl": JobTypeDef(
