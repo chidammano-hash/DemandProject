@@ -41,6 +41,7 @@ from common.ml.model_registry import (
     build_tree_model,
     fit_model,
     get_best_iteration,
+    get_tree_default_params,
 )
 from common.scripts_base import load_project_env, setup_logging
 from common.services.perf_profiler import profiled_section
@@ -158,30 +159,7 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "gpu_test_platform_check": True,  # only auto-detect on Darwin
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
-        "default_params": lambda algo, seed=42: {
-            k: v for k, v in {
-                "objective": algo.get("objective", "regression_l1"),
-                "alpha": algo.get("huber_delta", None),  # Huber delta (only used when objective=huber)
-                "n_estimators": algo.get("n_estimators", 1500),
-                "learning_rate": algo.get("learning_rate", 0.02),
-                "num_leaves": algo.get("num_leaves", 63),
-                "min_child_samples": algo.get("min_child_samples", 20),
-                "max_depth": algo.get("max_depth", 8),
-                "min_gain_to_split": algo.get("min_gain_to_split", 0.005),
-                "subsample": algo.get("subsample", 0.70),
-                "bagging_freq": algo.get("bagging_freq", 1),
-                "colsample_bytree": algo.get("colsample_bytree", 0.80),
-                "feature_fraction_bynode": algo.get("feature_fraction_bynode", 0.7),
-                "reg_lambda": algo.get("reg_lambda", 1.0),
-                "reg_alpha": algo.get("reg_alpha", 0.1),
-                "path_smooth": algo.get("path_smooth", 1.0),
-                "max_bin": algo.get("max_bin", 255),
-                "feature_pre_filter": True,
-                "verbosity": -1,
-                "random_state": seed,
-                "n_jobs": -1,
-            }.items() if v is not None
-        },
+        "default_params": lambda algo, seed=42: get_tree_default_params("lgbm", algo, seed=seed),
         "cat_dtype": "category",
         "model_params_key": "lgbm_params",
         "model_type_tag": "lgbm_backtest",
@@ -202,38 +180,7 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "gpu_test_platform_check": False,
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
-        "default_params": lambda algo, seed=42: {
-            k: v
-            for k, v in {
-                "iterations": algo.get("iterations", 300),
-                "learning_rate": algo.get("learning_rate", 0.08),
-                "depth": algo.get("depth", 5),
-                "l2_leaf_reg": algo.get("l2_leaf_reg", 3.0),
-                "border_count": algo.get("border_count", 64),
-                "max_ctr_complexity": algo.get("max_ctr_complexity", 1),
-                "grow_policy": algo.get("grow_policy"),
-                "max_leaves": algo.get("max_leaves"),
-                "subsample": algo.get("subsample"),
-                "reg_lambda": algo.get("reg_lambda"),
-                "random_strength": algo.get("random_strength"),
-                "min_data_in_leaf": algo.get("min_data_in_leaf"),
-                "colsample_bylevel": algo.get("colsample_bylevel"),
-                "bagging_temperature": algo.get("bagging_temperature"),
-                "bootstrap_type": algo.get("bootstrap_type"),
-                "model_size_reg": algo.get("model_size_reg"),
-                "score_function": algo.get("score_function"),
-                "boost_from_average": algo.get("boost_from_average"),
-                "leaf_estimation_method": algo.get("leaf_estimation_method"),
-                "leaf_estimation_iterations": algo.get("leaf_estimation_iterations"),
-                "langevin": algo.get("langevin"),
-                "diffusion_temperature": algo.get("diffusion_temperature"),
-                "random_seed": seed,
-                "loss_function": "RMSE",
-                "verbose": 0,
-                "thread_count": -1,
-            }.items()
-            if v is not None
-        },
+        "default_params": lambda algo, seed=42: get_tree_default_params("catboost", algo, seed=seed),
         "cat_dtype": "str",
         "model_params_key": "catboost_params",
         "model_type_tag": "catboost_backtest",
@@ -254,39 +201,7 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "gpu_test_platform_check": False,
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
-        "default_params": lambda algo, seed=42: {
-            k: v
-            for k, v in {
-                # Default to MAE (reg:absoluteerror) like LGBM's regression_l1.
-                # Without this XGBoost falls back to reg:squarederror (MSE), which
-                # chases demand spikes and over-predicts on skewed low-volume DFUs.
-                # Keep backtest and production training consistent so the champion
-                # judges XGBoost on the same objective it will run in production.
-                "objective": algo.get("objective", "reg:absoluteerror"),
-                "n_estimators": algo.get("n_estimators", 500),
-                "learning_rate": algo.get("learning_rate", 0.05),
-                "max_depth": algo.get("max_depth", 6),
-                "min_child_weight": algo.get("min_child_weight", 5),
-                "subsample": algo.get("subsample", 0.8),
-                "colsample_bytree": algo.get("colsample_bytree", 0.8),
-                "grow_policy": algo.get("grow_policy"),
-                "max_leaves": algo.get("max_leaves"),
-                "max_bin": algo.get("max_bin"),
-                "reg_lambda": algo.get("reg_lambda"),
-                "reg_alpha": algo.get("reg_alpha"),
-                "gamma": algo.get("gamma"),
-                "colsample_bylevel": algo.get("colsample_bylevel"),
-                "booster": algo.get("booster"),
-                **({"rate_drop": algo["rate_drop"]} if algo.get("booster") == "dart" and "rate_drop" in algo else {}),
-                **({"skip_drop": algo["skip_drop"]} if algo.get("booster") == "dart" and "skip_drop" in algo else {}),
-                "verbosity": 0,
-                "random_state": seed,
-                "n_jobs": -1,
-                "enable_categorical": True,
-                "tree_method": "hist",
-            }.items()
-            if v is not None
-        },
+        "default_params": lambda algo, seed=42: get_tree_default_params("xgboost", algo, seed=seed),
         "cat_dtype": "category",
         "model_params_key": "xgboost_params",
         "model_type_tag": "xgboost_backtest",

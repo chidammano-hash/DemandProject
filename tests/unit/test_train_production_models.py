@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from common.core.constants import MIN_CLUSTER_ROWS
+from common.core.utils import load_forecast_pipeline_config
 
 
 def _make_train_df(cluster_label: str, n_rows: int) -> pd.DataFrame:
@@ -73,3 +74,22 @@ def test_train_cluster_builds_tree_model_through_registry():
     assert model is mock_model
     assert meta["n_estimators_used"] == 100
     build.assert_called_once_with("lgbm", {"n_estimators": 100})
+
+
+def test_production_and_backtest_share_tree_default_params():
+    """Backtest and production training must resolve identical tree params."""
+    from scripts.ml.run_backtest import MODEL_REGISTRY
+    from scripts.ml.train_production_models import _MODEL_LIBRARY
+
+    cfg = load_forecast_pipeline_config()
+    model_ids = {
+        "lgbm": "lgbm_cluster",
+        "catboost": "catboost_cluster",
+        "xgboost": "xgboost_cluster",
+    }
+
+    for model_name, model_id in model_ids.items():
+        algo_params = cfg["algorithms"][model_id]["params"]
+        assert _MODEL_LIBRARY[model_name]["default_params_fn"](algo_params, seed=7) == (
+            MODEL_REGISTRY[model_name]["default_params"](algo_params, seed=7)
+        )

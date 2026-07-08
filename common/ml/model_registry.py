@@ -243,6 +243,116 @@ def _base_model_name(model_id: str, algo_type: str) -> str:
     return model_id
 
 
+def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict[str, Any]:
+    """Build default tree estimator params from a YAML algorithm params section.
+
+    This is the single source of truth for tree-model constructor params used by
+    both backtesting and production training. Model-specific fit behavior still
+    belongs in :func:`fit_model`.
+    """
+    if model_name == "lgbm":
+        return {
+            k: v for k, v in {
+                "objective": algo.get("objective", "regression_l1"),
+                "alpha": algo.get("huber_delta", None),
+                "n_estimators": algo.get("n_estimators", 1500),
+                "learning_rate": algo.get("learning_rate", 0.02),
+                "num_leaves": algo.get("num_leaves", 63),
+                "min_child_samples": algo.get("min_child_samples", 20),
+                "max_depth": algo.get("max_depth", 8),
+                "min_gain_to_split": algo.get("min_gain_to_split", 0.005),
+                "subsample": algo.get("subsample", 0.70),
+                "bagging_freq": algo.get("bagging_freq", 1),
+                "colsample_bytree": algo.get("colsample_bytree", 0.80),
+                "feature_fraction_bynode": algo.get("feature_fraction_bynode", 0.7),
+                "reg_lambda": algo.get("reg_lambda", 1.0),
+                "reg_alpha": algo.get("reg_alpha", 0.1),
+                "path_smooth": algo.get("path_smooth", 1.0),
+                "max_bin": algo.get("max_bin", 255),
+                "feature_pre_filter": True,
+                "verbosity": -1,
+                "random_state": seed,
+                "n_jobs": -1,
+            }.items() if v is not None
+        }
+
+    if model_name == "catboost":
+        return {
+            k: v
+            for k, v in {
+                "iterations": algo.get("iterations", 300),
+                "learning_rate": algo.get("learning_rate", 0.08),
+                "depth": algo.get("depth", 5),
+                "l2_leaf_reg": algo.get("l2_leaf_reg", 3.0),
+                "border_count": algo.get("border_count", 64),
+                "max_ctr_complexity": algo.get("max_ctr_complexity", 1),
+                "grow_policy": algo.get("grow_policy"),
+                "max_leaves": algo.get("max_leaves"),
+                "subsample": algo.get("subsample"),
+                "reg_lambda": algo.get("reg_lambda"),
+                "random_strength": algo.get("random_strength"),
+                "min_data_in_leaf": algo.get("min_data_in_leaf"),
+                "colsample_bylevel": algo.get("colsample_bylevel"),
+                "bagging_temperature": algo.get("bagging_temperature"),
+                "bootstrap_type": algo.get("bootstrap_type"),
+                "model_size_reg": algo.get("model_size_reg"),
+                "score_function": algo.get("score_function"),
+                "boost_from_average": algo.get("boost_from_average"),
+                "leaf_estimation_method": algo.get("leaf_estimation_method"),
+                "leaf_estimation_iterations": algo.get("leaf_estimation_iterations"),
+                "langevin": algo.get("langevin"),
+                "diffusion_temperature": algo.get("diffusion_temperature"),
+                "random_seed": seed,
+                "loss_function": algo.get("loss_function", "RMSE"),
+                "verbose": 0,
+                "thread_count": -1,
+            }.items()
+            if v is not None
+        }
+
+    if model_name == "xgboost":
+        return {
+            k: v
+            for k, v in {
+                "objective": algo.get("objective", "reg:absoluteerror"),
+                "n_estimators": algo.get("n_estimators", 500),
+                "learning_rate": algo.get("learning_rate", 0.05),
+                "max_depth": algo.get("max_depth", 6),
+                "min_child_weight": algo.get("min_child_weight", 5),
+                "subsample": algo.get("subsample", 0.8),
+                "colsample_bytree": algo.get("colsample_bytree", 0.8),
+                "grow_policy": algo.get("grow_policy"),
+                "max_leaves": algo.get("max_leaves"),
+                "max_bin": algo.get("max_bin"),
+                "reg_lambda": algo.get("reg_lambda"),
+                "reg_alpha": algo.get("reg_alpha"),
+                "gamma": algo.get("gamma"),
+                "colsample_bylevel": algo.get("colsample_bylevel"),
+                "booster": algo.get("booster"),
+                **(
+                    {"rate_drop": algo["rate_drop"]}
+                    if algo.get("booster") == "dart" and "rate_drop" in algo
+                    else {}
+                ),
+                **(
+                    {"skip_drop": algo["skip_drop"]}
+                    if algo.get("booster") == "dart" and "skip_drop" in algo
+                    else {}
+                ),
+                "verbosity": 0,
+                "random_state": seed,
+                "n_jobs": -1,
+                "enable_categorical": True,
+                "tree_method": algo.get("tree_method", "hist"),
+            }.items()
+            if v is not None
+        }
+
+    raise UnknownAlgorithm(
+        f"Unknown tree backend {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+    )
+
+
 def build_model(algorithm_id: str, params: dict | None = None) -> Any:
     """Construct a configured estimator for ``algorithm_id``.
 

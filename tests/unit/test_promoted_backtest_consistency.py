@@ -114,7 +114,7 @@ _PARAMS_META_KEYS = {
     "correlation_filter", "correlation_threshold",
     "variance_filter", "variance_threshold",
     # Config-only knobs the tuning UI does not expose.
-    "objective", "quantile_heads",
+    "objective", "loss_function", "quantile_heads",
 }
 
 
