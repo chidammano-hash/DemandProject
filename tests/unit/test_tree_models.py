@@ -75,7 +75,21 @@ _ALGO_CONFIG: dict[str, Any] = {
         "lgbm": {
             "enabled": True,
             "model_id": _MODEL_ID,
+            "objective": "regression_l1",
             "n_estimators": 100,
+            "learning_rate": 0.015,
+            "num_leaves": 63,
+            "min_child_samples": 20,
+            "max_depth": 8,
+            "min_gain_to_split": 0.01,
+            "subsample": 0.75,
+            "bagging_freq": 1,
+            "colsample_bytree": 0.8,
+            "feature_fraction_bynode": 0.8,
+            "reg_lambda": 0.8,
+            "reg_alpha": 0.1,
+            "path_smooth": 0.5,
+            "max_bin": 255,
         },
     },
 }
@@ -1151,6 +1165,91 @@ class TestLibraryImportError:
 class TestAlgoConfigOverride:
     """Passing algo_config explicitly must suppress the pipeline config load."""
 
+    def test_missing_iteration_param_skips_model_without_hidden_default(self):
+        """Explicit tree config must include the backend iteration key."""
+        predict_month = pd.Timestamp("2025-01-01")
+        skus = _make_group_skus("G")
+        sku_to_cluster = dict.fromkeys(skus, "C1")
+        grid = _make_grid(sku_to_cluster, predict_month=predict_month)
+
+        lib_module = _fake_lib_module()
+        incomplete_config = {
+            "algorithms": {
+                "lgbm": {
+                    "enabled": True,
+                    "model_id": _MODEL_ID,
+                },
+            },
+        }
+
+        with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model") as build,
+            patch("common.ml.expert_panel.tree_models.fit_model"),
+            patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
+            patch(
+                "common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS
+            ),
+            patch(
+                "common.ml.expert_panel.tree_models.importlib.import_module",
+                return_value=lib_module,
+            ),
+        ):
+            result = run_tree_models(
+                grid=grid,
+                train_end=pd.Timestamp("2024-12-01"),
+                predict_months=[predict_month],
+                enabled_models={"lgbm": {}},
+                classification_df=None,
+                algo_config=incomplete_config,
+            )
+
+        build.assert_not_called()
+        assert list(result.columns) == _PREDICT_COLS
+        assert result.empty
+
+    def test_catboost_missing_loss_function_skips_without_hidden_default(self):
+        """CatBoost loss/objective choices must come from config, not Python defaults."""
+        predict_month = pd.Timestamp("2025-01-01")
+        skus = _make_group_skus("G")
+        sku_to_cluster = dict.fromkeys(skus, "C1")
+        grid = _make_grid(sku_to_cluster, predict_month=predict_month)
+
+        lib_module = _fake_lib_module()
+        catboost_config = {
+            "algorithms": {
+                "catboost": {
+                    "enabled": True,
+                    "model_id": "catboost_cluster",
+                    "iterations": 100,
+                },
+            },
+        }
+
+        with (
+            patch("common.ml.expert_panel.tree_models.build_tree_model") as build,
+            patch("common.ml.expert_panel.tree_models.fit_model"),
+            patch("common.ml.expert_panel.tree_models.get_best_iteration", return_value=50),
+            patch(
+                "common.ml.expert_panel.tree_models.get_feature_columns", return_value=_FEATURE_COLS
+            ),
+            patch(
+                "common.ml.expert_panel.tree_models.importlib.import_module",
+                return_value=lib_module,
+            ),
+        ):
+            result = run_tree_models(
+                grid=grid,
+                train_end=pd.Timestamp("2024-12-01"),
+                predict_months=[predict_month],
+                enabled_models={"catboost": {}},
+                classification_df=None,
+                algo_config=catboost_config,
+            )
+
+        build.assert_not_called()
+        assert list(result.columns) == _PREDICT_COLS
+        assert result.empty
+
     def test_explicit_algo_config_used_without_loading_pipeline_config(self, monkeypatch):
         """load_forecast_pipeline_config must NOT be called when algo_config is provided."""
         predict_month = pd.Timestamp("2025-01-01")
@@ -1208,7 +1307,11 @@ class TestAlgoConfigOverride:
                     "type": "tree",
                     "enabled": True,
                     "cluster_strategy": "per_cluster",
-                    "params": {"n_estimators": 100},
+                    "params": {
+                        key: value
+                        for key, value in _ALGO_CONFIG["algorithms"]["lgbm"].items()
+                        if key not in {"enabled", "model_id"}
+                    },
                 },
             },
         }

@@ -16,6 +16,7 @@ from common.core.constants import CAT_FEATURES, FORECAST_QTY_COL
 from common.core.utils import load_forecast_pipeline_config
 from common.ml.feature_engineering import get_feature_columns
 from common.ml.model_registry import (
+    REQUIRED_TREE_PARAM_KEYS,
     UnknownAlgorithm,
     build_tree_model,
     fit_final_model,
@@ -62,7 +63,8 @@ def _extract_model_params(model_name: str, algo_section: dict[str, Any]) -> dict
     }
     params = {k: v for k, v in algo_section.items() if k not in meta_keys and v is not None}
 
-    # Add model-specific defaults not in config
+    # Add operational constructor settings only. Forecasting hyperparameters
+    # such as objective/loss and iteration count must come from config.
     if model_name == "lgbm":
         params.setdefault("verbosity", -1)
         params.setdefault("random_state", 42)
@@ -72,7 +74,6 @@ def _extract_model_params(model_name: str, algo_section: dict[str, Any]) -> dict
         params.setdefault("verbose", 0)
         params.setdefault("random_seed", 42)
         params.setdefault("thread_count", -1)
-        params.setdefault("loss_function", "RMSE")
     elif model_name == "xgboost":
         params.setdefault("verbosity", 0)
         params.setdefault("random_state", 42)
@@ -81,6 +82,48 @@ def _extract_model_params(model_name: str, algo_section: dict[str, Any]) -> dict
         params.setdefault("tree_method", "hist")
 
     return params
+
+
+def _missing_required_params(model_name: str, params: dict[str, Any]) -> list[str]:
+    """Return required tree hyperparameters missing from the resolved config."""
+    required_keys = REQUIRED_TREE_PARAM_KEYS.get(model_name, ())
+    return [key for key in required_keys if params.get(key) is None]
+
+
+def _required_iteration_count(
+    model_name: str, params: dict[str, Any], iter_param: str
+) -> int | None:
+    """Return the configured max iteration count, or None when config is incomplete."""
+    raw_value = params.get(iter_param)
+    if raw_value is None:
+        logger.warning(
+            "%s config missing required '%s'; skipping model instead of using a Python default",
+            model_name.upper(),
+            iter_param,
+        )
+        return None
+
+    try:
+        max_iterations = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "%s config has invalid '%s'=%r; skipping model",
+            model_name.upper(),
+            iter_param,
+            raw_value,
+        )
+        return None
+
+    if max_iterations <= 0:
+        logger.warning(
+            "%s config requires positive '%s'; got %d, skipping model",
+            model_name.upper(),
+            iter_param,
+            max_iterations,
+        )
+        return None
+
+    return max_iterations
 
 
 def _prepare_cat_features(
@@ -226,8 +269,19 @@ def run_tree_models(
 
         # Build params from algo_config
         params = _extract_model_params(model_name, algo_section)
+        missing_params = _missing_required_params(model_name, params)
+        if missing_params:
+            logger.warning(
+                "%s config missing required tree params: %s; skipping model",
+                model_name.upper(),
+                ", ".join(missing_params),
+            )
+            continue
+
         iter_param = lib_info["iter_param"]
-        max_iterations = params.get(iter_param, 1000)
+        max_iterations = _required_iteration_count(model_name, params, iter_param)
+        if max_iterations is None:
+            continue
 
         groups = sorted(train_df[partition_col].dropna().unique())
         logger.info(
