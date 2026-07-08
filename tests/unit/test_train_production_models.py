@@ -1,6 +1,7 @@
 """Tests for production tree model training orchestration."""
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -241,3 +242,61 @@ def test_save_training_metadata_records_params_source(tmp_path):
 
     metadata = json.loads((tmp_path / "training_metadata.json").read_text())
     assert metadata["params_source"] == "tuning_file:data/tuning/best_params_xgboost.json"
+
+
+def test_main_all_exits_nonzero_when_any_tree_model_fails():
+    """The all-model training job must not report success with missing artifacts."""
+    from scripts.ml.train_production_models import main
+
+    roster = {
+        "lgbm_cluster": {"type": "tree"},
+        "catboost_cluster": {"type": "tree"},
+        "xgboost_cluster": {"type": "tree"},
+        "rolling_mean": {"type": "statistical"},
+    }
+
+    def fake_train(model_id: str) -> None:
+        if model_id == "catboost_cluster":
+            raise RuntimeError("catboost failed")
+
+    with patch.object(sys, "argv", ["train_production_models.py", "--all"]):
+        with patch("scripts.ml.train_production_models.load_project_env"):
+            with patch("scripts.ml.train_production_models.get_algorithm_roster", return_value=roster):
+                with patch(
+                    "scripts.ml.train_production_models.train_production_model",
+                    side_effect=fake_train,
+                ) as train:
+                    with pytest.raises(SystemExit) as exc:
+                        main()
+
+    assert exc.value.code == 1
+    assert train.call_count == 3
+    assert [call.args[0] for call in train.call_args_list] == [
+        "catboost_cluster",
+        "lgbm_cluster",
+        "xgboost_cluster",
+    ]
+
+
+def test_main_all_succeeds_when_all_tree_models_train():
+    """All three tree families should be attempted and a clean run should exit normally."""
+    from scripts.ml.train_production_models import main
+
+    roster = {
+        "lgbm_cluster": {"type": "tree"},
+        "catboost_cluster": {"type": "tree"},
+        "xgboost_cluster": {"type": "tree"},
+        "seasonal_naive": {"type": "statistical"},
+    }
+
+    with patch.object(sys, "argv", ["train_production_models.py", "--all"]):
+        with patch("scripts.ml.train_production_models.load_project_env"):
+            with patch("scripts.ml.train_production_models.get_algorithm_roster", return_value=roster):
+                with patch("scripts.ml.train_production_models.train_production_model") as train:
+                    main()
+
+    assert [call.args[0] for call in train.call_args_list] == [
+        "catboost_cluster",
+        "lgbm_cluster",
+        "xgboost_cluster",
+    ]

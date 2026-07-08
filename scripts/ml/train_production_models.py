@@ -42,16 +42,21 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.ml.backtest_framework import (  # noqa: E402
-    compute_cluster_demand_stats,
-    load_backtest_data,
-    resolve_cluster_params,
-)
 from common.core.constants import (  # noqa: E402
     CAT_FEATURES,
     compute_min_cluster_rows,
 )
 from common.core.db import get_db_params  # noqa: E402
+from common.core.planning_date import get_planning_date  # noqa: E402
+from common.core.utils import (  # noqa: E402
+    get_algorithm_roster,
+    load_forecast_pipeline_config,
+)
+from common.ml.backtest_framework import (  # noqa: E402
+    compute_cluster_demand_stats,
+    load_backtest_data,
+    resolve_cluster_params,
+)
 from common.ml.model_registry import (  # noqa: E402
     build_tree_model,
     fit_model,
@@ -63,13 +68,8 @@ from common.ml.seasonal_naive import (  # noqa: E402
     make_dfu_key,
 )
 from common.ml.tuning import load_best_params  # noqa: E402
-from common.core.planning_date import get_planning_date  # noqa: E402
 from common.scripts_base import load_project_env, setup_logging  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
-from common.core.utils import (  # noqa: E402
-    get_algorithm_roster,
-    load_forecast_pipeline_config,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -775,12 +775,23 @@ def main() -> None:
             sys.exit(1)
 
         logger.info("Training %d forecastable tree models: %s", len(tree_models), tree_models)
+        failed_models: list[str] = []
         for model_id in sorted(tree_models):
             try:
                 train_production_model(model_id)
             except Exception:
                 logger.exception("Failed to train %s", model_id)
-                # Continue with remaining models
+                failed_models.append(model_id)
+                # Continue with remaining models so one bad family does not
+                # mask additional missing artifacts in the same production run.
+        if failed_models:
+            logger.error(
+                "Production training failed for %d/%d tree model(s): %s",
+                len(failed_models),
+                len(tree_models),
+                ", ".join(failed_models),
+            )
+            sys.exit(1)
     else:
         model_id = args.model
         # Validate model_id has a known model library prefix
