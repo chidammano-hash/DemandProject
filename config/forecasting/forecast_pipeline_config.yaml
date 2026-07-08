@@ -463,6 +463,9 @@ production_forecast:
     - lgbm_cluster
     - catboost_cluster
     - xgboost_cluster
+    - lgbm_cust_enriched
+    - catboost_cust_enriched
+    - xgboost_cust_enriched
     residual_lag: 0
     min_residual_months: 6
     z_lower: 1.282

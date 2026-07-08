@@ -60,6 +60,7 @@ from common.services.perf_profiler import profiled_section
 import psycopg
 
 PIPELINE_CONFIG_PATH = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
+CHAMPION_WINNERS_DIR = ROOT / "data" / "champion"
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,127 @@ def load_active_models(model_id: str, config: dict) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 
+def _get_promoted_champion_experiment_id(conn) -> int | None:
+    """Return the active promoted champion experiment, if one exists."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT experiment_id
+            FROM champion_experiment
+            WHERE is_promoted = TRUE
+            ORDER BY promoted_at DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
+def _load_promoted_winners_assignments(
+    conn,
+    item_id: str | None = None,
+    loc: str | None = None,
+) -> pd.DataFrame | None:
+    """Load champion routing from the promoted experiment winners CSV.
+
+    The promote endpoint treats ``data/champion/experiment_<id>_winners.csv`` as
+    source of truth. Production generation must use the same source; otherwise it
+    can stage forecasts from stale ``fact_external_forecast_monthly`` champion
+    rows and the product shows a promoted champion that was not actually used.
+    Returns ``None`` only when no promoted champion experiment exists, allowing
+    legacy installs to fall back to the historical DB-based route.
+    """
+    experiment_id = _get_promoted_champion_experiment_id(conn)
+    if experiment_id is None:
+        return None
+
+    winners_path = CHAMPION_WINNERS_DIR / f"experiment_{experiment_id}_winners.csv"
+    if not winners_path.exists():
+        raise FileNotFoundError(
+            f"Promoted champion experiment {experiment_id} has no winners file: "
+            f"{winners_path}. Re-run/promote a champion experiment before generating "
+            "production champion forecasts."
+        )
+
+    winners = pd.read_csv(
+        winners_path,
+        dtype={"item_id": str, "customer_group": str, "loc": str, "model_id": str},
+    )
+    required = {"item_id", "loc", "model_id", "startdate"}
+    missing = required - set(winners.columns)
+    if missing:
+        raise ValueError(
+            f"Winners file {winners_path.name} is missing required columns: "
+            f"{', '.join(sorted(missing))}"
+        )
+    if item_id:
+        winners = winners[winners["item_id"] == str(item_id)]
+    if loc:
+        winners = winners[winners["loc"] == str(loc)]
+    if winners.empty:
+        return pd.DataFrame(
+            columns=["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]
+        )
+
+    winners = winners.copy()
+    winners["startdate"] = pd.to_datetime(winners["startdate"]).dt.to_period("M").dt.to_timestamp()
+    winners["source_model_id"] = winners["model_id"].astype(str)
+    sort_cols = ["item_id", "loc", "startdate", "source_model_id"]
+    if "customer_group" in winners.columns:
+        sort_cols.append("customer_group")
+    winners = (
+        winners.sort_values(sort_cols)
+        .drop_duplicates(["item_id", "loc", "startdate"], keep="first")
+    )
+
+    attrs = load_dfu_attrs(conn, item_id, loc)
+    if attrs.empty:
+        winners["cluster_id"] = pd.NA
+        winners["customer_group"] = winners.get("customer_group", pd.Series(pd.NA, index=winners.index))
+        return winners[["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]]
+
+    attrs = attrs.copy()
+    attrs["item_id"] = attrs["item_id"].astype(str)
+    attrs["loc"] = attrs["loc"].astype(str)
+    attrs["customer_group"] = attrs["customer_group"].astype(str)
+    attrs = attrs.rename(columns={"ml_cluster": "cluster_id"})
+    default_attrs = (
+        attrs.sort_values(["item_id", "loc", "customer_group"])
+        .drop_duplicates(["item_id", "loc"], keep="first")
+        [["item_id", "loc", "customer_group", "cluster_id"]]
+    )
+
+    if "customer_group" in winners.columns and winners["customer_group"].notna().any():
+        merged = winners.merge(
+            attrs[["item_id", "customer_group", "loc", "cluster_id"]],
+            on=["item_id", "customer_group", "loc"],
+            how="left",
+        )
+        fallback = winners.merge(
+            default_attrs,
+            on=["item_id", "loc"],
+            how="left",
+            suffixes=("", "_default"),
+        )
+        merged["cluster_id"] = merged["cluster_id"].combine_first(fallback["cluster_id"])
+        merged["customer_group"] = merged["customer_group"].combine_first(
+            fallback["customer_group_default"]
+        )
+    else:
+        merged = winners.drop(columns=["customer_group"], errors="ignore").merge(
+            default_attrs,
+            on=["item_id", "loc"],
+            how="left",
+        )
+
+    df = merged[["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]]
+    logger.info(
+        "Promoted champion assignments loaded from %s: %s DFU-months across %s DFUs",
+        winners_path.name,
+        f"{len(df):,}",
+        f"{df.drop_duplicates(['item_id', 'loc']).shape[0]:,}",
+    )
+    return df.reset_index(drop=True)
+
+
 def get_champion_assignments(conn, item_id: str | None = None, loc: str | None = None) -> pd.DataFrame:
     """Return the champion model assignment per DFU-MONTH.
 
@@ -219,6 +341,10 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
     Returns DataFrame with columns:
         item_id, loc, startdate, source_model_id, cluster_id, customer_group.
     """
+    promoted_df = _load_promoted_winners_assignments(conn, item_id, loc)
+    if promoted_df is not None:
+        return promoted_df
+
     where_clauses = ["f.model_id = 'champion'"]
     params: list = []
 

@@ -557,7 +557,15 @@ def test_load_config_ci_section():
     config = load_config()
     ci = config["confidence_interval"]
     assert ci["enabled"] is True
-    assert "lgbm_cluster" in ci["source_model_ids"]
+    for model_id in (
+        "lgbm_cluster",
+        "catboost_cluster",
+        "xgboost_cluster",
+        "lgbm_cust_enriched",
+        "catboost_cust_enriched",
+        "xgboost_cust_enriched",
+    ):
+        assert model_id in ci["source_model_ids"]
     assert ci["z_lower"] == 1.282
 
 
@@ -1043,6 +1051,9 @@ def test_get_champion_assignments_returns_per_month_rows():
         return per_month.copy()
 
     with patch(
+        "scripts.forecasting.generate_production_forecasts._get_promoted_champion_experiment_id",
+        return_value=None,
+    ), patch(
         "scripts.forecasting.generate_production_forecasts.read_sql_chunked",
         side_effect=_fake_read_sql_chunked,
     ):
@@ -1056,3 +1067,54 @@ def test_get_champion_assignments_returns_per_month_rows():
     # Two months for the one DFU survive.
     assert len(df) == 2
     assert set(df["source_model_id"]) == {"seasonal_naive", "rolling_mean"}
+
+
+def test_get_champion_assignments_prefers_promoted_winners_csv(tmp_path):
+    """Production generation uses the promoted experiment winners file.
+
+    This keeps generate aligned with the promote endpoint: both treat
+    experiment_<id>_winners.csv as the champion routing source of truth instead
+    of stale fact_external_forecast_monthly rows.
+    """
+    champion_dir = tmp_path / "champion"
+    champion_dir.mkdir()
+    (champion_dir / "experiment_53_winners.csv").write_text(
+        "item_id,customer_group,loc,model_id,startdate\n"
+        "10031,ALL,1401-BULK,seasonal_naive,2026-01-01\n"
+        "10031,ALL,1401-BULK,rolling_mean,2026-02-01\n"
+        # Duplicate same DFU-month resolves lexically by model_id, matching promote.
+        "10031,ALL,1401-BULK,xgboost_cluster,2026-02-01\n"
+    )
+    attrs = pd.DataFrame([
+        {
+            "item_id": "10031",
+            "customer_group": "ALL",
+            "loc": "1401-BULK",
+            "ml_cluster": 7,
+            "execution_lag": 1,
+            "total_lt": 14,
+            "brand": "BrandA",
+            "region": "NORTH",
+            "abc_vol": "A",
+        }
+    ])
+
+    with patch(
+        "scripts.forecasting.generate_production_forecasts._get_promoted_champion_experiment_id",
+        return_value=53,
+    ), patch(
+        "scripts.forecasting.generate_production_forecasts.CHAMPION_WINNERS_DIR",
+        champion_dir,
+    ), patch(
+        "scripts.forecasting.generate_production_forecasts.load_dfu_attrs",
+        return_value=attrs,
+    ), patch(
+        "scripts.forecasting.generate_production_forecasts.read_sql_chunked",
+    ) as legacy_read:
+        df = get_champion_assignments(MagicMock())
+
+    legacy_read.assert_not_called()
+    assert len(df) == 2
+    assert list(df["source_model_id"]) == ["seasonal_naive", "rolling_mean"]
+    assert set(df["cluster_id"]) == {7}
+    assert set(df["customer_group"]) == {"ALL"}
