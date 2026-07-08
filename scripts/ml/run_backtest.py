@@ -38,6 +38,7 @@ from common.ml.backtest_framework import (
 )
 from common.core.constants import FORECAST_QTY_COL, compute_min_cluster_rows
 from common.ml.model_registry import (
+    build_tree_model,
     fit_model,
     get_best_iteration,
 )
@@ -609,12 +610,10 @@ def _train_single_cluster(
 
     This function is self-contained with no shared mutable state, making it safe
     for use in ProcessPoolExecutor.  Accepts only picklable arguments (no lambdas
-    or registry dicts).  model_class and lib_module can be passed as dotted-path
-    strings for picklability — they are resolved via import inside the worker.
+    or registry dicts).  Tree estimator construction is delegated to
+    model_registry.build_tree_model; lib_module can be passed as a dotted module
+    string for fit-time callback support.
     """
-    # Resolve string references to actual objects (for ProcessPoolExecutor pickling)
-    if isinstance(model_class, str):
-        model_class = _import_model_class(model_class)
     if isinstance(lib_module, str):
         lib_module = importlib.import_module(lib_module)
 
@@ -775,7 +774,7 @@ def _train_single_cluster(
         fit_params[thread_key] = max(2, n_cpus // 4)
 
     max_iters = fit_params.get(iter_param, 1000)
-    model = model_class(**fit_params)
+    model = build_tree_model(model_name, fit_params)
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()
     fit_model(
@@ -1066,7 +1065,7 @@ def train_and_predict_global(
 
     fit_params = {**params, **registry["fit_extras_global"](params, iter_param)}
     max_iters = fit_params.get(iter_param, 1000)
-    model = model_class(**fit_params)
+    model = build_tree_model(model_name, fit_params)
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()
     fit_model(model, model_name, X_tr, y_tr, X_val, y_val, cat_cols, feature_cols, lib_module, max_iters)

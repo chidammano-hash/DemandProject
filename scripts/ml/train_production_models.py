@@ -53,6 +53,7 @@ from common.core.constants import (  # noqa: E402
 )
 from common.core.db import get_db_params  # noqa: E402
 from common.ml.model_registry import (  # noqa: E402
+    build_tree_model,
     fit_model,
     get_best_iteration,
 )
@@ -381,7 +382,7 @@ def _train_cluster(
     fit_params = _apply_tweedie_objective(fit_params, model_name, demand_pattern)
 
     max_iters = fit_params.get(iter_param, 1000)
-    model = model_class(**fit_params)
+    model = build_tree_model(model_name, fit_params)
 
     # Fit with early stopping using validation set
     fit_model(
