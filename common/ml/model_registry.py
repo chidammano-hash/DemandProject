@@ -52,9 +52,7 @@ CANONICAL_TO_NATIVE: dict[str, dict[str, str | None]] = {
 # Reverse mapping: native → canonical (built dynamically)
 NATIVE_TO_CANONICAL: dict[str, dict[str, str]] = {}
 for _model, _mapping in CANONICAL_TO_NATIVE.items():
-    NATIVE_TO_CANONICAL[_model] = {
-        v: k for k, v in _mapping.items() if v is not None
-    }
+    NATIVE_TO_CANONICAL[_model] = {v: k for k, v in _mapping.items() if v is not None}
 
 
 def to_native_params(model_name: str, canonical_params: dict) -> dict:
@@ -91,6 +89,7 @@ def from_native_params(model_name: str, native_params: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Best iteration abstraction
 # ---------------------------------------------------------------------------
+
 
 def get_best_iteration(model: Any, model_name: str) -> int | None:
     """Get the best iteration from a trained model, abstracting attribute differences.
@@ -172,7 +171,7 @@ def _wape_lgbm(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[str, float, bool
 class WapeMetric:
     """CatBoost custom metric that computes WAPE for early stopping alignment."""
 
-    def get_final_error(self, error: float, weight: float) -> float:  # noqa: ARG002
+    def get_final_error(self, error: float, weight: float) -> float:
         return error
 
     def is_max_optimal(self) -> bool:
@@ -182,7 +181,7 @@ class WapeMetric:
         self,
         approxes: list[list[float]],
         target: list[float],
-        weight: list[float] | None,  # noqa: ARG002
+        weight: list[float] | None,
     ) -> tuple[float, float]:
         y_pred = np.asarray(approxes[0])
         y_true = np.asarray(target)
@@ -216,7 +215,8 @@ def _wape_xgb(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # Algorithm factory (build_model)
 # ---------------------------------------------------------------------------
 
-class UnknownAlgorithm(ValueError):
+
+class UnknownAlgorithm(ValueError):  # noqa: N818 - public API keeps this legacy name.
     """Raised when ``build_model`` is called with an unknown algorithm id.
 
     Subclasses ``ValueError`` so existing ``except ValueError`` blocks
@@ -302,7 +302,8 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
     if model_name == "lgbm":
         _require_tree_params(model_name, algo, REQUIRED_TREE_PARAM_KEYS[model_name])
         return {
-            k: v for k, v in {
+            k: v
+            for k, v in {
                 "objective": algo["objective"],
                 "alpha": algo.get("huber_delta"),
                 "n_estimators": algo["n_estimators"],
@@ -323,7 +324,8 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
                 "verbosity": -1,
                 "random_state": seed,
                 "n_jobs": -1,
-            }.items() if v is not None
+            }.items()
+            if v is not None
         }
 
     if model_name == "catboost":
@@ -438,8 +440,7 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
     entry = algorithms.get(algorithm_id)
     if entry is None:
         raise UnknownAlgorithm(
-            f"Unknown algorithm id: {algorithm_id!r}. "
-            f"Expected one of: {sorted(algorithms.keys())}"
+            f"Unknown algorithm id: {algorithm_id!r}. Expected one of: {sorted(algorithms.keys())}"
         )
 
     algo_type = entry.get("type", "tree")
@@ -482,12 +483,15 @@ def build_tree_model(base_name: str, params: dict | None = None) -> Any:
     native = to_native_params(base_name, resolved)
     if base_name == "lgbm":
         from lightgbm import LGBMRegressor
+
         return LGBMRegressor(**native)
     if base_name == "catboost":
         from catboost import CatBoostRegressor
+
         return CatBoostRegressor(**native)
     if base_name == "xgboost":
         from xgboost import XGBRegressor
+
         return XGBRegressor(**native)
     raise UnknownAlgorithm(
         f"Unknown tree backend {base_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
@@ -503,7 +507,7 @@ class _FoundationStub:
     algorithm so tests and generic orchestration code can introspect it.
     """
 
-    __slots__ = ("algorithm_id", "algo_type", "params")
+    __slots__ = ("algo_type", "algorithm_id", "params")
 
     def __init__(self, algorithm_id: str, algo_type: str, params: dict):
         self.algorithm_id = algorithm_id
@@ -567,7 +571,8 @@ def fit_model(
         # Training objective is MAE/Tweedie; stopping on WAPE drives stopping
         # toward the actual accuracy KPI used in champion selection.
         model.fit(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             eval_set=[(X_val, y_val)],
             eval_metric=_wape_lgbm,
             categorical_feature=cat_cols,
@@ -585,7 +590,8 @@ def fit_model(
         # Note: custom_metric only tracks additional metrics during training — it does
         # NOT change which metric drives early stopping, so it provides no benefit here.
         model.fit(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             cat_features=cat_indices,
             eval_set=eval_pool,
             early_stopping_rounds=patience,
@@ -597,9 +603,42 @@ def fit_model(
         _wape_xgb.__name__ = "wape"  # XGBoost uses __name__ as metric label
         model.set_params(eval_metric=_wape_xgb, early_stopping_rounds=patience)
         model.fit(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             eval_set=[(X_val, y_val)],
             verbose=False,
         )
     else:
-        raise ValueError(f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'.")
+        raise ValueError(
+            f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+        )
+
+
+def fit_final_model(
+    model: Any,
+    model_name: str,
+    X: pd.DataFrame,
+    y: pd.Series,
+    cat_cols: list[str],
+    feature_cols: list[str],
+) -> None:
+    """Fit a final tree model on the full training window without early stopping.
+
+    Production training first uses :func:`fit_model` on a train/validation split
+    to choose the boosting round, then constructs a fresh estimator with that
+    round count and calls this helper on ALL available rows. Keeping this final
+    fit in the registry preserves the "all tree .fit() calls go through
+    model_registry.py" rule while letting saved production artifacts use the
+    validation months as training signal.
+    """
+    if model_name == "lgbm":
+        model.fit(X, y, categorical_feature=cat_cols)
+    elif model_name == "catboost":
+        cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
+        model.fit(X, y, cat_features=cat_indices, verbose=False)
+    elif model_name == "xgboost":
+        model.fit(X, y, verbose=False)
+    else:
+        raise ValueError(
+            f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+        )

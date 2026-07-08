@@ -13,11 +13,12 @@ import numpy as np
 import pandas as pd
 
 from common.core.constants import CAT_FEATURES, FORECAST_QTY_COL
-from common.core.utils import get_algorithm_params, load_config, load_forecast_pipeline_config
+from common.core.utils import load_forecast_pipeline_config
 from common.ml.feature_engineering import get_feature_columns
 from common.ml.model_registry import (
     UnknownAlgorithm,
     build_tree_model,
+    fit_final_model,
     fit_model,
     get_best_iteration,
 )
@@ -48,9 +49,16 @@ def _extract_model_params(model_name: str, algo_section: dict[str, Any]) -> dict
     for passing to the model constructor.
     """
     meta_keys = {
-        "enabled", "model_id", "cluster_strategy", "recursive",
-        "shap_select", "shap_threshold", "shap_top_n", "shap_sample_size",
-        "tune_inline", "params_file",
+        "enabled",
+        "model_id",
+        "cluster_strategy",
+        "recursive",
+        "shap_select",
+        "shap_threshold",
+        "shap_top_n",
+        "shap_sample_size",
+        "tune_inline",
+        "params_file",
     }
     params = {k: v for k, v in algo_section.items() if k not in meta_keys and v is not None}
 
@@ -146,12 +154,17 @@ def run_tree_models(
         for mid, entry in pcfg.get("algorithms", {}).items():
             config_key = entry.get("config_key", mid)
             params = entry.get("params", {})
-            algo_config["algorithms"][config_key] = {
+            algo_entry = {
                 **params,
                 "model_id": mid,
                 "enabled": entry.get("enabled", True),
                 "cluster_strategy": entry.get("cluster_strategy", "per_cluster"),
             }
+            algo_config["algorithms"][config_key] = algo_entry
+            backend_key = next((name for name in _MODEL_LIB if mid.startswith(name)), None)
+            if backend_key:
+                if mid == f"{backend_key}_cluster" or backend_key not in algo_config["algorithms"]:
+                    algo_config["algorithms"][backend_key] = algo_entry
 
     # Merge archetype into grid when classification_df is provided
     working_grid = grid.copy()
@@ -193,7 +206,10 @@ def run_tree_models(
             continue
 
         lib_info = _MODEL_LIB[model_name]
-        algo_section = algo_config.get("algorithms", {}).get(model_name, {})
+        algo_sections = algo_config.get("algorithms", {})
+        algo_section = algo_sections.get(model_name) or algo_sections.get(
+            f"{model_name}_cluster", {}
+        )
         model_id = algo_section.get("model_id", f"{model_name}_cluster")
 
         # Import library module (passed to fit_model for early-stopping callbacks).
@@ -203,7 +219,8 @@ def run_tree_models(
         except ImportError:
             logger.warning(
                 "Library '%s' not installed; skipping %s",
-                lib_info["module"], model_name,
+                lib_info["module"],
+                model_name,
             )
             continue
 
@@ -215,7 +232,11 @@ def run_tree_models(
         groups = sorted(train_df[partition_col].dropna().unique())
         logger.info(
             "Running %s (model_id=%s, max_iter=%d) across %d %ss",
-            model_name.upper(), model_id, max_iterations, len(groups), partition_label,
+            model_name.upper(),
+            model_id,
+            max_iterations,
+            len(groups),
+            partition_label,
         )
 
         group_results: list[pd.DataFrame] = []
@@ -230,8 +251,13 @@ def run_tree_models(
             if len(train_g) < _MIN_GROUP_ROWS:
                 logger.warning(
                     "%s %s %d/%d '%s': skipped (train=%d < %d)",
-                    model_name.upper(), partition_label, gi, len(groups),
-                    group_label, len(train_g), _MIN_GROUP_ROWS,
+                    model_name.upper(),
+                    partition_label,
+                    gi,
+                    len(groups),
+                    group_label,
+                    len(train_g),
+                    _MIN_GROUP_ROWS,
                 )
                 continue
 
@@ -247,21 +273,28 @@ def run_tree_models(
             y_tr = train_part["qty"]
             X_val = val_part[feature_cols]
             y_val = val_part["qty"]
+            X_all = train_g[feature_cols]
+            y_all = train_g["qty"]
             X_pred = pred_g[feature_cols]
 
             # Handle categorical features per model type
             X_tr = _prepare_cat_features(X_tr, cat_cols, model_name)
             X_val = _prepare_cat_features(X_val, cat_cols, model_name)
+            X_all = _prepare_cat_features(X_all, cat_cols, model_name)
             X_pred = _prepare_cat_features(X_pred, cat_cols, model_name)
 
             # Constant target guard — models crash on constant targets
             if y_tr.nunique() <= 1:
                 const_val = float(y_tr.iloc[0]) if len(y_tr) > 0 else 0.0
                 logger.info(
-                    "%s %s %d/%d '%s': constant target=%.0f, "
-                    "using constant for %d predictions",
-                    model_name.upper(), partition_label, gi, len(groups),
-                    group_label, const_val, len(pred_g),
+                    "%s %s %d/%d '%s': constant target=%.0f, using constant for %d predictions",
+                    model_name.upper(),
+                    partition_label,
+                    gi,
+                    len(groups),
+                    group_label,
+                    const_val,
+                    len(pred_g),
                 )
                 result = pred_g[["sku_ck", "startdate"]].copy()
                 result[FORECAST_QTY_COL] = max(const_val, 0.0)
@@ -278,43 +311,77 @@ def run_tree_models(
             except (TypeError, UnknownAlgorithm) as te:
                 logger.warning(
                     "%s %s %d/%d '%s': instantiation failed: %s",
-                    model_name.upper(), partition_label, gi, len(groups),
-                    group_label, te,
+                    model_name.upper(),
+                    partition_label,
+                    gi,
+                    len(groups),
+                    group_label,
+                    te,
                 )
                 continue
 
             # Unified fit via model_registry
             try:
                 fit_model(
-                    model, model_name,
-                    X_tr, y_tr, X_val, y_val,
-                    cat_cols, feature_cols,
-                    lib_module, max_iterations,
+                    model,
+                    model_name,
+                    X_tr,
+                    y_tr,
+                    X_val,
+                    y_val,
+                    cat_cols,
+                    feature_cols,
+                    lib_module,
+                    max_iterations,
                 )
             except (ValueError, RuntimeError) as exc:
                 logger.warning(
                     "%s %s %d/%d '%s': fit failed: %s",
-                    model_name.upper(), partition_label, gi, len(groups),
-                    group_label, exc,
+                    model_name.upper(),
+                    partition_label,
+                    gi,
+                    len(groups),
+                    group_label,
+                    exc,
                 )
                 continue
-
-            # Predict and clip to non-negative
-            preds = model.predict(X_pred)
-            preds = np.maximum(preds, 0.0)
 
             best_iter = get_best_iteration(model, model_name)
             if best_iter is None:
                 best_iter = max_iterations
 
+            final_params = dict(params)
+            final_params[iter_param] = best_iter
+            try:
+                final_model = build_tree_model(model_name, final_params)
+                fit_final_model(final_model, model_name, X_all, y_all, cat_cols, feature_cols)
+            except (TypeError, ValueError, RuntimeError) as exc:
+                logger.warning(
+                    "%s %s %d/%d '%s': final refit failed: %s",
+                    model_name.upper(),
+                    partition_label,
+                    gi,
+                    len(groups),
+                    group_label,
+                    exc,
+                )
+                continue
+
             logger.info(
                 "%s %s %d/%d '%s': train=%d, pred=%d, best_iter=%s",
-                model_name.upper(), partition_label, gi, len(groups),
-                group_label, len(train_g), len(pred_g), best_iter,
+                model_name.upper(),
+                partition_label,
+                gi,
+                len(groups),
+                group_label,
+                len(train_g),
+                len(pred_g),
+                best_iter,
             )
 
             result = pred_g[["sku_ck", "startdate"]].copy()
-            result[FORECAST_QTY_COL] = preds
+            final_preds = final_model.predict(X_pred)
+            result[FORECAST_QTY_COL] = np.maximum(final_preds, 0.0)
             result["algorithm_id"] = model_id
             group_results.append(result)
 
@@ -323,7 +390,10 @@ def run_tree_models(
             all_model_results.append(model_result)
             logger.info(
                 "%s complete: %d predictions across %d %ss",
-                model_name.upper(), len(model_result), len(group_results), partition_label,
+                model_name.upper(),
+                len(model_result),
+                len(group_results),
+                partition_label,
             )
         else:
             logger.warning("%s: no predictions produced", model_name.upper())
@@ -335,6 +405,7 @@ def run_tree_models(
     combined = pd.concat(all_model_results, ignore_index=True)
     logger.info(
         "Tree models complete: %d total predictions from %d algorithms",
-        len(combined), len(all_model_results),
+        len(combined),
+        len(all_model_results),
     )
     return combined

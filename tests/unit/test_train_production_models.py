@@ -1,6 +1,7 @@
 """Tests for production tree model training orchestration."""
 
 import json
+import pickle
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -12,18 +13,26 @@ from common.core.constants import MIN_CLUSTER_ROWS
 from common.core.utils import load_forecast_pipeline_config
 
 
+class PicklableModelStub:
+    """Small model double for artifact serialization tests."""
+
+    feature_importances_ = [0.7, 0.3]
+
+
 def _make_train_df(cluster_label: str, n_rows: int) -> pd.DataFrame:
     dates = pd.date_range("2023-01-01", periods=n_rows, freq="MS")
-    return pd.DataFrame({
-        "sku_ck": [f"SKU_{i:03d}" for i in range(n_rows)],
-        "item_id": [f"ITEM_{i:03d}" for i in range(n_rows)],
-        "customer_group": ["CG1"] * n_rows,
-        "loc": ["L1"] * n_rows,
-        "startdate": dates,
-        "qty": [100.0 + (i % 7) for i in range(n_rows)],
-        "ml_cluster": [cluster_label] * n_rows,
-        "month": [d.month for d in dates],
-    })
+    return pd.DataFrame(
+        {
+            "sku_ck": [f"SKU_{i:03d}" for i in range(n_rows)],
+            "item_id": [f"ITEM_{i:03d}" for i in range(n_rows)],
+            "customer_group": ["CG1"] * n_rows,
+            "loc": ["L1"] * n_rows,
+            "startdate": dates,
+            "qty": [100.0 + (i % 7) for i in range(n_rows)],
+            "ml_cluster": [cluster_label] * n_rows,
+            "month": [d.month for d in dates],
+        }
+    )
 
 
 def test_train_cluster_builds_tree_model_through_registry():
@@ -34,49 +43,116 @@ def test_train_cluster_builds_tree_model_through_registry():
     train = _make_train_df("normal", n)
     n_val = max(1, int(len(train["startdate"].unique()) * 0.20))
 
-    mock_model = MagicMock()
-    mock_model.predict.return_value = np.array([100.0] * n_val)
+    eval_model = MagicMock()
+    eval_model.predict.return_value = np.array([100.0] * n_val)
+    final_model = MagicMock()
 
     with patch(
         "scripts.ml.train_production_models.build_tree_model",
-        return_value=mock_model,
+        side_effect=[eval_model, final_model],
     ) as build:
         with patch("scripts.ml.train_production_models.fit_model"):
-            with patch("scripts.ml.train_production_models.get_best_iteration", return_value=100):
+            with patch("scripts.ml.train_production_models.fit_final_model") as final_fit:
                 with patch(
-                    "scripts.ml.train_production_models.compute_cluster_demand_stats",
-                    return_value={
-                        "mean_demand": 100.0,
-                        "cv_demand": 0.1,
-                        "zero_demand_pct": 0.0,
-                        "seasonal_amplitude": 0.0,
-                    },
+                    "scripts.ml.train_production_models.get_best_iteration", return_value=100
                 ):
                     with patch(
-                        "scripts.ml.train_production_models.resolve_cluster_params",
-                        return_value=({"n_estimators": 100}, "default"),
+                        "scripts.ml.train_production_models.compute_cluster_demand_stats",
+                        return_value={
+                            "mean_demand": 100.0,
+                            "cv_demand": 0.1,
+                            "zero_demand_pct": 0.0,
+                            "seasonal_amplitude": 0.0,
+                        },
                     ):
-                        label, model, meta = _train_cluster(
-                            "normal",
-                            1,
-                            1,
-                            train,
-                            ["month"],
-                            [],
-                            {"n_estimators": 100},
-                            model_name="lgbm",
-                            model_class=MagicMock,
-                            lib_module=MagicMock(),
-                            iter_param="n_estimators",
-                            needs_cat_dtype_cast=False,
-                            constant_target_guard=True,
-                            backtest_cfg={},
-                        )
+                        with patch(
+                            "scripts.ml.train_production_models.resolve_cluster_params",
+                            return_value=({"n_estimators": 200}, "default"),
+                        ):
+                            label, model, meta = _train_cluster(
+                                "normal",
+                                1,
+                                1,
+                                train,
+                                ["month"],
+                                [],
+                                {"n_estimators": 200},
+                                model_name="lgbm",
+                                model_class=MagicMock,
+                                lib_module=MagicMock(),
+                                iter_param="n_estimators",
+                                needs_cat_dtype_cast=False,
+                                constant_target_guard=True,
+                                backtest_cfg={},
+                            )
 
     assert label == "normal"
-    assert model is mock_model
+    assert model is final_model
     assert meta["n_estimators_used"] == 100
-    build.assert_called_once_with("lgbm", {"n_estimators": 100})
+    assert meta["train_rows"] == len(train)
+    assert meta["early_stop_train_rows"] == len(train) - n_val
+    assert build.call_args_list[0].args == ("lgbm", {"n_estimators": 200})
+    assert build.call_args_list[1].args == ("lgbm", {"n_estimators": 100})
+    final_fit.assert_called_once()
+
+
+def test_train_cluster_saved_model_refits_all_history_after_early_stopping():
+    """Validation chooses n_estimators; the persisted model must then fit all rows."""
+    from scripts.ml.train_production_models import _train_cluster
+
+    train = _make_train_df("normal", MIN_CLUSTER_ROWS)
+    n_val = max(1, int(len(train["startdate"].unique()) * 0.20))
+
+    eval_model = MagicMock()
+    eval_model.predict.return_value = np.array([100.0] * n_val)
+    final_model = MagicMock()
+
+    with patch(
+        "scripts.ml.train_production_models.build_tree_model",
+        side_effect=[eval_model, final_model],
+    ):
+        with patch("scripts.ml.train_production_models.fit_model"):
+            with patch("scripts.ml.train_production_models.fit_final_model") as final_fit:
+                with patch(
+                    "scripts.ml.train_production_models.get_best_iteration", return_value=17
+                ):
+                    with patch(
+                        "scripts.ml.train_production_models.compute_cluster_demand_stats",
+                        return_value={
+                            "mean_demand": 100.0,
+                            "cv_demand": 0.1,
+                            "zero_demand_pct": 0.0,
+                            "seasonal_amplitude": 0.0,
+                        },
+                    ):
+                        with patch(
+                            "scripts.ml.train_production_models.resolve_cluster_params",
+                            return_value=({"n_estimators": 200}, "default"),
+                        ):
+                            _label, model, meta = _train_cluster(
+                                "normal",
+                                1,
+                                1,
+                                train,
+                                ["month"],
+                                [],
+                                {"n_estimators": 200},
+                                model_name="lgbm",
+                                model_class=MagicMock,
+                                lib_module=MagicMock(),
+                                iter_param="n_estimators",
+                                needs_cat_dtype_cast=False,
+                                constant_target_guard=True,
+                                backtest_cfg={},
+                            )
+
+    assert model is final_model
+    assert meta["train_rows"] == len(train)
+    assert meta["early_stop_train_rows"] == len(train) - n_val
+    X_all = final_fit.call_args.args[2]
+    y_all = final_fit.call_args.args[3]
+    assert len(X_all) == len(train)
+    assert len(y_all) == len(train)
 
 
 def test_train_cluster_routes_intermittent_to_seasonal_naive_artifact():
@@ -160,14 +236,18 @@ def test_apply_tuned_params_file_overlays_best_params_and_iterations(tmp_path):
     from scripts.ml.train_production_models import _apply_tuned_params_file
 
     params_file = tmp_path / "best_params_lgbm_cluster.json"
-    params_file.write_text(json.dumps({
-        "model": "lgbm_cluster",
-        "best_params": {
-            "learning_rate": 0.02,
-            "num_leaves": 31,
-        },
-        "best_n_estimators": 375,
-    }))
+    params_file.write_text(
+        json.dumps(
+            {
+                "model": "lgbm_cluster",
+                "best_params": {
+                    "learning_rate": 0.02,
+                    "num_leaves": 31,
+                },
+                "best_n_estimators": 375,
+            }
+        )
+    )
 
     params, source = _apply_tuned_params_file(
         {"learning_rate": 0.1, "n_estimators": 2000, "num_leaves": 63},
@@ -188,11 +268,15 @@ def test_apply_tuned_params_file_accepts_legacy_base_model_name(tmp_path):
     from scripts.ml.train_production_models import _apply_tuned_params_file
 
     params_file = tmp_path / "best_params_lgbm.json"
-    params_file.write_text(json.dumps({
-        "model": "lgbm",
-        "best_params": {"learning_rate": 0.03},
-        "best_n_estimators": 250,
-    }))
+    params_file.write_text(
+        json.dumps(
+            {
+                "model": "lgbm",
+                "best_params": {"learning_rate": 0.03},
+                "best_n_estimators": 250,
+            }
+        )
+    )
 
     params, _source = _apply_tuned_params_file(
         {"learning_rate": 0.1, "n_estimators": 2000},
@@ -209,11 +293,15 @@ def test_apply_tuned_params_file_rejects_wrong_model_artifact(tmp_path):
     from scripts.ml.train_production_models import _apply_tuned_params_file
 
     params_file = tmp_path / "best_params_catboost.json"
-    params_file.write_text(json.dumps({
-        "model": "catboost_cluster",
-        "best_params": {"learning_rate": 0.03},
-        "best_n_estimators": 250,
-    }))
+    params_file.write_text(
+        json.dumps(
+            {
+                "model": "catboost_cluster",
+                "best_params": {"learning_rate": 0.03},
+                "best_n_estimators": 250,
+            }
+        )
+    )
 
     with pytest.raises(ValueError, match="not 'lgbm_cluster'"):
         _apply_tuned_params_file(
@@ -244,6 +332,33 @@ def test_save_training_metadata_records_params_source(tmp_path):
     assert metadata["params_source"] == "tuning_file:data/tuning/best_params_xgboost.json"
 
 
+def test_save_cluster_artifact_uses_meta_estimators_after_final_refit(tmp_path):
+    """Final refit models may not expose best_iteration; persist selected round from meta."""
+    from scripts.ml.train_production_models import _save_cluster_artifact
+
+    model = PicklableModelStub()
+
+    _save_cluster_artifact(
+        out_dir=tmp_path,
+        cluster_label="normal",
+        model=model,
+        feature_cols=["month", "qty_lag_1"],
+        model_id="lgbm_cluster",
+        model_name="lgbm",
+        meta={
+            "n_estimators_used": 17,
+            "train_rows": 100,
+            "total_rows": 100,
+            "val_wape": 12.3,
+        },
+    )
+
+    with open(tmp_path / "cluster_normal.pkl", "rb") as f:
+        artifact = pickle.load(f)
+
+    assert artifact["n_estimators_used"] == 17
+
+
 def test_main_all_exits_nonzero_when_any_tree_model_fails():
     """The all-model training job must not report success with missing artifacts."""
     from scripts.ml.train_production_models import main
@@ -261,7 +376,9 @@ def test_main_all_exits_nonzero_when_any_tree_model_fails():
 
     with patch.object(sys, "argv", ["train_production_models.py", "--all"]):
         with patch("scripts.ml.train_production_models.load_project_env"):
-            with patch("scripts.ml.train_production_models.get_algorithm_roster", return_value=roster):
+            with patch(
+                "scripts.ml.train_production_models.get_algorithm_roster", return_value=roster
+            ):
                 with patch(
                     "scripts.ml.train_production_models.train_production_model",
                     side_effect=fake_train,
@@ -291,7 +408,9 @@ def test_main_all_succeeds_when_all_tree_models_train():
 
     with patch.object(sys, "argv", ["train_production_models.py", "--all"]):
         with patch("scripts.ml.train_production_models.load_project_env"):
-            with patch("scripts.ml.train_production_models.get_algorithm_roster", return_value=roster):
+            with patch(
+                "scripts.ml.train_production_models.get_algorithm_roster", return_value=roster
+            ):
                 with patch("scripts.ml.train_production_models.train_production_model") as train:
                     main()
 

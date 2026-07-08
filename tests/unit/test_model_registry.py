@@ -13,13 +13,13 @@ from common.ml.model_registry import (
     _wape_lgbm,
     _wape_xgb,
     compute_early_stop_patience,
+    fit_final_model,
     fit_model,
     from_native_params,
     get_best_iteration,
     get_tree_default_params,
     to_native_params,
 )
-
 
 # ---------------------------------------------------------------------------
 # to_native_params
@@ -209,8 +209,18 @@ class TestFitModel:
         lib_module.early_stopping.return_value = "es_callback"
         lib_module.log_evaluation.return_value = "log_callback"
 
-        fit_model(model, "lgbm", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  ["ml_cluster"], ["ml_cluster", "qty_lag_1"], lib_module, 1500)
+        fit_model(
+            model,
+            "lgbm",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            ["ml_cluster"],
+            ["ml_cluster", "qty_lag_1"],
+            lib_module,
+            1500,
+        )
 
         model.fit.assert_called_once()
         call_kwargs = model.fit.call_args
@@ -221,8 +231,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "catboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  ["ml_cluster"], ["ml_cluster", "qty_lag_1"], lib_module, 3000)
+        fit_model(
+            model,
+            "catboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            ["ml_cluster"],
+            ["ml_cluster", "qty_lag_1"],
+            lib_module,
+            3000,
+        )
 
         model.fit.assert_called_once()
         lib_module.Pool.assert_called_once()
@@ -233,8 +253,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "xgboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["qty_lag_1"], lib_module, 500)
+        fit_model(
+            model,
+            "xgboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["qty_lag_1"],
+            lib_module,
+            500,
+        )
 
         model.fit.assert_called_once()
         call_kwargs = model.fit.call_args
@@ -242,8 +272,49 @@ class TestFitModel:
 
     def test_unknown_model_raises(self):
         with pytest.raises(ValueError, match="Unknown model"):
-            fit_model(MagicMock(), "prophet", MagicMock(), MagicMock(), MagicMock(),
-                      MagicMock(), [], [], MagicMock(), 100)
+            fit_model(
+                MagicMock(),
+                "prophet",
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                [],
+                [],
+                MagicMock(),
+                100,
+            )
+
+    def test_final_lgbm_fit_uses_full_data_without_eval_set(self):
+        model = MagicMock()
+        X = MagicMock()
+        y = MagicMock()
+
+        fit_final_model(model, "lgbm", X, y, ["brand"], ["brand", "qty_lag_1"])
+
+        model.fit.assert_called_once_with(X, y, categorical_feature=["brand"])
+
+    def test_final_catboost_fit_uses_cat_indices_without_eval_set(self):
+        model = MagicMock()
+        X = MagicMock()
+        y = MagicMock()
+
+        fit_final_model(model, "catboost", X, y, ["brand"], ["qty_lag_1", "brand"])
+
+        model.fit.assert_called_once_with(X, y, cat_features=[1], verbose=False)
+
+    def test_final_xgboost_fit_uses_full_data_without_eval_set(self):
+        model = MagicMock()
+        X = MagicMock()
+        y = MagicMock()
+
+        fit_final_model(model, "xgboost", X, y, [], ["qty_lag_1"])
+
+        model.fit.assert_called_once_with(X, y, verbose=False)
+
+    def test_final_unknown_model_raises(self):
+        with pytest.raises(ValueError, match="Unknown model"):
+            fit_final_model(MagicMock(), "prophet", MagicMock(), MagicMock(), [], [])
 
     def test_standardized_patience_lgbm(self):
         """LGBM early stopping should use 5% patience."""
@@ -252,8 +323,18 @@ class TestFitModel:
         lib_module.early_stopping.return_value = "es"
         lib_module.log_evaluation.return_value = "log"
 
-        fit_model(model, "lgbm", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 1500)
+        fit_model(
+            model,
+            "lgbm",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            1500,
+        )
 
         lib_module.early_stopping.assert_called_once_with(stopping_rounds=75, verbose=False)
 
@@ -262,8 +343,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "catboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 3000)
+        fit_model(
+            model,
+            "catboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            3000,
+        )
 
         call_kwargs = model.fit.call_args.kwargs
         assert call_kwargs["early_stopping_rounds"] == 150
@@ -273,8 +364,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "xgboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 500)
+        fit_model(
+            model,
+            "xgboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            500,
+        )
 
         sp_kwargs = model.set_params.call_args.kwargs
         assert "early_stopping_rounds" in sp_kwargs
@@ -285,8 +386,18 @@ class TestFitModel:
         lib_module = MagicMock()
         max_iter = 500
 
-        fit_model(model, "xgboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, max_iter)
+        fit_model(
+            model,
+            "xgboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            max_iter,
+        )
 
         expected_patience = compute_early_stop_patience(max_iter)
         sp_kwargs = model.set_params.call_args.kwargs
@@ -303,24 +414,55 @@ class TestFitModel:
         lgbm_lib = MagicMock()
         lgbm_lib.early_stopping.return_value = "es"
         lgbm_lib.log_evaluation.return_value = "log"
-        fit_model(lgbm_model, "lgbm", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lgbm_lib, max_iter)
+        fit_model(
+            lgbm_model,
+            "lgbm",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lgbm_lib,
+            max_iter,
+        )
         lgbm_lib.early_stopping.assert_called_once_with(
-            stopping_rounds=expected_patience, verbose=False,
+            stopping_rounds=expected_patience,
+            verbose=False,
         )
 
         # CatBoost
         cat_model = MagicMock()
         cat_lib = MagicMock()
-        fit_model(cat_model, "catboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], cat_lib, max_iter)
+        fit_model(
+            cat_model,
+            "catboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            cat_lib,
+            max_iter,
+        )
         assert cat_model.fit.call_args.kwargs["early_stopping_rounds"] == expected_patience
 
         # XGBoost (early_stopping_rounds via set_params, not fit)
         xgb_model = MagicMock()
         xgb_lib = MagicMock()
-        fit_model(xgb_model, "xgboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], xgb_lib, max_iter)
+        fit_model(
+            xgb_model,
+            "xgboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            xgb_lib,
+            max_iter,
+        )
         assert xgb_model.set_params.call_args.kwargs["early_stopping_rounds"] == expected_patience
 
     def test_xgboost_small_n_estimators_patience_floor(self):
@@ -328,8 +470,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "xgboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 100)
+        fit_model(
+            model,
+            "xgboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            100,
+        )
 
         sp_kwargs = model.set_params.call_args.kwargs
         assert sp_kwargs["early_stopping_rounds"] == 10
@@ -351,8 +503,18 @@ class TestFitModel:
         lib_module.early_stopping.return_value = "es"
         lib_module.log_evaluation.return_value = "log"
 
-        fit_model(model, "lgbm", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 1500)
+        fit_model(
+            model,
+            "lgbm",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            1500,
+        )
 
         call_kwargs = model.fit.call_args.kwargs
         assert call_kwargs["eval_metric"] is _wape_lgbm
@@ -362,8 +524,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "catboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 3000)
+        fit_model(
+            model,
+            "catboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            3000,
+        )
 
         fit_kwargs = model.fit.call_args.kwargs
         assert "custom_metric" not in fit_kwargs
@@ -376,8 +548,18 @@ class TestFitModel:
         model = MagicMock()
         lib_module = MagicMock()
 
-        fit_model(model, "xgboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
-                  [], ["f1"], lib_module, 500)
+        fit_model(
+            model,
+            "xgboost",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            [],
+            ["f1"],
+            lib_module,
+            500,
+        )
 
         model.set_params.assert_called_once()
         sp_kwargs = model.set_params.call_args.kwargs

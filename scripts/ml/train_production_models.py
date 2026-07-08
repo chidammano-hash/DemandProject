@@ -59,6 +59,7 @@ from common.ml.backtest_framework import (  # noqa: E402
 )
 from common.ml.model_registry import (  # noqa: E402
     build_tree_model,
+    fit_final_model,
     fit_model,
     get_best_iteration,
     get_tree_default_params,
@@ -98,7 +99,9 @@ _MODEL_LIBRARY: dict[str, dict[str, Any]] = {
         "needs_cat_dtype_cast": False,
         "constant_target_guard": True,
         "feature_importance_fn": lambda model: model.get_feature_importance(),
-        "default_params_fn": lambda algo, seed=42: get_tree_default_params("catboost", algo, seed=seed),
+        "default_params_fn": lambda algo, seed=42: get_tree_default_params(
+            "catboost", algo, seed=seed
+        ),
     },
     "xgboost": {
         "class": "xgboost.XGBRegressor",
@@ -107,7 +110,9 @@ _MODEL_LIBRARY: dict[str, dict[str, Any]] = {
         "needs_cat_dtype_cast": True,
         "constant_target_guard": True,
         "feature_importance_fn": lambda model: model.feature_importances_,
-        "default_params_fn": lambda algo, seed=42: get_tree_default_params("xgboost", algo, seed=seed),
+        "default_params_fn": lambda algo, seed=42: get_tree_default_params(
+            "xgboost", algo, seed=seed
+        ),
     },
 }
 
@@ -214,8 +219,7 @@ def _apply_tuned_params_file(
     allowed_models = {model_id, model_name}
     if artifact_model and artifact_model not in allowed_models:
         raise ValueError(
-            f"Tuning artifact {path} is for model {artifact_model!r}, "
-            f"not {model_id!r}."
+            f"Tuning artifact {path} is for model {artifact_model!r}, not {model_id!r}."
         )
 
     resolved = dict(params)
@@ -349,7 +353,8 @@ def _train_cluster(
         model = build_seasonal_naive_model(train_c, window=window)
         meta = {
             "val_wape": val_wape,
-            "train_rows": len(X_tr),
+            "train_rows": len(X_all),
+            "early_stop_train_rows": len(X_tr),
             "total_rows": len(X_all),
             "val_rows": len(X_val),
             "n_estimators_used": 0,
@@ -399,9 +404,25 @@ def _train_cluster(
     if n_est_used is None:
         n_est_used = fit_params[iter_param]
 
+    # Refit the persisted artifact on ALL available history with the selected
+    # boosting round. The split model above is only for early-stopping/validation
+    # measurement; shipping it would discard the most recent validation months.
+    final_params = dict(fit_params)
+    final_params[iter_param] = n_est_used
+    final_model = build_tree_model(model_name, final_params)
+    fit_final_model(
+        final_model,
+        model_name,
+        X_all,
+        y_all,
+        cat_cols,
+        feature_cols,
+    )
+
     meta = {
         "val_wape": val_wape,
-        "train_rows": len(X_tr),
+        "train_rows": len(X_all),
+        "early_stop_train_rows": len(X_tr),
         "total_rows": len(X_all),
         "val_rows": len(X_val),
         "n_estimators_used": n_est_used,
@@ -429,7 +450,7 @@ def _train_cluster(
         time.time() - t0,
     )
 
-    return cluster_label, model, meta
+    return cluster_label, final_model, meta
 
 
 # ── Artifact persistence ────────────────────────────────────────────────────
@@ -451,7 +472,7 @@ def _save_cluster_artifact(
     load artifacts interchangeably regardless of training source.
     """
     _get_importance = _MODEL_LIBRARY[model_name]["feature_importance_fn"]
-    n_est_used = get_best_iteration(model, model_name) or 0
+    n_est_used = meta.get("n_estimators_used") or get_best_iteration(model, model_name) or 0
 
     try:
         importance_raw = _get_importance(model)
