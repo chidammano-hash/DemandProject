@@ -50,6 +50,56 @@ from common.ml.tuning import (
 from common.core.utils import _ts, get_algorithm_roster, load_forecast_pipeline_config
 
 
+TREE_MODEL_PREFIXES = ("lgbm", "catboost", "xgboost")
+
+
+def _base_model_name(model_id: str) -> str:
+    """Return the tree backend name for a pipeline model id."""
+    for prefix in TREE_MODEL_PREFIXES:
+        if model_id == prefix or model_id.startswith(f"{prefix}_"):
+            return prefix
+    raise ValueError(
+        f"Cannot resolve tree backend for model_id={model_id!r}. "
+        f"Expected one of: {', '.join(TREE_MODEL_PREFIXES)}."
+    )
+
+
+def _default_model_id(model_name: str, pipeline_cfg: dict) -> str:
+    """Return the canonical base model id for a backend."""
+    candidate = f"{model_name}_cluster"
+    algorithms = pipeline_cfg.get("algorithms", {}) or {}
+    if candidate in algorithms:
+        return candidate
+    return model_name
+
+
+def _resolve_tuning_target(
+    model_name: str,
+    model_id: str | None,
+    pipeline_cfg: dict | None,
+) -> tuple[str, str, dict]:
+    """Resolve backend/model-id config for a tuning run."""
+    if pipeline_cfg is None:
+        return model_name, model_id or model_name, {}
+
+    resolved_model_id = model_id or _default_model_id(model_name, pipeline_cfg)
+    resolved_model_name = _base_model_name(resolved_model_id)
+    if resolved_model_name != model_name:
+        raise ValueError(
+            f"--model {model_name!r} does not match --model-id {resolved_model_id!r}"
+        )
+
+    algorithms = pipeline_cfg.get("algorithms", {}) or {}
+    entry = algorithms.get(resolved_model_id)
+    if entry is None:
+        raise ValueError(
+            f"Model id {resolved_model_id!r} not found in forecast_pipeline_config.yaml"
+        )
+    if entry.get("type") != "tree":
+        raise ValueError(f"Model id {resolved_model_id!r} is not a tree algorithm")
+    return resolved_model_name, resolved_model_id, entry
+
+
 # ── Objective factory ─────────────────────────────────────────────────────────
 
 
@@ -214,6 +264,12 @@ def main() -> None:
         required=True,
         help="Model to tune",
     )
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default=None,
+        help="Pipeline model id to tune, e.g. lgbm_cust_enriched",
+    )
     parser.add_argument("--n-trials", type=int, default=None,
                         help="Override n_trials from config")
     parser.add_argument("--output-dir", type=str, default=None,
@@ -234,6 +290,7 @@ def main() -> None:
     # Overlay pipeline-level tuning params from forecast_pipeline_config.yaml
     # (n_trials, n_splits, gap_months, etc.). Search spaces remain in
     # hyperparameter_tuning.yaml.
+    pipeline_cfg: dict | None = None
     try:
         pipeline_cfg = load_forecast_pipeline_config()
         pipeline_tuning = pipeline_cfg.get("tuning", {})
@@ -248,26 +305,40 @@ def main() -> None:
     except FileNotFoundError:
         pass  # No pipeline config — use hyperparameter_tuning.yaml as-is
 
+    try:
+        model_name, resolved_model_id, algo_entry = _resolve_tuning_target(
+            args.model,
+            args.model_id,
+            pipeline_cfg,
+        )
+    except ValueError as exc:
+        print(f"[{_ts()}] {exc}")
+        sys.exit(2)
+
     # Check algorithm tune flag from the roster
-    # Roster keys use pipeline model_ids (e.g. "lgbm_cluster"), while
-    # args.model is the base name ("lgbm"). Match by key prefix.
     try:
         roster = get_algorithm_roster(stage="tune")
-        model_in_roster = any(
-            rid == args.model or rid.startswith(f"{args.model}_")
-            for rid in roster
-        )
-        if not model_in_roster:
-            # Check if the model exists but has tune=false
-            all_roster = get_algorithm_roster()
-            exists = any(
-                rid == args.model or rid.startswith(f"{args.model}_")
-                for rid in all_roster
-            )
-            if exists:
-                print(f"[{_ts()}] Model '{args.model}' has tune=false in "
-                      f"forecast_pipeline_config.yaml — skipping")
+        if args.model_id:
+            if resolved_model_id not in roster:
+                print(f"[{_ts()}] Model '{resolved_model_id}' has tune=false in "
+                      "forecast_pipeline_config.yaml — skipping")
                 sys.exit(0)
+        else:
+            model_in_roster = any(
+                rid == args.model or rid.startswith(f"{args.model}_")
+                for rid in roster
+            )
+            if not model_in_roster:
+                # Check if the model exists but has tune=false
+                all_roster = get_algorithm_roster()
+                exists = any(
+                    rid == args.model or rid.startswith(f"{args.model}_")
+                    for rid in all_roster
+                )
+                if exists:
+                    print(f"[{_ts()}] Model '{args.model}' has tune=false in "
+                          f"forecast_pipeline_config.yaml — skipping")
+                    sys.exit(0)
     except FileNotFoundError:
         pass  # No pipeline config — run unconditionally
 
@@ -276,22 +347,40 @@ def main() -> None:
     output_dir = Path(args.output_dir or (ROOT / t_cfg["output_dir"]))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_name = args.model
     # CatBoost uses str dtype for categoricals; LGBM and XGBoost use "category"
     cat_dtype = "str" if model_name == "catboost" else "category"
+    output_stem = resolved_model_id if args.model_id else model_name
+    include_customer_features = bool(
+        (algo_entry.get("params", {}) if algo_entry else {}).get("customer_features", False)
+    )
 
-    print(f"[{_ts()}] Tuning {model_name.upper()} — {n_trials} trials")
+    print(f"[{_ts()}] Tuning {resolved_model_id} ({model_name.upper()}) — {n_trials} trials")
     print(f"[{_ts()}] Output dir: {output_dir}")
 
     # ── Load data ─────────────────────────────────────────────────────────────
     print(f"\n[{_ts()}] Loading data from Postgres...")
     db = get_db_params()
-    sales_df, dfu_attrs, item_attrs = load_backtest_data(db)
+    data_result = load_backtest_data(
+        db,
+        include_customer_features=include_customer_features,
+    )
+    if include_customer_features:
+        sales_df, dfu_attrs, item_attrs, customer_features = data_result
+    else:
+        sales_df, dfu_attrs, item_attrs = data_result
+        customer_features = None
 
     # ── Build feature matrix ──────────────────────────────────────────────────
     all_months = sorted(sales_df["startdate"].unique())
     print(f"[{_ts()}] Building feature matrix ({len(all_months)} months)...")
-    full_grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months, cat_dtype=cat_dtype)
+    full_grid = build_feature_matrix(
+        sales_df,
+        dfu_attrs,
+        item_attrs,
+        all_months,
+        cat_dtype=cat_dtype,
+        customer_features=customer_features,
+    )
     feature_cols = get_feature_columns(full_grid)
     cat_cols = [c for c in CAT_FEATURES if c in feature_cols and c in full_grid.columns]
     print(f"[{_ts()}] Features: {len(feature_cols)} total, {len(cat_cols)} categorical")
@@ -315,9 +404,9 @@ def main() -> None:
         sys.exit(1)
 
     # ── Create Optuna study ───────────────────────────────────────────────────
-    study_path = output_dir / f"optuna_{model_name}.db"
+    study_path = output_dir / f"optuna_{output_stem}.db"
     storage = f"sqlite:///{study_path}"
-    study_name = f"{model_name}_tuning"
+    study_name = f"{output_stem}_tuning"
 
     sampler = optuna.samplers.TPESampler(seed=t_cfg["random_seed"])
     pruner = optuna.pruners.MedianPruner(
@@ -417,7 +506,7 @@ def main() -> None:
             print(f"    {cluster}: {wape * 100:.2f}%")
 
     # ── Save output ───────────────────────────────────────────────────────────
-    output_path = output_dir / f"best_params_{model_name}.json"
+    output_path = output_dir / f"best_params_{output_stem}.json"
     config_snapshot = {
         "n_splits": t_cfg["n_splits"],
         "gap_months": t_cfg["gap_months"],
@@ -428,7 +517,7 @@ def main() -> None:
     }
     save_best_params(
         output_path=output_path,
-        model_name=model_name,
+        model_name=resolved_model_id,
         best_wape=best_trial.value,
         best_n_estimators=best_n_estimators,
         best_params=best_params,
@@ -449,10 +538,11 @@ def main() -> None:
 
     log_backtest_run(
         model_type=f"{model_name}_tuning",
-        model_id=f"{model_name}_tuned",
+        model_id=f"{output_stem}_tuned",
         cluster_strategy="global",
         hyperparams={
             "model": model_name,
+            "model_id": resolved_model_id,
             "n_trials": n_trials,
             **config_snapshot,
             **best_params,
@@ -466,7 +556,7 @@ def main() -> None:
     )
 
     print(f"\n[{_ts()}] Tuning complete. Best params saved to {output_path}")
-    print(f"  Use: make backtest-{model_name}-cluster ARGS=\"--params-file {output_path}\"")
+    print(f"  Use: make backtest-{model_name} ARGS=\"--params-file {output_path}\"")
 
 
 if __name__ == "__main__":
