@@ -983,6 +983,7 @@ def promote_model(
     notes: str | None = None,
     promoted_by: str | None = None,
     bypass_token: str | None = None,
+    allow_cluster_mismatch: bool = False,
 ):
     """Promote a model's staged forecasts to production.
 
@@ -1069,6 +1070,56 @@ def promote_model(
                     detail="No promoted champion experiment found. Promote one on the Champion tab first.",
                 )
             champion_experiment_id = champ_row[0]
+
+            # Generation-lineage gate (sql/198): refuse when clustering was
+            # re-promoted AFTER this champion experiment ran — the winners CSV
+            # and per-cluster model artifacts would route against a different
+            # dim_sku.ml_cluster membership than the one currently live.
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'champion_experiment'
+                  AND column_name = 'cluster_experiment_id'
+                LIMIT 1
+                """
+            )
+            if cur.fetchone() is not None:
+                cur.execute(
+                    "SELECT cluster_experiment_id FROM champion_experiment "
+                    "WHERE experiment_id = %s",
+                    (champion_experiment_id,),
+                )
+                lineage_row = cur.fetchone()
+                champ_cluster_id = lineage_row[0] if lineage_row else None
+                cur.execute(
+                    "SELECT experiment_id FROM cluster_experiment "
+                    "WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1"
+                )
+                cluster_row = cur.fetchone()
+                current_cluster_id = cluster_row[0] if cluster_row else None
+                if champ_cluster_id is None:
+                    logger.warning(
+                        "Champion experiment %s has no cluster lineage (pre-sql/198 row); "
+                        "generation match cannot be verified.", champion_experiment_id,
+                    )
+                elif current_cluster_id is not None and champ_cluster_id != current_cluster_id:
+                    if not allow_cluster_mismatch:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Champion experiment {champion_experiment_id} was computed "
+                                f"under cluster experiment {champ_cluster_id}, but cluster "
+                                f"experiment {current_cluster_id} is now promoted. Re-run "
+                                "backtests + champion selection under the new clusters, or "
+                                "pass allow_cluster_mismatch=true to override."
+                            ),
+                        )
+                    logger.warning(
+                        "Promoting despite cluster-generation mismatch "
+                        "(champion=%s built under cluster exp %s, current is %s) — "
+                        "allow_cluster_mismatch=true",
+                        champion_experiment_id, champ_cluster_id, current_cluster_id,
+                    )
 
             # Load per-DFU winning model from the experiment's winners CSV. This
             # file is the source of truth for DFU→model routing (written by
@@ -1298,6 +1349,15 @@ def promote_model(
             logger.warning("Failed to emit lineage event for promotion: %s", exc)
 
         conn.commit()
+
+    # Refresh the MVs that read fact_production_forecast (mv_fairness_audit)
+    # so audits reflect the newly promoted plan — best-effort, post-commit.
+    try:
+        from common.core.mv_refresh import refresh_for_tables
+
+        refresh_for_tables(["fact_production_forecast"])
+    except psycopg.Error as exc:
+        logger.warning("Post-promotion MV refresh failed: %s", exc)
 
     return {
         "model_id": model_id,

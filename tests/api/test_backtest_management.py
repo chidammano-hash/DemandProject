@@ -19,6 +19,15 @@ from tests.api.conftest import make_pool as _make_pool
 
 _ROUTER_MOD = "api.routers.forecasting.backtest_management"
 
+
+@pytest.fixture(autouse=True)
+def _no_real_mv_refresh():
+    """Successful promotes refresh fact_production_forecast dependents through
+    the central MV service, which opens its own DB connection — stub it so
+    tests never touch a live database."""
+    with patch("common.core.mv_refresh.refresh_for_tables") as refresh:
+        yield refresh
+
 _NOW = datetime(2026, 4, 6, 10, 0, 0, tzinfo=timezone.utc)
 _NOW_ISO = _NOW.isoformat()
 
@@ -637,14 +646,17 @@ async def test_promote_champion_captures_insert_rowcount_not_coverage_count(tmp_
     # fetchone sequence for the champion path (gate is bypassed for champion):
     #  1) COUNT staging               -> non-zero so promote proceeds
     #  2) SELECT promoted experiment  -> experiment_id row
-    #  3) COUNT _dfu_champion         -> expected_dfus
-    #  4) unmatched DFU-month count   -> 0 (full coverage)
-    #  5) COUNT DISTINCT DFUs         -> dfu_count
-    #  6) persisted rows (run_id)     -> insert_n (integrity gate)
-    #  7) lineage emit RETURNING id
+    #  3) information_schema check for cluster_experiment_id -> None (sql/198
+    #     unapplied; the cluster-generation gate skips with a warning)
+    #  4) COUNT _dfu_champion         -> expected_dfus
+    #  5) unmatched DFU-month count   -> 0 (full coverage)
+    #  6) COUNT DISTINCT DFUs         -> dfu_count
+    #  7) persisted rows (run_id)     -> insert_n (integrity gate)
+    #  8) lineage emit RETURNING id
     cursor.fetchone.side_effect = [
         (insert_n,),   # staging COUNT
         (53,),         # promoted champion experiment_id
+        None,          # cluster_experiment_id column absent -> lineage gate skipped
         (12300,),      # expected_dfus
         (0,),          # unmatched_dfus
         (12300,),      # dfu_count
@@ -686,6 +698,36 @@ async def test_promote_champion_captures_insert_rowcount_not_coverage_count(tmp_
     # Param order: (model_id, promotion_type, champion_experiment_id,
     #               plan_version, dfu_count, total_rows, promoted_by, notes)
     assert log_calls[0][5] == insert_n
+
+
+# ---------------------------------------------------------------------------
+# 6b2. Champion promote — cluster-generation lineage gate (sql/198)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_promote_champion_blocks_on_cluster_generation_mismatch():
+    """Champion built under cluster exp 3 while exp 5 is promoted -> 409."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [
+        (100,),   # staging COUNT
+        (53,),    # promoted champion experiment_id
+        (1,),     # information_schema: cluster_experiment_id column exists
+        (3,),     # champion's cluster_experiment_id
+        (5,),     # currently promoted cluster experiment
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/champion/promote")
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "cluster experiment 3" in detail
+    assert "allow_cluster_mismatch" in detail
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +821,7 @@ async def test_promote_champion_routes_per_month_models(tmp_path):
     cursor.fetchone.side_effect = [
         (18,),     # staging COUNT
         (53,),     # promoted champion experiment_id
+        None,      # cluster_experiment_id column absent -> lineage gate skipped
         (2,),      # expected_dfus (per-DFU fallback rows)
         (0,),      # unmatched_dfus
         (2,),      # dfu_count

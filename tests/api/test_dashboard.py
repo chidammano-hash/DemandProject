@@ -899,16 +899,25 @@ async def test_customer_map_zip_fallback_to_state_centroid(mock_pool):
 # /dashboard/pipeline-readiness
 # ===========================================================================
 
-@pytest.mark.asyncio
-async def test_pipeline_readiness_flags_total_loss_of_clustering(mock_pool):
-    """Zero SKUs clustered -> a high-severity clustering check with a navigate action."""
-    pool, _, cursor = mock_pool
-    cursor.fetchone.return_value = (300_000, 0)  # total, clustered (none assigned)
+# fetchone order in the endpoint: (1) dim_sku counts, (2) stale tuning count,
+# (3) champion↔cluster lineage row, (4) (last sales load, champion promoted_at).
+_READINESS_HEALTHY_TAIL = [(0,), None, (None, None)]
+
+
+async def _get_readiness(pool):
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/dashboard/pipeline-readiness")
+            return await client.get("/dashboard/pipeline-readiness")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_flags_total_loss_of_clustering(mock_pool):
+    """Zero SKUs clustered -> a high-severity clustering check with a navigate action."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [(300_000, 0), *_READINESS_HEALTHY_TAIL]
+    resp = await _get_readiness(pool)
     assert resp.status_code == 200
     data = resp.json()
     assert data["ready"] is False
@@ -925,12 +934,8 @@ async def test_pipeline_readiness_ready_when_active_skus_clustered(mock_pool):
     """A healthy partial clustering (most SKUs inactive/NULL) is NOT stale."""
     pool, _, cursor = mock_pool
     # 300k total, only the ~13k active SKUs clustered — the normal healthy state.
-    cursor.fetchone.return_value = (300_000, 13_000)
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/dashboard/pipeline-readiness")
+    cursor.fetchone.side_effect = [(300_000, 13_000), *_READINESS_HEALTHY_TAIL]
+    resp = await _get_readiness(pool)
     assert resp.status_code == 200
     data = resp.json()
     assert data["ready"] is True
@@ -941,11 +946,62 @@ async def test_pipeline_readiness_ready_when_active_skus_clustered(mock_pool):
 async def test_pipeline_readiness_ready_when_dim_sku_empty(mock_pool):
     """No SKUs at all -> nothing to flag (not stale)."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.return_value = (0, 0)
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/dashboard/pipeline-readiness")
+    cursor.fetchone.side_effect = [(0, 0), *_READINESS_HEALTHY_TAIL]
+    resp = await _get_readiness(pool)
     assert resp.status_code == 200
     assert resp.json()["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_flags_stale_tuning_profiles(mock_pool):
+    """Stale cluster_tuning_profile_state rows -> a medium tuning check."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [(300_000, 13_000), (4,), None, (None, None)]
+    resp = await _get_readiness(pool)
+    data = resp.json()
+    assert data["ready"] is False
+    check = data["checks"][0]
+    assert check["stage"] == "tuning"
+    assert check["severity"] == "medium"
+    assert "4 tuning profile(s)" in check["title"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_flags_champion_cluster_mismatch(mock_pool):
+    """Champion built under cluster exp 3 while exp 5 is promoted -> high check."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [(300_000, 13_000), (0,), (12, 3, 5), (None, None)]
+    resp = await _get_readiness(pool)
+    data = resp.json()
+    assert data["ready"] is False
+    check = data["checks"][0]
+    assert check["stage"] == "champion"
+    assert check["severity"] == "high"
+    assert "cluster" in check["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_champion_lineage_match_is_ok(mock_pool):
+    """Matching champion/cluster generations produce no check."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [(300_000, 13_000), (0,), (12, 5, 5), (None, None)]
+    resp = await _get_readiness(pool)
+    assert resp.json()["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_flags_data_newer_than_champion(mock_pool):
+    """A sales load newer than the promoted champion -> medium forecast check."""
+    from datetime import datetime
+
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [
+        (300_000, 13_000), (0,), None,
+        (datetime(2026, 7, 1), datetime(2026, 6, 1)),
+    ]
+    resp = await _get_readiness(pool)
+    data = resp.json()
+    assert data["ready"] is False
+    check = data["checks"][0]
+    assert check["stage"] == "forecast"
+    assert check["severity"] == "medium"

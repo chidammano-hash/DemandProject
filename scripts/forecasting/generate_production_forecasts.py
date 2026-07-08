@@ -209,6 +209,71 @@ def _get_promoted_champion_experiment_id(conn) -> int | None:
     return int(row[0]) if row else None
 
 
+def check_champion_cluster_lineage(conn, allow_mismatch: bool = False) -> None:
+    """Refuse to generate when the promoted champion predates a re-clustering.
+
+    The champion's winners CSV and the per-cluster ``.pkl`` artifacts were
+    built under the cluster experiment recorded on ``champion_experiment``
+    (sql/198). If clustering was re-promoted since, the current
+    ``dim_sku.ml_cluster`` no longer matches that membership and per-cluster
+    routing silently degrades. ``--allow-cluster-mismatch`` downgrades the
+    failure to a warning.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'champion_experiment'
+                  AND column_name = 'cluster_experiment_id'
+                LIMIT 1
+            """)
+            if cur.fetchone() is None:
+                logger.warning(
+                    "champion_experiment.cluster_experiment_id missing (apply sql/198) — "
+                    "cluster-generation preflight skipped."
+                )
+                return
+            cur.execute("""
+                SELECT experiment_id, cluster_experiment_id
+                FROM champion_experiment
+                WHERE is_promoted = TRUE
+                ORDER BY promoted_at DESC
+                LIMIT 1
+            """)
+            champ_row = cur.fetchone()
+            cur.execute("""
+                SELECT experiment_id FROM cluster_experiment
+                WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1
+            """)
+            cluster_row = cur.fetchone()
+    except psycopg.Error as exc:
+        conn.rollback()
+        logger.warning("Cluster-generation preflight skipped (%s)", exc)
+        return
+
+    if champ_row is None:
+        return  # no promoted champion — downstream handles that as before
+    champ_id, champ_cluster_id = champ_row
+    current_cluster_id = cluster_row[0] if cluster_row else None
+    if champ_cluster_id is None:
+        logger.warning(
+            "Champion experiment %s has no cluster lineage (pre-sql/198 row); "
+            "generation match cannot be verified.", champ_id,
+        )
+        return
+    if current_cluster_id is not None and int(champ_cluster_id) != int(current_cluster_id):
+        msg = (
+            f"Champion experiment {champ_id} was computed under cluster experiment "
+            f"{champ_cluster_id}, but cluster experiment {current_cluster_id} is now "
+            "promoted — winners routing and per-cluster models likely mismatch the "
+            "current dim_sku.ml_cluster. Re-run backtests + champion selection under "
+            "the new clusters, or pass --allow-cluster-mismatch to override."
+        )
+        if not allow_mismatch:
+            raise RuntimeError(msg)
+        logger.warning("%s (continuing: --allow-cluster-mismatch)", msg)
+
+
 def _load_promoted_winners_assignments(
     conn,
     item_id: str | None = None,
@@ -1782,6 +1847,10 @@ def main() -> None:
                         action=argparse.BooleanOptionalAction, default=None,
                         help="Force CI (P10/P90) bands on/off. Default: use config "
                              "confidence_interval.enabled. Use --no-confidence-intervals to force off.")
+    parser.add_argument("--allow-cluster-mismatch", action="store_true",
+                        help="Proceed (with a warning) when the promoted champion was "
+                             "computed under a different cluster generation than the "
+                             "currently promoted one")
     args = parser.parse_args()
 
     config = load_config()
@@ -1814,6 +1883,9 @@ def main() -> None:
     db = get_db_params()
 
     with psycopg.connect(**db) as conn:
+        # Preflight: champion ↔ cluster generation lineage (sql/198)
+        check_champion_cluster_lineage(conn, allow_mismatch=args.allow_cluster_mismatch)
+
         # Load data
         logger.info("Step 1: Loading data...")
         with profiled_section("load_data"):

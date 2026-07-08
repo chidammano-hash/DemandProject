@@ -306,8 +306,11 @@ def _insert_child_experiment(
     row = conn.execute(
         """
         INSERT INTO champion_experiment
-            (label, strategy, strategy_params, models, metric, lag_mode, min_sku_rows)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (label, strategy, strategy_params, models, metric, lag_mode, min_sku_rows,
+             cluster_experiment_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s,
+                (SELECT experiment_id FROM cluster_experiment
+                 WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1))
         RETURNING experiment_id
         """,
         (
@@ -813,8 +816,10 @@ def _assemble_composite(
         INSERT INTO champion_experiment
             (label, strategy, strategy_params, models, metric, lag_mode, min_sku_rows,
              status, completed_at, champion_accuracy, n_dfu_months,
-             n_champions)
-        VALUES (%s, 'per_segment', %s, %s, %s, %s, %s, 'completed', NOW(), %s, %s, %s)
+             n_champions, cluster_experiment_id)
+        VALUES (%s, 'per_segment', %s, %s, %s, %s, %s, 'completed', NOW(), %s, %s, %s,
+                (SELECT experiment_id FROM cluster_experiment
+                 WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1))
         RETURNING experiment_id
         """,
         (

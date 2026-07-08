@@ -765,8 +765,11 @@ def create_experiment(body: CreateChampionExperimentBody):
                 """
                 INSERT INTO champion_experiment
                     (label, notes, template_id, strategy, strategy_params,
-                     meta_learner_params, models, metric, lag_mode, min_sku_rows)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     meta_learner_params, models, metric, lag_mode, min_sku_rows,
+                     cluster_experiment_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        (SELECT experiment_id FROM cluster_experiment
+                         WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1))
                 RETURNING experiment_id
                 """,
                 (

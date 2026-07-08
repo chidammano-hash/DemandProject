@@ -219,6 +219,61 @@ def submit_pipeline(req: SubmitPipelineRequest):
     )
 
 
+@router.get("/jobs/pipelines/named")
+def list_named_pipelines():
+    """List the named pipeline presets (config/forecasting/pipelines.yaml)."""
+    from common.services.pipeline_presets import load_pipeline_presets, preset_steps
+
+    presets = load_pipeline_presets()
+    return {
+        "pipelines": [
+            {
+                "name": name,
+                "description": preset.get("description"),
+                "steps": [s["job_type"] for s in preset_steps(preset)],
+            }
+            for name, preset in presets.items()
+        ]
+    }
+
+
+@router.post("/jobs/pipelines/named/{name}", dependencies=[Depends(require_api_key)])
+def run_named_pipeline(name: str):
+    """Launch a named pipeline preset as a sequential JobManager pipeline.
+
+    This is the one-call way to bring a whole lifecycle current (e.g.
+    ``data-refresh``, ``model-refresh``, ``forecast-publish``, ``full-refresh``)
+    instead of manually stepping each job.
+    """
+    from common.services.pipeline_presets import get_pipeline_preset, preset_steps
+
+    try:
+        preset = get_pipeline_preset(name)
+        steps = preset_steps(preset)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not steps:
+        raise HTTPException(status_code=422, detail=f"Pipeline '{name}' has no steps")
+
+    from common.services.job_registry import JOB_TYPE_REGISTRY
+    for step in steps:
+        if step["job_type"] not in JOB_TYPE_REGISTRY:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Pipeline step references unknown job type: {step['job_type']}",
+            )
+
+    mgr = _get_manager()
+    pipeline_id = mgr.submit_pipeline(steps=steps, label=name, triggered_by="api")
+    return JSONResponse(
+        status_code=202,
+        content={"pipeline_id": pipeline_id, "name": name, "status": "running",
+                 "steps": len(steps)},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints — Single job CRUD (parameterized {job_id} routes)
 # IMPORTANT: These MUST come after all /jobs/<literal> routes above,

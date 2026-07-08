@@ -72,7 +72,7 @@ The next call to `get_openai()` / `get_anthropic()` rebuilds the client from the
 
 ### 9.2.4 Related admin endpoint
 
-`POST /admin/tuning/invalidate-stale` clears the `stale` flag on `cluster_tuning_profile` rows so the tuning scheduler re-tunes them on the next cycle. Returns `{"status": "noop", "reason": "..."}` when the column is not yet present (Stream F not landed) or when the DB raises `psycopg.Error` — degrading rather than 500-ing keeps the admin UI safe to poll.
+`POST /admin/tuning/invalidate-stale` clears the `stale` flag on `cluster_tuning_profile_state` rows (set by cluster promotion). With `?retune=true` it instead submits the `tune_stale_clusters` job, which runs `tune_cluster_hyperparams.py --stale-only` and clears the flags it covers. Returns `{"status": "noop", "reason": "..."}` when the table is not yet migrated (sql/148) or when the DB raises `psycopg.Error` — degrading rather than 500-ing keeps the admin UI safe to poll.
 
 ---
 

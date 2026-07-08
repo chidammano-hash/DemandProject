@@ -276,17 +276,29 @@ and `adv-expert-panel` runs for pre-promotion gates.
 
 ---
 
-## 5.8 Stale Tuning Invalidation
+## 5.8 Stale Tuning Invalidation (the closed loop)
 
-When upstream data changes (new sales months, new clusters, schema migration)
-existing per-cluster profiles can become stale. The platform exposes an
-admin endpoint to clear the stale flag in bulk so the next tuning run will
-overwrite the row instead of skipping it.
+Promoting a clustering scenario changes cluster membership, so
+`promote_scenario()` flags every affected row in `cluster_tuning_profile_state`
+(sql/148) as `stale = TRUE`. Three consumers close the loop:
+
+1. **Re-tune** — `tune_cluster_hyperparams.py --stale-only` (Make: part of
+   `pipeline 'model-refresh'`; job type `tune_stale_clusters`) tunes only the
+   stale clusters, **merges** the results into `cluster_tuning_profiles.yaml`
+   (untouched clusters are preserved), stamps the YAML with the promoted
+   `cluster_experiment_id`, and clears the flags it covered.
+2. **Warn** — `warn_if_profiles_stale()` runs at the start of every tree
+   backtest and logs loudly when stale flags exist or the YAML generation
+   stamp mismatches the promoted cluster experiment.
+3. **Surface** — `GET /dashboard/pipeline-readiness` reports stale profiles as
+   a medium-severity check.
 
 ### Endpoint
 
 ```
-POST /admin/tuning/invalidate-stale
+POST /admin/tuning/invalidate-stale                  # acknowledge: clear flags
+POST /admin/tuning/invalidate-stale?retune=true      # submit tune_stale_clusters job
+POST /admin/tuning/invalidate-stale?retune=true&model=catboost
 ```
 
 Defined in `api/routers/platform/admin.py`. Guarded by `require_api_key`.
@@ -295,9 +307,10 @@ Defined in `api/routers/platform/admin.py`. Guarded by `require_api_key`.
 
 | DB State | Result | Returned `status` |
 |---|---|---|
-| `cluster_tuning_profile.stale` column exists, rows with `stale = TRUE` present | `UPDATE ... SET stale = FALSE` | `ok` (with `cleared` count) |
-| Column exists, no stale rows | No-op | `ok` (cleared = 0) |
-| Column does NOT exist | Logged no-op (warning) | `noop` |
+| `cluster_tuning_profile_state` rows with `stale = TRUE`, no `retune` | `UPDATE ... SET stale = FALSE, cleared_at = NOW()` | `ok` (with `invalidated` count + `stale_clusters`) |
+| Stale rows present, `retune=true` | `tune_stale_clusters` job submitted; flags cleared by the script on success | `retune_submitted` (with `job_id`) |
+| No stale rows | No-op | `ok` (invalidated = 0) |
+| Table does NOT exist (sql/148 unapplied) | Logged no-op (warning) | `noop` |
 | `psycopg.Error` (transient DB issue) | Logged exception, no-op | `noop` |
 
 The endpoint **never raises** on schema absence — it returns `status: "noop"`

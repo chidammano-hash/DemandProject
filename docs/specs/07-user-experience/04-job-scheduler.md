@@ -169,11 +169,37 @@ APScheduler (the `JobManager` documented above) stays the default for new jobs -
 | GET | `/jobs/schedules` | List all schedules with next run time |
 | DELETE | `/jobs/schedules/{id}` | Remove a schedule |
 | POST | `/jobs/pipeline` | Submit a sequential job pipeline |
+| GET | `/jobs/pipelines/named` | List named pipeline presets (`config/forecasting/pipelines.yaml`) |
+| POST | `/jobs/pipelines/named/{name}` | Launch a named pipeline preset |
 | GET | `/jobs/stats` | Dashboard KPIs: total, active, success rate, avg duration |
 | GET | `/jobs/{job_id}/logs` | Persistent execution log (supports `offset` for incremental polling) |
 | GET | `/jobs/history` | Paginated job history with filtering |
 
-Route ordering note: literal paths (`/jobs/schedules`, `/jobs/pipeline`, `/jobs/stats`) are defined before the parameterized `{job_id}` path to avoid conflicts.
+Route ordering note: literal paths (`/jobs/schedules`, `/jobs/pipeline*`, `/jobs/stats`) are defined before the parameterized `{job_id}` path to avoid conflicts.
+
+---
+
+## Schedule Persistence & Defaults
+
+- **Boot restore** — `JobManager.restore_schedules()` re-registers every enabled
+  `job_schedule` row into APScheduler during `_ensure_init`. Before this,
+  schedules only lived in APScheduler memory, so an API restart silently
+  killed them while `GET /jobs/schedules` kept returning the rows.
+- **Config-declared defaults** — `JobManager.ensure_default_schedules()` reads
+  `default_schedules` from `config/platform/jobs_config.yaml` and creates any
+  missing ones under the deterministic id `sched_default_<name>` (idempotent
+  across restarts). The shipped default is the nightly `refresh_all_mvs` job
+  (the materialized-view staleness safety net). Disable an entry in the config
+  to stop it — deleting the schedule row alone lasts only until the next boot.
+
+## Named Pipelines
+
+`config/forecasting/pipelines.yaml` (loaded by `common/services/pipeline_presets.py`)
+defines the forecasting lifecycle as sequential JobManager pipelines:
+`data-refresh`, `model-refresh`, `forecast-publish`, `full-refresh`. Each step
+is a registered job type; `tests/unit/test_pipeline_presets.py` fails if a
+preset references an unregistered type. Launch via
+`POST /jobs/pipelines/named/{name}`; a failed step stops the pipeline.
 
 ---
 

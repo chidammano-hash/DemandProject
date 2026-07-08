@@ -195,7 +195,7 @@ async def test_preview_sample_invalid_method():
 
 @pytest.mark.asyncio
 async def test_trigger_sampled_run_returns_200():
-    """POST /lgbm-tuning/sampled/run launches sampled backtest."""
+    """POST /lgbm-tuning/sampled/run submits a sampled_backtest job."""
     pool, conn, cursor = _make_pool()
     strata = _mock_strata()
     sampled_skus = [f"DFU_{i}" for i in range(5000)]
@@ -208,7 +208,8 @@ async def test_trigger_sampled_run_returns_200():
          patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus), \
          patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
          patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=1.5), \
-         patch("subprocess.Popen") as mock_popen:
+         patch("common.services.job_registry.JobManager") as manager_cls:
+        manager_cls.return_value.submit_job.return_value = "job_sampled_1"
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -219,12 +220,17 @@ async def test_trigger_sampled_run_returns_200():
     assert resp.status_code == 200
     data = resp.json()
     assert data["run_id"] == 42
+    assert data["job_id"] == "job_sampled_1"
     assert data["sample_size"] == 5000
     assert data["total_dfus"] == 50000
     assert data["method"] == "proportional"
     assert data["estimated_deviation_pct"] == 1.5
-    # Verify subprocess was launched
-    mock_popen.assert_called_once()
+    # Verify the job was submitted through the JobManager (no bare Popen)
+    submit = manager_cls.return_value.submit_job
+    submit.assert_called_once()
+    assert submit.call_args.args[0] == "sampled_backtest"
+    assert submit.call_args.args[1]["run_id"] == 42
+    assert submit.call_args.args[1]["sku_file"]
 
 
 @pytest.mark.asyncio
@@ -259,7 +265,8 @@ async def test_trigger_sampled_run_with_param_overrides():
          patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus), \
          patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
          patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=2.0), \
-         patch("subprocess.Popen") as mock_popen:
+         patch("common.services.job_registry.JobManager") as manager_cls:
+        manager_cls.return_value.submit_job.return_value = "job_sampled_2"
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -275,15 +282,14 @@ async def test_trigger_sampled_run_with_param_overrides():
     data = resp.json()
     assert data["run_id"] == 99
     assert data["sample_size"] == 3000
-    # Popen called with --param-overrides
-    call_args = mock_popen.call_args
-    cmd = call_args[0][0]
-    assert "--param-overrides" in cmd
+    # Overrides travel to the job params
+    params = manager_cls.return_value.submit_job.call_args.args[1]
+    assert params["param_overrides"] == {"learning_rate": 0.05, "num_leaves": 127}
 
 
 @pytest.mark.asyncio
-async def test_trigger_sampled_run_subprocess_failure():
-    """POST /lgbm-tuning/sampled/run handles subprocess launch failure."""
+async def test_trigger_sampled_run_submit_failure():
+    """POST /lgbm-tuning/sampled/run handles job-submission failure."""
     pool, conn, cursor = _make_pool()
     strata = _mock_strata()
     sampled_skus = [f"DFU_{i}" for i in range(2000)]
@@ -294,7 +300,8 @@ async def test_trigger_sampled_run_subprocess_failure():
          patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus), \
          patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
          patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=2.5), \
-         patch("subprocess.Popen", side_effect=OSError("Command not found")):
+         patch("common.services.job_registry.JobManager") as manager_cls:
+        manager_cls.return_value.submit_job.side_effect = RuntimeError("scheduler down")
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -303,7 +310,7 @@ async def test_trigger_sampled_run_subprocess_failure():
                 json={"target_n": 2000},
             )
     assert resp.status_code == 500
-    assert "failed to launch" in resp.json()["detail"].lower()
+    assert "failed to submit" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio

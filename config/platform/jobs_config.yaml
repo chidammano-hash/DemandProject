@@ -1,0 +1,17 @@
+# Background-job platform configuration.
+#
+# Consumed by: common/services/job_registry.py (JobManager.ensure_default_schedules)
+# at API startup, after persisted job_schedule rows are restored into APScheduler.
+#
+# default_schedules: recurring jobs the platform guarantees exist. Each entry
+# gets the deterministic schedule id "sched_default_<name>", so restarts and
+# multiple boots never duplicate it. To stop one, set enabled: false here —
+# deleting it via DELETE /jobs/schedules/{id} only lasts until the next boot.
+default_schedules:
+  - name: refresh_all_mvs_nightly       # -> schedule_id sched_default_refresh_all_mvs_nightly
+    job_type: refresh_all_mvs           # refreshes EVERY materialized view in dependency order
+    enabled: true
+    cron: "30 2 * * *"                  # 02:30 UTC nightly (before business hours)
+    params:
+      skip_heavy: false                 # include mv_intramonth_stockout (10-30 min)
+    label: "Nightly MV refresh (staleness safety net)"

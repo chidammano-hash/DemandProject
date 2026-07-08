@@ -1086,54 +1086,25 @@ def _run_refresh_forecast_views(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Refresh the customer-analytics + forecast materialized views concurrently.
+    """Refresh every MV that reads the forecast/backtest fact tables.
 
     Moved out of the API request thread (was inline in
     ``api/routers/forecasting/competition.py``). At 40x scale the synchronous
     refresh exceeds the 30s ``statement_timeout`` and holds ACCESS EXCLUSIVE
     locks blocking other readers — running it as a background job avoids both
-    issues. ``REFRESH ... CONCURRENTLY`` lets readers continue during the
-    refresh.
+    issues. The MV set comes from the central dependency map
+    (common/core/mv_refresh.py), not a hand-picked list.
 
-    Returns a dict with ``refreshed`` and ``failed`` lists of MV names.
+    Returns a dict with ``refreshed``, ``failed`` and ``missing`` MV lists.
     """
-    import psycopg
-    from psycopg import sql
+    # Imported here to keep module-level imports psycopg-free (see module docstring).
+    from common.core.mv_refresh import refresh_for_tables
 
-    mvs = ("agg_forecast_monthly", "agg_accuracy_by_dim", "agg_dfu_coverage")
-    refreshed: list[str] = []
-    failed: list[str] = []
-
-    if progress_cb:
-        progress_cb(pct=5, msg=f"Refreshing {len(mvs)} forecast materialized views")
-
-    # autocommit=True (default for _get_conn) is required: REFRESH MATERIALIZED
-    # VIEW CONCURRENTLY cannot run inside a transaction block.
-    with _get_conn() as conn:
-        with conn.cursor() as cur:
-            try:
-                cur.execute("SET maintenance_work_mem = '512MB'")
-            except psycopg.Error:
-                logger.exception("Failed to set maintenance_work_mem")
-            for idx, mv in enumerate(mvs, start=1):
-                if cancel_event and cancel_event.is_set():
-                    raise RuntimeError("Job cancelled by user")
-                if progress_cb:
-                    pct = int(5 + (idx - 1) / len(mvs) * 90)
-                    progress_cb(pct=pct, msg=f"Refreshing {mv}")
-                stmt = sql.SQL("REFRESH MATERIALIZED VIEW CONCURRENTLY {}").format(
-                    sql.Identifier(mv)
-                )
-                try:
-                    cur.execute(stmt)
-                    refreshed.append(mv)
-                except psycopg.Error:
-                    logger.exception("Failed to refresh %s", mv)
-                    failed.append(mv)
-
-    if progress_cb:
-        progress_cb(pct=100, msg=f"Refreshed {len(refreshed)}/{len(mvs)} views")
-    return {"refreshed": refreshed, "failed": failed}
+    return refresh_for_tables(
+        ["fact_external_forecast_monthly", "backtest_lag_archive"],
+        progress_cb=progress_cb,
+        cancel_event=cancel_event,
+    )
 
 
 def _run_refresh_customer_analytics(
@@ -1145,58 +1116,42 @@ def _run_refresh_customer_analytics(
     """Refresh the materialized views backing the Customer Analytics tab.
 
     Backs the "Recalculate" button on that tab. The CA panels read from these
-    MVs instead of aggregating fact tables per-request (see the Make targets
-    ``refresh-customer-mv`` / ``refresh-customer-filter-options`` /
-    ``refresh-ca-mvs``); this job runs the same refresh off the request thread.
-    ``mv_customer_activity_monthly`` is refreshed first since it is the core
-    activity rollup the rest of the tab builds on.
+    MVs instead of aggregating fact tables per-request; this job runs the same
+    refresh off the request thread. The MV set comes from the central
+    dependency map keyed on the customer-demand fact + customer dimension.
 
-    Returns a dict with ``refreshed`` and ``failed`` lists of MV names.
+    Returns a dict with ``refreshed``, ``failed`` and ``missing`` MV lists.
     """
-    import psycopg
-    from psycopg import sql
+    from common.core.mv_refresh import refresh_for_tables
 
-    mvs = (
-        "mv_customer_activity_monthly",
-        "mv_customer_filter_options",
-        "mv_ca_segment_trends",
-        "mv_ca_demand_at_risk",
-        "mv_ca_order_patterns",
-        "mv_ca_item_state",
+    return refresh_for_tables(
+        ["fact_customer_demand_monthly", "dim_customer"],
+        progress_cb=progress_cb,
+        cancel_event=cancel_event,
     )
-    refreshed: list[str] = []
-    failed: list[str] = []
 
-    if progress_cb:
-        progress_cb(pct=5, msg=f"Refreshing {len(mvs)} customer-analytics views")
 
-    # autocommit=True (default for _get_conn) is required: REFRESH MATERIALIZED
-    # VIEW CONCURRENTLY cannot run inside a transaction block.
-    with _get_conn() as conn:
-        with conn.cursor() as cur:
-            try:
-                cur.execute("SET maintenance_work_mem = '512MB'")
-            except psycopg.Error:
-                logger.exception("Failed to set maintenance_work_mem")
-            for idx, mv in enumerate(mvs, start=1):
-                if cancel_event and cancel_event.is_set():
-                    raise RuntimeError("Job cancelled by user")
-                if progress_cb:
-                    pct = int(5 + (idx - 1) / len(mvs) * 90)
-                    progress_cb(pct=pct, msg=f"Refreshing {mv}")
-                stmt = sql.SQL("REFRESH MATERIALIZED VIEW CONCURRENTLY {}").format(
-                    sql.Identifier(mv)
-                )
-                try:
-                    cur.execute(stmt)
-                    refreshed.append(mv)
-                except psycopg.Error:
-                    logger.exception("Failed to refresh %s", mv)
-                    failed.append(mv)
+def _run_refresh_all_mvs(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Refresh ALL materialized views in dependency order (staleness safety net).
 
-    if progress_cb:
-        progress_cb(pct=100, msg=f"Refreshed {len(refreshed)}/{len(mvs)} views")
-    return {"refreshed": refreshed, "failed": failed}
+    Scheduled recurring by default (config/platform/jobs_config.yaml) so no MV
+    stays stale longer than the schedule interval even if a writer path forgot
+    to refresh it. ``skip_heavy: true`` in params skips HEAVY_MVS
+    (mv_intramonth_stockout has its own dedicated job/cadence).
+    """
+    from common.core.mv_refresh import HEAVY_MVS, all_mvs, refresh_materialized_views
+
+    mvs = all_mvs()
+    if params.get("skip_heavy"):
+        mvs = [mv for mv in mvs if mv not in HEAVY_MVS]
+    return refresh_materialized_views(
+        mvs, progress_cb=progress_cb, cancel_event=cancel_event
+    )
 
 
 def _run_ss_simulation(
@@ -1238,6 +1193,67 @@ def _run_data_quality(
         "failed": failed,
         "output_log": f"Data quality checks completed: {passed}/{total} passed, {failed} failed",
     }
+
+
+def _run_tune_stale_clusters(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Re-tune per-cluster hyperparameters for clusters flagged stale.
+
+    Runs ``tune_cluster_hyperparams.py --stale-only``, which reads
+    ``cluster_tuning_profile_state`` (rows marked stale by cluster promotion),
+    tunes only those clusters, merges the results into
+    ``cluster_tuning_profiles.yaml``, and clears the flags it covered.
+    Submitted by ``POST /admin/tuning/invalidate-stale?retune=true``.
+    """
+    model = params.get("model") or "lgbm"
+    if model not in MODEL_OUTPUT_DIRS:
+        raise ValueError(
+            f"Unsupported tuning model '{model}' (expected one of {sorted(MODEL_OUTPUT_DIRS)})"
+        )
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Re-tuning stale clusters ({model})")
+    cmd = [
+        _UV, "run", "python", "scripts/ml/tune_cluster_hyperparams.py",
+        "--model", model, "--stale-only",
+    ]
+    if params.get("trials"):
+        cmd.extend(["--trials", str(int(params["trials"]))])
+    output = _run_subprocess(cmd, progress_cb, "Tuning stale clusters",
+                             cancel_event=cancel_event, job_id=job_id)
+    return {"output_log": output if output else "Stale-cluster tuning completed"}
+
+
+def _run_sampled_backtest(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a sampled-SKU LGBM backtest (Sampled Backtest panel).
+
+    Replaces the bare ``subprocess.Popen`` the endpoint used to fire —
+    running under the JobManager restores PID tracking, cancellation,
+    log streaming, and restart recovery.
+    """
+    sku_file = params.get("sku_file")
+    if not sku_file:
+        raise ValueError("sampled_backtest requires a 'sku_file' param")
+    if progress_cb:
+        progress_cb(pct=5, msg="Running sampled backtest")
+    cmd = [
+        _UV, "run", "python", str(_SCRIPTS_DIR / "ml" / "run_backtest.py"),
+        "--sampled-skus", str(sku_file),
+    ]
+    if params.get("param_overrides"):
+        cmd.extend(["--param-overrides", json.dumps(params["param_overrides"])])
+    output = _run_subprocess(cmd, progress_cb, "Running sampled backtest",
+                             cancel_event=cancel_event, job_id=job_id)
+    return {"output_log": output if output else "Sampled backtest completed",
+            "run_id": params.get("run_id")}
 
 
 def _run_tuning_backtest(

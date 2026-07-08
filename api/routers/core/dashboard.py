@@ -65,17 +65,22 @@ async def get_planning_date_info():
 
 @router.get("/dashboard/pipeline-readiness")
 def get_pipeline_readiness(response: FastAPIResponse):
-    """Report whether downstream ML stages are in sync with the SKU dimension.
+    """Report whether downstream ML stages are in sync with their inputs.
 
-    Staleness is *derived live* — there are no stored flags to get stuck.
+    Staleness is *derived live* from generation lineage and timestamps —
+    there are no stored flags to get stuck. Four checks:
 
-    Only a **total loss** of cluster assignments is treated as a problem. Most
-    SKUs are inactive and legitimately have ``ml_cluster IS NULL`` (clustering
-    only assigns the ~13k SKUs with enough history), so the NULL *fraction* is
-    meaningless as a signal. We flag staleness only when **nothing** is clustered
-    — e.g. after ``dim_sku`` was reloaded without re-running clustering, which is
-    exactly when per-cluster models silently collapse to ~0% accuracy. The check
-    auto-clears the moment clustering is re-run and promoted.
+    1. **clustering** — total loss of ``dim_sku.ml_cluster`` assignments. Most
+       SKUs are inactive and legitimately NULL, so only **nothing clustered**
+       is flagged (the state where per-cluster models silently collapse).
+    2. **tuning** — ``cluster_tuning_profile_state`` rows flagged stale by a
+       cluster promotion that no tuning run has covered.
+    3. **champion** — the promoted champion experiment's
+       ``cluster_experiment_id`` (sql/198) differs from the currently promoted
+       cluster experiment.
+    4. **forecast** — a sales load completed after the promoted champion ran.
+
+    Checks 2-4 skip silently when their tables/columns are not migrated yet.
 
     Response shape::
 
@@ -94,40 +99,143 @@ def get_pipeline_readiness(response: FastAPIResponse):
         }
     """
     checks: list[dict[str, Any]] = []
-    try:
-        with get_conn() as conn, conn.cursor() as cur:
+    with get_conn() as conn, conn.cursor() as cur:
+        # ── Check 1: total loss of cluster assignments ───────────────────────
+        try:
             cur.execute(
                 "SELECT COUNT(*) AS total, "
                 "COUNT(*) FILTER (WHERE ml_cluster IS NOT NULL) AS clustered "
                 "FROM dim_sku"
             )
             total, clustered = cur.fetchone()
-    except psycopg.Error:
-        logger.exception("pipeline-readiness check failed")
-        raise HTTPException(
-            status_code=500, detail="Failed to read pipeline readiness"
-        ) from None
+        except psycopg.Error:
+            logger.exception("pipeline-readiness check failed")
+            raise HTTPException(
+                status_code=500, detail="Failed to read pipeline readiness"
+            ) from None
 
-    if total and not clustered:
-        checks.append(
-            {
-                "stage": "clustering",
-                "status": "stale",
-                "severity": "high",
-                "title": "Clustering needs to be re-run",
-                "detail": (
-                    "No SKUs have a cluster assignment, so per-cluster models can't "
-                    "train and will score poorly. This usually means the SKU data was "
-                    "reloaded since clustering last ran. Open Clustering to run and "
-                    "promote a scenario."
-                ),
-                "action": {
-                    "kind": "navigate",
-                    "target": "clusters",
-                    "label": "Open Clustering",
-                },
-            }
-        )
+        if total and not clustered:
+            checks.append(
+                {
+                    "stage": "clustering",
+                    "status": "stale",
+                    "severity": "high",
+                    "title": "Clustering needs to be re-run",
+                    "detail": (
+                        "No SKUs have a cluster assignment, so per-cluster models can't "
+                        "train and will score poorly. This usually means the SKU data was "
+                        "reloaded since clustering last ran. Open Clustering to run and "
+                        "promote a scenario."
+                    ),
+                    "action": {
+                        "kind": "navigate",
+                        "target": "clusters",
+                        "label": "Open Clustering",
+                    },
+                }
+            )
+
+        # ── Check 2: tuning profiles flagged stale by a cluster promotion ───
+        # (cluster_tuning_profile_state, sql/148 — absent table just skips)
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE"
+            )
+            row = cur.fetchone()
+            stale_profiles = int(row[0]) if row else 0
+        except psycopg.Error:
+            conn.rollback()
+            stale_profiles = 0
+        if stale_profiles:
+            checks.append(
+                {
+                    "stage": "tuning",
+                    "status": "stale",
+                    "severity": "medium",
+                    "title": f"{stale_profiles} tuning profile(s) predate the current clusters",
+                    "detail": (
+                        "A clustering promotion changed cluster membership after these "
+                        "per-cluster hyperparameters were tuned. Re-tune via "
+                        "POST /admin/tuning/invalidate-stale?retune=true or "
+                        "'make tune-clusters'."
+                    ),
+                    "action": None,
+                }
+            )
+
+        # ── Check 3: promoted champion built under a superseded clustering ──
+        # (champion_experiment.cluster_experiment_id, sql/198 — absent column skips)
+        try:
+            cur.execute(
+                """
+                SELECT ch.experiment_id, ch.cluster_experiment_id, cl.experiment_id
+                FROM champion_experiment ch
+                LEFT JOIN LATERAL (
+                    SELECT experiment_id FROM cluster_experiment
+                    WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1
+                ) cl ON TRUE
+                WHERE ch.is_promoted = TRUE
+                ORDER BY ch.promoted_at DESC
+                LIMIT 1
+                """
+            )
+            lineage = cur.fetchone()
+        except psycopg.Error:
+            conn.rollback()
+            lineage = None
+        if (
+            lineage
+            and lineage[1] is not None
+            and lineage[2] is not None
+            and int(lineage[1]) != int(lineage[2])
+        ):
+            checks.append(
+                {
+                    "stage": "champion",
+                    "status": "stale",
+                    "severity": "high",
+                    "title": "Promoted champion predates the current clusters",
+                    "detail": (
+                        f"Champion experiment {lineage[0]} was computed under cluster "
+                        f"experiment {lineage[1]}, but experiment {lineage[2]} is now "
+                        "promoted. Re-run backtests and champion selection (pipeline "
+                        "'model-refresh') before generating production forecasts."
+                    ),
+                    "action": None,
+                }
+            )
+
+        # ── Check 4: sales data loaded after the promoted champion ran ──────
+        try:
+            cur.execute(
+                """
+                SELECT
+                  (SELECT MAX(completed_at) FROM audit_load_batch
+                   WHERE domain = 'sales' AND status = 'completed'),
+                  (SELECT MAX(promoted_at) FROM champion_experiment
+                   WHERE is_promoted = TRUE)
+                """
+            )
+            freshness = cur.fetchone()
+        except psycopg.Error:
+            conn.rollback()
+            freshness = None
+        if freshness and freshness[0] and freshness[1] and freshness[0] > freshness[1]:
+            checks.append(
+                {
+                    "stage": "forecast",
+                    "status": "stale",
+                    "severity": "medium",
+                    "title": "Sales data is newer than the promoted champion",
+                    "detail": (
+                        "A sales load completed after the promoted champion experiment "
+                        "ran, so backtests, champion routing, and production forecasts "
+                        "reflect pre-load data. Run pipeline 'model-refresh' (then "
+                        "'forecast-publish') to bring them current."
+                    ),
+                    "action": None,
+                }
+            )
 
     set_cache(response, max_age=60)
     return {"ready": len(checks) == 0, "checks": checks}

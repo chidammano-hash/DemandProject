@@ -215,6 +215,66 @@ def resolve_cluster_params(
     return base_params, "none"
 
 
+def warn_if_profiles_stale(db_params: dict[str, Any]) -> None:
+    """Log loud warnings when per-cluster tuning profiles are out of date.
+
+    Two independent staleness signals:
+    - ``cluster_tuning_profile_state`` rows flagged stale by a cluster
+      promotion (``promote_scenario``) that no tuning run has covered yet;
+    - the profiles YAML ``metadata.cluster_experiment_id`` stamp differing
+      from the currently promoted cluster experiment (name-matched overrides
+      would then apply to a different SKU membership).
+
+    Warning-only by design: backtests stay runnable, but the operator sees
+    exactly why per-cluster overrides may be mismatched and how to fix it.
+    """
+    cfg = load_config("cluster_tuning_profiles.yaml")
+    if not cfg.get("enabled", False):
+        return
+
+    try:
+        with psycopg.connect(**db_params) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE"
+            )
+            row = cur.fetchone()
+            stale_count = int(row[0]) if row else 0
+            cur.execute(
+                "SELECT experiment_id FROM cluster_experiment "
+                "WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            promoted_id = int(row[0]) if row else None
+    except psycopg.Error as exc:
+        logger.warning("Could not check tuning-profile staleness: %s", exc)
+        return
+
+    if stale_count:
+        logger.warning(
+            "%d per-cluster tuning profile(s) are flagged STALE (cluster promotion "
+            "since the last tuning run). Re-tune via 'make tune-clusters' or "
+            "POST /admin/tuning/invalidate-stale?retune=true.",
+            stale_count,
+        )
+
+    yaml_experiment = (cfg.get("metadata") or {}).get("cluster_experiment_id")
+    if promoted_id is None:
+        return
+    if yaml_experiment is None:
+        logger.info(
+            "cluster_tuning_profiles.yaml carries no cluster_experiment_id stamp; "
+            "generation match with promoted experiment %d cannot be verified.",
+            promoted_id,
+        )
+    elif int(yaml_experiment) != promoted_id:
+        logger.warning(
+            "cluster_tuning_profiles.yaml was tuned against cluster experiment %s "
+            "but experiment %d is promoted — per-cluster overrides may not match "
+            "current cluster membership. Re-run 'make tune-clusters'.",
+            yaml_experiment, promoted_id,
+        )
+
+
 # ── Timeframe generation ─────────────────────────────────────────────────────
 
 
@@ -1228,6 +1288,9 @@ def run_tree_backtest(
     else:
         sales_df, dfu_attrs, item_attrs = data_result
         customer_features = None
+
+    # Surface stale per-cluster tuning profiles before training starts.
+    warn_if_profiles_stale(db)
 
     # Execution lag lookup
     exec_lag_map = dfu_attrs.set_index("sku_ck")["execution_lag"].fillna(0).astype(int).to_dict()

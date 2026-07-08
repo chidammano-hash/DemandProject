@@ -77,12 +77,15 @@ from common.services.job_state import (
     _run_load_backtest_model,
     _run_load_backtest_results,
     _run_model_tuning_experiment,
+    _run_refresh_all_mvs,
     _run_refresh_customer_analytics,
     _run_refresh_forecast_views,
     _run_refresh_health_scores,
     _run_refresh_intramonth,
+    _run_sampled_backtest,
     _run_seasonality,
     _run_ss_simulation,
+    _run_tune_stale_clusters,
     _run_tuning_backtest,
 )
 from common.services.job_scheduler import make_scheduler, make_trigger
@@ -396,6 +399,16 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         callable=_run_refresh_forecast_views,
         params_schema={"mvs": None},
     ),
+    "refresh_all_mvs": JobTypeDef(
+        type_id="refresh_all_mvs",
+        label="Refresh All Materialized Views",
+        description="Refresh every materialized view in dependency order "
+                    "(staleness safety net; set skip_heavy to exclude "
+                    "mv_intramonth_stockout)",
+        group="platform",
+        callable=_run_refresh_all_mvs,
+        params_schema={"skip_heavy": True},
+    ),
     "refresh_customer_analytics": JobTypeDef(
         type_id="refresh_customer_analytics",
         label="Recalculate Customer Analytics",
@@ -420,6 +433,23 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="tuning",
         callable=_run_tuning_backtest,
         params_schema={"run_id": 0, "session_id": "", "overrides": {}, "strategy_label": ""},
+    ),
+    "tune_stale_clusters": JobTypeDef(
+        type_id="tune_stale_clusters",
+        label="Re-tune Stale Cluster Profiles",
+        description="Re-tune per-cluster hyperparameters flagged stale by a "
+                    "clustering promotion (tune_cluster_hyperparams.py --stale-only)",
+        group="tuning",
+        callable=_run_tune_stale_clusters,
+        params_schema={"model": "lgbm", "trials": None},
+    ),
+    "sampled_backtest": JobTypeDef(
+        type_id="sampled_backtest",
+        label="Sampled Backtest",
+        description="Run a sampled-SKU LGBM backtest for fast hyperparameter iteration",
+        group="tuning_lgbm",  # shares the per-model group with model_tuning_run(lgbm)
+        callable=_run_sampled_backtest,
+        params_schema={"run_id": 0, "sku_file": "", "param_overrides": {}},
     ),
     "model_tuning_run": JobTypeDef(
         type_id="model_tuning_run",
@@ -543,6 +573,17 @@ class JobManager:
             recovered = self.recover_stale_jobs()
             if recovered:
                 logger.info("Recovered %d stale jobs on startup", recovered)
+
+            # Re-register persisted recurring schedules. They previously lived
+            # only in APScheduler memory, so an API restart silently killed
+            # them while list_schedules() kept returning the DB rows.
+            restored = self.restore_schedules()
+            if restored:
+                logger.info("Restored %d recurring schedule(s) from job_schedule", restored)
+
+            # Guarantee config-declared default schedules (e.g. the nightly
+            # refresh_all_mvs staleness safety net) exist.
+            self.ensure_default_schedules()
 
     # ---- helpers ----
 
@@ -775,10 +816,13 @@ class JobManager:
         label: str | None = None,
         cron: str | None = None,
         interval_minutes: int | None = None,
+        schedule_id: str | None = None,
     ) -> str:
         """Schedule a recurring job via cron expression or interval.
 
         Returns a schedule_id that can be used to remove the schedule.
+        Pass an explicit ``schedule_id`` for deterministic schedules (config
+        defaults) so repeated calls upsert instead of duplicating.
         """
         self._ensure_init()
 
@@ -788,7 +832,7 @@ class JobManager:
             raise ValueError("Must specify either cron or interval_minutes")
 
         type_def = JOB_TYPE_REGISTRY[job_type]
-        schedule_id = f"sched_{uuid.uuid4().hex[:8]}"
+        schedule_id = schedule_id or f"sched_{uuid.uuid4().hex[:8]}"
         job_label = label or f"Scheduled: {type_def.label}"
         job_params = params or {}
 
@@ -871,6 +915,91 @@ class JobManager:
         except Exception:
             logger.warning("Failed to list schedules — table may not exist yet")
             return []
+
+    def restore_schedules(self) -> int:
+        """Re-register enabled ``job_schedule`` rows into APScheduler.
+
+        Called from ``_ensure_init`` on startup. Without this, recurring
+        schedules created via ``POST /jobs/schedule`` stopped firing after an
+        API restart even though ``list_schedules()`` still returned them.
+        """
+        try:
+            with _get_conn() as conn:
+                rows = conn.execute(
+                    """SELECT schedule_id, job_type, job_label, cron_expr, interval_min, params
+                       FROM job_schedule WHERE enabled = TRUE"""
+                ).fetchall()
+        except psycopg.Error:
+            logger.warning("job_schedule table unavailable — no schedules restored")
+            return 0
+
+        restored = 0
+        for row in rows:
+            try:
+                schedule_id, job_type, job_label, cron_expr, interval_min, params_raw = row
+                if job_type not in JOB_TYPE_REGISTRY:
+                    logger.warning(
+                        "Skipping schedule %s: unknown job type %s", schedule_id, job_type
+                    )
+                    continue
+                params = (
+                    params_raw if isinstance(params_raw, dict)
+                    else json.loads(params_raw or "{}")
+                )
+                self._scheduler.add_job(
+                    self._scheduled_execution,
+                    trigger=make_trigger(cron_expr, interval_min),
+                    args=[job_type, params, job_label],
+                    id=schedule_id,
+                    name=job_label,
+                    replace_existing=True,
+                )
+                restored += 1
+            except (ValueError, TypeError, KeyError):
+                logger.exception("Failed to restore schedule row %r", row)
+        return restored
+
+    def ensure_default_schedules(self) -> None:
+        """Create config-declared default schedules that are not registered yet.
+
+        Reads ``default_schedules`` from ``config/platform/jobs_config.yaml``.
+        Each entry gets the deterministic id ``sched_default_<name>``, so this
+        is idempotent across restarts. Disable an entry in the config to stop
+        it — deleting the schedule row alone lasts only until the next boot.
+        """
+        try:
+            from common.core.utils import load_config
+
+            cfg = load_config("jobs_config.yaml") or {}
+        except (OSError, ValueError):
+            logger.exception("jobs_config.yaml unreadable — skipping default schedules")
+            return
+
+        for entry in cfg.get("default_schedules") or []:
+            if not isinstance(entry, dict) or not entry.get("enabled", True):
+                continue
+            job_type = entry.get("job_type")
+            name = entry.get("name") or job_type
+            if job_type not in JOB_TYPE_REGISTRY:
+                logger.warning(
+                    "Skipping default schedule %r: unknown job type %r", name, job_type
+                )
+                continue
+            schedule_id = f"sched_default_{name}"
+            if self._scheduler.get_job(schedule_id) is not None:
+                continue  # already restored from job_schedule
+            try:
+                self.schedule_recurring(
+                    job_type,
+                    params=entry.get("params") or {},
+                    label=entry.get("label"),
+                    cron=entry.get("cron"),
+                    interval_minutes=entry.get("interval_minutes"),
+                    schedule_id=schedule_id,
+                )
+                logger.info("Registered default schedule %s (%s)", schedule_id, job_type)
+            except (ValueError, TypeError):
+                logger.exception("Failed to register default schedule %r", name)
 
     def submit_pipeline(
         self,

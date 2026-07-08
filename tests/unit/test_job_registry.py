@@ -228,8 +228,13 @@ class TestSubmitJob:
         # Use a real registered type
         job_id = mgr.submit_job("cluster_pipeline", params={"k_range": [3, 8]})
         assert job_id.startswith("job_")
-        # Verify scheduler was called
-        mock_scheduler.add_job.assert_called_once()
+        # Verify the job was dispatched to the scheduler (init also registers
+        # config-default schedules, so filter to this job's dispatch call).
+        dispatch_calls = [
+            c for c in mock_scheduler.add_job.call_args_list
+            if c.kwargs.get("id") == job_id
+        ]
+        assert len(dispatch_calls) == 1
 
     def test_submit_generates_unique_ids(self, mock_db, mock_scheduler):
         from common.services.job_registry import JobManager
@@ -683,3 +688,91 @@ class TestRunDataQuality:
         entry = JOB_TYPE_REGISTRY["data_quality"]
         assert entry.group == "platform"
         assert entry.type_id == "data_quality"
+
+
+# ---------------------------------------------------------------------------
+# Tests: schedule restoration + config-default schedules (boot wiring)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SCHED_ID = "sched_default_refresh_all_mvs_nightly"
+
+
+def _routing_conn(schedule_rows):
+    """Mock conn whose job_schedule SELECT returns *schedule_rows*, else empty."""
+    conn = MagicMock()
+
+    def _execute(sql, *args, **kwargs):
+        res = MagicMock()
+        if "FROM job_schedule" in str(sql):
+            res.fetchall.return_value = schedule_rows
+        else:
+            res.fetchall.return_value = []
+            res.fetchone.return_value = None
+            res.rowcount = 0
+        return res
+
+    conn.execute.side_effect = _execute
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+    return conn
+
+
+class TestScheduleRestoration:
+    """Persisted job_schedule rows must survive an API restart (re-registered)."""
+
+    def test_restore_reregisters_enabled_rows(self, mock_scheduler):
+        from common.services.job_registry import JobManager
+        conn = _routing_conn([
+            ("sched_ab12", "cluster_pipeline", "Clustering", "0 2 * * *", None, "{}"),
+        ])
+        with patch("common.services.job_registry._get_conn", return_value=conn):
+            JobManager()._ensure_init()
+        restored = [
+            c for c in mock_scheduler.add_job.call_args_list
+            if c.kwargs.get("id") == "sched_ab12"
+        ]
+        assert len(restored) == 1
+        assert restored[0].kwargs["replace_existing"] is True
+
+    def test_restore_skips_unknown_job_type(self, mock_scheduler):
+        from common.services.job_registry import JobManager
+        conn = _routing_conn([
+            ("sched_dead", "no_such_type", "Ghost", "0 2 * * *", None, "{}"),
+        ])
+        with patch("common.services.job_registry._get_conn", return_value=conn):
+            JobManager()._ensure_init()
+        assert not [
+            c for c in mock_scheduler.add_job.call_args_list
+            if c.kwargs.get("id") == "sched_dead"
+        ]
+
+    def test_restore_survives_malformed_row(self, mock_scheduler):
+        from common.services.job_registry import JobManager
+        conn = _routing_conn([("only", "two")])
+        with patch("common.services.job_registry._get_conn", return_value=conn):
+            JobManager()._ensure_init()  # must not raise
+
+
+class TestDefaultSchedules:
+    """config/platform/jobs_config.yaml default schedules register at boot."""
+
+    def test_default_mv_refresh_schedule_registered(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+        JobManager()._ensure_init()
+        defaults = [
+            c for c in mock_scheduler.add_job.call_args_list
+            if c.kwargs.get("id") == _DEFAULT_SCHED_ID
+        ]
+        assert len(defaults) == 1
+        assert defaults[0].kwargs["args"][0] == "refresh_all_mvs"
+
+    def test_default_not_duplicated_when_already_registered(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+        mock_scheduler.get_job.side_effect = (
+            lambda sid: MagicMock() if sid == _DEFAULT_SCHED_ID else None
+        )
+        JobManager()._ensure_init()
+        assert not [
+            c for c in mock_scheduler.add_job.call_args_list
+            if c.kwargs.get("id") == _DEFAULT_SCHED_ID
+        ]

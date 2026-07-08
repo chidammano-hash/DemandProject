@@ -454,7 +454,8 @@ def seed_champion_baseline(conn: psycopg.Connection) -> int | None:  # type: ign
                  champion_accuracy, ceiling_accuracy, gap_bps,
                  n_champions, n_dfu_months, model_distribution,
                  is_promoted, promoted_at,
-                 is_results_promoted, results_promoted_at)
+                 is_results_promoted, results_promoted_at,
+                 cluster_experiment_id)
             VALUES
                 (%s, %s, %s, 'completed', NOW(), NOW(),
                  %s, %s, %s,
@@ -462,7 +463,9 @@ def seed_champion_baseline(conn: psycopg.Connection) -> int | None:  # type: ign
                  %s, %s, %s,
                  %s, %s, %s,
                  TRUE, NOW(),
-                 TRUE, NOW())
+                 TRUE, NOW(),
+                 (SELECT experiment_id FROM cluster_experiment
+                  WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1))
             RETURNING experiment_id
             """,
             (

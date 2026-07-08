@@ -3,9 +3,10 @@
 Currently exposes:
 - ``POST /admin/llm/reset``      : force LLM client reinitialization after key rotation
 - ``POST /admin/tuning/invalidate-stale``
-                                  : ask tuning scheduler to re-tune stale per-cluster
-                                    profiles (no-op until the ``stale`` column lands
-                                    via Stream F).
+                                  : clear — or with ``?retune=true`` actually re-tune —
+                                    per-cluster tuning profiles flagged stale by a
+                                    clustering promotion (``cluster_tuning_profile_state``,
+                                    sql/148).
 
 All endpoints are guarded by the ``require_api_key`` dependency so they are
 unavailable in environments that do not set ``API_KEY``.
@@ -16,7 +17,7 @@ import logging
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from api.auth import require_api_key
 from api.llm import reset_llm_client
@@ -44,18 +45,27 @@ def admin_reset_llm() -> dict[str, Any]:
 
 
 @router.post("/tuning/invalidate-stale")
-def admin_invalidate_stale_tuning() -> dict[str, Any]:
-    """Invalidate per-cluster tuning profiles whose cluster has been re-promoted.
+def admin_invalidate_stale_tuning(
+    retune: bool = Query(
+        default=False,
+        description="Submit a tune_stale_clusters job (re-tunes stale clusters and "
+                    "clears their flags on success) instead of just clearing flags",
+    ),
+    model: str = Query(
+        default="lgbm",
+        description="Tree model to re-tune when retune=true (lgbm/catboost/xgboost)",
+    ),
+) -> dict[str, Any]:
+    """Handle per-cluster tuning profiles flagged stale by a cluster promotion.
 
-    Stream F owns the data-side of this feature: a ``stale`` column on
-    ``cluster_tuning_profile`` (or equivalent) that flips ``true`` whenever the
-    referenced cluster is replaced.  When the column exists we pick up the
-    stale profiles and notify the tuning scheduler so they re-tune on the next
-    cycle.
+    ``promote_scenario`` marks rows in ``cluster_tuning_profile_state`` stale
+    whenever a clustering scenario is promoted (sql/148). Two modes:
 
-    Until Stream F lands, this endpoint is intentionally a no-op that only
-    logs intent — it returns ``{"status": "noop", "reason": "..."}`` so the
-    UI / scheduler can wire against it safely.
+    - default: clear the stale flags (acknowledge without re-tuning — e.g.
+      after a manual full ``make tune-clusters`` run already covered them).
+    - ``?retune=true``: submit the ``tune_stale_clusters`` background job,
+      which runs ``tune_cluster_hyperparams.py --stale-only``; the script
+      clears the flags for the clusters it successfully re-tunes.
     """
     try:
         from api.core import get_conn
@@ -65,46 +75,69 @@ def admin_invalidate_stale_tuning() -> dict[str, Any]:
 
     try:
         with get_conn() as conn, conn.cursor() as cur:
-            # Is the stale column present yet?
             cur.execute(
                 """
                 SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = %s AND column_name = %s
+                FROM information_schema.tables
+                WHERE table_name = %s
                 LIMIT 1
                 """,
-                ("cluster_tuning_profile", "stale"),
+                ("cluster_tuning_profile_state",),
             )
-            has_stale = cur.fetchone() is not None
-            if not has_stale:
+            if cur.fetchone() is None:
                 logger.info(
-                    "admin/tuning/invalidate-stale: 'stale' column not present; no-op"
+                    "admin/tuning/invalidate-stale: state table not present; no-op"
                 )
                 return {
                     "status": "noop",
-                    "reason": "stale column not present (Stream F not landed)",
+                    "reason": "cluster_tuning_profile_state table not present (apply sql/148)",
                     "invalidated": 0,
                 }
 
-            # Column exists — count stale rows and reset their stale flag.
             cur.execute(
-                "SELECT COUNT(*) FROM cluster_tuning_profile WHERE stale = TRUE"
+                "SELECT cluster_name FROM cluster_tuning_profile_state "
+                "WHERE stale = TRUE ORDER BY cluster_name"
             )
-            row = cur.fetchone()
-            count = int(row[0]) if row else 0
-            if count == 0:
-                return {"status": "ok", "invalidated": 0}
+            stale_clusters = [row[0] for row in cur.fetchall()]
+            if not stale_clusters:
+                return {"status": "ok", "invalidated": 0, "stale_clusters": []}
 
-            # Clear the stale flag; scheduler picks these up via its own query.
+            if retune:
+                from common.services.job_registry import JobManager
+
+                job_id = JobManager().submit_job(
+                    "tune_stale_clusters",
+                    {"model": model},
+                    label=f"Re-tune {len(stale_clusters)} stale cluster profile(s)",
+                    triggered_by="api",
+                )
+                logger.info(
+                    "admin/tuning/invalidate-stale: submitted retune job %s for %d cluster(s)",
+                    job_id, len(stale_clusters),
+                )
+                return {
+                    "status": "retune_submitted",
+                    "job_id": job_id,
+                    "stale_clusters": stale_clusters,
+                    "invalidated": 0,
+                }
+
             cur.execute(
-                "UPDATE cluster_tuning_profile SET stale = FALSE WHERE stale = TRUE"
+                """UPDATE cluster_tuning_profile_state
+                   SET stale = FALSE, cleared_at = NOW(), modified_ts = NOW()
+                   WHERE stale = TRUE"""
             )
+            cleared = cur.rowcount
             conn.commit()
             logger.info(
                 "admin/tuning/invalidate-stale: cleared stale flag on %d profile(s)",
-                count,
+                cleared,
             )
-            return {"status": "ok", "invalidated": count}
+            return {
+                "status": "ok",
+                "invalidated": cleared,
+                "stale_clusters": stale_clusters,
+            }
     except psycopg.Error as exc:
         # DB-level failure (unmigrated schema, permissions, etc.) — degrade to
         # a no-op rather than 500 so the admin tooling stays safe to poll.

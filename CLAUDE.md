@@ -32,7 +32,7 @@
 Hard constraints. Violations cause bugs, test failures, or silent data corruption.
 
 ### Mechanically enforced (the pre-commit gate hard-blocks NEW violations)
-These 6 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
+These 7 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
 existing files) and hard-block a commit that adds a new one — so they need no prose vigilance,
 just don't add them:
 - `date.today()` only in `common/core/planning_date.py` → use `get_planning_date()`.
@@ -43,6 +43,10 @@ just don't add them:
 - No `print()` in `scripts/{etl,ml,inventory,forecasting,ops,ai}` → `logging.getLogger(__name__)`.
 - psycopg3 `%s` placeholders, never `$1`/`$2`; no f-string SQL inside `cur.execute()`.
 - No `: any` / `<any>` / `as any` in `frontend/src/api/queries/` → generate types via `npm run gen:types`.
+- No `REFRESH MATERIALIZED VIEW` outside `common/core/mv_refresh.py` → call
+  `refresh_for_tables([tables written])` after committing a fact/dim write. The MV
+  dependency map lives ONLY there; new MV DDL must register in it (test-enforced by
+  `tests/unit/test_mv_refresh.py`).
 
 ### Workflow (applies to every change)
 - **Self-review + refactor at each step** before reporting done (also a global habit). In
@@ -165,7 +169,14 @@ Still-here quick facts that don't belong to one skill:
   `sales_qty = MAX(0, demand_cases - oos_cases)`. Supports `--replace`, `--month YYYY-MM`.
 - **GPU**: `DEMAND_GPU=on|off|auto` (default `auto`) — `cupy` (Monte Carlo), `numba` (seasonality JIT); all fall back.
 - **Admin** (`api/routers/platform/admin.py`, `require_api_key`): `POST /admin/llm/reset` clears
-  LLM singletons; `POST /admin/tuning/invalidate-stale` clears `cluster_tuning_profile.stale`.
+  LLM singletons; `POST /admin/tuning/invalidate-stale` clears `cluster_tuning_profile_state.stale`
+  (with `?retune=true` it instead submits the `tune_stale_clusters` job, which re-tunes stale
+  clusters and clears their flags on success).
+- **Named pipelines**: the forecasting lifecycle chains as JobManager pipelines —
+  `GET /jobs/pipelines/named` + `POST /jobs/pipelines/named/{name}` (`data-refresh`,
+  `model-refresh`, `forecast-publish`, `full-refresh`; `config/forecasting/pipelines.yaml`).
+- **MV staleness safety net**: the `refresh_all_mvs` job is scheduled nightly by default
+  (`config/platform/jobs_config.yaml`); persisted `job_schedule` rows re-register at API boot.
 
 ---
 

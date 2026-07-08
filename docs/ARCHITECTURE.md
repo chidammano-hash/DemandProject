@@ -17,7 +17,7 @@ The single authoritative reference for system architecture, data flow, database 
 9. [Database Schema Map](#9-database-schema-map)
 10. [All Tables by Category](#10-all-tables-by-category-169-tables--28-materialized-views)
 11. [Accuracy Slice Materialized Views](#11-accuracy-slice-materialized-views-feature10)
-12. [Materialized View Refresh Order](#12-materialized-view-refresh-order)
+12. [Materialized View Refresh (central dependency map)](#12-materialized-view-refresh-central-dependency-map)
 13. [Compute Pipeline Dependency Graph](#13-compute-pipeline-dependency-graph)
 14. [Script-Level Dependency Details](#14-script-level-dependency-details)
 15. [API Router Architecture](#15-api-router-architecture)
@@ -760,39 +760,55 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
 
 ---
 
-## 12. Materialized View Refresh Order
+## 12. Materialized View Refresh (central dependency map)
 
-Views must be refreshed in dependency order. Later views depend on earlier ones.
+The single source of truth for MV → source-relation dependencies is
+`common/core/mv_refresh.py` `MV_SOURCES` — a dict declared in refresh order
+(an MV's upstream MVs come before it). Every code path that writes a fact or
+dimension table refreshes dependents through this module:
 
-```
-1. agg_sales_monthly          <- fact_sales_monthly
-2. agg_forecast_monthly       <- fact_external_forecast_monthly
-3. agg_inventory_monthly      <- fact_inventory_snapshot
-4. agg_accuracy_by_dim        <- backtest_lag_archive + dim_sku
-5. agg_accuracy_lag_archive   <- backtest_lag_archive
-6. agg_dfu_coverage           <- fact_sales_monthly + dim_sku
-6b. agg_dfu_naive_scale       <- fact_sales_monthly + fact_external_forecast_monthly (leakage-safe in-sample MASE scale)
-|
-+- (parallel, independent of each other)
-+-- 7a. mv_fill_rate_monthly          <- fact_inventory_snapshot
-+-- 7b. mv_supplier_performance       <- fact_inventory_snapshot (receipts)
-+-- 7c. mv_intramonth_stockout        <- fact_inventory_snapshot
-+-- 7d. mv_inventory_forecast_monthly <- agg_inventory_monthly + fact_external_forecast_monthly + dim_sku
-|
-8. mv_inventory_health_score  <- fact_safety_stock_targets + fact_replenishment_exceptions
-                                 + mv_fill_rate_monthly + fact_dfu_policy_assignment
-9. mv_network_balance         <- agg_inventory_monthly + fact_safety_stock_targets
-10. mv_control_tower_kpis     <- all IPfeature tables (aggregates everything)
-11. mv_dq_dashboard           <- fact_dq_check_results
-12. (parallel — customer analytics, nightly)
-    - mv_customer_activity_monthly  <- fact_customer_demand_monthly + dim_customer + dim_location (extended grain, sql/174)
-    - mv_customer_filter_options    <- dim_customer (3-row MV, sql/173; replaces 3x ARRAY_AGG DISTINCT)
-    - mv_ca_segment_trends          <- mv_customer_activity_monthly (sql/180)
-    - mv_ca_demand_at_risk          <- mv_customer_activity_monthly (sql/181)
-    - mv_ca_order_patterns          <- mv_customer_activity_monthly (sql/182)
+```python
+from common.core.mv_refresh import refresh_for_tables
+refresh_for_tables(["fact_external_forecast_monthly", "backtest_lag_archive"])
 ```
 
-**Note:** `mv_inventory_forecast_monthly` must refresh BEFORE `mv_inventory_health_score`. Use `SET max_parallel_workers_per_gather = 0` if you encounter shared memory errors during concurrent refresh. All MV refreshes in the Makefile + `scripts/etl/load_ext_ml_forecasts.py` are issued `CONCURRENTLY`.
+Key properties:
+
+- **Derived, never hand-picked.** `mvs_for_tables(tables)` computes the
+  transitive dependent closure (e.g. `fact_inventory_snapshot` →
+  `agg_inventory_monthly` → `mv_inventory_forecast_monthly` →
+  `mv_inventory_health_score` → `mv_control_tower_kpis`). The historical
+  defects — `agg_dfu_naive_scale` (the MASE scale) with no automated
+  refresher, `agg_accuracy_by_dfu` skipped by three of its writers — cannot
+  recur because writers only name the tables they wrote.
+- **Test-enforced completeness.** `tests/unit/test_mv_refresh.py` diffs
+  `MV_SOURCES` against the `sql/` DDL: an unregistered new MV, a retired MV
+  still in the map, a declared source the DDL never references, or a
+  non-topological order all fail the suite. Pre-commit gate rule 7 blocks any
+  new inline `REFRESH MATERIALIZED VIEW` outside the module.
+- **CONCURRENTLY-safe.** Refreshes run on a dedicated autocommit connection
+  (CONCURRENTLY is illegal inside a transaction block), attempting
+  `CONCURRENTLY` first with a plain-refresh fallback for unpopulated MVs.
+  `refresh_materialized_views_parallel()` runs tier-by-tier for the parallel
+  ETL path.
+- **Heavy-MV escape hatch.** `HEAVY_MVS` (currently `mv_intramonth_stockout`,
+  a 10-30 min rebuild) can be excluded with `include_heavy=False`; the
+  scheduled safety net still covers them.
+- **Safety net.** The `refresh_all_mvs` job runs nightly by default
+  (`config/platform/jobs_config.yaml`), so a missed writer path bounds
+  staleness at one day instead of forever.
+
+Operator entry points: `make refresh-mvs-tiered` / `make refresh-accuracy-mvs`
+(both back onto `scripts/db/refresh_mvs.py`, which accepts `--all`,
+`--tables t1,t2`, `--mvs m1,m2`, `--skip-heavy`, `--parallel N`).
+
+**Automatic writers** (all via the central service): ETL domain loads
+(`run_pipeline.py` / `load.py` derive tables per domain via
+`tables_written_for_domain()`), backtest loads, ext-ML loads, champion
+selection, forecast promotion (`fact_production_forecast` →
+`mv_fairness_audit`), DQ auto-fix, cluster promotion (dim_sku dependents),
+inventory planning pipeline, projection compute, and the forecast-clean
+scripts.
 
 ---
 
@@ -1952,9 +1968,13 @@ Centralized profiling for scripts, endpoints, and pipelines: `@profile_function`
 
 Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBAC (JWT, 4 roles, sessions), Notifications (Slack/Teams/Email/PagerDuty), Collaboration (threaded annotations), External Signals, FVA & ROI ladder, SQL Runner (read-only ad-hoc SQL + schema browser + history + CSV export), Reporting (scheduled PDF/Excel), API Governance (per-role rate limiting, versioning, usage analytics), Webhooks (HMAC-SHA256 signed delivery with retry + DLQ), Caching (in-memory LRU + optional Redis). See `docs/specs/08-integration/`.
 
-### 8. Job Automation
+### 8. Job Automation & Workflow Orchestration
 
-APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Jobs tab with live progress, kill button, cross-tab completion alerts.
+APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Persisted `job_schedule` rows are **re-registered into APScheduler at API boot** (`restore_schedules()`), and config-declared defaults (`config/platform/jobs_config.yaml`) are guaranteed via `ensure_default_schedules()` — the nightly `refresh_all_mvs` staleness safety net ships enabled. Jobs tab with live progress, kill button, cross-tab completion alerts.
+
+**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the forecasting lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh` (ETL delta → SKU features → MV refresh), `model-refresh` (stale-cluster re-tune → 3 tree backtests → champion selection), `forecast-publish` (production training → staging generation), and `full-refresh` (everything; promotion stays a manual review step). `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
+
+**Cross-stage staleness lineage**: cluster promotion flags `cluster_tuning_profile_state` (consumed by `tune_cluster_hyperparams.py --stale-only` / job `tune_stale_clusters`); `champion_experiment.cluster_experiment_id` (sql/198) records the cluster generation a champion was computed under, and both production generation and champion promotion refuse on a generation mismatch (overridable). `GET /dashboard/pipeline-readiness` derives four live checks: clustering wiped, stale tuning profiles, champion↔cluster mismatch, and sales data newer than the promoted champion.
 
 ### 9. UI Platform
 

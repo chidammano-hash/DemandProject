@@ -282,72 +282,102 @@ class TestComputeSkuFeaturesHandler:
 # ---------------------------------------------------------------------------
 
 class TestRefreshCustomerAnalyticsHandler:
-    """Refreshes the 6 CA materialized views CONCURRENTLY off the request thread."""
+    """Delegates to the central MV-refresh service keyed on the CA tables.
 
-    def _mock_conn_with_cursor(self):
-        mock_cur = MagicMock()
-        mock_cur.__enter__ = MagicMock(return_value=mock_cur)
-        mock_cur.__exit__ = MagicMock(return_value=False)
-        mock_conn = _make_mock_conn()
-        mock_conn.cursor = MagicMock(return_value=mock_cur)
-        return mock_conn, mock_cur
+    The refresh mechanics (CONCURRENTLY fallback, failure isolation,
+    cancellation) are covered by tests/unit/test_mv_refresh.py — here we pin
+    the delegation contract only.
+    """
 
-    def test_refreshes_all_six_mvs_concurrently(self):
+    def test_delegates_to_central_service_with_ca_tables(self):
+        from threading import Event
+
         from common.services.job_state import _run_refresh_customer_analytics
 
-        mock_conn, mock_cur = self._mock_conn_with_cursor()
-        with patch("common.services.job_state._get_conn", return_value=mock_conn):
-            result = _run_refresh_customer_analytics({})
+        cancel = Event()
+        sentinel = {"refreshed": ["mv_customer_activity_monthly"], "failed": [], "missing": []}
+        progress = MagicMock()
+        with patch(
+            "common.core.mv_refresh.refresh_for_tables", return_value=sentinel
+        ) as refresh:
+            result = _run_refresh_customer_analytics(
+                {}, progress_cb=progress, cancel_event=cancel
+            )
 
-        assert result["failed"] == []
-        assert result["refreshed"] == [
+        assert result is sentinel
+        refresh.assert_called_once()
+        call = refresh.call_args
+        assert call.args[0] == ["fact_customer_demand_monthly", "dim_customer"]
+        assert call.kwargs["progress_cb"] is progress
+        assert call.kwargs["cancel_event"] is cancel
+
+    def test_ca_tables_cover_all_six_ca_mvs(self):
+        # The derived set must include everything the CA tab reads.
+        from common.core.mv_refresh import mvs_for_tables
+
+        derived = set(mvs_for_tables(["fact_customer_demand_monthly", "dim_customer"]))
+        assert {
             "mv_customer_activity_monthly",
             "mv_customer_filter_options",
             "mv_ca_segment_trends",
             "mv_ca_demand_at_risk",
             "mv_ca_order_patterns",
             "mv_ca_item_state",
+        } <= derived
+
+
+class TestRefreshForecastViewsHandler:
+    """Delegates to the central MV-refresh service keyed on the forecast tables."""
+
+    def test_delegates_with_forecast_tables(self):
+        from common.services.job_state import _run_refresh_forecast_views
+
+        sentinel = {"refreshed": [], "failed": [], "missing": []}
+        with patch(
+            "common.core.mv_refresh.refresh_for_tables", return_value=sentinel
+        ) as refresh:
+            result = _run_refresh_forecast_views({})
+
+        assert result is sentinel
+        assert refresh.call_args.args[0] == [
+            "fact_external_forecast_monthly", "backtest_lag_archive",
         ]
-        # activity rollup must be refreshed first
-        executed = " ".join(str(c.args[0]) for c in mock_cur.execute.call_args_list)
-        assert "CONCURRENTLY" in executed
 
-    def test_continues_past_a_failing_mv(self):
-        import psycopg
+    def test_forecast_tables_cover_naive_scale_and_by_dfu(self):
+        # These two were the historically skipped MVs — pin their coverage.
+        from common.core.mv_refresh import mvs_for_tables
 
-        from common.services.job_state import _run_refresh_customer_analytics
+        derived = set(
+            mvs_for_tables(["fact_external_forecast_monthly", "backtest_lag_archive"])
+        )
+        assert "agg_dfu_naive_scale" in derived
+        assert "agg_accuracy_by_dfu" in derived
 
-        mock_conn, mock_cur = self._mock_conn_with_cursor()
 
-        # First REFRESH (after the SET) raises; the rest succeed.
-        calls = {"n": 0}
+class TestRefreshAllMvsHandler:
+    """Refreshes every known MV; skip_heavy excludes HEAVY_MVS."""
 
-        def _execute(stmt, *a, **k):
-            text = str(stmt)
-            if "REFRESH" in text:
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    raise psycopg.Error("lock timeout")
-            return MagicMock()
+    def test_refreshes_all_mvs(self):
+        from common.core.mv_refresh import all_mvs
+        from common.services.job_state import _run_refresh_all_mvs
 
-        mock_cur.execute.side_effect = _execute
-        with patch("common.services.job_state._get_conn", return_value=mock_conn):
-            result = _run_refresh_customer_analytics({})
+        with patch(
+            "common.core.mv_refresh.refresh_materialized_views",
+            return_value={"refreshed": [], "failed": [], "missing": []},
+        ) as refresh:
+            _run_refresh_all_mvs({})
+        assert refresh.call_args.args[0] == all_mvs()
 
-        assert len(result["failed"]) == 1
-        assert len(result["refreshed"]) == 5
+    def test_skip_heavy_excludes_heavy_mvs(self):
+        from common.core.mv_refresh import HEAVY_MVS
+        from common.services.job_state import _run_refresh_all_mvs
 
-    def test_raises_when_cancelled(self):
-        from threading import Event
-
-        from common.services.job_state import _run_refresh_customer_analytics
-
-        mock_conn, _ = self._mock_conn_with_cursor()
-        cancel = Event()
-        cancel.set()
-        with patch("common.services.job_state._get_conn", return_value=mock_conn):
-            with pytest.raises(RuntimeError, match="cancelled"):
-                _run_refresh_customer_analytics({}, cancel_event=cancel)
+        with patch(
+            "common.core.mv_refresh.refresh_materialized_views",
+            return_value={"refreshed": [], "failed": [], "missing": []},
+        ) as refresh:
+            _run_refresh_all_mvs({"skip_heavy": True})
+        assert not (HEAVY_MVS & set(refresh.call_args.args[0]))
 
 
 class TestJobScriptPathsExist:

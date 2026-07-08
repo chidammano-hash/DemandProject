@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -23,10 +22,6 @@ from api.core import get_conn, set_cache
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["lgbm-tuning"])
-
-from common.core.paths import SCRIPTS_DIR as _SCRIPTS_DIR  # noqa: E402
-_UV = "uv"
-
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -180,7 +175,7 @@ def trigger_sampled_run(
 
     1. Computes stratified sample of DFUs.
     2. Registers a tuning run with note ``sampled_n=<N>``.
-    3. Launches backtest subprocess.
+    3. Submits the sampled_backtest job (JobManager).
     4. Returns ``{run_id, sample_size, estimated_deviation}``.
     """
     try:
@@ -245,25 +240,23 @@ def trigger_sampled_run(
     sku_tmp.close()
     sku_file = Path(sku_tmp.name)
 
-    # Launch backtest subprocess
-    cmd = [
-        _UV, "run", "python", str(_SCRIPTS_DIR / "ml" / "run_backtest.py"),
-        "--sampled-skus", str(sku_file),
-    ]
-    if body.param_overrides:
-        cmd.extend(["--param-overrides", json.dumps(body.param_overrides)])
-
+    # Submit through the JobManager (PID tracking, cancel, log streaming,
+    # restart recovery) — never a bare subprocess.Popen.
     try:
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=str(_SCRIPTS_DIR.parent),
-            start_new_session=True,
+        from common.services.job_registry import JobManager
+
+        job_id = JobManager().submit_job(
+            "sampled_backtest",
+            {
+                "run_id": run_id,
+                "sku_file": str(sku_file),
+                "param_overrides": body.param_overrides or {},
+            },
+            label=f"Sampled backtest ({len(sampled_skus)} SKUs, {body.method})",
+            triggered_by="api",
         )
-    except OSError as exc:
-        logger.exception("Failed to launch sampled backtest subprocess")
+    except (ValueError, RuntimeError) as exc:
+        logger.exception("Failed to submit sampled backtest job")
         # Mark run as failed if we registered one
         if run_id is not None:
             try:
@@ -277,16 +270,17 @@ def trigger_sampled_run(
                 logger.warning("Failed to update run status to failed")
         raise HTTPException(
             status_code=500,
-            detail="Failed to launch backtest subprocess",
+            detail="Failed to submit sampled backtest job",
         ) from exc
 
     logger.info(
-        "Launched sampled backtest: run_id=%s, n=%d, method=%s",
-        run_id, len(sampled_skus), body.method,
+        "Submitted sampled backtest job %s: run_id=%s, n=%d, method=%s",
+        job_id, run_id, len(sampled_skus), body.method,
     )
 
     return {
         "run_id": run_id,
+        "job_id": job_id,
         "sample_size": len(sampled_skus),
         "total_dfus": total_dfus,
         "method": body.method,
