@@ -11,6 +11,8 @@ Usage:
     uv run python scripts/tune_cluster_hyperparams.py --model lgbm --clusters L2_1 L2_3
 """
 
+# ruff: noqa: E402
+
 import argparse
 import logging
 import shutil
@@ -32,20 +34,26 @@ import optuna
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-from common.ml.backtest_framework import load_backtest_data
 from common.core.constants import CAT_FEATURES, LAG_RANGE
 from common.core.db import get_db_params
-from common.ml.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
-from common.services.perf_profiler import profiled_section
+from common.core.utils import load_forecast_pipeline_config
+from common.ml.backtest_framework import load_backtest_data
+from common.ml.feature_engineering import (
+    build_feature_matrix,
+    get_feature_columns,
+    mask_future_sales,
+)
 from common.ml.tuning import (
     TRAIN_FOLD_FNS,
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
     generate_cv_month_splits,
+    iteration_param_for_model,
     merge_fixed_params,
     suggest_model_params,
+    trial_best_rounds_or_max,
 )
-from common.core.utils import load_forecast_pipeline_config
+from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +111,14 @@ def make_cluster_objective(
 
             try:
                 preds, best_rounds = train_fn(
-                    X_train, y_train, X_val, y_val,
-                    cat_cols, params, n_estimators_max, early_stopping_rounds,
+                    X_train,
+                    y_train,
+                    X_val,
+                    y_val,
+                    cat_cols,
+                    params,
+                    n_estimators_max,
+                    early_stopping_rounds,
                 )
             except Exception as exc:
                 logger.warning("Fold %d training failed: %s", fold_idx + 1, exc)
@@ -176,7 +190,8 @@ def write_cluster_profiles(
         logger.warning(
             "%d cluster(s) skipped due to non-finite tuning WAPE — they fall back "
             "to global params. Investigate empty CV folds before relying on "
-            "per-cluster profiles.", skipped_nonfinite,
+            "per-cluster profiles.",
+            skipped_nonfinite,
         )
 
     # Default fallback entry
@@ -210,9 +225,7 @@ def write_cluster_profiles(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Per-cluster hyperparameter tuning using Optuna"
-    )
+    parser = argparse.ArgumentParser(description="Per-cluster hyperparameter tuning using Optuna")
     parser.add_argument(
         "--model",
         choices=["lgbm", "catboost", "xgboost"],
@@ -220,19 +233,26 @@ def main() -> None:
         help="Model to tune",
     )
     parser.add_argument(
-        "--trials", type=int, default=30,
+        "--trials",
+        type=int,
+        default=30,
         help="Optuna trials per cluster (default: 30)",
     )
     parser.add_argument(
-        "--clusters", nargs="+", default=None,
+        "--clusters",
+        nargs="+",
+        default=None,
         help="Optional: only tune these clusters (e.g. --clusters L2_1 L2_3)",
     )
     parser.add_argument(
-        "--min-rows", type=int, default=500,
+        "--min-rows",
+        type=int,
+        default=500,
         help="Minimum rows per cluster to attempt tuning (default: 500)",
     )
     parser.add_argument(
-        "--config", type=str,
+        "--config",
+        type=str,
         default=str(ROOT / "config" / "forecasting" / "hyperparameter_tuning.yaml"),
         help="Path to hyperparameter tuning YAML config",
     )
@@ -255,9 +275,16 @@ def main() -> None:
         pipeline_cfg = load_forecast_pipeline_config()
         pipeline_tuning = pipeline_cfg.get("tuning", {})
         for key in (
-            "n_trials", "n_splits", "gap_months", "val_months_per_fold",
-            "min_train_months", "early_stopping_rounds", "n_estimators_max",
-            "n_estimators_buffer", "random_seed", "output_dir",
+            "n_trials",
+            "n_splits",
+            "gap_months",
+            "val_months_per_fold",
+            "min_train_months",
+            "early_stopping_rounds",
+            "n_estimators_max",
+            "n_estimators_buffer",
+            "random_seed",
+            "output_dir",
         ):
             if key in pipeline_tuning:
                 config["tuning"][key] = pipeline_tuning[key]
@@ -274,7 +301,9 @@ def main() -> None:
 
     logger.info(
         "Per-cluster tuning: %s | %d trials/cluster | min_rows=%d",
-        model_name.upper(), n_trials, min_rows,
+        model_name.upper(),
+        n_trials,
+        min_rows,
     )
 
     # ── Load data ────────────────────────────────────────────────────────────
@@ -288,12 +317,18 @@ def main() -> None:
         all_months = sorted(sales_df["startdate"].unique())
         logger.info("Building feature matrix (%d months)...", len(all_months))
         full_grid = build_feature_matrix(
-            sales_df, dfu_attrs, item_attrs, all_months, cat_dtype=cat_dtype,
+            sales_df,
+            dfu_attrs,
+            item_attrs,
+            all_months,
+            cat_dtype=cat_dtype,
         )
         feature_cols = get_feature_columns(full_grid)
         cat_cols = [c for c in CAT_FEATURES if c in feature_cols and c in full_grid.columns]
         logger.info(
-            "Features: %d total, %d categorical", len(feature_cols), len(cat_cols),
+            "Features: %d total, %d categorical",
+            len(feature_cols),
+            len(cat_cols),
         )
 
     # ── Discover clusters ────────────────────────────────────────────────────
@@ -305,11 +340,7 @@ def main() -> None:
         sys.exit(1)
 
     all_clusters = sorted(
-        full_grid["ml_cluster"]
-        .dropna()
-        .loc[lambda s: s != "__unknown__"]
-        .unique()
-        .tolist()
+        full_grid["ml_cluster"].dropna().loc[lambda s: s != "__unknown__"].unique().tolist()
     )
 
     if args.clusters:
@@ -320,8 +351,10 @@ def main() -> None:
         all_clusters = [c for c in all_clusters if c in requested]
 
     if not all_clusters:
-        logger.error("No clusters to tune. Available clusters: %s",
-                      full_grid["ml_cluster"].dropna().unique().tolist())
+        logger.error(
+            "No clusters to tune. Available clusters: %s",
+            full_grid["ml_cluster"].dropna().unique().tolist(),
+        )
         sys.exit(1)
 
     logger.info("Clusters to tune: %s", all_clusters)
@@ -341,7 +374,11 @@ def main() -> None:
             if n_rows < min_rows:
                 logger.warning(
                     "Skipping cluster %s (%d/%d): %d rows < min_rows=%d",
-                    cluster_name, idx, total, n_rows, min_rows,
+                    cluster_name,
+                    idx,
+                    total,
+                    n_rows,
+                    min_rows,
                 )
                 continue
 
@@ -350,7 +387,11 @@ def main() -> None:
 
             logger.info(
                 "Tuning cluster %s (%d/%d): %d rows, %d months...",
-                cluster_name, idx, total, n_rows, n_months,
+                cluster_name,
+                idx,
+                total,
+                n_rows,
+                n_months,
             )
 
             # Generate CV splits for this cluster's months
@@ -366,21 +407,28 @@ def main() -> None:
                 logger.warning(
                     "Skipping cluster %s: insufficient months for CV splits "
                     "(%d months, need >= %d + gap + val)",
-                    cluster_name, n_months, t_cfg["min_train_months"],
+                    cluster_name,
+                    n_months,
+                    t_cfg["min_train_months"],
                 )
                 continue
 
             logger.info(
-                "  CV splits: %d folds", len(month_splits),
+                "  CV splits: %d folds",
+                len(month_splits),
             )
             for i, (tm, vm) in enumerate(month_splits):
                 logger.info(
                     "    Fold %d: train [%s -> %s] (%d months), "
                     "gap %dm, val [%s -> %s] (%d months)",
                     i + 1,
-                    min(tm).date(), max(tm).date(), len(tm),
+                    min(tm).date(),
+                    max(tm).date(),
+                    len(tm),
                     t_cfg["gap_months"],
-                    min(vm).date(), max(vm).date(), len(vm),
+                    min(vm).date(),
+                    max(vm).date(),
+                    len(vm),
                 )
 
             # Create Optuna study with deterministic but cluster-unique seed
@@ -414,18 +462,19 @@ def main() -> None:
             ) -> None:
                 if trial.state == optuna.trial.TrialState.COMPLETE:
                     completed = len(
-                        [t for t in study.trials
-                         if t.state == optuna.trial.TrialState.COMPLETE]
+                        [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
                     )
                     best_wape_pct = (
-                        study.best_value * 100
-                        if study.best_value < float("inf")
-                        else float("inf")
+                        study.best_value * 100 if study.best_value < float("inf") else float("inf")
                     )
                     logger.info(
                         "  [%s] Trial %3d | WAPE=%.2f%% | best=%.2f%% | %d/%d",
-                        _cname, trial.number, trial.value * 100,
-                        best_wape_pct, completed, n_trials,
+                        _cname,
+                        trial.number,
+                        trial.value * 100,
+                        best_wape_pct,
+                        completed,
+                        n_trials,
                     )
 
             # Optimise
@@ -438,14 +487,14 @@ def main() -> None:
                 )
             except Exception:
                 logger.exception(
-                    "Tuning failed for cluster %s -- skipping", cluster_name,
+                    "Tuning failed for cluster %s -- skipping",
+                    cluster_name,
                 )
                 continue
 
             # Collect results
             completed_trials = [
-                t for t in study.trials
-                if t.state == optuna.trial.TrialState.COMPLETE
+                t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE
             ]
             if not completed_trials:
                 logger.warning(
@@ -456,14 +505,14 @@ def main() -> None:
 
             best_trial = study.best_trial
             best_params = merge_fixed_params(model_name, config, best_trial.params)
-            best_n_est_raw = best_trial.user_attrs.get("best_n_estimators", 500)
+            best_n_est_raw = trial_best_rounds_or_max(best_trial, t_cfg["n_estimators_max"])
             best_n_estimators = best_rounds_to_n_estimators(
                 [best_n_est_raw],
                 buffer=t_cfg.get("n_estimators_buffer", 1.1),
             )
 
-            # Add n_estimators to the params dict
-            best_params["n_estimators"] = best_n_estimators
+            iter_param = iteration_param_for_model(model_name)
+            best_params[iter_param] = best_n_estimators
 
             cluster_results[cluster_name] = {
                 "best_wape": best_trial.value,
@@ -476,7 +525,9 @@ def main() -> None:
 
             logger.info(
                 "  Cluster %s best: WAPE=%.4f%%, n_estimators=%d",
-                cluster_name, best_trial.value * 100, best_n_estimators,
+                cluster_name,
+                best_trial.value * 100,
+                best_n_estimators,
             )
 
     # ── Summary ──────────────────────────────────────────────────────────────
@@ -488,9 +539,7 @@ def main() -> None:
         logger.error("No clusters were successfully tuned.")
         sys.exit(1)
 
-    for cname, result in sorted(
-        cluster_results.items(), key=lambda x: x[1]["best_wape"]
-    ):
+    for cname, result in sorted(cluster_results.items(), key=lambda x: x[1]["best_wape"]):
         logger.info(
             "  %-20s WAPE=%6.2f%%  (%d rows, %d trials)",
             cname,

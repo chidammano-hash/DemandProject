@@ -14,6 +14,8 @@ Outputs:
     data/tuning/optuna_<model>.db          — Optuna study (SQLite, resumable)
 """
 
+# ruff: noqa: E402
+
 import argparse
 import sys
 import time
@@ -33,10 +35,15 @@ import optuna
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-from common.ml.backtest_framework import load_backtest_data
 from common.core.constants import CAT_FEATURES, LAG_RANGE
 from common.core.db import get_db_params
-from common.ml.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
+from common.core.utils import _ts, get_algorithm_roster, load_forecast_pipeline_config
+from common.ml.backtest_framework import load_backtest_data
+from common.ml.feature_engineering import (
+    build_feature_matrix,
+    get_feature_columns,
+    mask_future_sales,
+)
 from common.ml.mlflow_utils import log_backtest_run
 from common.ml.tuning import (
     TRAIN_FOLD_FNS,
@@ -46,9 +53,8 @@ from common.ml.tuning import (
     merge_fixed_params,
     save_best_params,
     suggest_model_params,
+    trial_best_rounds_or_max,
 )
-from common.core.utils import _ts, get_algorithm_roster, load_forecast_pipeline_config
-
 
 TREE_MODEL_PREFIXES = ("lgbm", "catboost", "xgboost")
 
@@ -85,9 +91,7 @@ def _resolve_tuning_target(
     resolved_model_id = model_id or _default_model_id(model_name, pipeline_cfg)
     resolved_model_name = _base_model_name(resolved_model_id)
     if resolved_model_name != model_name:
-        raise ValueError(
-            f"--model {model_name!r} does not match --model-id {resolved_model_id!r}"
-        )
+        raise ValueError(f"--model {model_name!r} does not match --model-id {resolved_model_id!r}")
 
     algorithms = pipeline_cfg.get("algorithms", {}) or {}
     entry = algorithms.get(resolved_model_id)
@@ -154,8 +158,14 @@ def make_objective(
 
             try:
                 preds, best_rounds = train_fn(
-                    X_train, y_train, X_val, y_val,
-                    cat_cols, params, n_estimators_max, early_stopping_rounds,
+                    X_train,
+                    y_train,
+                    X_val,
+                    y_val,
+                    cat_cols,
+                    params,
+                    n_estimators_max,
+                    early_stopping_rounds,
                 )
             except Exception as exc:
                 print(f"    [{_ts()}] Fold {fold_idx + 1} training failed: {exc}")
@@ -211,9 +221,7 @@ def evaluate_per_cluster_wape(
     train_mask = masked_grid["startdate"].isin(set(train_months))
     val_mask = masked_grid["startdate"].isin(set(val_months))
 
-    train_data = masked_grid[train_mask].dropna(
-        subset=[f"qty_lag_{lag}" for lag in LAG_RANGE]
-    )
+    train_data = masked_grid[train_mask].dropna(subset=[f"qty_lag_{lag}" for lag in LAG_RANGE])
     val_data = masked_grid[val_mask].copy()
     for col in feature_cols:
         if col in val_data.columns and col not in cat_cols:
@@ -225,9 +233,14 @@ def evaluate_per_cluster_wape(
     train_fn = TRAIN_FOLD_FNS[model_name]
     try:
         preds, _ = train_fn(
-            train_data[feature_cols], train_data["qty"],
-            val_data[feature_cols], val_data["qty"].values,
-            cat_cols, best_params, n_estimators_max, early_stopping_rounds,
+            train_data[feature_cols],
+            train_data["qty"],
+            val_data[feature_cols],
+            val_data["qty"].values,
+            cat_cols,
+            best_params,
+            n_estimators_max,
+            early_stopping_rounds,
         )
     except Exception:
         return {}
@@ -242,9 +255,7 @@ def evaluate_per_cluster_wape(
     for cluster, grp in val_data.groupby("ml_cluster"):
         if pd.isna(cluster) or cluster == "__unknown__":
             continue
-        wape = compute_wape_stabilised(
-            grp["_pred"].values, grp["qty"].values
-        )
+        wape = compute_wape_stabilised(grp["_pred"].values, grp["qty"].values)
         if not np.isinf(wape):
             per_cluster[str(cluster)] = round(wape, 6)
 
@@ -270,15 +281,19 @@ def main() -> None:
         default=None,
         help="Pipeline model id to tune, e.g. lgbm_cust_enriched",
     )
-    parser.add_argument("--n-trials", type=int, default=None,
-                        help="Override n_trials from config")
-    parser.add_argument("--output-dir", type=str, default=None,
-                        help="Override output directory from config")
-    parser.add_argument("--config", type=str,
-                        default=str(ROOT / "config" / "forecasting" / "hyperparameter_tuning.yaml"),
-                        help="Path to hyperparameter tuning YAML config")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume an existing Optuna study from SQLite DB")
+    parser.add_argument("--n-trials", type=int, default=None, help="Override n_trials from config")
+    parser.add_argument(
+        "--output-dir", type=str, default=None, help="Override output directory from config"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=str(ROOT / "config" / "forecasting" / "hyperparameter_tuning.yaml"),
+        help="Path to hyperparameter tuning YAML config",
+    )
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume an existing Optuna study from SQLite DB"
+    )
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
@@ -296,9 +311,16 @@ def main() -> None:
         pipeline_tuning = pipeline_cfg.get("tuning", {})
         # Merge: pipeline values override old config for shared keys
         for key in (
-            "n_trials", "n_splits", "gap_months", "val_months_per_fold",
-            "min_train_months", "early_stopping_rounds", "n_estimators_max",
-            "n_estimators_buffer", "random_seed", "output_dir",
+            "n_trials",
+            "n_splits",
+            "gap_months",
+            "val_months_per_fold",
+            "min_train_months",
+            "early_stopping_rounds",
+            "n_estimators_max",
+            "n_estimators_buffer",
+            "random_seed",
+            "output_dir",
         ):
             if key in pipeline_tuning:
                 config["tuning"][key] = pipeline_tuning[key]
@@ -320,24 +342,26 @@ def main() -> None:
         roster = get_algorithm_roster(stage="tune")
         if args.model_id:
             if resolved_model_id not in roster:
-                print(f"[{_ts()}] Model '{resolved_model_id}' has tune=false in "
-                      "forecast_pipeline_config.yaml — skipping")
+                print(
+                    f"[{_ts()}] Model '{resolved_model_id}' has tune=false in "
+                    "forecast_pipeline_config.yaml — skipping"
+                )
                 sys.exit(0)
         else:
             model_in_roster = any(
-                rid == args.model or rid.startswith(f"{args.model}_")
-                for rid in roster
+                rid == args.model or rid.startswith(f"{args.model}_") for rid in roster
             )
             if not model_in_roster:
                 # Check if the model exists but has tune=false
                 all_roster = get_algorithm_roster()
                 exists = any(
-                    rid == args.model or rid.startswith(f"{args.model}_")
-                    for rid in all_roster
+                    rid == args.model or rid.startswith(f"{args.model}_") for rid in all_roster
                 )
                 if exists:
-                    print(f"[{_ts()}] Model '{args.model}' has tune=false in "
-                          f"forecast_pipeline_config.yaml — skipping")
+                    print(
+                        f"[{_ts()}] Model '{args.model}' has tune=false in "
+                        f"forecast_pipeline_config.yaml — skipping"
+                    )
                     sys.exit(0)
     except FileNotFoundError:
         pass  # No pipeline config — run unconditionally
@@ -395,9 +419,11 @@ def main() -> None:
     )
     print(f"[{_ts()}] CV splits: {len(month_splits)} folds")
     for i, (tm, vm) in enumerate(month_splits):
-        print(f"  Fold {i + 1}: train [{min(tm).date()} → {max(tm).date()}] "
-              f"({len(tm)} months), gap {t_cfg['gap_months']}m, "
-              f"val [{min(vm).date()} → {max(vm).date()}] ({len(vm)} months)")
+        print(
+            f"  Fold {i + 1}: train [{min(tm).date()} → {max(tm).date()}] "
+            f"({len(tm)} months), gap {t_cfg['gap_months']}m, "
+            f"val [{min(vm).date()} → {max(vm).date()}] ({len(vm)} months)"
+        )
 
     if not month_splits:
         print(f"[{_ts()}] No valid CV splits — need more data or reduce n_splits")
@@ -432,7 +458,9 @@ def main() -> None:
     print(f"[{_ts()}] Study: {completed_before} existing complete trials, running {remaining} more")
 
     if remaining == 0:
-        print(f"[{_ts()}] Study already has {completed_before} completed trials — use --resume or increase --n-trials")
+        print(
+            f"[{_ts()}] Study already has {completed_before} completed trials — use --resume or increase --n-trials"
+        )
 
     # ── Build objective ───────────────────────────────────────────────────────
     objective_fn = make_objective(
@@ -450,10 +478,16 @@ def main() -> None:
 
     def _trial_callback(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
         if trial.state == optuna.trial.TrialState.COMPLETE:
-            completed = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
-            best_wape_pct = study.best_value * 100 if study.best_value < float("inf") else float("inf")
-            print(f"  [{_ts()}] Trial {trial.number:3d} | WAPE={trial.value * 100:.2f}% | "
-                  f"best={best_wape_pct:.2f}% | {completed}/{n_trials}")
+            completed = len(
+                [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+            )
+            best_wape_pct = (
+                study.best_value * 100 if study.best_value < float("inf") else float("inf")
+            )
+            print(
+                f"  [{_ts()}] Trial {trial.number:3d} | WAPE={trial.value * 100:.2f}% | "
+                f"best={best_wape_pct:.2f}% | {completed}/{n_trials}"
+            )
 
     if remaining > 0:
         study.optimize(
@@ -474,7 +508,7 @@ def main() -> None:
 
     best_trial = study.best_trial
     best_params = merge_fixed_params(model_name, config, best_trial.params)
-    best_n_est_raw = best_trial.user_attrs.get("best_n_estimators", 500)
+    best_n_est_raw = trial_best_rounds_or_max(best_trial, t_cfg["n_estimators_max"])
     best_n_estimators = best_rounds_to_n_estimators(
         [best_n_est_raw], buffer=t_cfg.get("n_estimators_buffer", 1.1)
     )
@@ -534,7 +568,9 @@ def main() -> None:
         "n_completed_trials": len(completed_trials),
         "n_cv_folds": len(month_splits),
     }
-    mlflow_metrics.update({f"cluster_wape_pct_{k}": round(v * 100, 4) for k, v in per_cluster_wape.items()})
+    mlflow_metrics.update(
+        {f"cluster_wape_pct_{k}": round(v * 100, 4) for k, v in per_cluster_wape.items()}
+    )
 
     log_backtest_run(
         model_type=f"{model_name}_tuning",
@@ -556,7 +592,7 @@ def main() -> None:
     )
 
     print(f"\n[{_ts()}] Tuning complete. Best params saved to {output_path}")
-    print(f"  Use: make backtest-{model_name} ARGS=\"--params-file {output_path}\"")
+    print(f'  Use: make backtest-{model_name} ARGS="--params-file {output_path}"')
 
 
 if __name__ == "__main__":

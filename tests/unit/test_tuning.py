@@ -3,6 +3,7 @@
 import math
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -14,12 +15,13 @@ from common.ml.tuning import (
     compute_wape_stabilised,
     generate_cv_month_splits,
     get_fixed_params,
+    iteration_param_for_model,
     load_best_params,
     merge_fixed_params,
     save_best_params,
+    trial_best_rounds_or_max,
     tune_for_timeframe,
 )
-
 
 # ── generate_cv_month_splits ──────────────────────────────────────────────────
 
@@ -31,80 +33,92 @@ class TestGenerateCvMonthSplits:
 
     def test_returns_correct_fold_count(self):
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         assert len(splits) == 5
 
     def test_train_windows_expand_monotonically(self):
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         train_lengths = [len(tm) for tm, _ in splits]
         for i in range(len(train_lengths) - 1):
             assert train_lengths[i] <= train_lengths[i + 1], (
-                f"Fold {i} train length {train_lengths[i]} > fold {i+1} length {train_lengths[i+1]}"
+                f"Fold {i} train length {train_lengths[i]} > fold {i + 1} length {train_lengths[i + 1]}"
             )
 
     def test_gap_enforced_between_train_end_and_val_start(self):
         gap = 2
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=gap,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=gap, min_train_months=13, val_months_per_fold=3
+        )
         for tm, vm in splits:
             train_end = max(tm)
             val_start = min(vm)
-            months_between = (val_start.year - train_end.year) * 12 + (val_start.month - train_end.month)
+            months_between = (val_start.year - train_end.year) * 12 + (
+                val_start.month - train_end.month
+            )
             assert months_between >= gap + 1, (
                 f"Gap too small: train_end={train_end.date()}, val_start={val_start.date()}, "
-                f"months_between={months_between}, required_gap={gap+1}"
+                f"months_between={months_between}, required_gap={gap + 1}"
             )
 
     def test_min_train_months_enforced(self):
         months = self._make_months(48)
         min_train = 18
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=min_train, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=min_train, val_months_per_fold=3
+        )
         for tm, _ in splits:
             assert len(tm) >= min_train
 
     def test_val_months_non_empty(self):
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         for _, vm in splits:
             assert len(vm) > 0
 
     def test_train_and_val_disjoint(self):
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         for tm, vm in splits:
             overlap = set(tm) & set(vm)
             assert len(overlap) == 0, f"Train and val overlap: {overlap}"
 
     def test_val_always_after_train(self):
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         for tm, vm in splits:
             assert max(tm) < min(vm)
 
     def test_too_few_months_returns_empty(self):
         months = self._make_months(10)  # Not enough for min_train_months=13
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         assert splits == []
 
     def test_single_fold(self):
         months = self._make_months(30)
-        splits = generate_cv_month_splits(months, n_splits=1, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=1, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         assert len(splits) == 1
 
     def test_no_duplicate_train_end_indices(self):
         months = self._make_months(48)
-        splits = generate_cv_month_splits(months, n_splits=5, gap_months=1,
-                                          min_train_months=13, val_months_per_fold=3)
+        splits = generate_cv_month_splits(
+            months, n_splits=5, gap_months=1, min_train_months=13, val_months_per_fold=3
+        )
         train_ends = [max(tm) for tm, _ in splits]
         assert len(train_ends) == len(set(train_ends))
 
@@ -205,6 +219,33 @@ class TestBestRoundsToNEstimators:
         assert result == math.ceil((99 + 100 + 102) / 3)
 
 
+class TestTreeIterationParams:
+    @pytest.mark.parametrize(
+        ("model_name", "expected"),
+        [
+            ("lgbm", "n_estimators"),
+            ("catboost", "iterations"),
+            ("xgboost", "n_estimators"),
+        ],
+    )
+    def test_iteration_param_for_tree_model(self, model_name, expected):
+        assert iteration_param_for_model(model_name) == expected
+
+    def test_iteration_param_unknown_model_raises(self):
+        with pytest.raises(ValueError, match="Unknown tree model"):
+            iteration_param_for_model("prophet")
+
+    def test_trial_best_rounds_uses_trial_attr(self):
+        trial = SimpleNamespace(user_attrs={"best_n_estimators": 137})
+
+        assert trial_best_rounds_or_max(trial, 2000) == 137
+
+    def test_trial_best_rounds_falls_back_to_configured_max(self):
+        trial = SimpleNamespace(user_attrs={})
+
+        assert trial_best_rounds_or_max(trial, 2000) == 2000
+
+
 # ── save_best_params / load_best_params ───────────────────────────────────────
 
 
@@ -251,7 +292,7 @@ class TestParamsJsonRoundtrip:
         assert loaded["best_n_estimators"] == 387
         assert loaded["best_params"]["learning_rate"] == pytest.approx(0.042, abs=1e-6)
         assert loaded["best_params"]["num_leaves"] == 63
-        # best_wape stored as % (×100)
+        # best_wape stored as % (x100)
         assert loaded["best_wape"] == pytest.approx(11.43, abs=0.01)
 
     def test_best_wape_stored_as_percentage(self):
@@ -520,7 +561,9 @@ class TestTuneForTimeframe:
         cutoff = pd.Timestamp("2023-06-01")
         captured_params: list[dict] = []
 
-        def capturing_fold_fn(X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, es_rounds):
+        def capturing_fold_fn(
+            X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, es_rounds
+        ):
             captured_params.append(dict(params))
             preds = np.full(len(y_val), float(np.mean(y_train)))
             return preds, 25
@@ -550,7 +593,9 @@ class TestTuneForTimeframe:
 
         months_seen_in_training: list[pd.Timestamp] = []
 
-        def capturing_fold_fn(X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, es_rounds):
+        def capturing_fold_fn(
+            X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, es_rounds
+        ):
             # Capture months from index if startdate is present, else use y_train length
             months_seen_in_training.append(cutoff)  # record the cutoff used
             preds = np.full(len(y_val), float(np.mean(y_train)))
@@ -579,7 +624,7 @@ class TestTuneForTimeframe:
         assert all(m <= cutoff for m in causal_months)
 
     def test_insufficient_data_returns_empty_params(self):
-        """When there are too few months for even one CV split, return ({}, 500)."""
+        """When there are too few months, return empty params plus configured max rounds."""
         # Only 10 months — below min_train_months=13
         grid = _make_full_grid(10)
         feature_cols = self._feature_cols(grid)
@@ -597,10 +642,10 @@ class TestTuneForTimeframe:
             n_trials=3,
         )
         assert params == {}
-        assert n_est == 500
+        assert n_est == _MINIMAL_CONFIG["tuning"]["n_estimators_max"]
 
     def test_cutoff_before_all_data_returns_empty(self):
-        """Cutoff before the earliest month yields no causal months → ({}, 500)."""
+        """Cutoff before the earliest month yields no params and configured max rounds."""
         grid = _make_full_grid(24)
         feature_cols = self._feature_cols(grid)
         cat_cols = []
@@ -617,7 +662,7 @@ class TestTuneForTimeframe:
             n_trials=2,
         )
         assert params == {}
-        assert n_est == 500
+        assert n_est == _MINIMAL_CONFIG["tuning"]["n_estimators_max"]
 
     def test_different_cutoffs_produce_different_results(self):
         """Earlier vs later cutoff should use different subsets of data.
@@ -628,7 +673,7 @@ class TestTuneForTimeframe:
         grid = _make_full_grid(60)
 
         early_cutoff = pd.Timestamp("2021-12-01")  # ~24 months
-        late_cutoff = pd.Timestamp("2023-12-01")   # ~48 months
+        late_cutoff = pd.Timestamp("2023-12-01")  # ~48 months
 
         early_months = sorted(m for m in grid["startdate"].unique() if m <= early_cutoff)
         late_months = sorted(m for m in grid["startdate"].unique() if m <= late_cutoff)

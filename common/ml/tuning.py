@@ -11,8 +11,9 @@ import json
 import logging
 import math
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,12 @@ import pandas as pd
 from common.core.utils import _ts
 
 logger = logging.getLogger(__name__)
+
+ITERATION_PARAM_BY_MODEL = {
+    "lgbm": "n_estimators",
+    "catboost": "iterations",
+    "xgboost": "n_estimators",
+}
 
 
 # ── CV splits ─────────────────────────────────────────────────────────────────
@@ -69,7 +76,7 @@ def generate_cv_month_splits(
     seen_train_ends: set[int] = set()
 
     for i in range(n_splits):
-        train_end_idx = int(round(first_train_end_idx + i * step))
+        train_end_idx = round(first_train_end_idx + i * step)
         train_end_idx = min(train_end_idx, last_train_end_idx)
 
         if train_end_idx in seen_train_ends:
@@ -249,6 +256,20 @@ def best_rounds_to_n_estimators(
     return max(50, math.ceil(mean_rounds * buffer))
 
 
+def iteration_param_for_model(model_name: str) -> str:
+    """Return the native boosting-round parameter for a tree backend."""
+    try:
+        return ITERATION_PARAM_BY_MODEL[model_name]
+    except KeyError as exc:
+        raise ValueError(f"Unknown tree model: {model_name!r}") from exc
+
+
+def trial_best_rounds_or_max(trial: Any, n_estimators_max: int) -> int:
+    """Return a trial's selected boosting rounds, falling back to configured max."""
+    best_rounds = trial.user_attrs.get("best_n_estimators")
+    return int(best_rounds) if best_rounds is not None else int(n_estimators_max)
+
+
 # ── Per-fold model training functions ─────────────────────────────────────────
 # These are used by both tune_hyperparams.py (global tuning) and
 # tune_for_timeframe() (causal per-timeframe tuning). Lazy model imports keep
@@ -325,9 +346,16 @@ def train_lgbm_fold(
 
     return _train_fold(
         "lgbm",
-        X_train, y_train, X_val, y_val,
-        cat_cols, params, n_estimators_max, early_stopping_rounds,
-        constructor_extras={}, lib_module=lgb,
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        cat_cols,
+        params,
+        n_estimators_max,
+        early_stopping_rounds,
+        constructor_extras={},
+        lib_module=lgb,
     )
 
 
@@ -401,9 +429,16 @@ def train_xgboost_fold(
 
     return _train_fold(
         "xgboost",
-        X_train, y_train, X_val, y_val,
-        cat_cols, params, n_estimators_max, early_stopping_rounds,
-        constructor_extras={}, lib_module=xgb,
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        cat_cols,
+        params,
+        n_estimators_max,
+        early_stopping_rounds,
+        constructor_extras={},
+        lib_module=xgb,
     )
 
 
@@ -449,22 +484,24 @@ def tune_for_timeframe(
     Returns
     -------
     (best_params_dict, best_n_estimators)
-    Returns ({}, 500) when insufficient data for even one CV split.
+    Returns ({}, tuning.n_estimators_max) when insufficient data for even one CV split.
     """
+    t_cfg = config["tuning"]
+    n_estimators_max = t_cfg["n_estimators_max"]
+
     try:
         import optuna
+
         optuna.logging.set_verbosity(optuna.logging.WARNING)
     except ImportError:
         logger.warning("[tune_for_timeframe] optuna not installed — returning empty params")
-        return {}, 500
+        return {}, n_estimators_max
 
     from common.ml.feature_engineering import mask_future_sales
 
-    t_cfg = config["tuning"]
     _n_trials = n_trials or t_cfg.get("inline_n_trials", 20)
     n_splits = t_cfg.get("inline_n_splits", 3)
     early_stopping_rounds = t_cfg["early_stopping_rounds"]
-    n_estimators_max = t_cfg["n_estimators_max"]
 
     # Only consider months that were available at forecast time
     causal_months = sorted(m for m in full_grid["startdate"].unique() if m <= cutoff_date)
@@ -478,7 +515,7 @@ def tune_for_timeframe(
     )
 
     if not month_splits:
-        return {}, 500
+        return {}, n_estimators_max
 
     def _objective(trial: "optuna.Trial") -> float:
         params = suggest_model_params(trial, model_name, config)
@@ -502,14 +539,17 @@ def tune_for_timeframe(
 
             try:
                 preds, best_rounds = train_fold_fn(
-                    train_data[feature_cols], train_data["qty"],
-                    val_data[feature_cols], val_data["qty"].values,
-                    cat_cols, params, n_estimators_max, early_stopping_rounds,
+                    train_data[feature_cols],
+                    train_data["qty"],
+                    val_data[feature_cols],
+                    val_data["qty"].values,
+                    cat_cols,
+                    params,
+                    n_estimators_max,
+                    early_stopping_rounds,
                 )
-            except Exception:  # noqa: BLE001 — a single bad fold must degrade to inf, not crash the Optuna study; logged so systematic bugs are visible
-                logger.exception(
-                    "Tuning fold failed (fold %d) — scoring trial as inf", fold_idx
-                )
+            except Exception:
+                logger.exception("Tuning fold failed (fold %d) — scoring trial as inf", fold_idx)
                 return float("inf")
 
             wape = compute_wape_stabilised(preds, val_data["qty"].values)
@@ -537,10 +577,10 @@ def tune_for_timeframe(
 
     completed = [t for t in study.trials if t.state.name == "COMPLETE"]
     if not completed:
-        return {}, 500
+        return {}, n_estimators_max
 
     best = study.best_trial
-    best_n_est_raw = best.user_attrs.get("best_n_estimators", n_estimators_max)
+    best_n_est_raw = trial_best_rounds_or_max(best, n_estimators_max)
     best_n_estimators = best_rounds_to_n_estimators(
         [best_n_est_raw], buffer=t_cfg.get("n_estimators_buffer", 1.1)
     )

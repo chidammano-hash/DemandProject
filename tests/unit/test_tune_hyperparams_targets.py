@@ -5,7 +5,7 @@ import inspect
 import pytest
 
 from common.core.paths import PROJECT_ROOT
-from scripts.ml import tune_hyperparams
+from scripts.ml import tune_cluster_hyperparams, tune_hyperparams
 from scripts.ml.tune_hyperparams import _base_model_name, _resolve_tuning_target
 
 
@@ -99,3 +99,19 @@ def test_tuning_main_threads_customer_features_into_matrix() -> None:
 
     assert "include_customer_features=include_customer_features" in source
     assert "customer_features=customer_features" in source
+
+
+def test_global_tuning_uses_configured_round_fallback() -> None:
+    source = inspect.getsource(tune_hyperparams.main)
+
+    assert 'trial_best_rounds_or_max(best_trial, t_cfg["n_estimators_max"])' in source
+    assert 'best_trial.user_attrs.get("best_n_estimators", 500)' not in source
+
+
+def test_cluster_tuning_writes_native_iteration_param() -> None:
+    source = inspect.getsource(tune_cluster_hyperparams.main)
+
+    assert 'trial_best_rounds_or_max(best_trial, t_cfg["n_estimators_max"])' in source
+    assert "iter_param = iteration_param_for_model(model_name)" in source
+    assert "best_params[iter_param] = best_n_estimators" in source
+    assert 'best_params["n_estimators"] = best_n_estimators' not in source
