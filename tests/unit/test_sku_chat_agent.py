@@ -5,9 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
+from common.ai.sku_chat import agent as agent_module
 from common.ai.sku_chat.agent import (
+    CodexRuntimeError,
     SkuChatAgent,
     SkuChatContext,
+    _resolve_codex_binary,
     sdk_message_to_events,
 )
 from common.ai.sku_chat.prompts import build_user_prompt
@@ -94,6 +97,88 @@ def test_build_user_prompt_without_sku_notes_no_selection():
     ctx = SkuChatContext("", "", "")
     prompt = build_user_prompt("Hello", ctx)
     assert "No specific SKU" in prompt
+
+
+def test_resolve_codex_binary_uses_path(monkeypatch):
+    monkeypatch.setattr(agent_module.shutil, "which", lambda name: f"/bin/{name}")
+    assert _resolve_codex_binary("codex") == "/bin/codex"
+
+
+def test_resolve_codex_binary_uses_codex_cli_path(monkeypatch, tmp_path):
+    binary = tmp_path / "codex"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
+    monkeypatch.setenv("CODEX_CLI_PATH", str(binary))
+    monkeypatch.setattr(agent_module, "_CODEX_BINARY_FALLBACKS", ())
+
+    assert _resolve_codex_binary("codex") == str(binary)
+
+
+def test_resolve_codex_binary_uses_codex_app_fallback(monkeypatch, tmp_path):
+    binary = tmp_path / "codex"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setattr(agent_module, "_CODEX_BINARY_FALLBACKS", (str(binary),))
+
+    assert _resolve_codex_binary("codex") == str(binary)
+
+
+def test_resolve_codex_binary_raises_for_missing_custom_path(tmp_path):
+    missing = tmp_path / "codex"
+    with pytest.raises(CodexRuntimeError, match="not executable"):
+        _resolve_codex_binary(str(missing))
+
+
+@pytest.mark.asyncio
+async def test_run_codex_exec_uses_current_cli_flags(monkeypatch):
+    calls = {}
+
+    class Proc:
+        returncode = 0
+
+        async def communicate(self, input=None):
+            calls["input"] = input
+            return b"answer", b""
+
+        def kill(self):
+            calls["killed"] = True
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return Proc()
+
+    monkeypatch.setattr(agent_module, "_resolve_codex_binary", lambda binary: "/bin/codex")
+    monkeypatch.setattr(
+        agent_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    out = await agent_module._run_codex_exec(
+        "hello",
+        model_id="gpt-5.5",
+        cfg={"codex": {"sandbox": "read-only", "approval_policy": "never"}},
+        env={},
+        timeout_s=5,
+    )
+
+    assert out == "answer"
+    assert "--ask-for-approval" not in calls["cmd"]
+    assert calls["cmd"][:6] == (
+        "/bin/codex",
+        "exec",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "-c",
+    )
+    assert "approval_policy=\"never\"" in calls["cmd"]
+    assert calls["cmd"][-3:] == ("--model", "gpt-5.5", "-")
+    assert calls["input"] == b"hello"
 
 
 @pytest.mark.asyncio

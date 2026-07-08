@@ -441,8 +441,8 @@ A conversational, **read-only** per-SKU assistant. A planner asks free-form
 questions about one SKU (item + customer group + location) and gets grounded,
 cited answers streamed back. Unlike the AI Planner (proactive, write-capable,
 portfolio-wide) and unlike the OpenAI/Ollama LLM client above, the chatbot runs
-on a selected local agent runtime: the **Claude Agent SDK** (`runtime.provider:
-claude`, default) or **Codex CLI** (`runtime.provider: codex`).
+on a selected local agent runtime: **Codex CLI** (`runtime.provider: codex`,
+current repo config) or the **Claude Agent SDK** (`runtime.provider: claude`).
 
 - Service package: `common/ai/sku_chat/` (`config`, `auth`, `model_router`, `sku_data`, `tools`, `agent`, `prompts`, `store`)
 - Router: `api/routers/intelligence/sku_chat.py` (prefix `/sku-chat`)
@@ -455,7 +455,7 @@ claude`, default) or **Codex CLI** (`runtime.provider: codex`).
 Both agent runtimes are lazy. The base install and test suite run without
 Claude Agent SDK or Codex CLI.
 
-For the default Claude runtime:
+For the Claude runtime:
 
 ```bash
 uv sync --extra agent          # installs claude-agent-sdk + its bundled Claude Code CLI
@@ -465,7 +465,7 @@ Until this is run, `POST /sku-chat/stream` in Claude mode returns a single SSE `
 (`"claude-agent-sdk is not installed. Run uv sync --extra agent."`) — by design,
 so the rest of the API is unaffected.
 
-For Codex runtime, install/sign in to the Codex CLI separately, then set:
+For Codex runtime, install/sign in to Codex, then set:
 
 ```yaml
 runtime:
@@ -473,6 +473,12 @@ runtime:
 auth:
   mode: "auto"
 ```
+
+The API resolves the Codex executable from `codex.binary`, then PATH, then
+`CODEX_CLI_PATH`, then the Codex desktop bundle
+`/Applications/Codex.app/Contents/Resources/codex`. If `/sku-chat/stream`
+reports that Codex is not visible to the API process, restart the API after
+sign-in or set `CODEX_CLI_PATH` / `codex.binary` to the executable path.
 
 ### 9.12.3 Runtime and authentication modes
 

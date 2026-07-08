@@ -26,6 +26,11 @@ from common.core.paths import PROJECT_ROOT
 
 log = logging.getLogger(__name__)
 
+_CODEX_BINARY_FALLBACKS = (
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "~/Applications/Codex.app/Contents/Resources/codex",
+)
+
 
 @dataclass
 class SkuChatContext:
@@ -108,6 +113,40 @@ def _json_context(data: dict[str, Any]) -> str:
     return json.dumps(data, default=str, indent=2, sort_keys=True)
 
 
+def _is_executable(path: str) -> bool:
+    """Return true when a candidate CLI path exists and can be executed."""
+    expanded = os.path.expanduser(path)
+    return os.path.isfile(expanded) and os.access(expanded, os.X_OK)
+
+
+def _resolve_codex_binary(binary: str) -> str:
+    """Resolve the Codex CLI binary from config, PATH, or Codex.app fallback."""
+    expanded = os.path.expanduser(binary)
+    if os.sep in binary:
+        if _is_executable(expanded):
+            return expanded
+        raise CodexRuntimeError(
+            f"configured codex.binary is not executable: {expanded}"
+        )
+
+    found = shutil.which(binary)
+    if found:
+        return found
+
+    if binary == "codex":
+        candidates = [os.getenv("CODEX_CLI_PATH"), *_CODEX_BINARY_FALLBACKS]
+        for candidate in candidates:
+            if candidate and _is_executable(candidate):
+                return os.path.expanduser(candidate)
+
+    raise CodexRuntimeError(
+        "codex CLI is not installed or not visible to the API process. "
+        "Set config/ai/sku_chat_config.yaml codex.binary to the Codex CLI path, "
+        "set CODEX_CLI_PATH, install codex on PATH, or switch runtime.provider "
+        "back to 'claude'."
+    )
+
+
 def _build_codex_context(
     pool: Any,
     ctx: SkuChatContext,
@@ -184,21 +223,16 @@ async def _run_codex_exec(
     sandbox = str(codex_cfg.get("sandbox", "read-only"))
     approval = str(codex_cfg.get("approval_policy", "never"))
     cwd = str(PROJECT_ROOT)
-
-    if os.sep not in binary and shutil.which(binary) is None:
-        raise CodexRuntimeError(
-            "codex CLI is not installed or not on PATH. Install/sign in to Codex, "
-            "or switch config/ai/sku_chat_config.yaml runtime.provider back to 'claude'."
-        )
+    resolved_binary = _resolve_codex_binary(binary)
 
     cmd = [
-        binary,
+        resolved_binary,
         "exec",
         "--ephemeral",
         "--sandbox",
         sandbox,
-        "--ask-for-approval",
-        approval,
+        "-c",
+        f'approval_policy="{approval}"',
         "--model",
         model_id,
         "-",

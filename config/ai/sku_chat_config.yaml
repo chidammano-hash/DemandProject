@@ -6,13 +6,13 @@
 
 # ───────────────────────────────────────────────────────────────────────────
 # Runtime provider — which local agent runtime powers /sku-chat/stream.
-#   claude : use claude-agent-sdk + Claude Code auth/tool loop (current default).
+#   claude : use claude-agent-sdk + Claude Code auth/tool loop.
 #   codex  : use Codex CLI `codex exec` with a read-only SKU context snapshot.
 #            In local development this reuses saved Codex/ChatGPT auth; in
 #            standalone automation use auth.mode=api_key + CODEX_API_KEY.
 # ───────────────────────────────────────────────────────────────────────────
 runtime:
-  provider: "claude"   # claude | codex
+  provider: "codex"   # claude | codex
 
 # ───────────────────────────────────────────────────────────────────────────
 # Authentication mode — interpreted by the selected runtime provider.
@@ -52,6 +52,9 @@ codex_models:
 
 # Codex CLI invocation settings. Keep sandbox read-only: the Codex runtime gets a
 # pre-fetched SKU context snapshot and must not modify files or run writes.
+# If "codex" is not visible to the API server PATH, agent.py also checks
+# CODEX_CLI_PATH and the Codex desktop bundle at:
+# /Applications/Codex.app/Contents/Resources/codex
 codex:
   binary: "codex"
   sandbox: "read-only"

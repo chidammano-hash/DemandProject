@@ -37,7 +37,7 @@ async def test_config_endpoint(monkeypatch):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["runtime_provider"] == "claude"
+    assert data["runtime_provider"] == "codex"
     assert data["auth_mode"] == "auto"
     assert data["models"]["deep"] == "claude-opus-4-8"
     assert data["codex_models"]["standard"] == "gpt-5.5"

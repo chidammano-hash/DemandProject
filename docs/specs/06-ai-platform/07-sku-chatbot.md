@@ -1,6 +1,6 @@
 # SKU Chatbot
 
-> A conversational, tool-using assistant that lets a planner ask free-form questions about a single SKU (or a small set) and get grounded, cited answers drawn from the platform's own sales, forecast, inventory, feature, and accuracy data. Default runtime is the **Claude Agent SDK** with tiered model routing (Haiku / Sonnet / Opus), and `runtime.provider: codex` can instead use **Codex CLI** (`codex exec`) with a read-only SKU context snapshot. Both support local subscription/session auth for development and API-key auth for standalone automation.
+> A conversational, tool-using assistant that lets a planner ask free-form questions about a single SKU (or a small set) and get grounded, cited answers drawn from the platform's own sales, forecast, inventory, feature, and accuracy data. Current repo config uses **Codex CLI** (`runtime.provider: codex`, `codex exec`) with a read-only SKU context snapshot; `runtime.provider: claude` can instead use the **Claude Agent SDK** with tiered model routing (Haiku / Sonnet / Opus). Both support local subscription/session auth for development and API-key auth for standalone automation.
 
 | | |
 |---|---|
@@ -29,7 +29,7 @@ We also have a deployment constraint the rest of the AI stack does not address: 
 A backend **`SkuChatAgent`** with a selectable runtime. `runtime.provider: claude` uses the **Claude Agent SDK** (`claude-agent-sdk`, the Python SDK that the Claude Code harness exposes — *not* the bare `anthropic` Messages SDK used by 06-01). `runtime.provider: codex` invokes **Codex CLI** (`codex exec`) in a read-only sandbox. For each incoming chat turn the agent:
 
 1. **Routes to a model tier** — a cheap Haiku classifier picks Haiku / Sonnet / Opus based on the question's complexity (overridable per-request and via config).
-2. **Runs the configured runtime** — Claude gets the SKU's data as **read-only SDK MCP tools** (`@tool` functions registered through `create_sdk_mcp_server`) that call our existing query layer in-process (no subprocess, no HTTP hop). Codex gets a pre-fetched, read-only JSON context snapshot and is invoked with `codex exec --sandbox read-only --ask-for-approval never`.
+2. **Runs the configured runtime** — Claude gets the SKU's data as **read-only SDK MCP tools** (`@tool` functions registered through `create_sdk_mcp_server`) that call our existing query layer in-process (no subprocess, no HTTP hop). Codex gets a pre-fetched, read-only JSON context snapshot and is invoked with `codex exec --sandbox read-only -c approval_policy="never"`.
 3. **Streams a grounded answer** back to the React chat UI over Server-Sent Events, with the tool calls surfaced as a "evidence trail" so the answer is auditable.
 
 Auth is delegated to the selected local runtime. Claude supports `auth.mode: auto` (inherit Claude Code's existing session — no key needed), `api_key` (`ANTHROPIC_API_KEY`), `bedrock`, or `vertex`. Codex supports `auth.mode: auto` (inherit saved Codex CLI auth / ChatGPT sign-in) or `api_key` (`CODEX_API_KEY` for the `codex exec` invocation). The Claude tool surface is **strictly read-only** except for the approval-gated staging tool; the Codex path receives data up front and runs read-only/non-interactively.
@@ -137,7 +137,7 @@ Because the agent runs as a server, it must not pick up the developer's local co
 - `setting_sources=[]` — Claude runtime: do not load `~/.claude` / project `CLAUDE.md` / local settings.
 - `system_prompt=<SKU specialist prompt>` — replaces the default; defines tone, citation discipline ("every numeric claim must come from a tool result"), and refusal behaviour for out-of-scope questions.
 - `permission_mode="bypassPermissions"` — Claude runtime: fully non-interactive. Safe **only because** the allow-listed tool surface is read-only (`mcp__sku__*`) except for approval-gated staging; no Bash/Write/Edit/Read-file tools are exposed.
-- `codex exec --sandbox read-only --ask-for-approval never` — Codex runtime: receives a pre-fetched JSON context snapshot and cannot write files.
+- `codex exec --sandbox read-only -c approval_policy="never"` — Codex runtime: receives a pre-fetched JSON context snapshot and cannot write files.
 - Per-turn circuit breakers (mirroring 06-01): `max_turns`, `token_budget`, and a wall-clock `timeout_seconds`. On breach the turn ends gracefully with a partial answer + a "truncated" flag.
 
 ---
@@ -181,7 +181,7 @@ File: `config/ai/sku_chat_config.yaml` (loaded via `load_config`). Inline commen
 
 | Key | Purpose | Default |
 |---|---|---|
-| `runtime.provider` | `claude` \| `codex` | `claude` |
+| `runtime.provider` | `claude` \| `codex` | `codex` |
 | `auth.mode` | `auto` \| `api_key` \| `bedrock` \| `vertex` | `auto` |
 | `models.fast` | Model for the `fast` tier | `claude-haiku-4-5` |
 | `models.standard` | Model for the `standard` tier | `claude-sonnet-4-6` |
@@ -189,7 +189,7 @@ File: `config/ai/sku_chat_config.yaml` (loaded via `load_config`). Inline commen
 | `codex_models.fast` | Codex model for the `fast` tier | `gpt-5.4-mini` |
 | `codex_models.standard` | Codex model for the `standard` tier | `gpt-5.5` |
 | `codex_models.deep` | Codex model for the `deep` tier | `gpt-5.5` |
-| `codex.binary` | Codex CLI executable | `codex` |
+| `codex.binary` | Codex CLI executable; resolver also checks `CODEX_CLI_PATH` and `/Applications/Codex.app/Contents/Resources/codex` when this is `codex` and PATH misses | `codex` |
 | `codex.sandbox` | Sandbox for `codex exec` | `read-only` |
 | `codex.approval_policy` | Approval policy for `codex exec` | `never` |
 | `routing.classifier_model` | Model that classifies intent → tier | `claude-haiku-4-5` |
