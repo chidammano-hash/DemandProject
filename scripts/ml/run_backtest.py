@@ -43,6 +43,7 @@ from common.ml.model_registry import (
     fit_model,
     get_best_iteration,
     get_tree_default_params,
+    probe_tree_gpu_available,
 )
 from common.scripts_base import load_project_env, setup_logging
 from common.services.perf_profiler import profiled_section
@@ -156,7 +157,6 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "config_section": "lgbm_cluster",
         "iter_param": "n_estimators",
         "gpu_params": lambda: {"device": "gpu"},
-        "gpu_test": lambda cls: cls(device="gpu", n_estimators=1, verbosity=-1),
         "gpu_test_platform_check": True,  # only auto-detect on Darwin
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
@@ -177,7 +177,6 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "config_section": "catboost_cluster",
         "iter_param": "iterations",
         "gpu_params": lambda: {"task_type": "GPU"},
-        "gpu_test": lambda cls: cls(task_type="GPU", iterations=1, verbose=0),
         "gpu_test_platform_check": False,
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
@@ -200,7 +199,6 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "config_section": "xgboost_cluster",
         "iter_param": "n_estimators",
         "gpu_params": lambda: {"device": "cuda"},
-        "gpu_test": lambda cls: cls(device="cuda", n_estimators=1, verbosity=0),
         "gpu_test_platform_check": False,
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
@@ -1547,10 +1545,9 @@ def main() -> None:
                 should_test = False
             if should_test:
                 try:
-                    _test_model = registry["gpu_test"](model_class)
-                    _test_model.fit([[0]], [0])
-                    _use_gpu = True
-                    logger.info("Using GPU for %s", label)
+                    _use_gpu = probe_tree_gpu_available(model_name, registry["gpu_params"]())
+                    if _use_gpu:
+                        logger.info("Using GPU for %s", label)
                 except Exception:
                     logger.info("GPU not available, falling back to CPU")
 

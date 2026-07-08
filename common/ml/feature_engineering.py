@@ -10,8 +10,7 @@ Feature groups (in build order):
   4. Derived demand (mom_growth, volatility_ratio, lag ratios, etc.)
   5. Croston decomposition (intermittent demand: size, interval, probability)
   6. TS profile (per-DFU static: cv_demand, adi, seasonal_amplitude, etc.)
-  7. Cross-DFU cluster aggregates (cluster_mean_lag1, cluster_demand_trend, etc.)
-  8. External forecast signal (optional enrichment via enrich_with_external_forecast)
+  7. External forecast signal (optional enrichment via enrich_with_external_forecast)
 """
 
 import logging
@@ -22,17 +21,14 @@ import pandas as pd
 
 from common.core.constants import (
     CAT_FEATURES,
-    CROSTON_FEATURES,
-    CROSS_DFU_FEATURES,
     CUSTOMER_FEATURE_COLS,
     ENHANCED_FEATURES,
     EXTERNAL_FORECAST_FEATURES,
     FORECAST_QTY_COL,
-    FOURIER_FEATURES,
     LAG_RANGE,
     METADATA_COLS,
-    NUMERIC_SKU_FEATURES,
     NUMERIC_ITEM_FEATURES,
+    NUMERIC_SKU_FEATURES,
     ROLLING_WINDOWS,
     TS_PROFILE_FEATURES,
 )
@@ -47,9 +43,8 @@ def _recompute_derived_features(df: pd.DataFrame) -> None:
     the logic to prevent three-way duplication across build_feature_matrix,
     mask_future_sales, and update_grid_with_predictions.
 
-    Also recomputes Croston decomposition and cross-DFU cluster aggregates
-    when those columns already exist in the DataFrame (i.e., they were
-    previously computed during build_feature_matrix).
+    Also recomputes Croston decomposition when those columns already exist in
+    the DataFrame (i.e., they were previously computed during build_feature_matrix).
     """
     df["mom_growth"] = (df["qty_lag_1"] - df["qty_lag_2"]) / (df["qty_lag_2"].abs() + 1.0)
     df["mom_growth"] = df["mom_growth"].clip(-2.0, 2.0)
@@ -74,7 +69,7 @@ def _recompute_derived_features(df: pd.DataFrame) -> None:
     if "croston_demand_size" in df.columns:
         _compute_croston_features(df)
 
-    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see docs/specs/01-foundation/08-known-gaps.md)
+    # Cross-DFU cluster aggregates intentionally stay removed to avoid ml_cluster leakage.
 
 
 def _compute_rolling_numpy(qty_2d: np.ndarray, windows: list[int]) -> dict[str, np.ndarray]:
@@ -403,77 +398,6 @@ def _compute_croston_features(df: pd.DataFrame) -> None:
             df.loc[idx, "croston_demand_size"] = sizes.astype(np.float32)
             df.loc[idx, "croston_demand_interval"] = intervals.astype(np.float32)
             df.loc[idx, "croston_probability"] = probs.astype(np.float32)
-
-
-def _compute_cross_dfu_features(df: pd.DataFrame) -> None:
-    """Compute cross-DFU cluster aggregate features in-place.
-
-    Requires ``ml_cluster``, ``qty_lag_1``, ``rolling_mean_3m``, and
-    ``rolling_mean_12m`` columns to be present.
-
-    Features (all causal — derived from lagged/rolling values already computed):
-    - ``cluster_mean_lag1``: Mean of qty_lag_1 across the cluster for that month
-    - ``cluster_total_lag1``: Sum of qty_lag_1 across the cluster for that month
-    - ``cluster_demand_trend``: cluster rolling_mean_3m / cluster rolling_mean_12m
-    - ``cluster_zero_pct``: Fraction of DFUs with zero qty_lag_1 in that month
-
-    Uses vectorized groupby-transform for performance.
-    """
-    if "ml_cluster" not in df.columns or "qty_lag_1" not in df.columns:
-        for col in CROSS_DFU_FEATURES:
-            df[col] = np.float32(0)
-        return
-
-    group_keys = ["ml_cluster", "startdate"]
-
-    # qty_lag_1 aggregates per cluster-month
-    grp = df.groupby(group_keys, sort=False, observed=True)
-
-    cluster_stats = grp.agg(
-        cluster_mean_lag1=pd.NamedAgg(column="qty_lag_1", aggfunc="mean"),
-        cluster_total_lag1=pd.NamedAgg(column="qty_lag_1", aggfunc="sum"),
-    ).reset_index()
-
-    # Cluster demand trend: rolling_mean_3m / rolling_mean_12m at cluster level
-    if "rolling_mean_3m" in df.columns and "rolling_mean_12m" in df.columns:
-        cluster_rolling = grp.agg(
-            _cluster_rm3=pd.NamedAgg(column="rolling_mean_3m", aggfunc="mean"),
-            _cluster_rm12=pd.NamedAgg(column="rolling_mean_12m", aggfunc="mean"),
-        ).reset_index()
-        with np.errstate(invalid="ignore", divide="ignore"):
-            trend = cluster_rolling["_cluster_rm3"] / (cluster_rolling["_cluster_rm12"].abs() + 1.0)
-        cluster_rolling["cluster_demand_trend"] = trend.clip(-10.0, 10.0).astype(np.float32)
-        cluster_stats = cluster_stats.merge(
-            cluster_rolling[["ml_cluster", "startdate", "cluster_demand_trend"]],
-            on=group_keys,
-            how="left",
-        )
-    else:
-        cluster_stats["cluster_demand_trend"] = np.float32(0)
-
-    # Cluster zero percentage
-    zero_pct_raw = grp["qty_lag_1"].apply(
-        lambda s: (s.fillna(0) == 0).mean(),
-    )
-    zero_pct = zero_pct_raw.reset_index(name="cluster_zero_pct")
-    cluster_stats = cluster_stats.merge(zero_pct, on=group_keys, how="left")
-
-    # Merge back — drop old columns first to avoid suffixes on recompute
-    for col in CROSS_DFU_FEATURES:
-        if col in df.columns:
-            df.drop(columns=col, inplace=True)
-
-    # Use a temporary index to preserve row order during merge
-    df_idx = df.index.copy()
-    merged = df.merge(
-        cluster_stats[group_keys + CROSS_DFU_FEATURES],
-        on=group_keys,
-        how="left",
-    )
-    merged.index = df_idx
-
-    for col in CROSS_DFU_FEATURES:
-        df[col] = merged[col].fillna(0).astype(np.float32)
 
 
 def enrich_with_external_forecast(
@@ -909,4 +833,4 @@ def update_grid_incremental(
     # these depend on rolling windows across all DFUs so partial update is unsafe)
     if "croston_demand_size" in grid.columns:
         _compute_croston_features(grid)
-    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see docs/specs/01-foundation/08-known-gaps.md)
+    # Cross-DFU cluster aggregates intentionally stay removed to avoid ml_cluster leakage.

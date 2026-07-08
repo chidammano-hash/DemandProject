@@ -123,7 +123,7 @@ def test_build_grid_unknown_dfu_attrs():
                                    "execution_lag", "total_lt", "brand", "region", "abc_vol"])
     grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
     assert grid is not None
-    # ml_cluster was removed from CAT_FEATURES (see docs/specs/01-foundation/08-known-gaps.md §1).
+    # ml_cluster was removed from CAT_FEATURES to prevent cluster-label leakage.
     # Validate the contract on the columns that ARE categorical features.
     from common.core.constants import CAT_FEATURES
     for col in CAT_FEATURES:

@@ -19,6 +19,7 @@ from common.ml.model_registry import (
     from_native_params,
     get_best_iteration,
     get_tree_default_params,
+    probe_tree_gpu_available,
     to_native_params,
 )
 
@@ -79,6 +80,24 @@ class TestBuildTreeClassifier:
             mapping = CANONICAL_TO_NATIVE[model]
             for canonical, native in mapping.items():
                 assert native is not None, f"{model}.{canonical} has None mapping"
+
+
+class TestProbeTreeGpuAvailable:
+    def test_probe_uses_registry_build_and_fit(self, monkeypatch):
+        model = MagicMock()
+        build_mock = MagicMock(return_value=model)
+        fit_mock = MagicMock()
+        monkeypatch.setattr("common.ml.model_registry.build_tree_model", build_mock)
+        monkeypatch.setattr("common.ml.model_registry.fit_final_model", fit_mock)
+
+        assert probe_tree_gpu_available("xgboost", {"device": "cuda"})
+
+        build_mock.assert_called_once()
+        model_name, params = build_mock.call_args.args
+        assert model_name == "xgboost"
+        assert params["device"] == "cuda"
+        assert params["n_estimators"] == 1
+        fit_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ flowchart TD
     end
 
     subgraph S4["Step 5 · Feature Engineering"]
-        FM["build_feature_matrix()\n• Lag features (lag 1–12)\n• Rolling stats (3m/6m/12m)\n• Calendar & Fourier seasonality\n• Croston decomposition\n• Cross-DFU cluster aggregates\n• DFU attrs incl. ml_cluster ①"]
+        FM["build_feature_matrix()\n• Lag features (lag 1–12)\n• Rolling stats (3m/6m/12m)\n• Calendar & Fourier seasonality\n• Croston decomposition\n• DFU attrs incl. ml_cluster ①"]
     end
 
     S1 --> S2 --> S3 --> S4

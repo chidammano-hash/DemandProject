@@ -358,7 +358,7 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 
 #### Expert 28: DeepAR Specialist
 - **Strength signal:** Large catalog with related items; new product introduction; cold-start with similar products as training signal
-- **Routing rule:** `(is_new_product = true AND has_similar_items = true) OR cross_dfu_shap_pct > 0.15`
+- **Routing rule:** `is_new_product = true AND has_similar_items = true`
 - **Key value:** ~15% accuracy improvement over ARIMA/ETS at Amazon. Global model learns cross-series patterns without explicit feature engineering.
 
 #### Expert 29: Efficient Deep Learning Specialist

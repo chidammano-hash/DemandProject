@@ -49,11 +49,11 @@ pipeline - combining a pretrained foundation model with domain-specific signals.
 
 ## Covariate Details
 
-**Past-only covariates (17 numeric):** known only for history, cannot be projected forward -
+**Past-only covariates (14 numeric):** known only for history, cannot be projected forward -
 `qty_lag_1`..`qty_lag_12` (5 used), `qty_rolling_mean_3/6/12`, `mom_growth`, `demand_accel`,
 `volatility_ratio`, Croston decomposition (`croston_demand_size`, `croston_demand_interval`,
-`croston_probability`), and cluster aggregates (`cluster_mean_lag1`, `cluster_total_lag1`,
-`cluster_demand_trend`).
+`croston_probability`). Cross-DFU cluster aggregates are intentionally excluded to avoid
+`ml_cluster` leakage in backtests.
 
 **Past + future covariates (13 numeric):** calendar/seasonal features computable for any date -
 `month`, `quarter`, `is_quarter_end`, `is_year_end`, `days_in_month`, and Fourier terms

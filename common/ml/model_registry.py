@@ -696,3 +696,28 @@ def fit_final_model(
         raise ValueError(
             f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
         )
+
+
+def probe_tree_gpu_available(model_name: str, gpu_params: dict[str, Any]) -> bool:
+    """Return whether a tree backend can train a tiny model with GPU params.
+
+    GPU availability checks still instantiate and fit a real estimator, so they
+    belong behind the same registry boundary as normal training.
+    """
+    probe_params: dict[str, Any] = dict(gpu_params)
+    if model_name == "lgbm":
+        probe_params.update({"n_estimators": 1, "verbosity": -1})
+    elif model_name == "catboost":
+        probe_params.update({"iterations": 1, "verbose": 0})
+    elif model_name == "xgboost":
+        probe_params.update({"n_estimators": 1, "verbosity": 0})
+    else:
+        raise ValueError(
+            f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
+        )
+
+    X = pd.DataFrame({"probe_feature": [0.0, 1.0, 2.0, 3.0]})
+    y = pd.Series([0.0, 1.0, 0.0, 1.0])
+    model = build_tree_model(model_name, probe_params)
+    fit_final_model(model, model_name, X, y, [], ["probe_feature"])
+    return True

@@ -515,7 +515,6 @@ class TestComputeTimeSeriesFeatures:
 from common.ml.feature_engineering import (  # noqa: E402
     _compute_fourier_features,
     _compute_croston_features,
-    _compute_cross_dfu_features,
     enrich_with_external_forecast,
 )
 
@@ -673,98 +672,21 @@ class TestCrostonFeatures:
         assert masked["croston_demand_size"].notna().all()
 
 
-class TestCrossDfuFeatures:
-    """Tests for cross-DFU cluster aggregate features."""
+class TestCrossDfuFeaturesRemoved:
+    """Cross-DFU cluster aggregates must stay out of the feature matrix."""
 
-    def test_cross_dfu_columns_present(self):
+    def test_cross_dfu_feature_list_is_empty(self):
+        assert CROSS_DFU_FEATURES == []
+
+    def test_removed_cluster_aggregate_columns_absent(self):
         grid = _build_grid()
-        from common.core.constants import CROSS_DFU_FEATURES
-        for feat in CROSS_DFU_FEATURES:
-            assert feat in grid.columns, f"Missing cross-DFU feature: {feat}"
-
-    def test_cross_dfu_no_nan(self):
-        grid = _build_grid()
-        from common.core.constants import CROSS_DFU_FEATURES
-        for feat in CROSS_DFU_FEATURES:
-            assert grid[feat].notna().all(), f"NaN in {feat}"
-
-    def test_cross_dfu_dtype_float32(self):
-        grid = _build_grid()
-        from common.core.constants import CROSS_DFU_FEATURES
-        for feat in CROSS_DFU_FEATURES:
-            assert grid[feat].dtype == np.float32, f"{feat} not float32"
-
-    @pytest.mark.skipif(
-        not CROSS_DFU_FEATURES,
-        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
-    )
-    def test_cluster_mean_lag1_consistent(self):
-        """cluster_mean_lag1 should be the mean of qty_lag_1 within each cluster-month."""
-        grid = _build_grid()
-        for (cluster, month), group in grid.groupby(["ml_cluster", "startdate"], observed=True):
-            expected_mean = group["qty_lag_1"].mean()
-            if pd.isna(expected_mean):
-                expected_mean = 0.0
-            actual = group["cluster_mean_lag1"].iloc[0]
-            assert abs(float(actual) - float(expected_mean)) < 1e-3, (
-                f"cluster_mean_lag1 mismatch for cluster={cluster}, month={month}"
-            )
-
-    @pytest.mark.skipif(
-        not CROSS_DFU_FEATURES,
-        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
-    )
-    def test_cluster_total_lag1_consistent(self):
-        """cluster_total_lag1 should be the sum of qty_lag_1 within each cluster-month."""
-        grid = _build_grid()
-        for (cluster, month), group in grid.groupby(["ml_cluster", "startdate"], observed=True):
-            expected_sum = group["qty_lag_1"].sum()
-            if pd.isna(expected_sum):
-                expected_sum = 0.0
-            actual = group["cluster_total_lag1"].iloc[0]
-            assert abs(float(actual) - float(expected_sum)) < 1e-2, (
-                f"cluster_total_lag1 mismatch for cluster={cluster}, month={month}"
-            )
-
-    @pytest.mark.skipif(
-        not CROSS_DFU_FEATURES,
-        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
-    )
-    def test_cluster_zero_pct_bounded(self):
-        """cluster_zero_pct should be in [0, 1]."""
-        grid = _build_grid()
-        assert (grid["cluster_zero_pct"] >= 0).all()
-        assert (grid["cluster_zero_pct"] <= 1.0 + 1e-6).all()
-
-    @pytest.mark.skipif(
-        not CROSS_DFU_FEATURES,
-        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
-    )
-    def test_cluster_demand_trend_clipped(self):
-        grid = _build_grid()
-        assert grid["cluster_demand_trend"].max() <= 10.0
-        assert grid["cluster_demand_trend"].min() >= -10.0
-
-    def test_cross_dfu_without_ml_cluster(self):
-        """When ml_cluster is not in dfu_attrs, features should be 0."""
-        months = pd.date_range("2023-01-01", periods=6, freq="MS")
-        sales = pd.DataFrame({
-            "sku_ck": [1] * 6,
-            "startdate": list(months),
-            "qty": [10.0] * 6,
-        })
-        dfu = pd.DataFrame({
-            "sku_ck": [1],
-            "item_id": ["U1"],
-            "customer_group": ["G1"],
-            "loc": ["L1"],
-            # No ml_cluster column
-        })
-        items = pd.DataFrame(columns=["item_id"])
-        grid = build_feature_matrix(sales, dfu, items, list(months))
-        from common.core.constants import CROSS_DFU_FEATURES
-        for feat in CROSS_DFU_FEATURES:
-            assert (grid[feat] == 0).all(), f"{feat} should be 0 without ml_cluster"
+        removed = {
+            "cluster_mean_lag1",
+            "cluster_total_lag1",
+            "cluster_demand_trend",
+            "cluster_zero_pct",
+        }
+        assert removed.isdisjoint(grid.columns)
 
 
 class TestExternalForecastEnrichment:

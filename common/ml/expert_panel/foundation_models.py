@@ -118,7 +118,6 @@ _C2E_PAST_ONLY_COVARIATES = [
     "qty_rolling_mean_3", "qty_rolling_mean_6", "qty_rolling_mean_12",
     "mom_growth", "demand_accel", "volatility_ratio",
     "croston_demand_size", "croston_demand_interval", "croston_probability",
-    "cluster_mean_lag1", "cluster_total_lag1", "cluster_demand_trend",
 ]
 
 # Known-future covariates: calendar/seasonal features computable for any date
