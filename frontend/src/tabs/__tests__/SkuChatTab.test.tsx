@@ -5,11 +5,17 @@ import { TestQueryWrapper } from "./test-utils";
 vi.mock("@/api/queries", () => ({
   skuChatKeys: { config: () => ["sku-chat", "config"] as const },
   fetchSkuChatConfig: vi.fn().mockResolvedValue({
+    runtime_provider: "claude",
     auth_mode: "auto",
     models: {
       fast: "claude-haiku-4-5",
       standard: "claude-sonnet-4-6",
       deep: "claude-opus-4-8",
+    },
+    codex_models: {
+      fast: "gpt-5.4-mini",
+      standard: "gpt-5.5",
+      deep: "gpt-5.5",
     },
     routing: { default_tier: "standard", allow_user_override: true },
     guardrails: {},

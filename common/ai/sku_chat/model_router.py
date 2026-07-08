@@ -2,17 +2,21 @@
 
 Each chat turn is an independent Agent SDK invocation, so the model is chosen
 per turn. A deterministic, config-driven heuristic maps the question to a tier
-(``fast`` -> Haiku, ``standard`` -> Sonnet, ``deep`` -> Opus). An explicit
-override from the UI wins. The heuristic is intentionally simple and pure so it
-is cheap and unit-testable; an LLM classifier can replace ``classify_tier``
-later without changing callers.
+(``fast``/``standard``/``deep``). An explicit override from the UI wins. The
+heuristic is intentionally simple and pure so it is cheap and unit-testable; an
+LLM classifier can replace ``classify_tier`` later without changing callers.
 """
 from __future__ import annotations
 
-_DEFAULT_MODELS = {
+_DEFAULT_CLAUDE_MODELS = {
     "fast": "claude-haiku-4-5",
     "standard": "claude-sonnet-4-6",
     "deep": "claude-opus-4-8",
+}
+_DEFAULT_CODEX_MODELS = {
+    "fast": "gpt-5.4-mini",
+    "standard": "gpt-5.5",
+    "deep": "gpt-5.5",
 }
 _DEFAULT_DEEP_KW = (
     "why", "diagnose", "root cause", "compare", "recommend", "explain",
@@ -39,6 +43,7 @@ def select_model(
     question: str,
     config: dict,
     *,
+    provider: str = "claude",
     override_tier: str | None = None,
     override_model: str | None = None,
 ) -> tuple[str, str]:
@@ -46,7 +51,10 @@ def select_model(
 
     Explicit overrides win when ``routing.allow_user_override`` is true.
     """
-    models = {**_DEFAULT_MODELS, **(config.get("models") or {})}
+    if provider == "codex":
+        models = {**_DEFAULT_CODEX_MODELS, **(config.get("codex_models") or {})}
+    else:
+        models = {**_DEFAULT_CLAUDE_MODELS, **(config.get("models") or {})}
     routing = config.get("routing") or {}
     allow_override = bool(routing.get("allow_user_override", True))
 

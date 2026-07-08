@@ -72,3 +72,27 @@ def test_empty_config_falls_back_to_sonnet():
     tier, model = model_router.select_model("a longer question that has no keywords here", {})
     assert tier == "standard"
     assert model == "claude-sonnet-4-6"
+
+
+def test_codex_provider_uses_codex_model_map():
+    cfg = {
+        **_CFG,
+        "codex_models": {
+            "fast": "gpt-5.4-mini",
+            "standard": "gpt-5.5",
+            "deep": "gpt-5.5",
+        },
+    }
+    tier, model = model_router.select_model(
+        "Why did the forecast miss in Q3?", cfg, provider="codex"
+    )
+    assert tier == "deep"
+    assert model == "gpt-5.5"
+
+
+def test_codex_provider_defaults_when_codex_models_missing():
+    tier, model = model_router.select_model(
+        "What is the lead time?", {}, provider="codex"
+    )
+    assert tier == "fast"
+    assert model == "gpt-5.4-mini"

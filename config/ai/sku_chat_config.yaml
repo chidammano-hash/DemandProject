@@ -5,12 +5,29 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ───────────────────────────────────────────────────────────────────────────
-# Authentication mode — how the Claude Agent SDK runtime authenticates.
+# Runtime provider — which local agent runtime powers /sku-chat/stream.
+#   claude : use claude-agent-sdk + Claude Code auth/tool loop (current default).
+#   codex  : use Codex CLI `codex exec` with a read-only SKU context snapshot.
+#            In local development this reuses saved Codex/ChatGPT auth; in
+#            standalone automation use auth.mode=api_key + CODEX_API_KEY.
+# ───────────────────────────────────────────────────────────────────────────
+runtime:
+  provider: "claude"   # claude | codex
+
+# ───────────────────────────────────────────────────────────────────────────
+# Authentication mode — interpreted by the selected runtime provider.
+#
+# Claude runtime:
 #   auto    : inherit the surrounding Claude Code session (no ANTHROPIC_API_KEY
 #             needed). Use this inside Claude Code / local dev.
 #   api_key : require ANTHROPIC_API_KEY in the environment (standalone deploy).
 #   bedrock : set CLAUDE_CODE_USE_BEDROCK=1 (AWS-native deploy; needs AWS creds).
 #   vertex  : set CLAUDE_CODE_USE_VERTEX=1 (GCP-native deploy; needs GCP creds).
+#
+# Codex runtime:
+#   auto    : inherit saved Codex CLI auth (ChatGPT sign-in or configured auth).
+#   api_key : require CODEX_API_KEY in the environment for `codex exec`.
+#
 # Resolution + fail-loud validation lives in common/ai/sku_chat/auth.py.
 # ───────────────────────────────────────────────────────────────────────────
 auth:
@@ -25,6 +42,20 @@ models:
   fast: "claude-haiku-4-5"      # single-field lookups, definitions, greetings
   standard: "claude-sonnet-4-6" # one-SKU analytical Q&A spanning a few tools
   deep: "claude-opus-4-8"       # multi-signal "why" diagnosis, recommendations
+
+# Codex model tiers. Used only when runtime.provider="codex". Current Codex
+# docs recommend gpt-5.5 for most Codex work and gpt-5.4-mini for lighter tasks.
+codex_models:
+  fast: "gpt-5.4-mini"
+  standard: "gpt-5.5"
+  deep: "gpt-5.5"
+
+# Codex CLI invocation settings. Keep sandbox read-only: the Codex runtime gets a
+# pre-fetched SKU context snapshot and must not modify files or run writes.
+codex:
+  binary: "codex"
+  sandbox: "read-only"
+  approval_policy: "never"
 
 # ───────────────────────────────────────────────────────────────────────────
 # Routing rules — deterministic heuristics that map a question to a tier.

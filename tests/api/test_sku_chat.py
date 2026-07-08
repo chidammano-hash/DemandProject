@@ -37,11 +37,14 @@ async def test_config_endpoint(monkeypatch):
 
     assert resp.status_code == 200
     data = resp.json()
+    assert data["runtime_provider"] == "claude"
     assert data["auth_mode"] == "auto"
     assert data["models"]["deep"] == "claude-opus-4-8"
+    assert data["codex_models"]["standard"] == "gpt-5.5"
     assert "mcp__sku__get_sku_profile" in data["tools"]
     assert data["persistence"] is True
     assert "ANTHROPIC_API_KEY" not in resp.text  # never leak secrets
+    assert "CODEX_API_KEY" not in resp.text
 
 
 @pytest.mark.asyncio

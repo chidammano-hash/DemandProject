@@ -1,23 +1,28 @@
-"""SkuChatAgent — the Claude Agent SDK runner for the SKU Chatbot.
+"""SkuChatAgent — selectable Claude/Codex runner for the SKU Chatbot.
 
-Per turn the agent: routes to a model tier, builds the read-only in-process tool
-server, runs the Agent SDK ``query`` loop under a wall-clock timeout, and maps
-the SDK's streamed messages to SSE event dicts the router relays to the browser.
+Per turn the agent routes to a model tier, then runs one of two configured
+runtimes:
 
-The SDK is imported lazily; if it is not installed the turn yields a single
-``error`` event instead of raising, so the API stays importable without the
-``agent`` extra.
+* ``claude`` uses the Claude Agent SDK with the existing in-process MCP tools.
+* ``codex`` invokes ``codex exec`` with a read-only SKU context snapshot.
+
+Both runtimes are lazy. If their local CLI/SDK dependency is missing, the turn
+yields an ``error`` event instead of breaking API startup.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from common.ai.sku_chat import auth, model_router, prompts, tools
+from common.ai.sku_chat import auth, model_router, prompts, sku_data, tools
 from common.ai.sku_chat.tools import AgentSdkUnavailableError
+from common.core.paths import PROJECT_ROOT
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +47,10 @@ def _import_query():
             "claude-agent-sdk is not installed. Run `uv sync --extra agent`."
         ) from exc
     return query, ClaudeAgentOptions
+
+
+class CodexRuntimeError(RuntimeError):
+    """Raised when the Codex runtime cannot complete a turn."""
 
 
 def sdk_message_to_events(msg: Any) -> list[dict[str, Any]]:
@@ -94,8 +103,140 @@ def sdk_message_to_events(msg: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _json_context(data: dict[str, Any]) -> str:
+    """Compact, deterministic JSON block for prompt context."""
+    return json.dumps(data, default=str, indent=2, sort_keys=True)
+
+
+def _build_codex_context(
+    pool: Any,
+    ctx: SkuChatContext,
+    *,
+    history_months: int,
+    peer_limit: int,
+) -> dict[str, Any]:
+    """Fetch the read-only SKU context Codex receives instead of live MCP tools."""
+    return {
+        "sku": {
+            "item_id": ctx.item_id,
+            "customer_group": ctx.customer_group,
+            "loc": ctx.loc,
+        },
+        "profile": sku_data.fetch_sku_profile(
+            pool, ctx.item_id, ctx.customer_group, ctx.loc
+        ) if ctx.item_id and ctx.loc else None,
+        "sales_history": sku_data.fetch_sku_sales_history(
+            pool, ctx.item_id, ctx.loc, history_months
+        ) if ctx.item_id and ctx.loc else None,
+        "forecast": sku_data.fetch_sku_forecast(
+            pool, ctx.item_id, ctx.loc
+        ) if ctx.item_id and ctx.loc else None,
+        "inventory": sku_data.fetch_sku_inventory(
+            pool, ctx.item_id, ctx.loc, history_months
+        ) if ctx.item_id and ctx.loc else None,
+        "accuracy": sku_data.fetch_sku_accuracy(
+            pool, ctx.item_id, ctx.customer_group, ctx.loc
+        ) if ctx.item_id and ctx.loc else None,
+        "cluster_peers": sku_data.fetch_sku_cluster_peers(
+            pool, ctx.item_id, ctx.customer_group, ctx.loc, peer_limit
+        ) if ctx.item_id and ctx.loc else None,
+    }
+
+
+def _build_codex_prompt(
+    question: str,
+    ctx: SkuChatContext,
+    cfg: dict,
+    *,
+    history: list[dict[str, str]] | None,
+    max_history: int,
+    page_focus: str | None,
+    context_data: dict[str, Any],
+) -> str:
+    """Compose the non-interactive Codex prompt from system rules + data."""
+    system_prompt = cfg.get("system_prompt") or prompts.DEFAULT_SYSTEM_PROMPT
+    user_prompt = prompts.build_user_prompt(
+        question, ctx, history=history, max_history=max_history, page_focus=page_focus
+    )
+    return (
+        f"{system_prompt}\n\n"
+        "Runtime note: you are running through Codex CLI in non-interactive mode. "
+        "Use only the JSON context below for business facts. Do not edit files, run "
+        "commands, or claim to have called live tools. The champion-adjustment "
+        "approval tool is only available in the Claude runtime; in Codex mode, "
+        "explain recommendations but do not stage changes.\n\n"
+        f"SKU context JSON:\n{_json_context(context_data)}\n\n"
+        f"{user_prompt}"
+    )
+
+
+async def _run_codex_exec(
+    prompt: str,
+    *,
+    model_id: str,
+    cfg: dict,
+    env: dict[str, str],
+    timeout_s: float,
+) -> str:
+    """Run Codex CLI non-interactively and return the final assistant text."""
+    codex_cfg = cfg.get("codex") or {}
+    binary = str(codex_cfg.get("binary", "codex"))
+    sandbox = str(codex_cfg.get("sandbox", "read-only"))
+    approval = str(codex_cfg.get("approval_policy", "never"))
+    cwd = str(PROJECT_ROOT)
+
+    if os.sep not in binary and shutil.which(binary) is None:
+        raise CodexRuntimeError(
+            "codex CLI is not installed or not on PATH. Install/sign in to Codex, "
+            "or switch config/ai/sku_chat_config.yaml runtime.provider back to 'claude'."
+        )
+
+    cmd = [
+        binary,
+        "exec",
+        "--ephemeral",
+        "--sandbox",
+        sandbox,
+        "--ask-for-approval",
+        approval,
+        "--model",
+        model_id,
+        "-",
+    ]
+    proc_env = {**os.environ, **env}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=cwd,
+            env=proc_env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise CodexRuntimeError(f"could not start codex exec: {exc}") from exc
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=prompt.encode("utf-8")),
+            timeout=timeout_s,
+        )
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.communicate()
+        raise CodexRuntimeError(
+            f"Codex exceeded the {int(timeout_s)}s limit; truncated."
+        ) from exc
+
+    out = stdout.decode("utf-8", errors="replace").strip()
+    err = stderr.decode("utf-8", errors="replace").strip()
+    if proc.returncode != 0:
+        detail = err[-1000:] or out[-1000:] or "no output"
+        raise CodexRuntimeError(f"codex exec failed ({proc.returncode}): {detail}")
+    return out
+
+
 class SkuChatAgent:
-    """Runs one SKU-scoped chat turn against the Claude Agent SDK."""
+    """Runs one SKU-scoped chat turn against the configured agent runtime."""
 
     def __init__(self, pool: Any, config: dict):
         self.pool = pool
@@ -123,14 +264,39 @@ class SkuChatAgent:
         peer_limit = int(context_cfg.get("cluster_peer_limit", 10))
         champion_adjust_enabled = bool((cfg.get("champion_adjust") or {}).get("enabled", True))
 
+        try:
+            provider = auth.runtime_provider(cfg)
+        except auth.SkuChatAuthError as exc:
+            yield {"type": "error", "message": str(exc)}
+            return
         tier, model_id = model_router.select_model(
-            question, cfg, override_tier=model_tier, override_model=model
+            question,
+            cfg,
+            provider=provider,
+            override_tier=model_tier,
+            override_model=model,
         )
-        yield {"type": "meta", "tier": tier, "model": model_id}
+        yield {"type": "meta", "tier": tier, "model": model_id, "runtime": provider}
+
+        if provider == "codex":
+            async for event in self._stream_codex_turn(
+                question,
+                ctx,
+                cfg=cfg,
+                model_id=model_id,
+                history=history,
+                max_history=max_history,
+                history_months=history_months,
+                peer_limit=peer_limit,
+                page_focus=page_focus,
+                timeout_s=timeout_s,
+            ):
+                yield event
+            return
 
         try:
             query_fn, options_cls = _import_query()
-            env = auth.resolve_auth_env(cfg)
+            env = auth.resolve_auth_env(cfg, provider=provider)
             tool_server = tools.build_sku_tool_server(
                 self.pool,
                 history_months=history_months,
@@ -178,3 +344,56 @@ class SkuChatAgent:
                 "message": f"Response exceeded the {int(timeout_s)}s limit; truncated.",
                 "truncated": True,
             }
+
+    async def _stream_codex_turn(
+        self,
+        question: str,
+        ctx: SkuChatContext,
+        *,
+        cfg: dict,
+        model_id: str,
+        history: list[dict[str, str]] | None,
+        max_history: int,
+        history_months: int,
+        peer_limit: int,
+        page_focus: str | None,
+        timeout_s: float,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield SSE events for a Codex CLI-backed turn."""
+        try:
+            env = auth.resolve_auth_env(cfg, provider="codex")
+            try:
+                context_data = await asyncio.to_thread(
+                    _build_codex_context,
+                    self.pool,
+                    ctx,
+                    history_months=history_months,
+                    peer_limit=peer_limit,
+                )
+            except Exception as exc:  # noqa: BLE001, RUF100 — stream context-load failures
+                log.exception("sku-chat Codex context load failed for %s@%s", ctx.item_id, ctx.loc)
+                raise CodexRuntimeError(
+                    "Could not load SKU context for the Codex runtime."
+                ) from exc
+            prompt = _build_codex_prompt(
+                question,
+                ctx,
+                cfg,
+                history=history,
+                max_history=max_history,
+                page_focus=page_focus,
+                context_data=context_data,
+            )
+            answer = await _run_codex_exec(
+                prompt,
+                model_id=model_id,
+                cfg=cfg,
+                env=env,
+                timeout_s=timeout_s,
+            )
+        except (auth.SkuChatAuthError, CodexRuntimeError) as exc:
+            yield {"type": "error", "message": str(exc)}
+            return
+
+        yield {"type": "text", "chunk": answer}
+        yield {"type": "result", "text": answer, "cost_usd": None, "usage": None}

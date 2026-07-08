@@ -1,6 +1,6 @@
 # SKU Chatbot
 
-> A conversational, tool-using assistant that lets a planner ask free-form questions about a single SKU (or a small set) and get grounded, cited answers drawn from the platform's own sales, forecast, inventory, feature, and accuracy data. Built on the **Claude Agent SDK** with tiered model routing (Haiku / Sonnet / Opus) and dual-mode auth: subscription auth inside Claude Code today, API key (or Bedrock/Vertex) for standalone deployment later.
+> A conversational, tool-using assistant that lets a planner ask free-form questions about a single SKU (or a small set) and get grounded, cited answers drawn from the platform's own sales, forecast, inventory, feature, and accuracy data. Default runtime is the **Claude Agent SDK** with tiered model routing (Haiku / Sonnet / Opus), and `runtime.provider: codex` can instead use **Codex CLI** (`codex exec`) with a read-only SKU context snapshot. Both support local subscription/session auth for development and API-key auth for standalone automation.
 
 | | |
 |---|---|
@@ -8,9 +8,9 @@
 | **UI Tab** | SkuChatTab (standalone) **+ a global, page-aware chat drawer (`GlobalChatDrawer`) on every tab** |
 | **Key Files** | `frontend/src/tabs/SkuChatTab.tsx`, `frontend/src/tabs/sku-chat/{SkuChatPanel,GlobalChatDrawer}.tsx` + `pageChatConfig.ts`, `frontend/src/context/ActiveSkuContext.tsx` (chat inherits the active page's SKU; `ItemAnalysisTab` publishes), `frontend/src/App.tsx` (mounts the global drawer + `ActiveSkuProvider`), `frontend/src/api/queries/sku-chat.ts`, `api/routers/intelligence/sku_chat.py`, `common/ai/sku_chat/` (config, auth, model_router, sku_data, tools, agent, prompts, store, champion_adjust), `config/ai/sku_chat_config.yaml`, `sql/196`, `sql/197` |
 | **API Prefixes** | `/sku-chat` |
-| **Depends On** | Claude Agent SDK (`claude-agent-sdk`, `agent` extra), `dim_sku` + SKU features (03-02), production/candidate forecast (02), demand history workbench (03-06), accuracy KPIs (02), AI Planning Agent (06-01) as the architectural sibling |
+| **Depends On** | Claude Agent SDK (`claude-agent-sdk`, `agent` extra) for `runtime.provider: claude`; Codex CLI for `runtime.provider: codex`; `dim_sku` + SKU features (03-02), production/candidate forecast (02), demand history workbench (03-06), accuracy KPIs (02), AI Planning Agent (06-01) as the architectural sibling |
 
-> **Implementation status (Phases 1 + 3 + agentic adjust).** Built: the read-only tool layer (`sku_data.py` → 7 `@tool` MCP tools), per-turn Haiku/Sonnet/Opus routing, `auth.mode` resolution (auto / api_key / bedrock / vertex), the SSE `/sku-chat/{config,session,stream}` router + `GET /session/{id}` history (mounted before `domains.py`), **best-effort persistence** (`store.py` → `sku_chat_session|message|call_log`, `sql/196`), the standalone React tab, and a **global, page-aware chat drawer (`GlobalChatDrawer`) present on every tab** — its focus (sent to the agent as page context), suggested-prompt chips, and SKU scope adapt to the active page via `pageChatConfig`. Plus the **agentic champion-forecast adjustment**: an `apply_champion_adjustment` staging tool + an "AI Adjust" button + an in-chat **approval card** + `POST /sku-chat/adjustment/{id}` that reuses the existing guarded `save_adjustment` (`champion_adjust.py`, `sql/197`). 62 tests (54 backend + 8 frontend, all green; the full frontend suite is 1171, incl. the active-SKU scope-inheritance + persistent per-page thread tests). The Agent SDK is lazy-imported via the `agent` optional extra, so the API and test suite run without it; until `uv sync --extra agent` is run, `/sku-chat/stream` returns a single `error` event ("claude-agent-sdk is not installed"). The exact `ClaudeAgentOptions` field names and subscription-auth inheritance should be validated against the installed SDK/CLI version on first live run — all SDK touch-points are isolated in `agent.py` / `tools.py`.
+> **Implementation status (Phases 1 + 3 + agentic adjust + Codex runtime switch).** Built: the read-only tool layer (`sku_data.py` → 7 `@tool` MCP tools for Claude and a read-only JSON context snapshot for Codex), per-turn model-tier routing, `runtime.provider` (`claude` / `codex`) plus `auth.mode` resolution, the SSE `/sku-chat/{config,session,stream}` router + `GET /session/{id}` history (mounted before `domains.py`), **best-effort persistence** (`store.py` → `sku_chat_session|message|call_log`, `sql/196`), the standalone React tab, and a **global, page-aware chat drawer (`GlobalChatDrawer`) present on every tab** — its focus (sent to the agent as page context), suggested-prompt chips, and SKU scope adapt to the active page via `pageChatConfig`. Plus the **agentic champion-forecast adjustment** on the Claude runtime: an `apply_champion_adjustment` staging tool + an "AI Adjust" button + an in-chat **approval card** + `POST /sku-chat/adjustment/{id}` that reuses the existing guarded `save_adjustment` (`champion_adjust.py`, `sql/197`). The Claude Agent SDK and Codex CLI are both lazy runtime dependencies, so the API and test suite run without them; the selected runtime returns a single `error` event if its local dependency/auth is unavailable.
 
 ---
 
@@ -26,13 +26,13 @@ We also have a deployment constraint the rest of the AI stack does not address: 
 
 ## Solution
 
-A backend **`SkuChatAgent`** built on the **Claude Agent SDK** (`claude-agent-sdk`, the Python SDK that the Claude Code harness exposes — *not* the bare `anthropic` Messages SDK used by 06-01). For each incoming chat turn the agent:
+A backend **`SkuChatAgent`** with a selectable runtime. `runtime.provider: claude` uses the **Claude Agent SDK** (`claude-agent-sdk`, the Python SDK that the Claude Code harness exposes — *not* the bare `anthropic` Messages SDK used by 06-01). `runtime.provider: codex` invokes **Codex CLI** (`codex exec`) in a read-only sandbox. For each incoming chat turn the agent:
 
 1. **Routes to a model tier** — a cheap Haiku classifier picks Haiku / Sonnet / Opus based on the question's complexity (overridable per-request and via config).
-2. **Runs an in-process tool loop** — the SKU's data is exposed to Claude as a set of **read-only SDK MCP tools** (`@tool` functions registered through `create_sdk_mcp_server`) that call our existing query layer in-process (no subprocess, no HTTP hop).
+2. **Runs the configured runtime** — Claude gets the SKU's data as **read-only SDK MCP tools** (`@tool` functions registered through `create_sdk_mcp_server`) that call our existing query layer in-process (no subprocess, no HTTP hop). Codex gets a pre-fetched, read-only JSON context snapshot and is invoked with `codex exec --sandbox read-only --ask-for-approval never`.
 3. **Streams a grounded answer** back to the React chat UI over Server-Sent Events, with the tool calls surfaced as a "evidence trail" so the answer is auditable.
 
-Auth is **delegated to the Agent SDK runtime** and selected by a single config switch (`auth.mode`): `auto` (inherit Claude Code's existing session — no key needed), `api_key` (`ANTHROPIC_API_KEY`), or `bedrock` / `vertex`. The tool surface is **strictly read-only** (no Bash/Write/Edit, no DB writes), which is what makes running the agent under `permission_mode="bypassPermissions"` safe and fully non-interactive on a server.
+Auth is delegated to the selected local runtime. Claude supports `auth.mode: auto` (inherit Claude Code's existing session — no key needed), `api_key` (`ANTHROPIC_API_KEY`), `bedrock`, or `vertex`. Codex supports `auth.mode: auto` (inherit saved Codex CLI auth / ChatGPT sign-in) or `api_key` (`CODEX_API_KEY` for the `codex exec` invocation). The Claude tool surface is **strictly read-only** except for the approval-gated staging tool; the Codex path receives data up front and runs read-only/non-interactively.
 
 This is a sibling to 06-01, not a replacement: 06-01 is proactive + write-capable + portfolio-wide; this is interactive + read-only + SKU-scoped.
 
@@ -115,26 +115,29 @@ This is the user-chosen "full agentic write tool gated by an in-chat approval ro
 
 ### Authentication & deployment modes
 
-The Agent SDK spawns the bundled Claude Code runtime, which resolves model auth from its environment. We expose this as one config switch so the same code runs in all environments:
+`runtime.provider` selects the local agent runtime, and `auth.mode` is interpreted by that runtime. This keeps "use the local developer subscription/session now; use API credentials later" as a config switch instead of a rewrite.
 
-| `auth.mode` | What happens | When |
+| Config | What happens | When |
 |---|---|---|
-| `auto` (default) | No `ANTHROPIC_API_KEY` injected; the agent inherits whatever the surrounding Claude Code session is authenticated with (subscription login / `CLAUDE_CODE_OAUTH_TOKEN`). **This is the "inside Claude Code, no API key needed" path.** | Local dev today |
-| `api_key` | Sets `ANTHROPIC_API_KEY` from the secret store before invoking the SDK. | Standalone container / CI / customer env |
-| `bedrock` | Sets `CLAUDE_CODE_USE_BEDROCK=1` (+ AWS creds). | AWS-native deploy |
-| `vertex` | Sets `CLAUDE_CODE_USE_VERTEX=1` (+ GCP creds). | GCP-native deploy |
+| `runtime.provider=claude`, `auth.mode=auto` | No `ANTHROPIC_API_KEY` injected; the agent inherits whatever the surrounding Claude Code session is authenticated with (subscription login / `CLAUDE_CODE_OAUTH_TOKEN`). | Local dev in Claude Code |
+| `runtime.provider=claude`, `auth.mode=api_key` | Sets `ANTHROPIC_API_KEY` from the secret store before invoking the SDK. | Standalone container / CI / customer env |
+| `runtime.provider=claude`, `auth.mode=bedrock` | Sets `CLAUDE_CODE_USE_BEDROCK=1` (+ AWS creds). | AWS-native deploy |
+| `runtime.provider=claude`, `auth.mode=vertex` | Sets `CLAUDE_CODE_USE_VERTEX=1` (+ GCP creds). | GCP-native deploy |
+| `runtime.provider=codex`, `auth.mode=auto` | Runs `codex exec` with no API key injected; Codex reuses saved CLI auth (for example ChatGPT sign-in). | Local dev in Codex |
+| `runtime.provider=codex`, `auth.mode=api_key` | Requires `CODEX_API_KEY` and injects it only into the `codex exec` process. | Standalone trusted automation |
 
-`auth.py` resolves the mode, validates that the required credentials are present, and fails loud at startup (not mid-request) if a non-`auto` mode is selected without its credentials. Precedence if multiple are set follows the SDK runtime's own order (explicit `ANTHROPIC_API_KEY` → Bedrock/Vertex flags → inherited session); `auth.py` only sets the variables its mode requires and clears the others so the selection is unambiguous.
+`auth.py` resolves the runtime/mode pair, validates that the required credentials are present, and fails loud at request time if a selected non-`auto` mode lacks credentials.
 
-> **Implementation note — verify before coding.** The exact subscription-auth inheritance behaviour and any ToS limits on using subscription/OAuth credentials from a long-running server should be confirmed against the installed `claude-agent-sdk` + Claude Code CLI version. The `auto` path is intended for the team's local Claude-Code-hosted use; production standalone deployments should use `api_key`, `bedrock`, or `vertex`. Keep `auth.mode` and credential resolution behind `auth.py` so this is a one-file change if the runtime's behaviour shifts.
+> **Implementation note.** The exact subscription-auth inheritance behaviour and any ToS limits on using local subscription/OAuth credentials from a long-running server should be confirmed against the installed Claude Code / Codex CLI version before production use. The `auto` paths are intended for local developer-hosted use; production standalone deployments should use `api_key`, Bedrock, or Vertex as appropriate.
 
 ### Settings isolation & guardrails
 
 Because the agent runs as a server, it must not pick up the developer's local config or prompt for permissions:
 
-- `setting_sources=[]` — do not load `~/.claude` / project `CLAUDE.md` / local settings.
+- `setting_sources=[]` — Claude runtime: do not load `~/.claude` / project `CLAUDE.md` / local settings.
 - `system_prompt=<SKU specialist prompt>` — replaces the default; defines tone, citation discipline ("every numeric claim must come from a tool result"), and refusal behaviour for out-of-scope questions.
-- `permission_mode="bypassPermissions"` — fully non-interactive. Safe **only because** the allow-listed tool surface is read-only (`mcp__sku__*`); no Bash/Write/Edit/Read-file tools are exposed.
+- `permission_mode="bypassPermissions"` — Claude runtime: fully non-interactive. Safe **only because** the allow-listed tool surface is read-only (`mcp__sku__*`) except for approval-gated staging; no Bash/Write/Edit/Read-file tools are exposed.
+- `codex exec --sandbox read-only --ask-for-approval never` — Codex runtime: receives a pre-fetched JSON context snapshot and cannot write files.
 - Per-turn circuit breakers (mirroring 06-01): `max_turns`, `token_budget`, and a wall-clock `timeout_seconds`. On breach the turn ends gracefully with a partial answer + a "truncated" flag.
 
 ---
@@ -163,7 +166,7 @@ Router `api/routers/intelligence/sku_chat.py`, prefix `/sku-chat`, `get_conn()` 
 | POST | `/sku-chat/stream` | Send a turn; returns an SSE stream (`text` deltas, `tool` evidence events, terminal `result` with usage). Write-class → `Depends(require_api_key)`. |
 | POST | `/sku-chat/session` | Create a session bound to a SKU; returns `session_id`. `Depends(require_api_key)`. |
 | GET | `/sku-chat/session/{session_id}` | Fetch a session + its ordered message history (404 if unknown). |
-| GET | `/sku-chat/config` | Return the active model-tier mapping, `auth.mode` (without secrets), and guardrail limits — drives the UI's tier toggle and a health badge. |
+| GET | `/sku-chat/config` | Return `runtime.provider`, active model-tier mappings, `auth.mode` (without secrets), and guardrail limits — drives the UI's tier toggle and health badge. |
 | POST | `/sku-chat/adjustment/{approval_id}` | Approve (apply) or reject a staged champion-forecast adjustment (`{decision: "approve"\|"reject"}`). Approve calls the guarded `save_adjustment`. `Depends(require_api_key)`. |
 
 - SSE event envelope: `{"type": "text"|"tool"|"result"|"error", ...}`. Mapped from the SDK stream — `StreamEvent` `content_block_delta`/`text_delta` → `text`; `ToolUseBlock` → `tool`; `ResultMessage` → `result`.
@@ -178,10 +181,17 @@ File: `config/ai/sku_chat_config.yaml` (loaded via `load_config`). Inline commen
 
 | Key | Purpose | Default |
 |---|---|---|
+| `runtime.provider` | `claude` \| `codex` | `claude` |
 | `auth.mode` | `auto` \| `api_key` \| `bedrock` \| `vertex` | `auto` |
 | `models.fast` | Model for the `fast` tier | `claude-haiku-4-5` |
 | `models.standard` | Model for the `standard` tier | `claude-sonnet-4-6` |
 | `models.deep` | Model for the `deep` tier | `claude-opus-4-8` |
+| `codex_models.fast` | Codex model for the `fast` tier | `gpt-5.4-mini` |
+| `codex_models.standard` | Codex model for the `standard` tier | `gpt-5.5` |
+| `codex_models.deep` | Codex model for the `deep` tier | `gpt-5.5` |
+| `codex.binary` | Codex CLI executable | `codex` |
+| `codex.sandbox` | Sandbox for `codex exec` | `read-only` |
+| `codex.approval_policy` | Approval policy for `codex exec` | `never` |
 | `routing.classifier_model` | Model that classifies intent → tier | `claude-haiku-4-5` |
 | `routing.default_tier` | Tier when classification is inconclusive | `standard` |
 | `routing.allow_user_override` | Let the UI force a tier/model | `true` |

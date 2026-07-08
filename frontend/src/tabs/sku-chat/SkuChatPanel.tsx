@@ -185,7 +185,8 @@ export function SkuChatPanel({
     <div className="flex h-full min-h-0 flex-col gap-2">
       {config ? (
         <div className="px-1 text-[11px] text-muted-foreground">
-          auth <span className="font-mono">{config.auth_mode}</span> · default tier{" "}
+          runtime <span className="font-mono">{config.runtime_provider}</span> · auth{" "}
+          <span className="font-mono">{config.auth_mode}</span> · default tier{" "}
           <span className="font-mono">{config.routing.default_tier}</span>
         </div>
       ) : null}

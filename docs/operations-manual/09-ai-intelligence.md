@@ -433,7 +433,7 @@ To switch the local Ollama model to `qwen2.5:32b` (higher quality, slower), edit
 
 ---
 
-## 9.12 SKU Chatbot (Claude Agent SDK)
+## 9.12 SKU Chatbot (Claude Agent SDK or Codex CLI)
 
 ### 9.12.1 What it is
 
@@ -441,8 +441,8 @@ A conversational, **read-only** per-SKU assistant. A planner asks free-form
 questions about one SKU (item + customer group + location) and gets grounded,
 cited answers streamed back. Unlike the AI Planner (proactive, write-capable,
 portfolio-wide) and unlike the OpenAI/Ollama LLM client above, the chatbot runs
-on the **Claude Agent SDK** (`claude-agent-sdk`) — the SDK the Claude Code
-harness exposes.
+on a selected local agent runtime: the **Claude Agent SDK** (`runtime.provider:
+claude`, default) or **Codex CLI** (`runtime.provider: codex`).
 
 - Service package: `common/ai/sku_chat/` (`config`, `auth`, `model_router`, `sku_data`, `tools`, `agent`, `prompts`, `store`)
 - Router: `api/routers/intelligence/sku_chat.py` (prefix `/sku-chat`)
@@ -450,40 +450,54 @@ harness exposes.
 - Frontend: **SKU Chat** sidebar tab + a **global, page-aware chat drawer on every tab** (`GlobalChatDrawer`, mounted in `App.tsx`; per-page focus/suggestions/scope from `pageChatConfig.ts`)
 - Spec: `docs/specs/06-ai-platform/07-sku-chatbot.md`
 
-### 9.12.2 Enabling it (the one operational prerequisite)
+### 9.12.2 Enabling it
 
-The Agent SDK is an **optional extra**, lazy-imported, so the base install and
-test suite run without it. To run the live chatbot:
+Both agent runtimes are lazy. The base install and test suite run without
+Claude Agent SDK or Codex CLI.
+
+For the default Claude runtime:
 
 ```bash
 uv sync --extra agent          # installs claude-agent-sdk + its bundled Claude Code CLI
 ```
 
-Until this is run, `POST /sku-chat/stream` returns a single SSE `error` event
+Until this is run, `POST /sku-chat/stream` in Claude mode returns a single SSE `error` event
 (`"claude-agent-sdk is not installed. Run uv sync --extra agent."`) — by design,
 so the rest of the API is unaffected.
 
-### 9.12.3 Authentication modes (`auth.mode` in `sku_chat_config.yaml`)
+For Codex runtime, install/sign in to the Codex CLI separately, then set:
 
-The Agent SDK delegates model auth to its bundled Claude Code runtime;
-`common/ai/sku_chat/auth.py` turns one config switch into the right environment.
+```yaml
+runtime:
+  provider: "codex"
+auth:
+  mode: "auto"
+```
 
-| `auth.mode` | Behaviour | Use when |
+### 9.12.3 Runtime and authentication modes
+
+`common/ai/sku_chat/auth.py` interprets `auth.mode` against the selected
+`runtime.provider`.
+
+| Config | Behaviour | Use when |
 |---|---|---|
-| `auto` (default) | Inherit the surrounding Claude Code session — **no `ANTHROPIC_API_KEY` needed** | Local dev inside Claude Code |
-| `api_key` | Requires `ANTHROPIC_API_KEY` (fails loud at request time if absent) | Standalone container / CI |
-| `bedrock` | Sets `CLAUDE_CODE_USE_BEDROCK=1` (AWS creds) | AWS-native deploy |
-| `vertex` | Sets `CLAUDE_CODE_USE_VERTEX=1` (GCP creds) | GCP-native deploy |
+| `runtime.provider=claude`, `auth.mode=auto` | Inherit the surrounding Claude Code session — **no `ANTHROPIC_API_KEY` needed** | Local dev inside Claude Code |
+| `runtime.provider=claude`, `auth.mode=api_key` | Requires `ANTHROPIC_API_KEY` (fails loud at request time if absent) | Standalone container / CI |
+| `runtime.provider=claude`, `auth.mode=bedrock` | Sets `CLAUDE_CODE_USE_BEDROCK=1` (AWS creds) | AWS-native deploy |
+| `runtime.provider=claude`, `auth.mode=vertex` | Sets `CLAUDE_CODE_USE_VERTEX=1` (GCP creds) | GCP-native deploy |
+| `runtime.provider=codex`, `auth.mode=auto` | Runs `codex exec` with saved Codex CLI auth — **no `CODEX_API_KEY` needed** | Local dev inside Codex |
+| `runtime.provider=codex`, `auth.mode=api_key` | Requires `CODEX_API_KEY` for the single `codex exec` process | Trusted standalone automation |
 
 > The subscription-auth inheritance (`auto`) and the exact SDK option surface
 > should be validated against the installed SDK/CLI version on first live run —
 > all SDK touch-points are isolated in `agent.py` / `tools.py`.
 
-### 9.12.4 Model routing — "use Opus / Sonnet / Haiku wisely"
+### 9.12.4 Model routing
 
 Each turn is routed to a tier by `model_router.py` (deterministic keyword/length
 heuristic; an LLM classifier can replace `classify_tier` later). Tier→model map
-lives in `sku_chat_config.yaml` `models.*`:
+The Claude tier map lives in `sku_chat_config.yaml` `models.*`; the Codex tier
+map lives in `codex_models.*`.
 
 | Tier | Default model | Routes on |
 |---|---|---|
@@ -491,11 +505,13 @@ lives in `sku_chat_config.yaml` `models.*`:
 | `standard` | `claude-sonnet-4-6` | one-SKU analysis (default) |
 | `deep` | `claude-opus-4-8` | "why" / "compare" / "recommend"; the UI "Deep analysis" toggle |
 
+Codex defaults: `fast=gpt-5.4-mini`, `standard=gpt-5.5`, `deep=gpt-5.5`.
+
 ### 9.12.5 Endpoints (prefix `/sku-chat`)
 
 | Method & Path | Purpose |
 |---|---|
-| `GET  /sku-chat/config` | Active tiers, auth mode, guardrails (never leaks secrets); drives the UI badge |
+| `GET  /sku-chat/config` | Active runtime, tiers, auth mode, guardrails (never leaks secrets); drives the UI badge |
 | `POST /sku-chat/session` | Create a session id bound to a SKU (key-guarded) |
 | `GET  /sku-chat/session/{id}` | Session + ordered message history (404 if unknown) |
 | `POST /sku-chat/stream` | Stream one turn as Server-Sent Events — `meta` / `text` / `tool` / `result` / `error` (key-guarded) |

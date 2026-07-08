@@ -7,8 +7,10 @@ import { fetchJson } from "./core";
 // Types (mirror api/routers/intelligence/sku_chat.py)
 // ---------------------------------------------------------------------------
 export interface SkuChatConfig {
+  runtime_provider: string;
   auth_mode: string;
   models: Record<string, string>;
+  codex_models: Record<string, string>;
   routing: { default_tier: string; allow_user_override: boolean };
   guardrails: Record<string, number>;
   tools: string[];
@@ -71,7 +73,7 @@ export interface ChampionAdjustPreview {
 
 // SSE event union emitted by /sku-chat/stream.
 export type SkuChatEvent =
-  | { type: "meta"; tier: string; model: string; session_id?: string }
+  | { type: "meta"; tier: string; model: string; runtime?: string; session_id?: string }
   | { type: "text"; chunk: string }
   | { type: "tool"; name: string | null; input: unknown }
   | { type: "result"; text: string | null; cost_usd: number | null; usage: unknown }

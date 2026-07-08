@@ -115,3 +115,58 @@ async def test_stream_turn_degrades_to_meta_then_error_when_sdk_unavailable():
     assert events[0]["tier"] == "deep"
     assert events[-1]["type"] == "error"
     assert "claude-agent-sdk" in events[-1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_uses_codex_runtime_when_configured():
+    """Codex mode emits meta/text/result without importing the Claude SDK."""
+
+    def fake_context(pool, ctx, *, history_months, peer_limit):
+        assert pool == "pool"
+        assert ctx.item_id == "100320"
+        assert history_months == 12
+        assert peer_limit == 3
+        return {"profile": {"found": True, "item_id": ctx.item_id}}
+
+    async def fake_codex(prompt, *, model_id, cfg, env, timeout_s):
+        assert model_id == "gpt-5.5"
+        assert cfg["runtime"]["provider"] == "codex"
+        assert env == {}
+        assert "SKU context JSON" in prompt
+        assert timeout_s == 15
+        return "Codex answer from SKU context."
+
+    agent = SkuChatAgent(
+        pool="pool",
+        config={
+            "runtime": {"provider": "codex"},
+            "auth": {"mode": "auto"},
+            "codex_models": {
+                "fast": "gpt-5.4-mini",
+                "standard": "gpt-5.5",
+                "deep": "gpt-5.5",
+            },
+            "context": {"history_lookback_months": 12, "cluster_peer_limit": 3},
+            "guardrails": {"timeout_seconds": 15},
+        },
+    )
+    ctx = SkuChatContext("100320", "RETAIL", "DC1")
+    with patch("common.ai.sku_chat.agent._build_codex_context", fake_context), patch(
+        "common.ai.sku_chat.agent._run_codex_exec", fake_codex
+    ):
+        events = [
+            ev async for ev in agent.stream_turn(
+                "Provide a detailed summary of demand and forecast trends", ctx
+            )
+        ]
+
+    assert events == [
+        {"type": "meta", "tier": "standard", "model": "gpt-5.5", "runtime": "codex"},
+        {"type": "text", "chunk": "Codex answer from SKU context."},
+        {
+            "type": "result",
+            "text": "Codex answer from SKU context.",
+            "cost_usd": None,
+            "usage": None,
+        },
+    ]

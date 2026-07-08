@@ -1,7 +1,7 @@
 """SKU Chatbot API router — spec docs/specs/06-ai-platform/07-sku-chatbot.md.
 
 Endpoints under ``/sku-chat``:
-  GET  /sku-chat/config            Active model tiers, auth mode, guardrails (no secrets)
+  GET  /sku-chat/config            Active runtime/model tiers, auth mode, guardrails (no secrets)
   POST /sku-chat/session           Create a session id bound to a SKU (key-guarded)
   GET  /sku-chat/session/{id}      Session + ordered message history (Phase 3)
   POST /sku-chat/stream            Stream one chat turn as Server-Sent Events (key-guarded)
@@ -68,9 +68,12 @@ def _persistence_enabled(cfg: dict) -> bool:
 async def get_config() -> dict[str, Any]:
     """Return the active routing config for the UI (never leaks credentials)."""
     cfg = get_sku_chat_config()
+    runtime_provider = str((cfg.get("runtime") or {}).get("provider", "claude")).lower()
     return {
+        "runtime_provider": runtime_provider,
         "auth_mode": (cfg.get("auth") or {}).get("mode", "auto"),
         "models": cfg.get("models") or {},
+        "codex_models": cfg.get("codex_models") or {},
         "routing": {
             "default_tier": (cfg.get("routing") or {}).get("default_tier", "standard"),
             "allow_user_override": (cfg.get("routing") or {}).get(
