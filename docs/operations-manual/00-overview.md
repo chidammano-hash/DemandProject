@@ -10,7 +10,7 @@ End-to-end runbook for populating, operating, and maintaining every module of th
 |---|---|---|
 | 1 | [Setup & Environment](01-setup-environment.md) | Fresh clone → working dev (Docker, Postgres, env vars, schema, sanity) |
 | 2 | [Data Ingestion (ETL)](02-data-ingestion.md) | Raw CSVs → 11 normalized domains in Postgres + refreshed MVs |
-| 3 | [SKU Features & Clustering](03-sku-features-clustering.md) | `dim_sku` features computed → cluster experiment promoted → `ml_cluster` propagated |
+| 3 | [SKU Features & Clustering](03-sku-features-clustering.md) | `dim_sku` features computed → cluster experiment promoted → assignment table current |
 | 4 | [Forecasting Backtests](04-forecasting-backtest.md) | All model families backtested → predictions in `fact_candidate_forecast` + archive |
 | 5 | [Tuning & Champion Selection](05-tuning-champion-selection.md) | Bayesian tuning + champion DFU assignments at `data/champion/dfu_assignments.csv` |
 | 6 | [Production Forecasting](06-production-forecasting.md) | Generate + promote → `fact_production_forecast` populated, served by `/forecast/*` |
@@ -36,7 +36,7 @@ make setup-data                 # normalize-all + load-all (all 11 domains)
 
 # 3. Features + clustering
 make features-compute           # SKU feature pipeline → dim_sku
-make cluster-all                # Cluster experiment → auto-promote → ml_cluster
+make cluster-all                # Cluster experiment → auto-promote → sku_cluster_assignment
 
 # 4. ML — backtest + tune + champion
 make customer-features          # Pre-compute customer-derived features

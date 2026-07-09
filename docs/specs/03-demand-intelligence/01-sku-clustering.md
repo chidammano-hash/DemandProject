@@ -239,8 +239,7 @@ Priority-ordered evaluation (first match wins):
 
 Compound labels (e.g., `high_volume_seasonal_growing`). Promoted labels are
 stored in `sku_cluster_assignment` and exposed through
-`current_sku_cluster_assignment`; `dim_sku.ml_cluster` is a transition/cache
-column only.
+`current_sku_cluster_assignment`.
 
 ---
 
@@ -371,8 +370,7 @@ The promotion flow performs:
    the durable gzip copy on the experiment row (`cluster_experiment.cluster_labels_gz`,
    sql/191), reconstructing the production CSV
 2. Copy artifacts to `data/clustering/` (production location)
-3. Bulk UPSERT `sku_cluster_assignment` for all SKUs and refresh
-   `dim_sku.ml_cluster` as a compatibility cache
+3. Bulk UPSERT `sku_cluster_assignment` for all SKUs
 4. Refresh cluster-dependent accuracy/coverage materialized views after the
    promoted experiment flag is set:
    - `agg_accuracy_by_dim`
@@ -645,7 +643,6 @@ CREATE INDEX idx_tuning_run_cluster_exp
 | `cluster_experiment.is_promoted` | BOOLEAN | Current production config flag |
 | `sku_cluster_assignment.cluster_label` | TEXT | Production cluster label for a promoted experiment |
 | `current_sku_cluster_assignment.ml_cluster` | TEXT | Current promoted cluster label view for downstream reads |
-| `dim_sku.ml_cluster` | TEXT | Compatibility/cache copy only; not the source of truth |
 | `dim_sku.cluster_assignment` | TEXT | Production cluster label (alias) |
 | `lgbm_tuning_run.cluster_experiment_id` | INTEGER FK | Links tuning runs to cluster experiments |
 | `cluster_experiment_comparison` | Table | Cached comparison results (ON DELETE CASCADE) |
@@ -831,7 +828,7 @@ Unified entry point: `scripts/ml/run_cluster_pipeline.py`
 | Feature engineering | `common/ml/clustering/features` | Feature matrix |
 | Train + select K | `common/ml/clustering/training` | MLflow experiment `sku_clustering` |
 | Label clusters | `common/ml/clustering/labeling` | Labeled cluster assignments |
-| Write to DB | `common/ml/clustering/scenario` / `promote_scenario()` | `sku_cluster_assignment` upserted; `dim_sku.ml_cluster` cache refreshed |
+| Write to DB | `common/ml/clustering/scenario` / `promote_scenario()` | `sku_cluster_assignment` upserted |
 
 ### Job Pipeline
 

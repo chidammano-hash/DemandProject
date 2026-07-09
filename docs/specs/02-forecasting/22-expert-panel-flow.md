@@ -9,7 +9,7 @@ flowchart TD
 
     subgraph S1["Step 1–2 · Golden Set & Data Loading"]
         GS["Stratified sample N DFUs\ncreate_golden_set() / create_loc_golden_set()"]
-        DB["Load from PostgreSQL\n• fact_sales_monthly → sales_df\n• dim_sku → dfu_attrs incl. ml_cluster ①\n• dim_item → item_attrs"]
+        DB["Load from PostgreSQL\n• fact_sales_monthly → sales_df\n• dim_sku + current_sku_cluster_assignment → dfu_attrs incl. ml_cluster ①\n• dim_item → item_attrs"]
         GS --> DB
     end
 
@@ -140,7 +140,7 @@ flowchart TD
     %% ─────────────────────────────────────────────────────────────────
     %% ANNOTATION: ml_cluster sourcing
     %% ─────────────────────────────────────────────────────────────────
-    NOTE["① ml_cluster source:\nOffline k-means run via make cluster-all\nStored in dim_sku.ml_cluster\nLoaded at run time — not computed live\nTree models train one model per cluster value"]
+    NOTE["① ml_cluster source:\nOffline k-means run via make cluster-all\nStored in sku_cluster_assignment\nLoaded through current_sku_cluster_assignment\nTree models train one model per cluster value"]
     style NOTE fill:#fffbe6,stroke:#f0c040,color:#555
 ```
 
@@ -149,8 +149,8 @@ flowchart TD
 | Stage | What happens | File |
 |---|---|---|
 | Offline (prior) | k-means clustering of SKU demand patterns | `scripts/ml/run_cluster_pipeline.py` |
-| DB write | Cluster labels stored in `dim_sku.ml_cluster` | `sql/` DDL |
-| Runtime load | `load_golden_set_data()` queries `dim_sku` → `dfu_attrs["ml_cluster"]` | `algorithm_testing/golden_set.py:168` |
+| DB write | Cluster labels stored in `sku_cluster_assignment` | `sql/200_create_sku_cluster_assignment.sql` |
+| Runtime load | `load_golden_set_data()` joins `current_sku_cluster_assignment` → `dfu_attrs["ml_cluster"]` | `common/ml/expert_panel/golden_set.py` |
 | Feature matrix | `build_feature_matrix()` merges `dfu_attrs` incl. `ml_cluster` into grid | `common/ml/feature_engineering.py` |
 | Tree model use | One model trained per `ml_cluster` value, predictions concatenated | `common/ml/expert_panel/tree_models.py` |
 

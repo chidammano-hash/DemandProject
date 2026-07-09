@@ -92,12 +92,12 @@ Defined with the SDK `@tool` decorator and registered via `create_sdk_mcp_server
 | Tool | Reads from | Purpose |
 |---|---|---|
 | `search_skus` | `dim_sku` | Resolve a fuzzy item/brand/description to concrete `(item_id, customer_group, loc)` keys |
-| `get_sku_profile` | `dim_sku` (features) | Demand stats, CV, intermittency, seasonality, ABC-XYZ, `ml_cluster`, execution lag |
+| `get_sku_profile` | `dim_sku` + `current_sku_cluster_assignment` | Demand stats, CV, intermittency, seasonality, ABC-XYZ, `ml_cluster`, execution lag |
 | `get_sku_sales_history` | `fact_sales_monthly` / `agg_sales_monthly` | Monthly demand history (chunked read) |
 | `get_sku_forecast` | `fact_production_forecast` (staging) + `fact_candidate_forecast` (backtest) | Forward forecast + CI bands, per-model backtest overlay |
 | `get_sku_inventory` | `agg_inventory_monthly` | On-hand, on-order, DOS, lead time trend |
 | `get_sku_accuracy` | `agg_accuracy_by_dim` / `agg_accuracy_by_dfu` (193) | WAPE, bias, accuracy by model + lag; error contribution |
-| `get_sku_cluster_peers` | `dim_sku` | Similar SKUs in the same `ml_cluster` for comparison |
+| `get_sku_cluster_peers` | `dim_sku` + `current_sku_cluster_assignment` | Similar SKUs in the same `ml_cluster` for comparison |
 | `apply_champion_adjustment` | — (writes a `pending` row only) | **Write-staging tool** (only when `champion_adjust.enabled`): stages a guardrail-validated champion-forecast adjustment for planner approval. It does **not** write the forecast — see below. |
 
 **Join rule (carried from CLAUDE.md):** any tool that joins a forecast/accuracy fact to `dim_sku` must match on the full grain `item_id AND customer_group AND loc` — a 2-key join fans rows across customer groups and inflates WAPE/bias. Tools return compact, pre-aggregated payloads (not raw fact dumps) to keep the context window small and answers grounded.

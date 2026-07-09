@@ -133,68 +133,6 @@ def _resolve_forecast_execution_lag(cur, stg_table: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# dim_sku ml_cluster preservation (loop-4)
-# ---------------------------------------------------------------------------
-# The `sku` feed (dfu.txt) carries NO ML-computed cluster label, so a full
-# reload TRUNCATEs dim_sku and re-INSERTs every row with ml_cluster = NULL.
-# That silently collapses every per-cluster tree model to the global/fallback
-# model (generate_production_forecasts can no longer route a DFU to its cluster
-# artifact). The Makefile chains scripts/ml/restore_cluster_assignments.py after
-# the sku load as the recovery path, but the loader itself preserves the label
-# across its own TRUNCATE so the wipe never happens in the first place.
-
-_ML_CLUSTER_SNAPSHOT = "_ml_cluster_snapshot"
-
-
-def _snapshot_ml_cluster(cur) -> int:
-    """Snapshot existing (sku_ck, ml_cluster) into a temp table before TRUNCATE.
-
-    Only the dim_sku (`sku`) load calls this. Returns the number of non-NULL
-    cluster labels preserved. The snapshot is a temp table dropped on commit, so
-    a failed/rolled-back load leaves no residue.
-    """
-    cur.execute(f"DROP TABLE IF EXISTS {qident(_ML_CLUSTER_SNAPSHOT)}")
-    cur.execute(f"""
-        CREATE TEMP TABLE {qident(_ML_CLUSTER_SNAPSHOT)} ON COMMIT DROP AS
-        SELECT sku_ck, ml_cluster
-        FROM dim_sku
-        WHERE ml_cluster IS NOT NULL
-    """)
-    cur.execute(f"SELECT COUNT(*) FROM {qident(_ML_CLUSTER_SNAPSHOT)}")
-    preserved = cur.fetchone()[0]
-    logger.info("  Snapshotted %s non-null ml_cluster label(s) before reload",
-                f"{preserved:,}")
-    return preserved
-
-
-def _restore_ml_cluster_from_snapshot(cur) -> int:
-    """Re-merge the pre-TRUNCATE ml_cluster snapshot onto the freshly loaded rows.
-
-    Matched on the full ``sku_ck`` grain (item_id, customer_group, loc) — the
-    snapshot key is dim_sku.sku_ck, so the join cannot fan out. Only fills rows
-    the dfu.txt feed left NULL; a label that DID arrive in the feed is never
-    overwritten. Returns the number of dim_sku rows whose ml_cluster was restored.
-    """
-    cur.execute("""
-        SELECT 1 FROM information_schema.tables
-        WHERE table_name = %s AND table_schema = ANY(current_schemas(true))
-    """, [_ML_CLUSTER_SNAPSHOT])
-    if cur.fetchone() is None:
-        return 0
-    cur.execute(f"""
-        UPDATE dim_sku d
-        SET ml_cluster = s.ml_cluster
-        FROM {qident(_ML_CLUSTER_SNAPSHOT)} s
-        WHERE d.sku_ck = s.sku_ck
-          AND d.ml_cluster IS NULL
-    """)
-    restored = cur.rowcount
-    logger.info("  Restored ml_cluster on %s reloaded dim_sku row(s)",
-                f"{restored:,}")
-    return restored
-
-
-# ---------------------------------------------------------------------------
 # Post-load hooks (domain-specific)
 # ---------------------------------------------------------------------------
 
@@ -543,10 +481,6 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     logger.info("  Incremental delete + dropped %d indexes (%s)",
                                 len(saved_indexes) + len(saved_constraints), _elapsed(t0))
                 else:
-                    # dfu.txt carries no ML cluster label — snapshot it before the
-                    # TRUNCATE so the reload doesn't wipe ml_cluster to NULL (loop-4).
-                    if spec.name == "sku":
-                        _snapshot_ml_cluster(cur)
                     cur.execute(f"TRUNCATE TABLE {qident(spec.table)} CASCADE")
                     logger.info("  Truncated + dropped %d indexes (%s)",
                                 len(saved_indexes) + len(saved_constraints), _elapsed(t0))
@@ -662,11 +596,6 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     _post_load_purchase_order(cur)
                 elif spec.name == "sourcing":
                     _post_load_sourcing(cur)
-                elif spec.name == "sku":
-                    # Re-apply the pre-TRUNCATE ml_cluster snapshot onto the
-                    # freshly loaded rows (loop-4) — fills only rows the feed left
-                    # NULL, matched on the full sku_ck grain (no fan-out).
-                    _restore_ml_cluster_from_snapshot(cur)
 
             # Phase 4: Rebuild indexes
             with profiled_section("recreate_indexes"):

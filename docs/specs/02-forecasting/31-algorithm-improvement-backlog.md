@@ -42,7 +42,7 @@ vs incumbent, ≥80% coverage) before promotion.
 
 ### 0. 🔬 GATING — measure the irreducible-noise floor per segment
 Compare realized accuracy to `1 − demand_mad/demand_mean` (best any point forecast could do) per
-`ml_cluster`, from `dim_sku`. Splits the volatile segments into **model-fixable** (realized ≪ floor)
+`ml_cluster`, from `current_sku_cluster_assignment`. Splits the volatile segments into **model-fixable** (realized ≪ floor)
 vs **intrinsic noise** (realized ≈ floor → no point model helps → item 5). This decides which volatile
 work is worth doing. Read-only; ~1 query. **Do this first.**
 

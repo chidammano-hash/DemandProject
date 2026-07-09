@@ -535,7 +535,7 @@ erDiagram
 | `dim_location` | 149 | `sk` | `location_id` | site, state_id, demand_location | pg_trgm on site |
 | `dim_customer` | 1,007,168 | `sk` | `site + customer_no` | customer_name, channel, region | pg_trgm on customer_name |
 | `dim_time` | 5,844 | `sk` | `date_key` | year, month, quarter, day_of_week, is_month_end | B-tree on date_key |
-| `dim_sku` | 273,212 | `sk` | `item_id + customer_group + loc` | ml_cluster, seasonality_profile, abc_vol, xyz_class, execution_lag, total_lt | Composite on (item_id, loc) |
+| `dim_sku` | 273,212 | `sk` | `item_id + customer_group + loc` | seasonality_profile, abc_vol, xyz_class, execution_lag, total_lt | Composite on (item_id, loc) |
 | `dim_sourcing` | ~1,050,000 | `sk` | `item_id + loc + source_cd` | supplier_name, supplier_plant, lead_time, moq | Composite on (item_id, loc) |
 
 #### Fact Tables (4)
@@ -716,7 +716,7 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 |---|---|
 | **Surrogate Keys** | All dimension tables have `sk` (auto-increment) and `ck` (composite key) |
 | **Full-Text Search** | `pg_trgm` trigram indexes on high-cardinality text fields |
-| **Progressive Enrichment** | `dim_sku` enriched by compute pipelines: `ml_cluster`, `seasonality_profile`, `abc_vol`, `xyz_class` |
+| **Progressive Enrichment** | `dim_sku` enriched by compute pipelines: `seasonality_profile`, `abc_vol`, `xyz_class`; promoted ML clusters live in `sku_cluster_assignment` |
 | **Time Dimension** | Auto-generated 2020-2035 calendar (not from external file) |
 | **Cross-Referential Integrity** | DQ engine validates FK relationships between facts and dimensions |
 | **Data Lineage** | Medallion infrastructure (`sql/080_medallion_infrastructure.sql`) tracks data flow through bronze/silver/gold layers |
@@ -1631,7 +1631,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | Attribute | Value |
 |---|---|
 | **Status** | Accepted |
-| **Context** | Every fact-table writer (backtest loads, champion selection, ETL, DQ auto-fix, promotions) maintained its own hand-picked list of materialized views to refresh, and each list had holes — `agg_dfu_naive_scale` (the MASE denominator) had no automated refresher at all, `agg_accuracy_by_dfu` was skipped by three of its writers, and `mv_supplier_performance` (retired in sql/143) was still being "refreshed". The forecasting lifecycle (load → features → clusters → tuning → backtest → champion → generate → promote) had no chaining, no shared staleness signal (the `cluster_tuning_profile_state.stale` flag was write-only, the admin endpoint queried a wrong table name), and no generation lineage (a champion promoted under old clusters silently routed production forecasts against new `dim_sku.ml_cluster`). |
+| **Context** | Every fact-table writer (backtest loads, champion selection, ETL, DQ auto-fix, promotions) maintained its own hand-picked list of materialized views to refresh, and each list had holes — `agg_dfu_naive_scale` (the MASE denominator) had no automated refresher at all, `agg_accuracy_by_dfu` was skipped by three of its writers, and `mv_supplier_performance` (retired in sql/143) was still being "refreshed". The forecasting lifecycle (load → features → clusters → tuning → backtest → champion → generate → promote) had no chaining, no shared staleness signal (the `cluster_tuning_profile_state.stale` flag was write-only, the admin endpoint queried a wrong table name), and no generation lineage (a champion promoted under old clusters silently routed production forecasts against newly promoted SKU cluster assignments). |
 | **Decision** | (1) One table→MV dependency map in `common/core/mv_refresh.py`; all writers call `refresh_for_tables([tables written])`, gate rule 7 blocks inline `REFRESH MATERIALIZED VIEW`, and `tests/unit/test_mv_refresh.py` diffs the map against sql/ DDL. (2) A nightly `refresh_all_mvs` job as staleness safety net; persisted schedules re-register at API boot. (3) Generation lineage: cluster promotion flags tuning profiles stale (consumed by `--stale-only` re-tuning), `champion_experiment.cluster_experiment_id` (sql/198) gates production generation and promotion. (4) The lifecycle expressed as named JobManager pipelines (`config/forecasting/pipelines.yaml`) with readiness surfaced in `/dashboard/pipeline-readiness`. |
 | **Rationale** | Derived refreshes cannot silently miss a dependent the way hand-picked lists did; test-enforced map completeness turns "remember to refresh" into a mechanical gate. Invalidate-eagerly / recompute-deliberately keeps heavy ML runs operator-triggered (one pipeline call) while cheap MV refreshes happen automatically. |
 | **Consequences** | New MV DDL must register in `MV_SOURCES` in the same change or the suite fails. Writers refresh a slightly larger (but correct) dependent set; the heavy `mv_intramonth_stockout` is opt-out with the nightly net as backstop. `etl_config.yaml` no longer carries `mv_refresh:`/`always_refresh:` maps. Promotion of a champion built under a superseded clustering now 409s unless explicitly overridden. |

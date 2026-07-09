@@ -149,7 +149,7 @@ The script `run_unified_pipeline()` does the following in one shot:
 5. **Auto-promotes** the new experiment by default — clears `is_promoted` on the old champion and sets it on the new row, then calls `promote_scenario()` which:
    - Copies `cluster_labels.csv`, `cluster_centroids.csv`, `scenario_result.json`, `cluster_metadata.json` to `data/clustering/`.
    - Upserts promoted labels into `sku_cluster_assignment` via a `COPY`-loaded temp
-     table and refreshes `dim_sku.ml_cluster` only as a transition/cache column.
+     table.
    - Best-effort marks `cluster_tuning_profile_state.stale = TRUE` for each new cluster name (sql/148) so the next tuning run knows to re-train.
 
 Skip auto-promotion with `--no-promote` for a dry segmentation evaluated only via the experiment row.
@@ -203,8 +203,8 @@ clustering:
     features_csv: data/staged/clustering_features.csv
     output_dir: data/clustering
   db_target:
-    table: dim_sku
-    column: ml_cluster
+    table: sku_cluster_assignment
+    current_view: current_sku_cluster_assignment
 ```
 
 When `clustering.enabled: false`:
@@ -244,8 +244,7 @@ Cluster assignments are filterable in the Data Explorer via the `cluster_assignm
 ### 4.3 Promotion semantics
 
 - A new promotion clears `is_promoted` on the previous champion and sets it on the new row in a single transaction.
-- Promotion writes `sku_cluster_assignment` as the source of truth and refreshes
-  `dim_sku.ml_cluster` only as a temporary compatibility/cache column.
+- Promotion writes `sku_cluster_assignment` as the source of truth.
 - Per-cluster tuning profile staleness flags are best-effort updated in `cluster_tuning_profile_state` so downstream tuning knows to re-train against the new partitions.
 
 ---

@@ -45,7 +45,7 @@ Supply Chain Command Center uses a domain-driven design where all 11 datasets sh
 | `dim_location` | One row per location | `location_id` | site_id, site_desc, state_id, primary_demand_location | ~1K |
 | `dim_customer` | One row per site+customer | `site-customer_no` | customer_name, city, state, chain_type_desc, rpt_channel_desc | ~50K |
 | `dim_time` | One row per day | `date_key` | day_name, month_bucket, quarter_bucket, year_number | ~5.8K |
-| `dim_sku` | One row per item+group+location | `item_id_customer_group_loc` | brand, region, abc_vol, execution_lag, cluster_assignment, ml_cluster, seasonality_profile | ~113K |
+| `dim_sku` | One row per item+group+location | `item_id_customer_group_loc` | brand, region, abc_vol, execution_lag, cluster_assignment, seasonality_profile | ~113K |
 
 ### DFU Extended Attributes
 
@@ -53,7 +53,7 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 
 | Column | Source | Purpose |
 |---|---|---|
-| `ml_cluster` | Clustering pipeline | KMeans-assigned cluster label |
+| `current_sku_cluster_assignment.ml_cluster` | Clustering pipeline | Current promoted KMeans-assigned cluster label |
 | `cluster_assignment` | Cluster labeling | Business-readable cluster name |
 | `seasonality_profile` | [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) | Seasonal pattern label (e.g., "yearly_strong") |
 | `seasonality_strength` | [SKU Feature Engineering](../03-demand-intelligence/02-sku-feature-engineering.md) | ACF-based strength metric (0-1) |

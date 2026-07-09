@@ -455,7 +455,7 @@ make customer-features-python   # Python-based alternative
 
 | Table | Read/Write | Purpose |
 |---|---|---|
-| `dim_sku` | Read + cache refresh | Read attributes; refresh `ml_cluster` compatibility cache |
+| `dim_sku` | Read | SKU attributes and computed SKU features |
 | `sku_cluster_assignment` | Write | Durable promoted ML cluster labels keyed by `(experiment_id, sku_ck)` |
 | `current_sku_cluster_assignment` | Read | Current promoted `ml_cluster` labels for downstream pipelines |
 | `fact_sales_monthly` | Read | Source time series for feature engineering |

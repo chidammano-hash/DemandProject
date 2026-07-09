@@ -419,8 +419,7 @@ fresh-all
 A **full reload of the `sku` dataset truncates `dim_sku` and re-INSERTs from
 `dfu.txt`**, which carries **no** ML-computed `ml_cluster` label. Promoted ML
 cluster output is now stored in `sku_cluster_assignment` and exposed through
-`current_sku_cluster_assignment`; `dim_sku.ml_cluster` is only a compatibility
-cache during the transition. Two safeguards keep promoted labels from being
+`current_sku_cluster_assignment`. Two safeguards keep promoted labels from being
 silently lost during reloads:
 
 1. **The durable table is outside the SKU reload path.** `sku_cluster_assignment`
@@ -430,9 +429,8 @@ silently lost during reloads:
    after `--dataset sku`, `load-all` runs
    `scripts/ml/restore_cluster_assignments.py --skip-if-missing`, which upserts
    `data/clustering/cluster_labels.csv` into `sku_cluster_assignment` for the
-   promoted experiment and refreshes `dim_sku.ml_cluster` as a cache. It is
-   **idempotent** and exits cleanly on a fresh DB before any clustering scenario
-   exists.
+   promoted experiment. It is **idempotent** and exits cleanly on a fresh DB
+   before any clustering scenario exists.
 
 - **Full pipelines self-heal.** `fresh-all` / `fresh-features` re-run `cluster-all`
   + `features-compute` right after the load, so `current_sku_cluster_assignment`

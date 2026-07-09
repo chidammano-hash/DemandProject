@@ -2,8 +2,7 @@
 --
 -- ML clustering output is computed lifecycle state, not source-loaded SKU
 -- master data. It must survive dim_sku reloads from dfu.txt, so the promoted
--- per-SKU labels live here and dim_sku.ml_cluster is retained only as a
--- transition/cache column.
+-- per-SKU labels live here instead of on dim_sku.
 
 CREATE TABLE IF NOT EXISTS sku_cluster_assignment (
     experiment_id       INTEGER NOT NULL
@@ -31,8 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_sku_cluster_assignment_exp_label
 
 COMMENT ON TABLE sku_cluster_assignment IS
     'Durable per-SKU ML cluster assignments keyed by clustering experiment. '
-    'This is the source of truth for promoted ML clusters; dim_sku.ml_cluster '
-    'is a transitional compatibility/cache column only.';
+    'This is the source of truth for promoted ML clusters.';
 
 COMMENT ON COLUMN sku_cluster_assignment.sku_ck IS
     'Full SKU grain key (item_id, customer_group, loc) copied at assignment time.';
@@ -59,42 +57,9 @@ WHERE e.is_promoted IS TRUE;
 
 COMMENT ON VIEW current_sku_cluster_assignment IS
     'Current promoted SKU ML cluster labels. Consumers should join this view '
-    'instead of reading dim_sku.ml_cluster.';
+    'for promoted ML clustering.';
 
--- Best-effort backfill for environments that already have a promoted
--- experiment and legacy dim_sku.ml_cluster labels.
-INSERT INTO sku_cluster_assignment (
-    experiment_id,
-    sku_ck,
-    item_id,
-    customer_group,
-    loc,
-    cluster_label
-)
-SELECT
-    e.experiment_id,
-    d.sku_ck,
-    d.item_id,
-    d.customer_group,
-    d.loc,
-    d.ml_cluster
-FROM dim_sku d
-JOIN LATERAL (
-    SELECT experiment_id
-    FROM cluster_experiment
-    WHERE is_promoted IS TRUE
-    ORDER BY promoted_at DESC NULLS LAST, experiment_id DESC
-    LIMIT 1
-) e ON TRUE
-WHERE d.ml_cluster IS NOT NULL
-ON CONFLICT (experiment_id, sku_ck) DO UPDATE
-SET item_id = EXCLUDED.item_id,
-    customer_group = EXCLUDED.customer_group,
-    loc = EXCLUDED.loc,
-    cluster_label = EXCLUDED.cluster_label,
-    modified_ts = NOW();
-
--- Rebuild accuracy MVs so existing databases stop reading dim_sku.ml_cluster.
+-- Rebuild accuracy MVs so existing databases read promoted assignment rows.
 DROP MATERIALIZED VIEW IF EXISTS agg_accuracy_by_dim;
 DROP MATERIALIZED VIEW IF EXISTS agg_accuracy_lag_archive;
 DROP MATERIALIZED VIEW IF EXISTS agg_dfu_coverage;

@@ -33,9 +33,8 @@ production forecast generation, or accuracy/FVA endpoints.
   `build_feature_matrix()` for per-cluster partitioning. Using it as a model feature
   (or cross-DFU cluster aggregates) reintroduces the resolved backtest leakage.
 - **Promoted labels live in `sku_cluster_assignment`; reads use
-  `current_sku_cluster_assignment`.** `dim_sku.ml_cluster` is only a transition/cache
-  column for old consumers and restore compatibility. New SQL must not read
-  clusters from `dim_sku.ml_cluster`.
+  `current_sku_cluster_assignment`.** `dim_sku.ml_cluster` does not exist. New SQL
+  must not read clusters from `dim_sku`.
 - **An empty `current_sku_cluster_assignment` silently collapses ALL per-cluster tree
   forecasts to near-zero** and breaks backtest + champion-select. Restore via
   `scripts/ml/restore_cluster_assignments.py` from `data/clustering/cluster_labels.csv`

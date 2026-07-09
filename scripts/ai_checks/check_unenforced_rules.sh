@@ -257,8 +257,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # Rule 9: promoted ML cluster reads must use current_sku_cluster_assignment.
-# dim_sku.ml_cluster is a transition/cache column only; only the assignment
-# persistence and legacy restore/load compatibility paths may write/read it.
+# dim_sku.ml_cluster has been removed; production code must not read/write it.
 # ---------------------------------------------------------------------------
 echo "[Rule 9] ML cluster reads use current_sku_cluster_assignment"
 RULE9_OUTPUT=$(python3 - <<'PY'
@@ -266,12 +265,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-allowed = {
-    Path("common/ml/clustering/assignment_store.py"),
-    Path("common/ml/clustering/scenario.py"),
-    Path("scripts/ml/restore_cluster_assignments.py"),
-    Path("scripts/etl/load_dataset_postgres.py"),
-}
 roots = [Path("api"), Path("scripts"), Path("common")]
 tokens = ("d.ml_cluster", "s.ml_cluster", "dim_sku.ml_cluster")
 failures: list[str] = []
@@ -280,7 +273,7 @@ for root in roots:
     if not root.exists():
         continue
     for path in root.rglob("*.py"):
-        if path in allowed or "tests" in path.parts:
+        if "tests" in path.parts:
             continue
         try:
             lines = path.read_text().splitlines()
@@ -292,7 +285,7 @@ for root in roots:
             if any(token in line for token in tokens):
                 failures.append(
                     f"{path}:{lineno}: use current_sku_cluster_assignment; "
-                    "dim_sku.ml_cluster is a compatibility cache"
+                    "dim_sku.ml_cluster has been removed"
                 )
             stripped = " ".join(line.lower().split())
             if (

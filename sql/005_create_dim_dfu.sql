@@ -37,7 +37,6 @@ CREATE TABLE IF NOT EXISTS dim_sku (
   file_dt TEXT,
   histstart TEXT,
   cluster_assignment TEXT,
-  ml_cluster TEXT,
   sop_ref TEXT,
   -- Seasonality columns (Feature 30)
   seasonality_profile TEXT,
@@ -210,7 +209,6 @@ CREATE INDEX IF NOT EXISTS idx_dim_sku_loc ON dim_sku (loc);
 CREATE INDEX IF NOT EXISTS idx_dim_sku_brand ON dim_sku (brand);
 CREATE INDEX IF NOT EXISTS idx_dim_sku_region ON dim_sku (region);
 CREATE INDEX IF NOT EXISTS idx_dim_sku_cluster_assignment ON dim_sku (cluster_assignment);
-CREATE INDEX IF NOT EXISTS idx_dim_sku_ml_cluster ON dim_sku (ml_cluster);
 CREATE INDEX IF NOT EXISTS idx_dim_sku_seasonality_profile ON dim_sku (seasonality_profile);
 CREATE INDEX IF NOT EXISTS idx_dim_sku_is_yearly_seasonal ON dim_sku (is_yearly_seasonal);
 CREATE INDEX IF NOT EXISTS idx_dim_sku_variability_class ON dim_sku (variability_class);

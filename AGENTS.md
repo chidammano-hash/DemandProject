@@ -52,7 +52,7 @@ just don't add them:
   `get_read_only_conn()`; `get_planning_date_info` is the only uncached dashboard
   exception.
 - Promoted ML cluster reads use `current_sku_cluster_assignment` /
-  `sku_cluster_assignment`; `dim_sku.ml_cluster` is a transition/cache column only.
+  `sku_cluster_assignment`; `dim_sku.ml_cluster` does not exist.
 
 ### Workflow (applies to every change)
 - **Self-review + refactor at each step** before reporting done (also a global habit). In

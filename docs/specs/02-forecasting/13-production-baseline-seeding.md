@@ -56,7 +56,7 @@ After any production pipeline run completes, the system **automatically register
 |---|---|
 | `lgbm_tuning_run` | One row per model with `run_label='Production Baseline'`, `model_id`, `status='completed'`, `params` (from YAML), `accuracy_pct`, `wape`, `bias`, `n_predictions`, `n_dfus`, `metadata` (full JSON blob), `is_promoted=TRUE`, `promoted_at=NOW()`, `template_id='production_baseline'` |
 | `lgbm_tuning_timeframe` | 10 rows per model (timeframes A-J) with accuracy/WAPE/bias per window |
-| `lgbm_tuning_cluster` | N rows per model — per-`ml_cluster` and per-`cluster_assignment` accuracy, from predictions CSV joined to `dim_sku` |
+| `lgbm_tuning_cluster` | N rows per model — per-`ml_cluster` and per-`cluster_assignment` accuracy, from predictions CSV joined to `dim_sku` + `current_sku_cluster_assignment` |
 | `lgbm_tuning_month` | N rows per model — per-month accuracy from predictions CSV |
 | `lgbm_tuning_lag` | 5 rows per model (exec_lag 0-4) — per-lag accuracy from predictions CSV or all-lags archive |
 

@@ -14,7 +14,7 @@ Before any inventory pipeline runs, the following must already be populated:
 | `fact_production_forecast` (PROMOTED — see Section 6) | `POST /backtest-management/{model_id}/promote` | Demand input for SS, projection, replenishment |
 | `fact_customer_demand_monthly` (monthly partitioned by `startdate`) | `make pipeline-customer-demand` | Variability, lead-time actuals, customer-level fill |
 | `dim_sourcing` + `fact_purchase_order` | `make load-all` (sourcing + purchase_order domains) | Lead time, open POs, planned orders |
-| `dim_sku` with `ml_cluster` populated | `make features-compute` + `make cluster-all` (Section 3) | Per-cluster policy assignment |
+| `dim_sku` + `current_sku_cluster_assignment` | `make features-compute` + `make cluster-all` (Section 3) | Per-cluster policy assignment |
 
 **If production forecast is missing or stale, every downstream metric (SS, projection, replenishment, exceptions) will be wrong.** Verify with:
 

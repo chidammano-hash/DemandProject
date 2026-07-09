@@ -12,7 +12,6 @@ class ClusterAssignmentWriteResult:
     """Counts from writing cluster assignments."""
 
     assignments_upserted: int
-    dim_sku_updated: int
 
 
 def get_promoted_experiment_id(conn) -> int | None:
@@ -34,14 +33,8 @@ def write_cluster_assignments(
     conn,
     *,
     experiment_id: int | None,
-    update_dim_sku_cache: bool = True,
 ) -> ClusterAssignmentWriteResult:
-    """Upsert promoted cluster labels and optionally refresh dim_sku cache.
-
-    ``sku_cluster_assignment`` is the durable source of truth. During the
-    migration, ``dim_sku.ml_cluster`` remains a compatibility/cache column for
-    callers that have not moved to ``current_sku_cluster_assignment`` yet.
-    """
+    """Upsert promoted cluster labels into the durable source-of-truth table."""
     if experiment_id is None:
         raise ValueError("experiment_id is required to persist cluster assignments")
     required = {"sku_ck", "cluster_label"}
@@ -101,22 +94,12 @@ def write_cluster_assignments(
                 cluster_id = EXCLUDED.cluster_id,
                 cluster_label = EXCLUDED.cluster_label,
                 modified_ts = NOW()
+            WHERE sku_cluster_assignment.item_id IS DISTINCT FROM EXCLUDED.item_id
+               OR sku_cluster_assignment.customer_group IS DISTINCT FROM EXCLUDED.customer_group
+               OR sku_cluster_assignment.loc IS DISTINCT FROM EXCLUDED.loc
+               OR sku_cluster_assignment.cluster_id IS DISTINCT FROM EXCLUDED.cluster_id
+               OR sku_cluster_assignment.cluster_label IS DISTINCT FROM EXCLUDED.cluster_label
         """, (experiment_id,))
         assignments_upserted = cur.rowcount
 
-        dim_sku_updated = 0
-        if update_dim_sku_cache:
-            cur.execute("""
-                UPDATE dim_sku d
-                SET ml_cluster = u.cluster_label,
-                    modified_ts = NOW()
-                FROM _cluster_updates u
-                WHERE d.sku_ck = u.sku_ck
-                  AND d.ml_cluster IS DISTINCT FROM u.cluster_label
-            """)
-            dim_sku_updated = cur.rowcount
-
-    return ClusterAssignmentWriteResult(
-        assignments_upserted=assignments_upserted,
-        dim_sku_updated=dim_sku_updated,
-    )
+    return ClusterAssignmentWriteResult(assignments_upserted=assignments_upserted)

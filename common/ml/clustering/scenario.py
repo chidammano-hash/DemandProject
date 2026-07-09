@@ -196,10 +196,9 @@ def _load_label_bytes(scenario_id: str, labels_path: Path) -> bytes | None:
 def promote_scenario(scenario_id: str) -> dict[str, Any]:
     """Promote a scenario to production by writing SKU cluster assignments.
 
-    ``sku_cluster_assignment`` is the source of truth. ``dim_sku.ml_cluster`` is
-    still refreshed as a compatibility/cache column during the migration. The
-    caller refreshes assignment-dependent materialized views after the promoted
-    experiment flag is updated, so the current view resolves to this experiment.
+    ``sku_cluster_assignment`` is the source of truth. The caller refreshes
+    assignment-dependent materialized views after the promoted experiment flag is
+    updated, so the current view resolves to this experiment.
 
     Labels are loaded from the working scenario dir when present, else from the
     durable copy on the experiment row — so any completed experiment stays
@@ -267,7 +266,6 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
                     df,
                     conn,
                     experiment_id=experiment_id,
-                    update_dim_sku_cache=True,
                 )
 
                 # Gen-4 SC-9: mark per-cluster tuning profiles stale so the
@@ -315,6 +313,5 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
         "status": "promoted",
         "scenario_id": scenario_id,
         "dfus_updated": write_result.assignments_upserted,
-        "dim_sku_cache_updated": write_result.dim_sku_updated,
         "cluster_distribution": distribution,
     }

@@ -16,9 +16,11 @@
 --
 --   INCLUDE columns are the dim_sku attributes those same endpoints project /
 --   filter on after the join (see accuracy.py GROUP_FIELDS + segment filters:
---   ml_cluster, abc_vol, region, brand_desc, seasonality_profile). Carrying
---   them in the index leaf makes it COVERING for the common segment-filtered
---   accuracy query — the heap fetch is avoided (index-only scan eligible).
+--   abc_vol, region, brand_desc, seasonality_profile). Promoted ML cluster labels
+--   live in sku_cluster_assignment/current_sku_cluster_assignment and are indexed
+--   there. Carrying dim_sku attributes in the index leaf makes it COVERING for the
+--   common segment-filtered accuracy query — the heap fetch is avoided
+--   (index-only scan eligible).
 --
 -- CONCURRENTLY: the migration runner (Makefile `db-apply-sql`) pipes each file
 --   through `psql ... < file` with NO --single-transaction / -1 flag and no
@@ -31,4 +33,4 @@
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dim_sku_dfu_triple
 ON dim_sku (item_id, customer_group, loc)
-INCLUDE (ml_cluster, abc_vol, region, brand_desc, seasonality_profile);
+INCLUDE (abc_vol, region, brand_desc, seasonality_profile);

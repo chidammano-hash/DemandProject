@@ -654,7 +654,7 @@ Paginated, sortable, filterable list of per-SKU feature rows.
 }
 ```
 
-All 35+ feature columns from `dim_sku` are included in each row. The sortable column allowlist includes all feature columns plus `item_id`, `loc`, `ml_cluster`, `seasonality_profile`, `variability_class`, `trend_direction`, and `features_computed_ts`.
+All 35+ feature columns from `dim_sku` are included in each row. The sortable column allowlist includes all feature columns plus `item_id`, `loc`, promoted `ml_cluster` from `current_sku_cluster_assignment`, `seasonality_profile`, `variability_class`, `trend_direction`, and `features_computed_ts`.
 
 Cache: `public, max-age=120`
 

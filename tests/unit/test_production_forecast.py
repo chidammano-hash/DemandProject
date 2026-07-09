@@ -1000,7 +1000,7 @@ def test_cold_start_model_is_statistically_routed():
 
 
 # ---------------------------------------------------------------------------
-# Data-integrity guard: dim_sku.ml_cluster wipe → tree forecast collapse.
+# Data-integrity guard: empty promoted cluster assignments → tree forecast collapse.
 # _cluster_assignments_wiped() must fail loud only for the catastrophic
 # all-NULL-cluster + multi-cluster-tree signature.
 # ---------------------------------------------------------------------------

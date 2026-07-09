@@ -7,7 +7,8 @@ Reads:
   - fact_inventory_snapshot (lead time data — avg/std per item_id + loc)
   - fact_safety_stock_targets (historical SS for delta comparison)
   - agg_inventory_monthly (current on-hand position)
-  - dim_sku (ABC class, demand_std fallback, ml_cluster)
+  - dim_sku (ABC class, demand_std fallback)
+  - current_sku_cluster_assignment (promoted ml_cluster)
 
 Writes:
   - fact_replenishment_plan (upsert on plan_version + item_id + loc + plan_month)
@@ -343,15 +344,17 @@ def load_policy_assignments(conn: psycopg.Connection) -> pd.DataFrame:
 
 
 def load_dfu_attrs(conn: psycopg.Connection) -> pd.DataFrame:
-    """Load DFU attributes: ABC class, demand_std fallback, ml_cluster."""
+    """Load DFU attributes: ABC class, demand_std fallback, promoted ml_cluster."""
     sql = """
         SELECT
-            item_id                         AS item_id,
-            loc,
-            abc_vol,
-            COALESCE(demand_std, 0.0)       AS demand_std,
-            ml_cluster
-        FROM dim_sku
+            d.item_id                         AS item_id,
+            d.loc,
+            d.abc_vol,
+            COALESCE(d.demand_std, 0.0)       AS demand_std,
+            ca.ml_cluster
+        FROM dim_sku d
+        LEFT JOIN current_sku_cluster_assignment ca
+          ON ca.sku_ck = d.sku_ck
     """
     with conn.cursor() as cur:
         cur.execute(sql)

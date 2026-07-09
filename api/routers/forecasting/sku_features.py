@@ -73,16 +73,21 @@ _HISTOGRAM_FEATURES: dict[str, str] = {
 
 # Columns returned per row in the list endpoint
 _LIST_SELECT = (
-    "sku_ck, item_id, loc, ml_cluster, seasonality_profile, variability_class, "
-    "trend_direction, features_computed_ts, "
-    + ", ".join(_FEATURE_COLS)
+    "d.sku_ck, d.item_id, d.loc, ca.ml_cluster, d.seasonality_profile, "
+    "d.variability_class, d.trend_direction, d.features_computed_ts, "
+    + ", ".join(f"d.{col}" for col in _FEATURE_COLS)
 )
 
 # Valid sort columns (prevent SQL injection via allowlist)
 _SORTABLE = {
-    "item_id", "loc", "ml_cluster", "seasonality_profile", "variability_class",
-    "trend_direction", "features_computed_ts",
-} | set(_FEATURE_COLS)
+    "item_id": "d.item_id",
+    "loc": "d.loc",
+    "ml_cluster": "ca.ml_cluster",
+    "seasonality_profile": "d.seasonality_profile",
+    "variability_class": "d.variability_class",
+    "trend_direction": "d.trend_direction",
+    "features_computed_ts": "d.features_computed_ts",
+} | {col: f"d.{col}" for col in _FEATURE_COLS}
 
 _CACHE_SHORT = "public, max-age=120"
 _CACHE_MEDIUM = "public, max-age=300"
@@ -211,35 +216,37 @@ def sku_features_list(
         sort_by = "item_id"
 
     # Build WHERE clause
-    conditions = ["features_computed_ts IS NOT NULL"]
+    conditions = ["d.features_computed_ts IS NOT NULL"]
     params: list = []
 
     if seasonality_profile is not None:
-        conditions.append("seasonality_profile = %s")
+        conditions.append("d.seasonality_profile = %s")
         params.append(seasonality_profile)
     if variability_class is not None:
-        conditions.append("variability_class = %s")
+        conditions.append("d.variability_class = %s")
         params.append(variability_class)
     if trend_direction is not None:
-        conditions.append("trend_direction = %s")
+        conditions.append("d.trend_direction = %s")
         params.append(trend_direction)
     if search:
-        conditions.append("item_id ILIKE %s")
+        conditions.append("d.item_id ILIKE %s")
         params.append(f"%{search}%")
 
     where = " AND ".join(conditions)
 
     # sort_by is validated against _SORTABLE allowlist above — safe to interpolate
-    order = f"{sort_by} {sort_dir} NULLS LAST"
+    order = f"{_SORTABLE[sort_by]} {sort_dir} NULLS LAST"
 
     with get_conn() as conn, conn.cursor() as cur:
         # Total matching count
-        cur.execute(f"SELECT COUNT(*)::bigint FROM dim_sku WHERE {where}", params)
+        cur.execute(f"SELECT COUNT(*)::bigint FROM dim_sku d WHERE {where}", params)
         total = int(cur.fetchone()[0])
 
         # Paginated rows
         cur.execute(
-            f"SELECT {_LIST_SELECT} FROM dim_sku WHERE {where} "
+            f"SELECT {_LIST_SELECT} FROM dim_sku d "
+            "LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = d.sku_ck "
+            f"WHERE {where} "
             f"ORDER BY {order} LIMIT %s OFFSET %s",
             [*params, limit, offset],
         )
