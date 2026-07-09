@@ -63,6 +63,10 @@ Default filters (run all when invoked with no flags):
 
 Two flags scope the run:
 
+**Current behavior:** when `--loc <LOC>` is supplied, the location filter applies to all four input
+families: `dfu.txt`, `dfu_lvl2_hist.txt`, `dfu_stat_fcst.txt`, and every
+`Inventory_Snapshot_*.csv` file.
+
 - `--files {dfu,hist,fcst,inventory} ...` — run only the listed filters (default: all four).
 - `--loc <LOC>` — on `dfu_lvl2_hist.txt` and `dfu_stat_fcst.txt`, additionally keep **only** rows whose `LOC`/`loc` equals `<LOC>` (i.e. remove every other location). Applied **on top of** the default filters above.
 
