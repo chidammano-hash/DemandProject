@@ -6,7 +6,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import add_cross_dim_filters, compute_kpis, get_conn, set_cache
+from api.core import add_cross_dim_filters, compute_kpis, get_read_only_conn, set_cache
+from common.services.cache import cached_sync
 from common.services.metrics import compute_unweighted_accuracy, compute_unweighted_mase
 
 router = APIRouter(tags=["accuracy"])
@@ -123,6 +124,7 @@ _RAW_BUCKET_EXPR: dict[str, str] = {
 
 
 @router.get("/forecast/accuracy/slice")
+@cached_sync(ttl=300, group="accuracy")
 def forecast_accuracy_slice(
     response: FastAPIResponse,
     group_by: str = Query(default="cluster_assignment", max_length=64),
@@ -275,7 +277,7 @@ def forecast_accuracy_slice(
             GROUP BY 1
         """
 
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, all_params)
             db_rows = cur.fetchall()
             cur.execute(count_sql, list(model_list) + [len(model_list)])
@@ -386,7 +388,7 @@ def forecast_accuracy_slice(
             ORDER BY a.bucket ASC NULLS LAST, a.model_id ASC
         """
 
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql_raw, [*raw_params, limit])
             db_rows = cur.fetchall()
 
@@ -495,7 +497,7 @@ def forecast_accuracy_slice(
             GROUP BY 1, 2
         """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, [*params, limit])
         db_rows = cur.fetchall()
         if include_dfu_count:
@@ -526,6 +528,7 @@ def forecast_accuracy_slice(
 
 
 @router.get("/forecast/accuracy/lag-curve")
+@cached_sync(ttl=300, group="accuracy")
 def forecast_accuracy_lag_curve(
     response: FastAPIResponse,
     models: str = Query(default="", max_length=500),
@@ -617,7 +620,7 @@ def forecast_accuracy_lag_curve(
             ORDER BY 2 ASC, 1 ASC
         """
 
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, all_params)
             db_rows = cur.fetchall()
 
@@ -692,7 +695,7 @@ def forecast_accuracy_lag_curve(
             ORDER BY 2 ASC, 1 ASC
         """
 
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql_raw, raw_params)
             db_rows = cur.fetchall()
 
@@ -770,7 +773,7 @@ def forecast_accuracy_lag_curve(
             GROUP BY 1, 2
         """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         db_rows = cur.fetchall()
         if include_dfu_count:
@@ -796,6 +799,7 @@ def forecast_accuracy_lag_curve(
 
 
 @router.get("/forecast/accuracy/lag-leaderboard")
+@cached_sync(ttl=300, group="accuracy")
 def forecast_accuracy_lag_leaderboard(
     response: FastAPIResponse,
     month_from: str = Query(default="", max_length=20),
@@ -833,7 +837,7 @@ def forecast_accuracy_lag_leaderboard(
         ORDER BY 1 ASC, 3 DESC
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         db_rows = cur.fetchall()
 
@@ -924,6 +928,7 @@ def _build_accuracy_by_dfu_where(
 
 
 @router.get("/forecast/accuracy/decomposition")
+@cached_sync(ttl=300, group="accuracy")
 def forecast_accuracy_decomposition(
     response: FastAPIResponse,
     group_by: str = Query(default="seasonality_profile", max_length=64),
@@ -996,7 +1001,7 @@ def forecast_accuracy_decomposition(
         {where_sql}
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         db_rows = cur.fetchall()
 
@@ -1051,6 +1056,7 @@ def forecast_accuracy_decomposition(
 
 
 @router.get("/forecast/accuracy/error-contributors")
+@cached_sync(ttl=300, group="accuracy")
 def forecast_accuracy_error_contributors(
     response: FastAPIResponse,
     models: str = Query(default="", max_length=500),
@@ -1105,7 +1111,7 @@ def forecast_accuracy_error_contributors(
         {where_sql}
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(top_sql, [*params, limit])
         top_rows = cur.fetchall()
         cur.execute(total_sql, params)

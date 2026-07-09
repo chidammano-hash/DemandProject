@@ -18,6 +18,11 @@ Without rate limiting, a single misbehaving client (or a script in a tight loop)
 
 A sliding-window rate limiter enforces a per-IP request limit on write requests (POST/PUT/DELETE) at the middleware level. Usage tracking records request counts, latencies, and status codes by endpoint and client. API versioning is declared via config (current version `v1`) but is not enforced at runtime.
 
+Read-heavy GET endpoints are protected through the performance architecture rather than the
+rate limiter: repeated analytical reads use the cache layer, stale-tolerant reads route through
+read-replica helpers, and large result sets must be capped/paginated. The mechanically enforced
+reference set is Dashboard and Forecast Accuracy (`@cached_sync(...)` + `get_read_only_conn()`).
+
 ## How It Works
 
 1. Only POST, PUT, and DELETE requests pass through `rate_limit_middleware` in `api/main.py`; GET requests are never rate-limited
@@ -26,6 +31,13 @@ A sliding-window rate limiter enforces a per-IP request limit on write requests 
 4. If allowed, the request proceeds to the route handler
 5. If exceeded, the client receives 429 Too Many Requests with a `Retry-After: 60` header
 6. Usage counters are aggregated in memory every 5 minutes for monitoring
+
+For GET endpoints, governance happens at implementation time:
+
+- Repeated analytical GETs use `@cached_sync` / `@cached_async`
+- Stale-tolerant DB reads use `get_read_only_conn()` / `get_async_read_only_conn()`
+- High-cardinality responses expose server-side caps/pagination instead of returning full fact grains
+- `scripts/ai_checks/check_unenforced_rules.sh` blocks uncached/non-replica-aware Dashboard and Accuracy GETs
 
 ## Rate Limit Tiers
 

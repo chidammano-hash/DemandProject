@@ -119,6 +119,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Async router pilot (`customer_analytics` + `inv_planning_insights` GETs use `AsyncConnectionPool` via `get_async_conn` / `get_async_read_only_conn`) | — | Foundation |
 | pg-queue scaffold (`sql/183_create_job_queue.sql`, `common/services/pg_queue.py` — `enqueue_job`, `claim_next_job`, exponential-backoff requeue) | — | Foundation |
 | Read-replica scaffold (`READ_REPLICA_URL` opt-in, parsed by `common/core/db.py` `get_read_replica_params()`; `api/pool.py` builds replica pools when present; `api/core.py` `get_read_only_conn` / `get_async_read_only_conn` route reads when available) | — | Foundation |
+| Enforced hot-analytics read pattern (`@cached_sync` + `get_read_only_conn` on Dashboard and Forecast Accuracy GETs; checked by `scripts/ai_checks/check_unenforced_rules.sh`) | [../08-integration/03-caching.md](../08-integration/03-caching.md) | Foundation |
 | Weekly partitioning DDL prep (`sql/184`, `sql/185` — REVIEW-BEFORE-RUN; `scripts/db/auto_create_partitions.py` extended with `interval="week"` ISO week math) | — | Foundation |
 | Streaming ETL helpers (`common/core/sql_helpers.py` — `stream_query_in_chunks`, `read_sql_chunked`, `DEFAULT_CHUNK_SIZE`) | [02-data-models.md](02-data-models.md) | Foundation |
 | ORJSON default response class (`api/main.py` uses `ORJSONResponse` for faster JSON serialization) | — | Foundation |

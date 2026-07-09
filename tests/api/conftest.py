@@ -22,6 +22,21 @@ def _reset_rate_limiter():
     get_rate_limiter().reset()
 
 
+@pytest.fixture(autouse=True)
+def _reset_api_cache():
+    """Reset API response caches between tests.
+
+    API tests patch different DB rows into the same route handlers. Without a
+    clean cache, a cached response from one mocked scenario can leak into the
+    next and hide the SQL path under test.
+    """
+    from common.services.cache import reset_cache
+
+    reset_cache()
+    yield
+    reset_cache()
+
+
 def _make_async_cm(value):
     """Wrap a value in an awaitable async-context-manager that yields it.
 

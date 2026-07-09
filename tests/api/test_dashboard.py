@@ -1,13 +1,22 @@
 """Tests for dashboard endpoints — /dashboard/kpis, /dashboard/alerts,
 /dashboard/top-movers, /dashboard/heatmap, /dashboard/trend, /dashboard/planning-date."""
 
-import pytest
 from datetime import date
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import httpx
+import pytest
 from httpx import ASGITransport
 
 from common.core.planning_date import _reset_cache
+
+
+def _first_sql_call(cursor, containing: str):
+    for call in cursor.execute.call_args_list:
+        sql_text = call[0][0]
+        if containing in sql_text:
+            return call
+    raise AssertionError(f"No SQL call containing {containing!r}")
 
 
 # ===========================================================================
@@ -100,6 +109,28 @@ async def test_dashboard_kpis_returns_structure(mock_pool):
             assert deltas["accuracy_pct"] == 3.5   # 85.5 - 82.0
             assert deltas["wape_pct"] == -3.5       # 14.5 - 18.0
             assert deltas["bias_pct"] == -1.9        # 3.2 - 5.1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_kpis_repeated_request_uses_server_cache(mock_pool):
+    """Identical KPI requests should not rerun SQL after the first response."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [
+        (85.5, 14.5, 3.2, 50000.0, 48500.0),
+        (82.0, 18.0, 5.1, None, None),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.get("/dashboard/kpis")
+            execute_count_after_first = cursor.execute.call_count
+            second = await client.get("/dashboard/kpis")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert cursor.execute.call_count == execute_count_after_first
 
 
 @pytest.mark.asyncio
@@ -581,9 +612,10 @@ async def test_dashboard_kpis_uses_model_id_not_lag(mock_pool):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/dashboard/kpis")
     assert resp.status_code == 200
-    sql_current = cursor.execute.call_args_list[0][0][0]
+    sql_call = _first_sql_call(cursor, "FROM fact_external_forecast_monthly f")
+    sql_current = sql_call[0][0]
     assert "model_id = %s" in sql_current
-    params_current = cursor.execute.call_args_list[0][0][1]
+    params_current = sql_call[0][1]
     assert params_current[0] == "external"
     assert "lag = 0" not in sql_current
 
@@ -647,7 +679,7 @@ async def test_dashboard_kpis_uses_planning_date(mock_pool):
             resp = await client.get("/dashboard/kpis")
     _reset_cache()
     assert resp.status_code == 200
-    sql_arg = cursor.execute.call_args_list[0][0][0]
+    sql_arg = _first_sql_call(cursor, "FROM fact_external_forecast_monthly f")[0][0]
     assert "2026-02-24" in sql_arg
     assert "CURRENT_DATE" not in sql_arg
 
@@ -779,7 +811,6 @@ async def test_customer_map_by_state(mock_pool):
 def _mock_pgeocode(lats, lons):
     """Create a mock pgeocode.Nominatim that returns given lat/lon arrays."""
     import pandas as pd
-    import numpy as np
     mock_nomi = MagicMock()
     df = pd.DataFrame({"latitude": lats, "longitude": lons})
     mock_nomi.query_postal_code.return_value = df

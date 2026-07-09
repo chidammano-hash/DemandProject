@@ -1,23 +1,22 @@
 """Dashboard KPI, alerts, top movers, heatmap endpoints (feature 36)."""
 from __future__ import annotations
 
-from collections import OrderedDict
-from typing import Any
 import logging
 import math
 import threading
-
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response as FastAPIResponse
-
+from collections import OrderedDict
 from datetime import date
+from typing import Any
 
 import pgeocode
 import psycopg
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import get_read_only_conn, set_cache
 from common.core.planning_date import get_planning_date
 from common.core.sql_helpers import EXTERNAL_MODEL_ID
+from common.services.cache import cached_sync
 
 # Lazy-initialized US zip code geocoder (pgeocode downloads ~2MB file on first use)
 _nomi: pgeocode.Nominatim | None = None
@@ -64,6 +63,7 @@ async def get_planning_date_info():
 
 
 @router.get("/dashboard/pipeline-readiness")
+@cached_sync(ttl=60, group="dashboard")
 def get_pipeline_readiness(response: FastAPIResponse):
     """Report whether downstream ML stages are in sync with their inputs.
 
@@ -99,7 +99,7 @@ def get_pipeline_readiness(response: FastAPIResponse):
         }
     """
     checks: list[dict[str, Any]] = []
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         # ── Check 1: total loss of cluster assignments ───────────────────────
         try:
             cur.execute(
@@ -308,6 +308,7 @@ def _dashboard_filter_clause(
 # ---------------------------------------------------------------------------
 
 @router.get("/dashboard/kpis")
+@cached_sync(ttl=120, group="dashboard")
 def dashboard_kpis(
     response: FastAPIResponse,
     window: int = Query(default=3, ge=1, le=24),
@@ -383,7 +384,7 @@ def dashboard_kpis(
         WHERE {where_prior}{where_extra}
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql_current, [model, window] + filter_params)
         row = cur.fetchone()
         accuracy = float(row[0]) if row and row[0] is not None else None
@@ -417,6 +418,7 @@ def dashboard_kpis(
 
 
 @router.get("/dashboard/alerts")
+@cached_sync(ttl=120, group="dashboard")
 def dashboard_alerts(
     response: FastAPIResponse,
     limit: int = Query(default=10, ge=1, le=50),
@@ -469,7 +471,7 @@ def dashboard_alerts(
             GROUP BY forecast_ck
             HAVING (100.0 - 100.0 * SUM(ABS(basefcst_pref - tothist_dmd)) / NULLIF(ABS(SUM(tothist_dmd)), 0)) < 70
         """
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, _alert_params)
             low_acc_count = len(cur.fetchall())
         if low_acc_count > 0:
@@ -518,7 +520,7 @@ def dashboard_alerts(
             GROUP BY i.class
             HAVING ABS(100.0 * (SUM(f.basefcst_pref) / NULLIF(ABS(SUM(f.tothist_dmd)), 0) - 1)) > 20
         """
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, _bias_params)
             bias_cats = cur.fetchall()
         if bias_cats:
@@ -568,7 +570,7 @@ def dashboard_alerts(
                    ) > 0.3
             ) sub
         """
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, _spike_params)
             spike_row = cur.fetchone()
             spike_count = int(spike_row[0]) if spike_row else 0
@@ -591,6 +593,7 @@ def dashboard_alerts(
 
 
 @router.get("/dashboard/top-movers")
+@cached_sync(ttl=120, group="dashboard")
 def dashboard_top_movers(
     response: FastAPIResponse,
     limit: int = Query(default=5, ge=1, le=20),
@@ -649,7 +652,7 @@ def dashboard_top_movers(
         LIMIT %s
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, _tm_params + [limit * 2])
         rows = cur.fetchall()
 
@@ -673,6 +676,7 @@ def dashboard_top_movers(
 
 
 @router.get("/dashboard/heatmap")
+@cached_sync(ttl=300, group="dashboard")
 def dashboard_heatmap(
     response: FastAPIResponse,
     grain: str = Query(default="category"),
@@ -775,7 +779,7 @@ def dashboard_heatmap(
         ORDER BY {row_order}, {col_order}
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, [model, periods, model, periods, model] + filter_params)
         rows = cur.fetchall()
 
@@ -819,6 +823,7 @@ def dashboard_heatmap(
 
 
 @router.get("/dashboard/trend")
+@cached_sync(ttl=120, group="dashboard")
 def dashboard_trend(
     response: FastAPIResponse,
     window: int = Query(default=12, ge=1, le=36),
@@ -879,7 +884,7 @@ def dashboard_trend(
         ORDER BY f.startdate
     """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, [model, window, model, window, model] + filter_params)
         rows = cur.fetchall()
 
@@ -930,6 +935,7 @@ _STATE_CENTROIDS: dict[str, tuple[float, float]] = {
 
 
 @router.get("/dashboard/customer-map")
+@cached_sync(ttl=600, group="dashboard")
 def dashboard_customer_map(
     response: FastAPIResponse,
     group_by: str = Query(default="state", pattern="^(state|zip|city)$"),
@@ -975,7 +981,7 @@ def dashboard_customer_map(
             LIMIT {_MARKER_LIMIT}
         """
 
-    with get_conn() as conn, conn.cursor() as cur:
+    with get_read_only_conn() as conn, conn.cursor() as cur:
         cur.execute(sql)
         rows = cur.fetchall()
 

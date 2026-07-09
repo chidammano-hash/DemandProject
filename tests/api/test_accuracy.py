@@ -1,9 +1,9 @@
 """Tests for accuracy router — item/location filter support."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 from httpx import ASGITransport
 
 from tests.api.conftest import make_pool as _make_pool
@@ -20,6 +20,14 @@ def _make_slice_row(bucket="cluster_a", model_id="external", dfu_count=10,
 def _make_lag_row(model_id="external", lag=0, dfu_count=10,
                   sum_fcst=1000.0, sum_actual=900.0, sum_abs=100.0):
     return (model_id, lag, dfu_count, sum_fcst, sum_actual, sum_abs)
+
+
+def _first_sql_call(cursor: MagicMock, containing: str):
+    for call in cursor.execute.call_args_list:
+        sql_text = call[0][0]
+        if containing in sql_text:
+            return call
+    raise AssertionError(f"No SQL call containing {containing!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +97,7 @@ async def test_slice_item_and_location_combined():
     assert data["source"] == "fact_external_forecast_monthly"
 
     # Verify the SQL contained IN clauses for item and location
-    sql_call = cursor.execute.call_args_list[0]
+    sql_call = _first_sql_call(cursor, "f.item_id IN")
     sql_text = sql_call[0][0]
     sql_params = sql_call[0][1]
     assert "f.item_id IN" in sql_text
@@ -142,10 +150,38 @@ async def test_slice_accepts_limit_and_pushes_into_sql():
     data = resp.json()
     assert data["limit"] == 25
     # The LIMIT is parameterised (%s) and `limit` is the trailing bound param.
-    sql_call = cursor.execute.call_args_list[0]
+    sql_call = _first_sql_call(cursor, "LIMIT %s")
     sql_text, sql_params = sql_call[0][0], sql_call[0][1]
     assert "LIMIT %s" in sql_text
     assert sql_params[-1] == 25
+
+
+@pytest.mark.asyncio
+async def test_slice_repeated_request_uses_server_cache():
+    """Identical accuracy slice requests should hit the DB once, then serve from cache."""
+    pool, _conn, cursor = _make_pool(fetchall_return=[
+        ("cluster_a", "external", 50, 5000.0, 4500.0, 500.0, 1),
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.get("/forecast/accuracy/slice", params={
+                "group_by": "cluster_assignment",
+                "lag": 0,
+                "limit": 25,
+            })
+            execute_count_after_first = cursor.execute.call_count
+            second = await client.get("/forecast/accuracy/slice", params={
+                "group_by": "cluster_assignment",
+                "lag": 0,
+                "limit": 25,
+            })
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert cursor.execute.call_count == execute_count_after_first
 
 
 @pytest.mark.asyncio
@@ -265,7 +301,7 @@ async def test_lag_curve_item_location_sql_contains_filters():
             })
     assert resp.status_code == 200
 
-    sql_call = cursor.execute.call_args_list[0]
+    sql_call = _first_sql_call(cursor, "a.item_id IN")
     sql_text = sql_call[0][0]
     sql_params = sql_call[0][1]
     assert "a.item_id IN" in sql_text

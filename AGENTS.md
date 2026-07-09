@@ -32,7 +32,7 @@
 Hard constraints. Violations cause bugs, test failures, or silent data corruption.
 
 ### Mechanically enforced (the pre-commit gate hard-blocks NEW violations)
-These 6 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
+These 8 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
 existing files) and hard-block a commit that adds a new one — so they need no prose vigilance,
 just don't add them:
 - `date.today()` only in `common/core/planning_date.py` → use `get_planning_date()`.
@@ -43,6 +43,14 @@ just don't add them:
 - No `print()` in `scripts/{etl,ml,inventory,forecasting,ops,ai}` → `logging.getLogger(__name__)`.
 - psycopg3 `%s` placeholders, never `$1`/`$2`; no f-string SQL inside `cur.execute()`.
 - No `: any` / `<any>` / `as any` in `frontend/src/api/queries/` → generate types via `npm run gen:types`.
+- No `REFRESH MATERIALIZED VIEW` outside `common/core/mv_refresh.py` → call
+  `refresh_for_tables([tables written])` after committing a fact/dim write. The MV
+  dependency map lives ONLY there; new MV DDL must register in it (test-enforced by
+  `tests/unit/test_mv_refresh.py`).
+- Hot analytical GETs in `api/routers/core/dashboard.py` and
+  `api/routers/forecasting/accuracy.py` must use `@cached_sync(...)` and
+  `get_read_only_conn()`; `get_planning_date_info` is the only uncached dashboard
+  exception.
 
 ### Workflow (applies to every change)
 - **Self-review + refactor at each step** before reporting done (also a global habit). In
@@ -72,8 +80,10 @@ just don't add them:
 - **Modules/routers > 800 LoC split** by sub-feature into a domain folder.
 - **No `_row_to_dict` outside `common/core/sql_helpers.py`** → `row_to_dict_from_cursor` /
   `row_to_dict_from_cols`.
-- **Read-only analytics opt into `get_async_read_only_conn()`** / `get_read_only_conn()`
-  (read replica when `READ_REPLICA_URL` set; never for read-after-write). 7 CA endpoints use it.
+- **Read-heavy analytics opt into cache + read-only routing**: use
+  `@cached_sync` / `@cached_async` for repeated GETs and
+  `get_read_only_conn()` / `get_async_read_only_conn()` for queries that tolerate replica lag
+  (never for read-after-write). Dashboard and Accuracy GETs are mechanically enforced.
 
 ### ML / Forecasting → see skill `forecasting-patterns` for the full pattern catalog
 - **All tree `.fit()`/instantiation goes through `common/ml/model_registry.py`.** Direct

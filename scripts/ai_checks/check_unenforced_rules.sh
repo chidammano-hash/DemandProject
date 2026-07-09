@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mechanical gates for the 5 CLAUDE.md rules that were previously unenforced.
+# Mechanical gates for CLAUDE.md rules that were previously unenforced.
 #
 # Each rule has an allowlist at scripts/ai_checks/allowlists/ruleN_*.txt that
 # pins the EXISTING violations as of the introduction of these gates. Any NEW
@@ -201,6 +201,61 @@ while IFS= read -r f; do
 done <<< "$RULE7_HITS"
 
 # ---------------------------------------------------------------------------
+# Rule 8: read-heavy dashboard/accuracy endpoints must stay cached and
+# replica-aware. This is intentionally scoped to the known hot analytical
+# routers; broader router design remains covered by api-design review.
+# ---------------------------------------------------------------------------
+echo "[Rule 8] hot analytics GETs use cached_sync + get_read_only_conn"
+RULE8_OUTPUT=$(python3 - <<'PY'
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+targets = {
+    Path("api/routers/forecasting/accuracy.py"): set(),
+    Path("api/routers/core/dashboard.py"): {"get_planning_date_info"},
+}
+failures: list[str] = []
+
+for path, uncached_allow in targets.items():
+    text = path.read_text()
+    if "with get_conn(" in text:
+        failures.append(f"{path}: uses get_conn(); hot analytics reads must use get_read_only_conn()")
+
+    tree = ast.parse(text)
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_route = False
+        has_cached = False
+        for dec in node.decorator_list:
+            call = dec if isinstance(dec, ast.Call) else None
+            target = call.func if call else dec
+            if (
+                isinstance(target, ast.Attribute)
+                and target.attr == "get"
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "router"
+            ):
+                has_route = True
+            if isinstance(target, ast.Name) and target.id == "cached_sync":
+                has_cached = True
+        if has_route and node.name not in uncached_allow and not has_cached:
+            failures.append(f"{path}:{node.lineno}: @{node.name} missing @cached_sync(...)")
+
+for failure in failures:
+    print(failure)
+PY
+)
+if [[ -n "$RULE8_OUTPUT" ]]; then
+  while IFS= read -r ln; do
+    [[ -z "$ln" ]] && continue
+    violation "$ln"
+  done <<< "$RULE8_OUTPUT"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [[ "$FAIL" -gt 0 ]]; then
   echo "BLOCKED: $FAIL new violation(s) of unenforced CLAUDE.md rules."
@@ -208,5 +263,5 @@ if [[ "$FAIL" -gt 0 ]]; then
   echo "         $ALLOW_DIR/ pin EXISTING violations only and are not for new code."
   exit 1
 fi
-echo "OK: no new violations of the 7 CLAUDE.md unenforced rules."
+echo "OK: no new violations of the 8 CLAUDE.md unenforced rules."
 exit 0

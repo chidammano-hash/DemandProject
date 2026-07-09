@@ -16,12 +16,13 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from functools import wraps
-import threading
 from typing import Any, Callable
 
-from common.core.utils import load_config, reset_config as _reset_utils_config
+from common.core.utils import load_config
+from common.core.utils import reset_config as _reset_utils_config
 
 _CONFIG_NAME = "cache_config.yaml"
 
@@ -423,12 +424,7 @@ def cached_sync(ttl: int = 300, group: str = "default", skip_kwargs: tuple[str, 
             backend = get_cache()
             cache_kwargs = {k: v for k, v in kwargs.items() if k not in skip_kwargs}
             key = cache_key_for(f"{group}:{func.__name__}", cache_kwargs or None)
-            hit = backend.get(key)
-            if hit is not None:
-                return hit
-            result = func(*args, **kwargs)
-            backend.set(key, result, ttl)
-            return result
+            return backend.get_or_compute(key, lambda: func(*args, **kwargs), ttl)
         return wrapper
     return decorator
 

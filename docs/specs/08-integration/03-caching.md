@@ -49,11 +49,25 @@ Indexes on `(endpoint, recorded_at DESC)` and `(cache_hit)`. Rows older than 30 
 
 | Namespace | TTL | Invalidated By |
 |---|---|---|
-| `dashboard` | 60s | Data loads |
+| `dashboard` | 60-600s by endpoint | Data loads |
 | `accuracy` | 300s | Data loads, forecast loads |
 | `inventory` | 180s | Data loads |
 | `inv_planning` | 300s | MV refreshes |
 | `control_tower` | 120s | MV refreshes |
+
+## Hot Analytics Pattern
+
+Read-heavy analytical GET endpoints use two controls together:
+
+1. `@cached_sync(...)` or `@cached_async(...)` caches repeated identical requests.
+2. `get_read_only_conn()` or `get_async_read_only_conn()` routes stale-tolerant reads to the
+   read replica when `READ_REPLICA_URL` is configured, falling back to primary otherwise.
+
+The canonical sync examples are the Dashboard endpoints in `api/routers/core/dashboard.py`
+and Forecast Accuracy endpoints in `api/routers/forecasting/accuracy.py`. The pre-commit
+AI check enforces that these hot routers keep `@cached_sync(...)` and `get_read_only_conn()`
+together, with only `/dashboard/planning-date` intentionally uncached because it exposes the
+current planning/system-date comparison.
 
 ## Configuration
 
@@ -118,7 +132,7 @@ database.
 | Decorator | For | Notes |
 |---|---|---|
 | `@cached(ttl, group)` | Async route handlers | Original async-only decorator. |
-| `@cached_sync(ttl, group)` | Sync FastAPI handlers | Strips `Response` from cache key via `skip_kwargs`. |
+| `@cached_sync(ttl, group)` | Sync FastAPI handlers | Strips `Response` from cache key via `skip_kwargs` and uses backend `get_or_compute()` so Redis-backed deployments get single-flight protection. |
 | `@cached_async(ttl, group)` | `async def` handlers (Item 19 pilot) | Mirrors `cached_sync` but awaits the wrapped coroutine. Used by the customer-analytics package after its async migration. |
 
 ### `reset_cache()` Semantics
