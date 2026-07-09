@@ -86,7 +86,7 @@ Predict future demand using ML models, then select the best forecast per item.
 | 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
 | 30 | [Champion Strategy Sweep](02-forecasting/30-champion-strategy-sweep.md) | Tournament grid over champion-selection strategies (`champion_sweep`, sql/192); winners feed champion experiments |
 | 32 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/32-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
-| 33 | [Forecast Snapshot Archive & Live FVA](02-forecasting/33-forecast-snapshot-archive-fva.md) | **Proposed** - monthly as-of archive of every algorithm's forward forecasts (`record_month`, lags 0-5), separately gated staging cleanup, live snapshot accuracy in FVA |
+| 33 | [Forecast Snapshot Archive & Live FVA](02-forecasting/33-forecast-snapshot-archive-fva.md) | **Proposed** - monthly as-of archive of the champion plus three frozen, WAPE-ranked contenders (`record_month`, lags 0-5), separately gated staging cleanup, live snapshot FVA |
 
 **Reading order:** 01-03 (foundations) → 04-05 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation model) → 19 (pipeline config) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 26 (operational reference)
 
