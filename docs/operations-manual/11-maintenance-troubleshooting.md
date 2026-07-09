@@ -962,6 +962,12 @@ make forecast-staging-clean                                # clean only safely a
 
 For a historical bootstrap, use `make forecast-snapshot-contenders ARGS="--record-month 2026-06 --from-existing-staging"` before archiving. It freezes the roster from the original staged runs and never regenerates forecasts using newer actuals.
 
+The same three steps are available as the named JobManager pipeline
+`forecast-snapshot-bundle` (Jobs API/UI): it selects the contenders, archives the
+four-series snapshot, then cleans only generations older than the planning month
+that pass the reconciliation gate. Use the standalone cleanup job when an
+explicit generation override is required.
+
 ---
 
 ## Read Replica Deployment (Item 24)

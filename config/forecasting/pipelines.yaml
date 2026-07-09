@@ -46,6 +46,17 @@ pipelines:
       - job_type: generate_production_forecast
       - job_type: prepare_forecast_snapshot_contenders
 
+  forecast-snapshot-bundle:
+    description: >-
+      Freeze the top three non-champion contenders, archive the champion-plus-three
+      six-lag snapshot, then clean only staging generations that pass reconciliation.
+      The cleanup step targets generations older than the planning month; use the
+      standalone cleanup job for an explicit generation override.
+    steps:
+      - job_type: prepare_forecast_snapshot_contenders
+      - job_type: archive_forecast_snapshot
+      - job_type: cleanup_forecast_staging
+
   full-refresh:
     description: >-
       The whole lifecycle end-to-end: data refresh, feature recompute,

@@ -35,6 +35,9 @@ const MOCK_JOB_TYPES: JobType[] = [
   { type_id: "compute_variability", label: "Demand Variability", description: "", group: "inventory", params_schema: {} },
   { type_id: "compute_demand_signals", label: "Demand Signals", description: "", group: "inventory", params_schema: {} },
   { type_id: "generate_storyboard", label: "Storyboard Exceptions", description: "", group: "ai", params_schema: {} },
+  { type_id: "prepare_forecast_snapshot_contenders", label: "Prepare Forecast Snapshot Contenders", description: "", group: "forecast", params_schema: {} },
+  { type_id: "archive_forecast_snapshot", label: "Archive Forecast Snapshot", description: "", group: "forecast", params_schema: {} },
+  { type_id: "cleanup_forecast_staging", label: "Clean Forecast Staging", description: "", group: "forecast", params_schema: {} },
 ];
 
 const storage = new Map<string, string>();
@@ -62,7 +65,7 @@ describe("PipelineBuilderPanel", () => {
   it("renders collapsed by default with bundle count badge", () => {
     render(<PipelineBuilderPanel jobTypes={MOCK_JOB_TYPES} onSubmit={onSubmit} />);
     expect(screen.getByText("Pipeline Builder")).toBeDefined();
-    expect(screen.getByText("8 bundles")).toBeDefined();
+    expect(screen.getByText("9 bundles")).toBeDefined();
     expect(screen.queryByText("Delta Data Load")).toBeNull();
   });
 
@@ -73,13 +76,29 @@ describe("PipelineBuilderPanel", () => {
     expect(screen.getByText("Forecast Feature Prep")).toBeDefined();
     expect(screen.getByText("Core Tree Backtests")).toBeDefined();
     expect(screen.getByText("Inventory Refresh")).toBeDefined();
+    expect(screen.getByText("Forecast Snapshot Archive")).toBeDefined();
+  });
+
+  it("submits the forecast snapshot selection, archive, and cleanup bundle", () => {
+    render(<PipelineBuilderPanel jobTypes={MOCK_JOB_TYPES} onSubmit={onSubmit} />);
+    expandPanel();
+    const bundle = screen.getByText("Forecast Snapshot Archive").closest("div.rounded-md")!;
+    fireEvent.click(bundle.querySelector("button")!);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const call = onSubmit.mock.calls[0][0];
+    expect(call.label).toBe("Forecast Snapshot Archive");
+    expect(call.steps.map((step: { type: string }) => step.type)).toEqual([
+      "prepare_forecast_snapshot_contenders",
+      "archive_forecast_snapshot",
+      "cleanup_forecast_staging",
+    ]);
   });
 
   it("calls onSubmit with correct steps when a default bundle Run button is clicked", () => {
     render(<PipelineBuilderPanel jobTypes={MOCK_JOB_TYPES} onSubmit={onSubmit} />);
     expandPanel();
-    const runButtons = screen.getAllByText("Run");
-    fireEvent.click(runButtons[0]); // First bundle: Delta Data Load
+    const bundle = screen.getByText("Delta Data Load").closest("div.rounded-md")!;
+    fireEvent.click(bundle.querySelector("button")!);
     expect(onSubmit).toHaveBeenCalledTimes(1);
     const call = onSubmit.mock.calls[0][0];
     expect(call.label).toBe("Delta Data Load");

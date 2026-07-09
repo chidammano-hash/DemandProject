@@ -18,8 +18,22 @@ from common.services.pipeline_presets import (
 class TestPresetConfig:
     def test_expected_presets_exist(self):
         presets = load_pipeline_presets()
-        for name in ("data-refresh", "model-refresh", "forecast-publish", "full-refresh"):
+        for name in (
+            "data-refresh",
+            "model-refresh",
+            "forecast-publish",
+            "forecast-snapshot-bundle",
+            "full-refresh",
+        ):
             assert name in presets, f"missing preset {name}"
+
+    def test_snapshot_bundle_selects_archives_then_cleans(self):
+        steps = preset_steps(get_pipeline_preset("forecast-snapshot-bundle"))
+        assert [step["job_type"] for step in steps] == [
+            "prepare_forecast_snapshot_contenders",
+            "archive_forecast_snapshot",
+            "cleanup_forecast_staging",
+        ]
 
     def test_every_step_job_type_is_registered(self):
         for name, preset in load_pipeline_presets().items():

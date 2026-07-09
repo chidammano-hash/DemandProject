@@ -46,6 +46,18 @@ function getBundleStorage(): Storage | null {
 
 const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
   {
+    id: "forecast_snapshot_bundle",
+    label: "Forecast Snapshot Archive",
+    description: "Select the top three contenders, archive six lags for champion plus contenders, then clean reconciled staging.",
+    steps: [
+      { type: "prepare_forecast_snapshot_contenders", params: {} },
+      { type: "archive_forecast_snapshot", params: {} },
+      { type: "cleanup_forecast_staging", params: {} },
+    ],
+    estimatedMinutes: 30,
+    source: "default",
+  },
+  {
     id: "delta_data_load",
     label: "Delta Data Load",
     description: "Incremental ETL refresh using source-change detection.",

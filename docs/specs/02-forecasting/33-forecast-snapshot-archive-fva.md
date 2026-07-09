@@ -187,6 +187,10 @@ The normal champion-generation job remains responsible for the operational plan.
   With `ON CONFLICT DO NOTHING` this step is an idempotent no-op when the month-close run already archived, and a no-op on empty staging.
 - Belt-and-suspenders cron: `default_schedules` entry `forecast_snapshot_monthly` (cron `0 4 3 * *`, the 3rd at 04:00, after month-open actuals loads; `enabled: false` initially).
 - Manual trigger: Jobs tab, or `make forecast-archive ARGS="--record-month 2026-06"`.
+- Named bundle: `forecast-snapshot-bundle` runs contender selection, archive, and
+  reconciliation-gated cleanup in that order. Its cleanup step targets generations
+  older than the planning month; use the standalone cleanup job for an explicit
+  `--generation` override.
 
 ### 4.4 Sizing (June 2026 reference population)
 
