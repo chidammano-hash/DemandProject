@@ -7,6 +7,8 @@ import {
   purgeJobs,
   submitJob,
   type Job,
+  type PurgeFilter,
+  type SubmitJobRequest,
 } from "@/api/queries/integration";
 import type { ScanResult } from "@/api/queries/integration_chain";
 import { DomainSelector } from "@/components/integration/DomainSelector";
@@ -17,9 +19,20 @@ import { ScanPanel } from "@/components/integration/ScanPanel";
 import { ChainComposer } from "@/components/integration/ChainComposer";
 import { ChainProgress } from "@/components/integration/ChainProgress";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 type Mode = "onetime" | "delta" | "file";
 type Feedback = { type: "success" | "error"; msg: string } | null;
+type PendingSubmit = {
+  request: SubmitJobRequest;
+  target: string;
+  targetList: string;
+  hasCascade: boolean;
+};
+type PendingPurge = {
+  label: string;
+  filter: PurgeFilter;
+};
 
 const ACTIVE_STATUSES: ReadonlyArray<Job["status"]> = ["queued", "running"];
 
@@ -36,6 +49,8 @@ export default function IntegrationTab(): JSX.Element {
   // "all" = drop every terminal job; otherwise N = drop jobs older than N days
   const [purgeOlderDays, setPurgeOlderDays] = useState<"all" | number>("all");
   const [reindex, setReindex] = useState<boolean>(false);
+  const [pendingSubmit, setPendingSubmit] = useState<PendingSubmit | null>(null);
+  const [pendingPurge, setPendingPurge] = useState<PendingPurge | null>(null);
 
   const domainsQuery = useQuery({
     queryKey: integrationKeys.domains,
@@ -118,26 +133,55 @@ export default function IntegrationTab(): JSX.Element {
   const handleSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
     if (submitDisabled) return;
-    let confirmDestructive = false;
-    if (mode === "onetime") {
-      const targetList = cascadeTargets.length > 0 ? cascadeTargets.join(", ") : "the target table";
-      const ok = window.confirm(
-        `One-time reload will TRUNCATE ${selectedDomainInfo?.name ?? domain}` +
-          (cascadeTargets.length > 0
-            ? ` and CASCADE-truncate: ${targetList}.\n\nAll rows in those fact tables will be lost. Continue?`
-            : `.\n\nAll rows will be replaced. Continue?`),
-      );
-      if (!ok) return;
-      confirmDestructive = cascadeTargets.length > 0;
-    }
-    setFeedback(null);
-    submitMutation.mutate({
+    const request: SubmitJobRequest = {
       domain,
       mode,
       ...(sliceRequired ? { slice: slice.trim() } : {}),
-      ...(confirmDestructive ? { confirm_destructive: true } : {}),
       ...(reindex ? { reindex: true } : {}),
+    };
+    if (mode === "onetime") {
+      const targetList = cascadeTargets.length > 0 ? cascadeTargets.join(", ") : "the target table";
+      setPendingSubmit({
+        request: {
+          ...request,
+          ...(cascadeTargets.length > 0 ? { confirm_destructive: true } : {}),
+        },
+        target: selectedDomainInfo?.name ?? domain,
+        targetList,
+        hasCascade: cascadeTargets.length > 0,
+      });
+      return;
+    }
+    setFeedback(null);
+    submitMutation.mutate(request);
+  };
+
+  const handleConfirmedSubmit = (): void => {
+    if (!pendingSubmit) return;
+    setFeedback(null);
+    submitMutation.mutate(pendingSubmit.request);
+    setPendingSubmit(null);
+  };
+
+  const handlePurgeRequest = (): void => {
+    const label =
+      purgeOlderDays === "all"
+        ? "all terminal jobs"
+        : `terminal jobs older than ${purgeOlderDays} day${purgeOlderDays === 1 ? "" : "s"}`;
+    setPendingPurge({
+      label,
+      filter:
+        purgeOlderDays === "all"
+          ? {}
+          : { older_than_hours: purgeOlderDays * 24 },
     });
+  };
+
+  const handleConfirmedPurge = (): void => {
+    if (!pendingPurge) return;
+    setFeedback(null);
+    purgeMutation.mutate(pendingPurge.filter);
+    setPendingPurge(null);
   };
 
   return (
@@ -342,19 +386,7 @@ export default function IntegrationTab(): JSX.Element {
             </select>
             <button
               type="button"
-              onClick={() => {
-                const ageSummary =
-                  purgeOlderDays === "all"
-                    ? "ALL recent (terminal)"
-                    : `terminal jobs older than ${purgeOlderDays} day${purgeOlderDays === 1 ? "" : "s"}`;
-                if (window.confirm(`Clear ${ageSummary} jobs? Queued/running jobs are preserved.`)) {
-                  purgeMutation.mutate(
-                    purgeOlderDays === "all"
-                      ? {}
-                      : { older_than_hours: purgeOlderDays * 24 },
-                  );
-                }
-              }}
+              onClick={handlePurgeRequest}
               disabled={purgeMutation.isPending}
               className="rounded-md border border-border px-2 py-1 text-xs text-foreground/80 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               title="Delete terminal jobs (success / failed / skipped) matching the age filter"
@@ -366,6 +398,47 @@ export default function IntegrationTab(): JSX.Element {
       >
         <JobHistoryTable jobs={recentJobs} emptyMessage="No recent jobs." />
       </CollapsibleSection>
+
+      <ConfirmDialog
+        open={pendingSubmit != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingSubmit(null);
+        }}
+        title="Confirm one-time reload"
+        description={
+          pendingSubmit?.hasCascade
+            ? "This reload truncates the selected domain and cascades into dependent fact tables."
+            : "This reload replaces every row in the selected domain table."
+        }
+        tone="destructive"
+        confirmLabel="Submit one-time reload"
+        pendingLabel="Submitting..."
+        isPending={submitMutation.isPending}
+        details={[
+          { label: "Domain", value: pendingSubmit?.target ?? "" },
+          { label: "Affected tables", value: pendingSubmit?.targetList ?? "" },
+          { label: "Running jobs", value: "Queued and running jobs are not cancelled automatically." },
+        ]}
+        onConfirm={handleConfirmedSubmit}
+      />
+
+      <ConfirmDialog
+        open={pendingPurge != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingPurge(null);
+        }}
+        title="Clear job history?"
+        description="Only terminal integration jobs are deleted. Queued and running jobs are preserved server-side."
+        tone="destructive"
+        confirmLabel="Clear jobs"
+        pendingLabel="Clearing..."
+        isPending={purgeMutation.isPending}
+        details={[
+          { label: "Scope", value: pendingPurge?.label ?? "" },
+          { label: "Preserved", value: "Queued and running jobs" },
+        ]}
+        onConfirm={handleConfirmedPurge}
+      />
     </div>
   );
 }

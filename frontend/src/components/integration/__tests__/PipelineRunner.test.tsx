@@ -58,24 +58,25 @@ describe("PipelineRunner", () => {
   });
 
   it("requires confirmation for a destructive full reload", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderRunner();
     fireEvent.change(screen.getByLabelText("Pipeline mode"), {
       target: { value: "full" },
     });
     fireEvent.click(screen.getByRole("button", { name: /run pipeline/i }));
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(
+      screen.getByRole("dialog", { name: /run full pipeline reload/i }),
+    ).toBeInTheDocument();
     expect(mockedRun).not.toHaveBeenCalled();
   });
 
   it("submits a full reload once confirmed, passing parallel", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderRunner();
     fireEvent.change(screen.getByLabelText("Pipeline mode"), {
       target: { value: "full" },
     });
     fireEvent.click(screen.getByLabelText("Parallel"));
     fireEvent.click(screen.getByRole("button", { name: /run pipeline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run full reload/i }));
     await waitFor(() => expect(mockedRun).toHaveBeenCalledTimes(1));
     expect(mockedRun.mock.calls[0][0]).toEqual({ mode: "full", parallel: true });
   });

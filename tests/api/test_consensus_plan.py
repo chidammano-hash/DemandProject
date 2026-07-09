@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import patch
 import httpx
 from httpx import ASGITransport
+from common.core.planning_date import get_planning_date
 from tests.api.conftest import make_pool as _make_pool
 
 
@@ -72,6 +73,11 @@ def _override_row(
         estimated_impact_value,
         currency,
     )
+
+
+def _current_planning_month_window() -> tuple[str, str]:
+    month_start = get_planning_date().replace(day=1)
+    return month_start.isoformat(), month_start.replace(day=28).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +182,7 @@ async def test_submit_override_auto_approved():
     """Small override (no threshold breach) → auto-approved."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (1, "approved", False, 30.0, 150.0)  # RETURNING
+    override_month, override_valid_to = _current_planning_month_window()
 
     with patch("api.core._get_pool", return_value=pool), \
          patch("api.routers.forecasting.consensus_plan.record_override_approval") as mock_ledger, \
@@ -188,13 +195,13 @@ async def test_submit_override_auto_approved():
                 json={
                     "item_id": "100320",
                     "loc": "1401-BULK",
-                    "override_month": "2026-05-01",
+                    "override_month": override_month,
                     "override_type": "PROMO",
                     "override_multiplier": 1.05,
                     "override_reason": "Small promo lift",
                     "created_by": "planner1",
-                    "valid_from": "2026-05-01",
-                    "valid_to": "2026-05-31",
+                    "valid_from": override_month,
+                    "valid_to": override_valid_to,
                     "statistical_qty": 400.0,
                 },
             )
@@ -211,6 +218,7 @@ async def test_submit_override_requires_approval():
     """Large uplift → requires_approval=True."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (2, "pending_approval", True, 500.0, 2500.0)
+    override_month, override_valid_to = _current_planning_month_window()
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -221,13 +229,13 @@ async def test_submit_override_requires_approval():
                 json={
                     "item_id": "100320",
                     "loc": "1401-BULK",
-                    "override_month": "2026-05-01",
+                    "override_month": override_month,
                     "override_type": "PROMO",
                     "override_multiplier": 2.0,  # 100% uplift > 20% threshold
                     "override_reason": "Major promo event",
                     "created_by": "planner2",
-                    "valid_from": "2026-05-01",
-                    "valid_to": "2026-05-31",
+                    "valid_from": override_month,
+                    "valid_to": override_valid_to,
                     "statistical_qty": 400.0,
                 },
             )

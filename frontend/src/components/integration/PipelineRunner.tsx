@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { runPipeline, type PipelineMode } from "@/api/queries/integration";
 import { fetchJobDetail } from "@/api/queries/jobs";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
@@ -16,6 +17,7 @@ export function PipelineRunner(): JSX.Element {
   const [parallel, setParallel] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmFullReload, setConfirmFullReload] = useState(false);
 
   const jobQuery = useQuery({
     queryKey: ["integration", "pipeline-job", jobId],
@@ -37,16 +39,16 @@ export function PipelineRunner(): JSX.Element {
       setError(err instanceof Error ? err.message : "Failed to start pipeline"),
   });
 
+  function runSelectedMode(): void {
+    mutation.mutate({ mode, parallel });
+  }
+
   function handleRun(): void {
-    if (
-      mode === "full" &&
-      !window.confirm(
-        "Full reload wipes and reloads every domain. This is destructive — continue?",
-      )
-    ) {
+    if (mode === "full") {
+      setConfirmFullReload(true);
       return;
     }
-    mutation.mutate({ mode, parallel });
+    runSelectedMode();
   }
 
   const job = jobQuery.data;
@@ -104,6 +106,26 @@ export function PipelineRunner(): JSX.Element {
           ) : null}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmFullReload}
+        onOpenChange={setConfirmFullReload}
+        title="Run full pipeline reload?"
+        description="A full reload clears and reloads every registered domain before refreshing downstream materialized views."
+        tone="destructive"
+        confirmLabel="Run full reload"
+        pendingLabel="Starting..."
+        isPending={mutation.isPending}
+        details={[
+          { label: "Mode", value: "Full reload" },
+          { label: "Parallel", value: parallel ? "Enabled" : "Disabled" },
+          { label: "Impact", value: "All domain tables are reloaded from source files." },
+        ]}
+        onConfirm={() => {
+          setConfirmFullReload(false);
+          runSelectedMode();
+        }}
+      />
     </div>
   );
 }

@@ -7,10 +7,12 @@ Element.prototype.scrollIntoView = vi.fn();
 
 vi.mock("../AppSidebar", () => ({
   NAV_ITEMS: [
-    { key: "commandCenter", label: "Command Center", icon: () => null, section: "command", shortcut: "1" },
+    { key: "commandCenter", label: "Command Center", icon: () => null, section: "tower", shortcut: "1" },
     { key: "aggregateAnalysis", label: "Portfolio", icon: () => null, section: "demand", shortcut: "2" },
     { key: "itemAnalysis", label: "Item Analysis", icon: () => null, section: "demand", shortcut: "3" },
     { key: "invPlanning", label: "Inv. Planning", icon: () => null, section: "supply", shortcut: "4" },
+    { key: "jobs", label: "Jobs", icon: () => null, section: "operations", shortcut: "6" },
+    { key: "integration", label: "Integration", icon: () => null, section: "operations" },
   ],
 }));
 
@@ -47,6 +49,7 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Portfolio")).toBeDefined();
     expect(screen.getByText("Item Analysis")).toBeDefined();
     expect(screen.getByText("Inv. Planning")).toBeDefined();
+    expect(screen.getByText("Jobs")).toBeDefined();
   });
 
   it("shows quick action items", () => {
@@ -123,6 +126,13 @@ describe("CommandPalette", () => {
     expect(screen.getByText("3")).toBeDefined();
   });
 
+  it("maps sidebar sections to user-facing command groups", () => {
+    render(<CommandPalette {...defaultProps} />);
+    expect(screen.getByText("Command")).toBeDefined();
+    expect(screen.getByText("Operations")).toBeDefined();
+    expect(screen.queryByText("tower")).toBeNull();
+  });
+
   it("renders footer hints", () => {
     render(<CommandPalette {...defaultProps} />);
     expect(screen.getByText("to select")).toBeDefined();
@@ -136,5 +146,13 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Toggle dark mode")).toBeDefined();
     // Nav items without "dark" keyword should be gone
     expect(screen.queryByText("Command Center")).toBeNull();
+  });
+
+  it("filters navigation by workflow keywords", () => {
+    render(<CommandPalette {...defaultProps} />);
+    const input = screen.getByLabelText("Search commands");
+    fireEvent.change(input, { target: { value: "etl" } });
+    expect(screen.getByText("Integration")).toBeDefined();
+    expect(screen.queryByText("Portfolio")).toBeNull();
   });
 });

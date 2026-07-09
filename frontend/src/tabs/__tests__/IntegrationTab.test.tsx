@@ -64,8 +64,6 @@ function makeJob(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Onetime mode now triggers a confirm() interstitial; auto-accept in tests.
-  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 describe("IntegrationTab", () => {
@@ -232,7 +230,7 @@ describe("IntegrationTab", () => {
 
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
-    // Default mode = "onetime" — leave it.
+    fireEvent.click(screen.getByRole("radio", { name: /Delta/i }));
     fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
 
     await waitFor(() => {
@@ -243,7 +241,7 @@ describe("IntegrationTab", () => {
     const submitMock = queries.submitJob as ReturnType<typeof vi.fn>;
     expect(submitMock.mock.calls[0][0]).toEqual({
       domain: "sales",
-      mode: "onetime",
+      mode: "delta",
     });
   });
 
@@ -269,6 +267,7 @@ describe("IntegrationTab", () => {
 
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
+    fireEvent.click(screen.getByRole("radio", { name: /Delta/i }));
     fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
 
     await waitFor(() => {
@@ -297,6 +296,7 @@ describe("IntegrationTab", () => {
 
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
+    fireEvent.click(screen.getByRole("radio", { name: /Delta/i }));
     fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
 
     await waitFor(() => {
@@ -510,7 +510,7 @@ describe("IntegrationTab", () => {
     });
   });
 
-  it("shows confirm dialog and includes confirm_destructive in payload for cascading onetime", async () => {
+  it("shows confirm dialog before submitting a one-time reload", async () => {
     const queries = await import("../../api/queries/integration");
     (queries.listDomains as ReturnType<typeof vi.fn>).mockResolvedValue(DOMAINS);
     (queries.listJobs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -535,9 +535,11 @@ describe("IntegrationTab", () => {
     fireEvent.click(screen.getByRole("radio", { name: /one-time/i }));
     fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
 
-    await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalled();
-    });
+    expect(
+      await screen.findByRole("dialog", { name: /confirm one-time reload/i }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /submit one-time reload/i }));
+
     // Sales has no cascade targets so confirm_destructive is NOT sent.
     const submitMock = queries.submitJob as ReturnType<typeof vi.fn>;
     await waitFor(() => expect(submitMock).toHaveBeenCalledTimes(1));

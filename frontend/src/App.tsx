@@ -29,6 +29,7 @@ import {
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
+import { OperationsStatusBar } from "@/components/OperationsStatusBar";
 import { Toaster } from "@/components/Toaster";
 
 // ---------------------------------------------------------------------------
@@ -204,6 +205,7 @@ export default function App() {
             <div className="block px-4 py-2 text-center text-xs text-muted-foreground bg-muted/50 border-b border-border/30 md:hidden">
               Best experienced on desktop for full analytics
             </div>
+            <OperationsStatusBar activeTab={activeTab} onNavigate={handleTabSwitch} />
             {/* Tab content */}
             <div id="tab-content" role="tabpanel" aria-label={`${activeTab} tab content`} className="flex-1 overflow-y-auto p-4 md:p-6">
               <div className="mx-auto max-w-[1600px]">

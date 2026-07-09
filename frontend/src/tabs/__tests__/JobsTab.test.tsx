@@ -64,6 +64,7 @@ vi.mock("lucide-react", () => {
     Repeat: Stub, X: Stub, Sparkles: Stub, Package: Stub, Boxes: Stub,
     Play: Stub, Plus: Stub, ArrowRight: Stub, ScrollText: Stub,
     Database: Stub, FilterX: Stub, AlertTriangle: Stub,
+    Save: Stub,
   };
 });
 
@@ -276,7 +277,8 @@ describe("JobsTab", () => {
     // Expand the panel
     fireEvent.click(screen.getByText("Pipeline Builder").closest("button")!);
     await waitFor(() => {
-      expect(screen.getByText("Full S&OP Refresh")).toBeDefined();
+      expect(screen.getByText("Delta Data Load")).toBeDefined();
+      expect(screen.getByText("Full Data Load")).toBeDefined();
       expect(screen.getByText("Inventory Refresh")).toBeDefined();
       expect(screen.getByText("Weekly Data Refresh")).toBeDefined();
     });

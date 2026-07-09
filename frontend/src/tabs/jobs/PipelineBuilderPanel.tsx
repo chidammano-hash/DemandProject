@@ -31,6 +31,19 @@ interface PipelineBundle {
 
 const CUSTOM_BUNDLES_STORAGE_KEY = "demandProject.pipelineBuilder.customBundles.v1";
 
+function getBundleStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  const storage = window.localStorage;
+  if (
+    !storage ||
+    typeof storage.getItem !== "function" ||
+    typeof storage.setItem !== "function"
+  ) {
+    return null;
+  }
+  return storage;
+}
+
 const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
   {
     id: "delta_data_load",
@@ -133,9 +146,10 @@ const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
 ];
 
 function loadCustomBundles(): PipelineBundle[] {
-  if (typeof window === "undefined") return [];
+  const storage = getBundleStorage();
+  if (!storage) return [];
   try {
-    const raw = window.localStorage.getItem(CUSTOM_BUNDLES_STORAGE_KEY);
+    const raw = storage.getItem(CUSTOM_BUNDLES_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -161,8 +175,13 @@ function loadCustomBundles(): PipelineBundle[] {
 }
 
 function saveCustomBundles(bundles: PipelineBundle[]): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(CUSTOM_BUNDLES_STORAGE_KEY, JSON.stringify(bundles));
+  const storage = getBundleStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(CUSTOM_BUNDLES_STORAGE_KEY, JSON.stringify(bundles));
+  } catch {
+    // Storage can be disabled or quota-limited; custom bundles still work in memory.
+  }
 }
 
 // ---------------------------------------------------------------------------
