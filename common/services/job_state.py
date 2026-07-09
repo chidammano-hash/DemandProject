@@ -785,6 +785,7 @@ def _run_generate_production_forecast(
     """Run the production forecast generation pipeline (F1.1)."""
     horizon = params.get("horizon")
     model_id = params.get("model_id")
+    run_id = params.get("run_id")
     # Tri-state: None → use the script/config default; True/False → force on/off.
     confidence_intervals = params.get("confidence_intervals")
     if progress_cb:
@@ -795,6 +796,8 @@ def _run_generate_production_forecast(
         cmd.extend(["--horizon", str(horizon)])
     if model_id:
         cmd.extend(["--model-id", str(model_id)])
+    if run_id:
+        cmd.extend(["--run-id", str(run_id)])
     if confidence_intervals is True:
         cmd.append("--confidence-intervals")
     elif confidence_intervals is False:
@@ -805,9 +808,80 @@ def _run_generate_production_forecast(
         progress_cb(pct=100, msg="Production forecast generation complete")
     return {
         "horizon": horizon,
+        "run_id": run_id,
         "confidence_intervals": confidence_intervals,
         "output_log": output if output else "Production forecast generation completed",
     }
+
+
+def _run_prepare_forecast_snapshot_contenders(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Freeze the top-three live-FVA roster and generate its six-lag forecasts."""
+    cmd = [_UV, "run", "python", str(_SCRIPTS_DIR / "forecasting" / "prepare_forecast_snapshot_contenders.py")]
+    if params.get("record_month"):
+        cmd.extend(["--record-month", str(params["record_month"])])
+    if params.get("dry_run"):
+        cmd.append("--dry-run")
+    if params.get("from_existing_staging"):
+        cmd.append("--from-existing-staging")
+    output = _run_subprocess(
+        cmd,
+        progress_cb,
+        "Preparing forecast snapshot contenders",
+        cancel_event=cancel_event,
+        job_id=job_id,
+    )
+    return {"output_log": output or "Forecast snapshot contenders prepared"}
+
+
+def _run_archive_forecast_snapshot(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Archive the frozen champion-plus-three snapshot before staging overwrite."""
+    cmd = [_UV, "run", "python", str(_SCRIPTS_DIR / "forecasting" / "archive_forecast_snapshot.py")]
+    if params.get("record_month"):
+        cmd.extend(["--record-month", str(params["record_month"])])
+    if params.get("dry_run"):
+        cmd.append("--dry-run")
+    if params.get("overwrite"):
+        cmd.append("--overwrite")
+    output = _run_subprocess(
+        cmd,
+        progress_cb,
+        "Archiving forecast snapshot",
+        cancel_event=cancel_event,
+        job_id=job_id,
+    )
+    return {"output_log": output or "Forecast snapshot archived"}
+
+
+def _run_cleanup_forecast_staging(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Delete staging generations only after their bounded snapshot reconciles."""
+    cmd = [_UV, "run", "python", str(_SCRIPTS_DIR / "forecasting" / "cleanup_forecast_staging.py")]
+    if params.get("generation"):
+        cmd.extend(["--generation", str(params["generation"])])
+    if params.get("dry_run"):
+        cmd.append("--dry-run")
+    output = _run_subprocess(
+        cmd,
+        progress_cb,
+        "Cleaning forecast staging",
+        cancel_event=cancel_event,
+        job_id=job_id,
+    )
+    return {"output_log": output or "Forecast staging cleaned"}
 
 
 def _run_compute_replenishment_plan(

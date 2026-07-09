@@ -12,7 +12,6 @@ import csv
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
@@ -23,6 +22,7 @@ from api.core import get_conn
 from common.ai.decision_ledger import DecisionRecord, append_decision
 from common.ai.lineage import emit_event as emit_lineage_event
 from common.core.constants import CHAMPION_MODEL_ID
+from common.core.planning_date import get_planning_date
 from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 
@@ -995,7 +995,7 @@ def promote_model(
     is recorded to the AI decision ledger.
     """
     is_champion = model_id == CHAMPION_MODEL_ID
-    plan_version = datetime.now(UTC).strftime("%Y-%m")
+    plan_version = get_planning_date().strftime("%Y-%m")
     run_id_str = str(uuid.uuid4())
     champion_experiment_id: int | None = None
 

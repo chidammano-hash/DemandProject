@@ -1843,6 +1843,8 @@ def main() -> None:
                         help="Preview without writing to DB")
     parser.add_argument("--model-id", type=str, default=None,
                         help="Override model_id (default: champion assignment per DFU)")
+    parser.add_argument("--run-id", type=str, default=None,
+                        help="Use this UUID for staging lineage (default: generate a new UUID)")
     parser.add_argument("--plan-version", type=str, default=None,
                         help="Override plan version label (e.g. '2026-02'). Defaults to current month.")
     parser.add_argument("--max-dfus", type=int, default=None,
@@ -1871,7 +1873,13 @@ def main() -> None:
 
     plan_version = args.plan_version or get_planning_date().strftime(config["plan_version"]["format"])
     forecast_month_generated = get_planning_date().replace(day=1)
-    run_id = str(uuid.uuid4())
+    if args.run_id:
+        try:
+            run_id = str(uuid.UUID(args.run_id))
+        except ValueError as exc:
+            raise SystemExit(f"--run-id must be a UUID: {args.run_id}") from exc
+    else:
+        run_id = str(uuid.uuid4())
 
     item_filter = args.dfu[0] if args.dfu else None
     loc_filter = args.dfu[1] if args.dfu else None

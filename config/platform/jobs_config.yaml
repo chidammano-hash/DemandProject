@@ -8,6 +8,12 @@
 # multiple boots never duplicate it. To stop one, set enabled: false here —
 # deleting it via DELETE /jobs/schedules/{id} only lasts until the next boot.
 default_schedules:
+  - name: forecast_snapshot_monthly
+    job_type: archive_forecast_snapshot
+    enabled: false
+    cron: "0 4 3 * *"
+    params: {}
+    label: "Monthly forecast snapshot archive"
   - name: refresh_all_mvs_nightly       # -> schedule_id sched_default_refresh_all_mvs_nightly
     job_type: refresh_all_mvs           # refreshes EVERY materialized view in dependency order
     enabled: true

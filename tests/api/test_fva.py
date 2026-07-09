@@ -335,3 +335,54 @@ async def test_fva_roi_summary_zeros():
     assert data["total_interventions"] == 0
     assert data["total_estimated_impact"] == 0
     assert data["total_actual_impact"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests — live forecast snapshot archive (Spec 33)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_snapshot_accuracy_requires_record_month():
+    """The live matrix is always scoped to one archived planning month."""
+    pool, _, _ = _make_pool(fetchall_return=[])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/fva/snapshot-accuracy")
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_snapshot_accuracy_returns_champion_and_ranked_contenders():
+    """The API exposes only the frozen four-series archive and common-DFU delta."""
+    rows = [
+        ("champion", "champion", None, 0, datetime.date(2026, 6, 1), 100.0, 100.0, 0.0, 1, None, None, None, None, None, None),
+        ("lgbm_cluster", "contender", 1, 0, datetime.date(2026, 6, 1), 110.0, 100.0, 10.0, 1, 110.0, 100.0, 10.0, 100.0, 0.0, 1),
+    ]
+    pool, _, cursor = _make_pool(fetchall_return=rows)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/fva/snapshot-accuracy", params={"record_month": "2026-06-01"})
+    assert response.status_code == 200
+    data = response.json()
+    assert [row["model_id"] for row in data["rows"]] == ["champion", "lgbm_cluster"]
+    assert data["rows"][1]["contender_rank"] == 1
+    assert data["rows"][1]["fva_vs_champion_pts"] == -10.0
+    sql = cursor.execute.call_args_list[-1].args[0]
+    assert "agg_accuracy_snapshot" in sql
+    assert "forecast_snapshot_roster" in sql
+
+
+@pytest.mark.asyncio
+async def test_snapshot_months_returns_available_archives():
+    pool, _, _ = _make_pool(fetchall_return=[(datetime.date(2026, 6, 1), 2, datetime.date(2026, 7, 1), datetime.datetime(2026, 7, 9, 4, 0, 0))])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/fva/snapshot-months")
+    assert response.status_code == 200
+    assert response.json()["months"][0]["record_month"] == "2026-06-01"
+    assert response.json()["months"][0]["last_refresh_at"] == "2026-07-09T04:00:00"

@@ -1,6 +1,6 @@
 # 33 - Forecast Snapshot Archive & Live FVA
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-07-09
 **Related:** 03-backtest-framework.md, 08-production-forecast.md, 24-candidate-forecast-promotion.md, 32-lag-decomposed-accuracy-leaderboard.md, ../08-integration/07-fva.md, ../07-user-experience/06-backtest-cleanup.md, ../01-foundation/06-execution-lag.md
 
@@ -139,6 +139,7 @@ row             = (record_month, model_id, lag, horizon_months, item_id, loc,
   Accuracy cells can still revise if a month's source file is re-delivered - the API exposes the MV's last-refresh time so the panel can display it.
   If an intra-month incremental sales feed is ever introduced, this rule must be replaced with an explicit load-complete marker *before* that feed ships.
 - KPIs are never stored; the API derives them from summed components via `compute_kpis` (api/core.py): `wape = 100 * sum_abs_error / ABS(sum_actual)`, `accuracy_pct = 100 - wape`, `bias = sum_forecast / sum_actual - 1`, null KPIs when `sum_actual = 0`.
+- The MV stores the refresh statement timestamp as `last_refresh_at` on each materialized row; `/fva/snapshot-months` returns its maximum for the selected record month (NULL when no lag is closed yet).
 - Unique index on `(record_month, model_id, item_id, loc, forecast_month)` backs `REFRESH ... CONCURRENTLY`.
 - Registered in `common/core/mv_refresh.py` `MV_SOURCES` as `agg_accuracy_snapshot: {fact_forecast_snapshot, fact_sales_monthly}` - **Tier 1** (aggregates directly over base tables, like `agg_dfu_naive_scale`), in the same change as the DDL; enforced by `tests/unit/test_mv_refresh.py`.
   Sales loads and archive runs then refresh it automatically via `refresh_for_tables()`.

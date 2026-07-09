@@ -192,7 +192,34 @@ export const fetchSharedViews = async (): Promise<{ views: SharedView[] }> =>
 // ---------------------------------------------------------------------------
 // FVA Tracking (08-07)
 // ---------------------------------------------------------------------------
-export const fvaKeys = { waterfall: (m: number) => ["fva", "waterfall", m], interventions: ["fva", "interventions"], roi: (m: number) => ["fva", "roi", m] } as const;
+export interface FVASnapshotAccuracyRow {
+  model_id: string;
+  snapshot_role: "champion" | "contender";
+  contender_rank: number | null;
+  lag: number;
+  forecast_month: string;
+  n_dfus: number;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  fva_vs_champion_pts: number | null;
+  n_dfus_common: number;
+}
+
+export interface FVASnapshotMonth {
+  record_month: string;
+  closed_lag_count: number;
+  latest_closed_forecast_month: string | null;
+  last_refresh_at: string | null;
+}
+
+export const fvaKeys = {
+  waterfall: (m: number) => ["fva", "waterfall", m],
+  interventions: ["fva", "interventions"],
+  roi: (m: number) => ["fva", "roi", m],
+  snapshotMonths: ["fva", "snapshot-months"],
+  snapshotAccuracy: (recordMonth: string) => ["fva", "snapshot", recordMonth],
+} as const;
 
 export const fetchFVAWaterfall = async (months = 12) =>
   fetchJson(`/fva/waterfall?months=${months}`);
@@ -202,6 +229,12 @@ export const fetchFVAInterventions = async (limit = 50, offset = 0) =>
 
 export const fetchFVAROI = async (months = 12) =>
   fetchJson(`/fva/roi-summary?months=${months}`);
+
+export const fetchFVASnapshotMonths = async (): Promise<{ months: FVASnapshotMonth[] }> =>
+  fetchJson("/fva/snapshot-months");
+
+export const fetchFVASnapshotAccuracy = async (recordMonth: string): Promise<{ record_month: string; rows: FVASnapshotAccuracyRow[] }> =>
+  fetchJson(`/fva/snapshot-accuracy?record_month=${encodeURIComponent(recordMonth)}`);
 
 // ---------------------------------------------------------------------------
 // Reports (08-08)

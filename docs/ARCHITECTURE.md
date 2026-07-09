@@ -606,13 +606,14 @@ erDiagram
 
 `mv_inventory_forecast_monthly`, `mv_inventory_health_score`, `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout`, `mv_network_balance`, `mv_control_tower_kpis`, `mv_supplier_po_performance`, `mv_po_lead_time_analysis`
 
-### Forecasting & Champion (9)
+### Forecasting & Champion (12)
 
-`fact_candidate_forecast`, `fact_production_forecast`, `model_promotion_log`, `fact_replenishment_plan`, `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log`
+`fact_candidate_forecast`, `fact_production_forecast`, `model_promotion_log`, `fact_replenishment_plan`, `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot`, `agg_accuracy_snapshot`
 
 - **`fact_candidate_forecast`** — staging table where all model predictions land before promotion. Grain: item_id + loc + model_id + forecast_month. Tracks forecast_qty, accuracy_pct, wape, bias, backtest_run_id, is_promoted, promoted_at.
 - **`model_promotion_log`** — audit trail for every promotion/demotion event. Tracks model_id, promotion_type (single/champion), plan_version, is_active, dfu_count, total_rows.
 - **`backtest_run`** extended with `is_loaded_to_candidate` and `candidate_loaded_at` columns to track candidate loading state.
+- **`forecast_snapshot_roster` / `fact_forecast_snapshot`** — immutable monthly live-forward archive: one promoted champion plus exactly three WAPE-ranked contender runs, with database-enforced lags 0 through 5. `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
 
 ### AI & Exception Tables
 

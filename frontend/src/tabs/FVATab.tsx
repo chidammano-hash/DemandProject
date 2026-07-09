@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchFVAWaterfall, fetchFVAROI, fetchFVAInterventions, fvaKeys, STALE_PLATFORM } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
+import { SnapshotAccuracyPanel } from "./fva/SnapshotAccuracyPanel";
 
 type FVAStage = {
   stage_id: string;
@@ -178,6 +179,8 @@ export default function FVATab() {
           ))}
         </div>
       </div>
+
+      <SnapshotAccuracyPanel />
 
       {/* Recent Interventions */}
       <div className="rounded-lg border border-border bg-card p-4">

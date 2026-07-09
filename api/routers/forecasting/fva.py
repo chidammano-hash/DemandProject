@@ -1,13 +1,18 @@
 """Forecast Value Added (FVA) & ROI tracking endpoints (Spec 08-07)."""
 from __future__ import annotations
 
-import psycopg
-from fastapi import APIRouter, Query
+import logging
+from datetime import date
 
-from api.core import get_conn
+import psycopg
+from fastapi import APIRouter, HTTPException, Query
+
+from api.core import compute_kpis, get_conn, get_read_only_conn
 from common.core.planning_date import get_planning_date
+from common.services.cache import cached_sync
 
 router = APIRouter(prefix="/fva", tags=["fva"])
+logger = logging.getLogger(__name__)
 
 
 # Each tuple: (stage_id, label, description, default_state, missing_state).
@@ -216,6 +221,161 @@ async def fva_waterfall(
             "ceiling": models.get("ceiling"),
             "models": list(models.values()),
         },
+    }
+
+
+@router.get("/snapshot-accuracy")
+@cached_sync(ttl=300, group="fva_snapshot")
+def snapshot_accuracy(
+    record_month: date = Query(..., description="Archived planning month"),
+    lag: int | None = Query(None, ge=0, le=5, description="Optional snapshot lag"),
+):
+    """Live accuracy for the frozen champion-plus-three archive roster."""
+    sql = """WITH roster AS (
+                   SELECT record_month, model_id, snapshot_role, contender_rank
+                   FROM forecast_snapshot_roster
+                   WHERE record_month = %s
+               ),
+               lag_grid AS (
+                   SELECT r.record_month, r.model_id, r.snapshot_role, r.contender_rank,
+                          l.lag::smallint AS lag,
+                          (r.record_month + (l.lag * INTERVAL '1 month'))::date AS forecast_month
+                   FROM roster r
+                   CROSS JOIN generate_series(0, 5) AS l(lag)
+                   WHERE (%s::smallint IS NULL OR l.lag = %s)
+               ),
+               filtered AS (
+                   SELECT a.record_month, a.model_id, r.snapshot_role, r.contender_rank,
+                          a.lag, a.forecast_month, a.item_id, a.loc,
+                          a.forecast_qty, a.actual_qty, a.abs_error
+                   FROM agg_accuracy_snapshot a
+                   JOIN forecast_snapshot_roster r
+                     ON r.record_month = a.record_month
+                    AND r.model_id = a.model_id
+                   WHERE a.record_month = %s
+                     AND (%s::smallint IS NULL OR a.lag = %s)
+               ),
+               own AS (
+                   SELECT model_id, snapshot_role, contender_rank, lag, forecast_month,
+                          SUM(forecast_qty) AS sum_forecast,
+                          SUM(actual_qty) AS sum_actual,
+                          SUM(abs_error) AS sum_abs_error,
+                          COUNT(DISTINCT (item_id, loc)) AS n_dfus
+                   FROM filtered
+                   GROUP BY model_id, snapshot_role, contender_rank, lag, forecast_month
+               ),
+               common_pairs AS (
+                   SELECT contender.model_id, contender.lag, contender.forecast_month,
+                          SUM(contender.forecast_qty) AS contender_forecast,
+                          SUM(contender.actual_qty) AS common_actual,
+                          SUM(contender.abs_error) AS contender_abs_error,
+                          SUM(champion.forecast_qty) AS champion_forecast,
+                          SUM(champion.abs_error) AS champion_abs_error,
+                          COUNT(*) AS n_dfus_common
+                   FROM filtered contender
+                   JOIN filtered champion
+                     ON champion.model_id = 'champion'
+                    AND champion.lag = contender.lag
+                    AND champion.forecast_month = contender.forecast_month
+                    AND champion.item_id = contender.item_id
+                    AND champion.loc = contender.loc
+                   WHERE contender.model_id <> 'champion'
+                   GROUP BY contender.model_id, contender.lag, contender.forecast_month
+               )
+               SELECT grid.model_id, grid.snapshot_role, grid.contender_rank, grid.lag,
+                      grid.forecast_month, own.sum_forecast, own.sum_actual,
+                      own.sum_abs_error, own.n_dfus, common_pairs.contender_forecast,
+                      common_pairs.common_actual, common_pairs.contender_abs_error,
+                      common_pairs.champion_forecast, common_pairs.champion_abs_error,
+                      common_pairs.n_dfus_common
+               FROM lag_grid grid
+               LEFT JOIN own
+                 ON own.model_id = grid.model_id
+                AND own.lag = grid.lag
+                AND own.forecast_month = grid.forecast_month
+               LEFT JOIN common_pairs
+                 ON common_pairs.model_id = grid.model_id
+                AND common_pairs.lag = grid.lag
+                AND common_pairs.forecast_month = grid.forecast_month
+               ORDER BY CASE WHEN grid.snapshot_role = 'champion' THEN 0 ELSE 1 END,
+                        grid.contender_rank NULLS FIRST, grid.lag, grid.forecast_month"""
+    try:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (record_month, lag, lag, record_month, lag, lag))
+            db_rows = cur.fetchall()
+    except psycopg.Error:
+        logger.exception("Failed to load forecast snapshot accuracy")
+        raise HTTPException(status_code=500, detail="Failed to load forecast snapshot accuracy") from None
+
+    rows = []
+    for row in db_rows:
+        own = compute_kpis(float(row[5] or 0), float(row[6] or 0), float(row[7] or 0), int(row[8] or 0))
+        if row[0] == "champion":
+            delta = 0.0
+            common_count = own["dfu_count"]
+        elif row[14] is None:
+            delta = None
+            common_count = 0
+        else:
+            contender_common = compute_kpis(
+                float(row[9] or 0), float(row[10] or 0), float(row[11] or 0), int(row[14] or 0)
+            )
+            champion_common = compute_kpis(
+                float(row[12] or 0), float(row[10] or 0), float(row[13] or 0), int(row[14] or 0)
+            )
+            contender_accuracy = contender_common["accuracy_pct"]
+            champion_accuracy = champion_common["accuracy_pct"]
+            delta = (
+                round(contender_accuracy - champion_accuracy, 4)
+                if contender_accuracy is not None and champion_accuracy is not None
+                else None
+            )
+            common_count = int(row[14] or 0)
+        rows.append(
+            {
+                "model_id": row[0],
+                "snapshot_role": row[1],
+                "contender_rank": row[2],
+                "lag": int(row[3]),
+                "forecast_month": row[4].isoformat(),
+                "n_dfus": own["dfu_count"],
+                "accuracy_pct": own["accuracy_pct"],
+                "wape": own["wape"],
+                "bias": own["bias"],
+                "fva_vs_champion_pts": delta,
+                "n_dfus_common": common_count,
+            }
+        )
+    return {"record_month": record_month.isoformat(), "rows": rows}
+
+
+@router.get("/snapshot-months")
+@cached_sync(ttl=300, group="fva_snapshot")
+def snapshot_months():
+    """Available snapshot months and their closed-lag coverage."""
+    sql = """SELECT r.record_month, COUNT(DISTINCT a.lag), MAX(a.forecast_month),
+                      MAX(a.last_refresh_at)
+             FROM forecast_snapshot_roster r
+             LEFT JOIN agg_accuracy_snapshot a ON a.record_month = r.record_month
+             GROUP BY r.record_month
+             ORDER BY r.record_month DESC"""
+    try:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            db_rows = cur.fetchall()
+    except psycopg.Error:
+        logger.exception("Failed to load forecast snapshot months")
+        raise HTTPException(status_code=500, detail="Failed to load forecast snapshot months") from None
+    return {
+        "months": [
+            {
+                "record_month": row[0].isoformat(),
+                "closed_lag_count": int(row[1] or 0),
+                "latest_closed_forecast_month": row[2].isoformat() if row[2] else None,
+                "last_refresh_at": row[3].isoformat() if row[3] else None,
+            }
+            for row in db_rows
+        ]
     }
 
 

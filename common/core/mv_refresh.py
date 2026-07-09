@@ -60,6 +60,7 @@ MV_SOURCES: dict[str, frozenset[str]] = {
         {"backtest_lag_archive", "dim_sku", "sku_cluster_assignment", "cluster_experiment"}
     ),
     "agg_dfu_naive_scale": frozenset({"fact_sales_monthly", "fact_external_forecast_monthly"}),
+    "agg_accuracy_snapshot": frozenset({"fact_forecast_snapshot", "fact_sales_monthly"}),
     "mv_fill_rate_monthly": frozenset({"fact_sales_monthly", "dim_sku"}),
     "mv_intramonth_stockout": frozenset({"fact_inventory_snapshot", "dim_sku"}),
     # mv_supplier_performance was retired by sql/143 — mv_supplier_po_performance

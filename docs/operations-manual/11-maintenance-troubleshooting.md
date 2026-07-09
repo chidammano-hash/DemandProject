@@ -609,6 +609,8 @@ TRUNCATE TABLE fact_rebalancing_plan CASCADE;
 TRUNCATE TABLE backtest_lag_archive CASCADE;
 TRUNCATE TABLE fact_external_forecast_monthly CASCADE;
 TRUNCATE TABLE fact_candidate_forecast CASCADE;
+TRUNCATE TABLE fact_forecast_snapshot CASCADE;
+TRUNCATE TABLE forecast_snapshot_roster CASCADE;
 TRUNCATE TABLE backtest_run CASCADE;
 TRUNCATE TABLE model_promotion_log CASCADE;
 TRUNCATE TABLE fact_production_forecast CASCADE;
@@ -946,6 +948,19 @@ make forecast-clean ARGS="--before 2025-01-01 --date-column fcstdate --archive-o
 Accepted date formats: `YYYY-MM-DD`, `YYYY-MM`, `MM/DD/YYYY` (all normalized to month-start).
 
 After any cleanup that affects champion/ceiling rows, re-run `make champion-select`.
+
+### Live Forecast Snapshot Archive
+
+The live FVA archive retains exactly the promoted `champion` plus three frozen, WAPE-ranked contender models for lags 0 through 5. All other staging rows remain disposable.
+
+```bash
+make forecast-snapshot-contenders                         # freeze and generate the three contender runs
+make forecast-archive ARGS="--record-month 2026-06"      # archive champion + contenders (lags 0..5)
+make forecast-staging-clean ARGS="--dry-run"              # verify archive reconciliation before cleanup
+make forecast-staging-clean                                # clean only safely archived old staging generations
+```
+
+For a historical bootstrap, use `make forecast-snapshot-contenders ARGS="--record-month 2026-06 --from-existing-staging"` before archiving. It freezes the roster from the original staged runs and never regenerates forecasts using newer actuals.
 
 ---
 
