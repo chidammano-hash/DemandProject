@@ -23,8 +23,11 @@ def _rows(cur: Any) -> list[dict[str, Any]]:
 def search_skus(pool: Any, query: str, limit: int = 10) -> dict[str, Any]:
     """Resolve a fuzzy item_id search to concrete SKU keys."""
     sql = (
-        "SELECT item_id, customer_group, loc, abc_vol, ml_cluster, variability_class "
-        "FROM dim_sku WHERE item_id ILIKE %s ORDER BY item_id, loc LIMIT %s"
+        "SELECT d.item_id, d.customer_group, d.loc, d.abc_vol, "
+        "ca.ml_cluster, d.variability_class "
+        "FROM dim_sku d "
+        "LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = d.sku_ck "
+        "WHERE d.item_id ILIKE %s ORDER BY d.item_id, d.loc LIMIT %s"
     )
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(sql, [f"%{query}%", int(limit)])
@@ -37,18 +40,20 @@ def fetch_sku_profile(
 ) -> dict[str, Any]:
     """Demand-behaviour profile + classifications + cluster for one SKU."""
     sql = (
-        "SELECT item_id, customer_group, loc, abc_vol, "
-        "demand_mean, demand_std, demand_cv, demand_p50, demand_p90, "
-        "intermittency_ratio, variability_class, "
-        "seasonality_profile, seasonality_strength, is_yearly_seasonal, "
-        "peak_month, trough_month, "
-        "xyz_class, abc_xyz_segment, abc_xyz_service_level, "
-        "execution_lag, ml_cluster, cluster_assignment "
-        "FROM dim_sku WHERE item_id = %s AND loc = %s"
+        "SELECT d.item_id, d.customer_group, d.loc, d.abc_vol, "
+        "d.demand_mean, d.demand_std, d.demand_cv, d.demand_p50, d.demand_p90, "
+        "d.intermittency_ratio, d.variability_class, "
+        "d.seasonality_profile, d.seasonality_strength, d.is_yearly_seasonal, "
+        "d.peak_month, d.trough_month, "
+        "d.xyz_class, d.abc_xyz_segment, d.abc_xyz_service_level, "
+        "d.execution_lag, ca.ml_cluster, d.cluster_assignment "
+        "FROM dim_sku d "
+        "LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = d.sku_ck "
+        "WHERE d.item_id = %s AND d.loc = %s"
     )
     params: list[Any] = [item_id, loc]
     if customer_group:
-        sql += " AND customer_group = %s"
+        sql += " AND d.customer_group = %s"
         params.append(customer_group)
     sql += " LIMIT 1"
     with pool.connection() as conn, conn.cursor() as cur:
@@ -159,17 +164,21 @@ def fetch_sku_cluster_peers(
     pool: Any, item_id: str, customer_group: str, loc: str, limit: int = 10
 ) -> dict[str, Any]:
     """Other SKUs sharing this SKU's ``ml_cluster`` for comparison."""
-    sub_where = "item_id = %s AND loc = %s"
+    sub_where = "d2.item_id = %s AND d2.loc = %s"
     sub_params: list[Any] = [item_id, loc]
     if customer_group:
-        sub_where += " AND customer_group = %s"
+        sub_where += " AND d2.customer_group = %s"
         sub_params.append(customer_group)
     sql = (
-        "SELECT item_id, customer_group, loc, abc_vol, demand_mean, demand_cv, "
-        "variability_class FROM dim_sku WHERE ml_cluster = "
-        "(SELECT ml_cluster FROM dim_sku WHERE " + sub_where + " LIMIT 1) "
-        "AND ml_cluster IS NOT NULL AND NOT (item_id = %s AND loc = %s) "
-        "ORDER BY demand_mean DESC NULLS LAST LIMIT %s"
+        "SELECT d.item_id, d.customer_group, d.loc, d.abc_vol, d.demand_mean, d.demand_cv, "
+        "d.variability_class FROM dim_sku d "
+        "LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = d.sku_ck "
+        "WHERE ca.ml_cluster = "
+        "(SELECT ca2.ml_cluster FROM dim_sku d2 "
+        " LEFT JOIN current_sku_cluster_assignment ca2 ON ca2.sku_ck = d2.sku_ck "
+        " WHERE " + sub_where + " LIMIT 1) "
+        "AND ca.ml_cluster IS NOT NULL AND NOT (d.item_id = %s AND d.loc = %s) "
+        "ORDER BY d.demand_mean DESC NULLS LAST LIMIT %s"
     )
     params = [*sub_params, item_id, loc, int(limit)]
     with pool.connection() as conn, conn.cursor() as cur:

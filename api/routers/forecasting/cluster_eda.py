@@ -60,7 +60,7 @@ def cluster_profile(response: FastAPIResponse):
 
     profile_sql = """
         SELECT
-            s.ml_cluster,
+            ca.ml_cluster,
             COUNT(DISTINCT s.sku_ck)                                          AS n_dfus,
             ROUND(AVG(CASE WHEN f.tothist_dmd > 0
                             THEN f.tothist_dmd END)::numeric, 1)             AS mean_demand,
@@ -71,27 +71,29 @@ def cluster_profile(response: FastAPIResponse):
             ROUND(AVG(f.tothist_dmd)::numeric, 1)                            AS overall_mean,
             ROUND(STDDEV(f.tothist_dmd)::numeric, 1)                         AS demand_std
         FROM dim_sku s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         JOIN fact_sales_monthly f ON s.sku_ck = f.sku_ck
-        WHERE s.ml_cluster IS NOT NULL
-        GROUP BY s.ml_cluster
-        ORDER BY s.ml_cluster
+        WHERE ca.ml_cluster IS NOT NULL
+        GROUP BY ca.ml_cluster
+        ORDER BY ca.ml_cluster
     """
 
     accuracy_sql = """
         SELECT
-            s.ml_cluster,
+            ca.ml_cluster,
             ROUND((100 - 100.0 * SUM(ABS(ef.basefcst_pref - f.tothist_dmd))
                    / NULLIF(ABS(SUM(f.tothist_dmd)), 0))::numeric, 2)       AS accuracy_pct,
             ROUND((SUM(ABS(ef.basefcst_pref - f.tothist_dmd))::float
                    / NULLIF(ABS(SUM(f.tothist_dmd)), 0))::numeric, 4)       AS wape
         FROM dim_sku s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         JOIN fact_sales_monthly f ON s.sku_ck = f.sku_ck
         JOIN fact_external_forecast_monthly ef
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
-        WHERE s.ml_cluster IS NOT NULL
+        WHERE ca.ml_cluster IS NOT NULL
           AND ef.lag = 0
-        GROUP BY s.ml_cluster
-        ORDER BY s.ml_cluster
+        GROUP BY ca.ml_cluster
+        ORDER BY ca.ml_cluster
     """
 
     try:
@@ -188,7 +190,7 @@ def error_concentration(response: FastAPIResponse):
     error_by_cluster_sql = """
         WITH cluster_errs AS (
             SELECT
-                s.ml_cluster,
+                ca.ml_cluster,
                 SUM(ABS(ef.basefcst_pref - f.tothist_dmd)) AS abs_err,
                 SUM(f.tothist_dmd) AS total_actual,
                 SUM(ef.basefcst_pref) AS total_fcst
@@ -196,8 +198,9 @@ def error_concentration(response: FastAPIResponse):
             JOIN fact_sales_monthly f
                  ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
             JOIN dim_sku s ON s.sku_ck = f.sku_ck
-            WHERE ef.lag = 0 AND s.ml_cluster IS NOT NULL
-            GROUP BY s.ml_cluster
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
+            WHERE ef.lag = 0 AND ca.ml_cluster IS NOT NULL
+            GROUP BY ca.ml_cluster
         ),
         totals AS (
             SELECT SUM(abs_err) AS grand_total FROM cluster_errs
@@ -224,6 +227,7 @@ def error_concentration(response: FastAPIResponse):
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.lag = 0
         GROUP BY COALESCE(s.abc_class, 'Unknown')
         ORDER BY abc_class
@@ -289,7 +293,8 @@ def demand_distribution(cluster_id: int, response: FastAPIResponse):
     count_sql = """
         SELECT COUNT(DISTINCT s.sku_ck)
         FROM dim_sku s
-        WHERE s.ml_cluster = %s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
+        WHERE ca.ml_cluster = %s
     """
 
     histogram_sql = """
@@ -306,7 +311,8 @@ def demand_distribution(cluster_id: int, response: FastAPIResponse):
             COUNT(*) AS cnt
         FROM fact_sales_monthly f
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
-        WHERE s.ml_cluster = %s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
+        WHERE ca.ml_cluster = %s
         GROUP BY bucket
         ORDER BY MIN(f.tothist_dmd)
     """
@@ -321,7 +327,8 @@ def demand_distribution(cluster_id: int, response: FastAPIResponse):
             ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY f.tothist_dmd)::numeric, 1)
         FROM fact_sales_monthly f
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
-        WHERE s.ml_cluster = %s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
+        WHERE ca.ml_cluster = %s
     """
 
     top_dfus_sql = """
@@ -332,7 +339,8 @@ def demand_distribution(cluster_id: int, response: FastAPIResponse):
                    / NULLIF(AVG(f.tothist_dmd), 0))::numeric, 2)            AS cv
         FROM fact_sales_monthly f
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
-        WHERE s.ml_cluster = %s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
+        WHERE ca.ml_cluster = %s
         GROUP BY f.sku_ck
         ORDER BY AVG(f.tothist_dmd) DESC
         LIMIT 20
@@ -417,10 +425,11 @@ def residual_analysis(
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.model_id = %s
           AND ef.lag = 0
     """
-    _STATS_CLUSTER = _STATS_BASE + " AND s.ml_cluster = %s"
+    _STATS_CLUSTER = _STATS_BASE + " AND ca.ml_cluster = %s"
 
     _HORIZON_BASE = """
         SELECT
@@ -431,6 +440,7 @@ def residual_analysis(
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.model_id = %s
         GROUP BY ef.lag
         ORDER BY ef.lag
@@ -444,7 +454,8 @@ def residual_analysis(
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
-        WHERE ef.model_id = %s AND s.ml_cluster = %s
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
+        WHERE ef.model_id = %s AND ca.ml_cluster = %s
         GROUP BY ef.lag
         ORDER BY ef.lag
     """
@@ -455,14 +466,15 @@ def residual_analysis(
             ROUND(AVG(ABS(ef.basefcst_pref - f.tothist_dmd))::numeric, 2) AS mean_abs_error,
             ROUND(((SUM(ef.basefcst_pref)::float
                     / NULLIF(SUM(f.tothist_dmd), 0)) - 1)::numeric, 4)    AS bias,
-            s.ml_cluster
+            ca.ml_cluster
         FROM fact_external_forecast_monthly ef
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.model_id = %s
           AND ef.lag = 0
-        GROUP BY ef.sku_ck, s.ml_cluster
+        GROUP BY ef.sku_ck, ca.ml_cluster
         ORDER BY AVG(ABS(ef.basefcst_pref - f.tothist_dmd)) DESC
         LIMIT 20
     """
@@ -472,15 +484,16 @@ def residual_analysis(
             ROUND(AVG(ABS(ef.basefcst_pref - f.tothist_dmd))::numeric, 2) AS mean_abs_error,
             ROUND(((SUM(ef.basefcst_pref)::float
                     / NULLIF(SUM(f.tothist_dmd), 0)) - 1)::numeric, 4)    AS bias,
-            s.ml_cluster
+            ca.ml_cluster
         FROM fact_external_forecast_monthly ef
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.model_id = %s
           AND ef.lag = 0
-          AND s.ml_cluster = %s
-        GROUP BY ef.sku_ck, s.ml_cluster
+          AND ca.ml_cluster = %s
+        GROUP BY ef.sku_ck, ca.ml_cluster
         ORDER BY AVG(ABS(ef.basefcst_pref - f.tothist_dmd)) DESC
         LIMIT 20
     """
@@ -493,18 +506,19 @@ def residual_analysis(
     # Bias by cluster
     bias_sql = """
         SELECT
-            s.ml_cluster,
+            ca.ml_cluster,
             ROUND(((SUM(ef.basefcst_pref)::float
                     / NULLIF(SUM(f.tothist_dmd), 0)) - 1)::numeric, 4) AS bias
         FROM fact_external_forecast_monthly ef
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.model_id = %s
           AND ef.lag = 0
-          AND s.ml_cluster IS NOT NULL
-        GROUP BY s.ml_cluster
-        ORDER BY s.ml_cluster
+          AND ca.ml_cluster IS NOT NULL
+        GROUP BY ca.ml_cluster
+        ORDER BY ca.ml_cluster
     """
 
     try:
@@ -571,7 +585,7 @@ def seasonality_heatmap(response: FastAPIResponse):
 
     sql = """
         SELECT
-            s.ml_cluster,
+            ca.ml_cluster,
             EXTRACT(MONTH FROM f.month_start)::int AS month_num,
             ROUND((SUM(ABS(ef.basefcst_pref - f.tothist_dmd))::float
                    / NULLIF(ABS(SUM(f.tothist_dmd)), 0))::numeric, 2) AS wape
@@ -579,10 +593,11 @@ def seasonality_heatmap(response: FastAPIResponse):
         JOIN fact_sales_monthly f
              ON ef.sku_ck = f.sku_ck AND ef.actual_month = f.month_start
         JOIN dim_sku s ON s.sku_ck = f.sku_ck
+        LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = s.sku_ck
         WHERE ef.lag = 0
-          AND s.ml_cluster IS NOT NULL
-        GROUP BY s.ml_cluster, EXTRACT(MONTH FROM f.month_start)
-        ORDER BY s.ml_cluster, month_num
+          AND ca.ml_cluster IS NOT NULL
+        GROUP BY ca.ml_cluster, EXTRACT(MONTH FROM f.month_start)
+        ORDER BY ca.ml_cluster, month_num
     """
 
     try:

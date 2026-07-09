@@ -234,10 +234,15 @@ def _insert_cluster_month_rows(
     if df.empty:
         return 0, 0
 
-    # Fetch cluster mappings from dim_sku
+    # Fetch cluster mappings from promoted cluster assignments.
     with psycopg.connect(**db_params) as sku_conn:
         with sku_conn.cursor() as sku_cur:
-            sku_cur.execute("SELECT item_id, loc, ml_cluster, cluster_assignment FROM dim_sku")
+            sku_cur.execute("""
+                SELECT d.item_id, d.loc, ca.ml_cluster, d.cluster_assignment
+                FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
+            """)
             sku_rows = sku_cur.fetchall()
 
     sku_df = pd.DataFrame(sku_rows, columns=["item_id", "loc", "ml_cluster", "cluster_assignment"])

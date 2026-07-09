@@ -256,6 +256,67 @@ if [[ -n "$RULE8_OUTPUT" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Rule 9: promoted ML cluster reads must use current_sku_cluster_assignment.
+# dim_sku.ml_cluster is a transition/cache column only; only the assignment
+# persistence and legacy restore/load compatibility paths may write/read it.
+# ---------------------------------------------------------------------------
+echo "[Rule 9] ML cluster reads use current_sku_cluster_assignment"
+RULE9_OUTPUT=$(python3 - <<'PY'
+from __future__ import annotations
+
+from pathlib import Path
+
+allowed = {
+    Path("common/ml/clustering/assignment_store.py"),
+    Path("common/ml/clustering/scenario.py"),
+    Path("scripts/ml/restore_cluster_assignments.py"),
+    Path("scripts/etl/load_dataset_postgres.py"),
+}
+roots = [Path("api"), Path("scripts"), Path("common")]
+tokens = ("d.ml_cluster", "s.ml_cluster", "dim_sku.ml_cluster")
+failures: list[str] = []
+
+for root in roots:
+    if not root.exists():
+        continue
+    for path in root.rglob("*.py"):
+        if path in allowed or "tests" in path.parts:
+            continue
+        try:
+            lines = path.read_text().splitlines()
+        except UnicodeDecodeError:
+            continue
+        for lineno, line in enumerate(lines, start=1):
+            if "current_sku_cluster_assignment" in line:
+                continue
+            if any(token in line for token in tokens):
+                failures.append(
+                    f"{path}:{lineno}: use current_sku_cluster_assignment; "
+                    "dim_sku.ml_cluster is a compatibility cache"
+                )
+            stripped = " ".join(line.lower().split())
+            if (
+                "from dim_sku" in stripped
+                and "ml_cluster" in stripped
+            ):
+                window = "\n".join(lines[max(0, lineno - 4): lineno + 3])
+                if "current_sku_cluster_assignment" not in window:
+                    failures.append(
+                        f"{path}:{lineno}: select ML clusters from current_sku_cluster_assignment"
+                    )
+
+for failure in failures:
+    print(failure)
+PY
+)
+if [[ -n "$RULE9_OUTPUT" ]]; then
+  while IFS= read -r ln; do
+    [[ -z "$ln" ]] && continue
+    violation "$ln"
+  done <<< "$RULE9_OUTPUT"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 if [[ "$FAIL" -gt 0 ]]; then
   echo "BLOCKED: $FAIL new violation(s) of unenforced CLAUDE.md rules."
@@ -263,5 +324,5 @@ if [[ "$FAIL" -gt 0 ]]; then
   echo "         $ALLOW_DIR/ pin EXISTING violations only and are not for new code."
   exit 1
 fi
-echo "OK: no new violations of the 8 CLAUDE.md unenforced rules."
+echo "OK: no new violations of the 9 CLAUDE.md unenforced rules."
 exit 0

@@ -388,10 +388,12 @@ def load_backtest_data(
 
         with conn.cursor() as _cur:
             _cur.execute("""
-                SELECT sku_ck, item_id, customer_group, loc,
-                       execution_lag, total_lt, ml_cluster,
-                       brand, region, abc_vol
-                FROM dim_sku
+                SELECT d.sku_ck, d.item_id, d.customer_group, d.loc,
+                       d.execution_lag, d.total_lt, ca.ml_cluster,
+                       d.brand, d.region, d.abc_vol
+                FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
             """)
             _cols = [d[0] for d in _cur.description]
             dfu_attrs = pd.DataFrame(_cur.fetchall(), columns=_cols)

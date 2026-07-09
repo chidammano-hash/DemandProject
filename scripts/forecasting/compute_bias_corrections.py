@@ -111,16 +111,18 @@ def load_historical_bias_cluster(
     """Load per-cluster bias from backtest_lag_archive for reference months."""
     sql = """
         SELECT
-            d.ml_cluster::TEXT AS segment_value,
+            ca.ml_cluster::TEXT AS segment_value,
             f.startdate        AS plan_month,
             SUM(f.basefcst_pref) AS forecast_sum,
             SUM(f.tothist_dmd)   AS actual_sum
         FROM fact_external_forecast_monthly f
         JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
+        LEFT JOIN current_sku_cluster_assignment ca
+               ON ca.sku_ck = d.sku_ck
         WHERE f.startdate = ANY(%s)
           AND f.lag = 0
           AND f.model_id = 'champion'
-        GROUP BY d.ml_cluster, f.startdate
+        GROUP BY ca.ml_cluster, f.startdate
         HAVING SUM(f.tothist_dmd) > 0
     """
     with conn.cursor() as cur:
@@ -252,7 +254,11 @@ def run(
             cluster_dfu_map: dict[str, list[tuple]] = {}
             if segment == "cluster":
                 with conn.cursor() as cur:
-                    cur.execute("SELECT ml_cluster, item_id, loc FROM dim_sku WHERE ml_cluster IS NOT NULL")
+                    cur.execute("""
+                        SELECT ml_cluster, item_id, loc
+                        FROM current_sku_cluster_assignment
+                        WHERE ml_cluster IS NOT NULL
+                    """)
                     for row in cur.fetchall():
                         cluster_dfu_map.setdefault(str(row[0]), []).append((row[1], row[2]))
 

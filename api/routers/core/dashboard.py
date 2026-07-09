@@ -70,9 +70,10 @@ def get_pipeline_readiness(response: FastAPIResponse):
     Staleness is *derived live* from generation lineage and timestamps —
     there are no stored flags to get stuck. Four checks:
 
-    1. **clustering** — total loss of ``dim_sku.ml_cluster`` assignments. Most
-       SKUs are inactive and legitimately NULL, so only **nothing clustered**
-       is flagged (the state where per-cluster models silently collapse).
+    1. **clustering** — total loss of promoted ``sku_cluster_assignment`` rows.
+       Most SKUs are inactive and legitimately unclustered, so only **nothing
+       clustered** is flagged (the state where per-cluster models silently
+       collapse).
     2. **tuning** — ``cluster_tuning_profile_state`` rows flagged stale by a
        cluster promotion that no tuning run has covered.
     3. **champion** — the promoted champion experiment's
@@ -103,9 +104,10 @@ def get_pipeline_readiness(response: FastAPIResponse):
         # ── Check 1: total loss of cluster assignments ───────────────────────
         try:
             cur.execute(
-                "SELECT COUNT(*) AS total, "
-                "COUNT(*) FILTER (WHERE ml_cluster IS NOT NULL) AS clustered "
-                "FROM dim_sku"
+                "SELECT "
+                "(SELECT COUNT(*) FROM dim_sku) AS total, "
+                "(SELECT COUNT(*) FROM current_sku_cluster_assignment "
+                " WHERE ml_cluster IS NOT NULL) AS clustered"
             )
             total, clustered = cur.fetchone()
         except psycopg.Error:
@@ -122,10 +124,9 @@ def get_pipeline_readiness(response: FastAPIResponse):
                     "severity": "high",
                     "title": "Clustering needs to be re-run",
                     "detail": (
-                        "No SKUs have a cluster assignment, so per-cluster models can't "
-                        "train and will score poorly. This usually means the SKU data was "
-                        "reloaded since clustering last ran. Open Clustering to run and "
-                        "promote a scenario."
+                        "No SKUs have a promoted ML cluster assignment, so per-cluster "
+                        "models can't train and will score poorly. Open Clustering to run "
+                        "and promote a scenario."
                     ),
                     "action": {
                         "kind": "navigate",

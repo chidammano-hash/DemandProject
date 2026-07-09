@@ -215,7 +215,7 @@ def check_champion_cluster_lineage(conn, allow_mismatch: bool = False) -> None:
     The champion's winners CSV and the per-cluster ``.pkl`` artifacts were
     built under the cluster experiment recorded on ``champion_experiment``
     (sql/198). If clustering was re-promoted since, the current
-    ``dim_sku.ml_cluster`` no longer matches that membership and per-cluster
+    promoted ``current_sku_cluster_assignment`` no longer matches that membership and per-cluster
     routing silently degrades. ``--allow-cluster-mismatch`` downgrades the
     failure to a warning.
     """
@@ -266,7 +266,7 @@ def check_champion_cluster_lineage(conn, allow_mismatch: bool = False) -> None:
             f"Champion experiment {champ_id} was computed under cluster experiment "
             f"{champ_cluster_id}, but cluster experiment {current_cluster_id} is now "
             "promoted — winners routing and per-cluster models likely mismatch the "
-            "current dim_sku.ml_cluster. Re-run backtests + champion selection under "
+            "current promoted SKU cluster assignments. Re-run backtests + champion selection under "
             "the new clusters, or pass --allow-cluster-mismatch to override."
         )
         if not allow_mismatch:
@@ -432,12 +432,14 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
             f.loc,
             f.startdate,
             f.source_model_id,
-            d.ml_cluster                AS cluster_id,
+            ca.ml_cluster               AS cluster_id,
             d.customer_group
         FROM fact_external_forecast_monthly f
         JOIN dim_sku d ON d.item_id = f.item_id
                       AND d.customer_group = f.customer_group
                       AND d.loc = f.loc
+        LEFT JOIN current_sku_cluster_assignment ca
+               ON ca.sku_ck = d.sku_ck
         WHERE {where_sql}
         ORDER BY f.item_id, f.loc, f.startdate,
                  f.source_model_id ASC NULLS LAST, f.customer_group
@@ -608,18 +610,21 @@ def load_dfu_attrs(conn, item_id: str | None = None, loc: str | None = None) -> 
     params: list = []
 
     if item_id:
-        where_clauses.append("item_id = %s")
+        where_clauses.append("d.item_id = %s")
         params.append(item_id)
     if loc:
-        where_clauses.append("loc = %s")
+        where_clauses.append("d.loc = %s")
         params.append(loc)
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
     sql = f"""
-        SELECT item_id AS item_id, customer_group, loc, ml_cluster,
-               execution_lag, total_lt, brand, region, abc_vol
-        FROM dim_sku
+        SELECT d.item_id AS item_id, d.customer_group, d.loc,
+               ca.ml_cluster,
+               d.execution_lag, d.total_lt, d.brand, d.region, d.abc_vol
+        FROM dim_sku d
+        LEFT JOIN current_sku_cluster_assignment ca
+               ON ca.sku_ck = d.sku_ck
         {where_sql}
     """
 
@@ -1795,11 +1800,10 @@ def _cluster_assignments_wiped(
     loaded_models: dict[str, dict],
     non_tree_models: set[str],
 ) -> bool:
-    """Detect the ``dim_sku.ml_cluster``-wipe failure mode (fail loud, don't ship garbage).
+    """Detect the promoted-cluster wipe failure mode (fail loud, don't ship garbage).
 
-    Per-cluster tree models partition on ``dim_sku.ml_cluster`` (read into
-    ``champion_df.cluster_id``). A dim_sku reload that recreates rows with
-    ``ml_cluster = NULL`` and does NOT re-apply the clustering assignment makes
+    Per-cluster tree models partition on promoted SKU cluster assignments (read
+    into ``champion_df.cluster_id``). A missing current assignment table/view makes
     ``cluster_id`` NULL for EVERY DFU. The tree path then silently routes every
     DFU to a single arbitrary cluster model (``_resolve_artifact``'s ``min()``
     fallback), so high-volume forecasts collapse to a tiny near-constant value
@@ -1971,15 +1975,15 @@ def main() -> None:
                             "to train and persist model weights, then re-run this script.")
                 return
 
-        # Data-integrity guard: abort if dim_sku.ml_cluster was wiped (every DFU
+        # Data-integrity guard: abort if promoted cluster assignments were wiped (every DFU
         # NULL while per-cluster trees are loaded). Otherwise tree inference would
         # silently collapse high-volume forecasts to a near-constant. Fail loud.
         if _cluster_assignments_wiped(champion_df, loaded_models, non_tree_models):
             raise RuntimeError(
-                "dim_sku.ml_cluster is NULL for every champion DFU while multi-cluster "
+                "current_sku_cluster_assignment is empty for every champion DFU while multi-cluster "
                 "tree models are loaded — per-cluster tree inference would collapse to a "
                 "single arbitrary cluster model (high-volume forecasts crash to a "
-                "near-constant). Restore the cluster assignment first:\n"
+                "near-constant). Restore the promoted cluster assignment first:\n"
                 "  uv run python scripts/ml/restore_cluster_assignments.py"
             )
 

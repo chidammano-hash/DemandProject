@@ -44,52 +44,94 @@ def _validate_scenario_id(scenario_id: str) -> str:
 def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
     """Get cluster summary statistics for DFU clustering.
 
-    source=ml    -> pipeline-generated clusters (ml_cluster column)
+    source=ml    -> promoted ML clusters (current_sku_cluster_assignment)
     source=source -> original source-file clusters (cluster_assignment column)
     """
-    col = "ml_cluster" if source == "ml" else "cluster_assignment"
-    col_id = psycopg_sql.Identifier(col)
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(psycopg_sql.SQL("""
-            WITH cluster_counts AS (
+        if source == "ml":
+            cur.execute("""
+                WITH cluster_counts AS (
+                    SELECT
+                        ml_cluster AS cluster_label,
+                        COUNT(*) AS dfu_count
+                    FROM current_sku_cluster_assignment
+                    WHERE ml_cluster IS NOT NULL AND ml_cluster != ''
+                    GROUP BY ml_cluster
+                ),
+                total AS (
+                    SELECT SUM(dfu_count) AS total_assigned FROM cluster_counts
+                ),
+                cluster_demand AS (
+                    SELECT
+                        ca.ml_cluster AS cluster_label,
+                        AVG(s.qty) AS avg_demand,
+                        CASE
+                            WHEN AVG(s.qty) > 0 THEN COALESCE(STDDEV(s.qty), 0) / AVG(s.qty)
+                            ELSE 0
+                        END AS cv_demand
+                    FROM current_sku_cluster_assignment ca
+                    INNER JOIN dim_sku d ON d.sku_ck = ca.sku_ck
+                    INNER JOIN fact_sales_monthly s
+                        ON s.item_id = d.item_id
+                        AND s.customer_group = d.customer_group
+                        AND s.loc = d.loc
+                    WHERE ca.ml_cluster IS NOT NULL AND ca.ml_cluster != ''
+                        AND s.qty IS NOT NULL
+                    GROUP BY ca.ml_cluster
+                )
                 SELECT
-                    {col} AS cluster_label,
-                    COUNT(*) AS dfu_count
-                FROM dim_sku
-                WHERE {col} IS NOT NULL AND {col} != ''
-                GROUP BY {col}
-            ),
-            total AS (
-                SELECT SUM(dfu_count) AS total_assigned FROM cluster_counts
-            ),
-            cluster_demand AS (
+                    cc.cluster_label,
+                    cc.dfu_count,
+                    ROUND(cc.dfu_count * 100.0 / t.total_assigned, 2) AS pct_of_total,
+                    COALESCE(cd.avg_demand, 0) AS avg_demand,
+                    COALESCE(cd.cv_demand, 0) AS cv_demand
+                FROM cluster_counts cc
+                CROSS JOIN total t
+                LEFT JOIN cluster_demand cd ON cd.cluster_label = cc.cluster_label
+                ORDER BY cc.dfu_count DESC
+            """)
+        else:
+            col_id = psycopg_sql.Identifier("cluster_assignment")
+            cur.execute(psycopg_sql.SQL("""
+                WITH cluster_counts AS (
+                    SELECT
+                        {col} AS cluster_label,
+                        COUNT(*) AS dfu_count
+                    FROM dim_sku
+                    WHERE {col} IS NOT NULL AND {col} != ''
+                    GROUP BY {col}
+                ),
+                total AS (
+                    SELECT SUM(dfu_count) AS total_assigned FROM cluster_counts
+                ),
+                cluster_demand AS (
+                    SELECT
+                        d.{col} AS cluster_label,
+                        AVG(s.qty) AS avg_demand,
+                        CASE
+                            WHEN AVG(s.qty) > 0 THEN COALESCE(STDDEV(s.qty), 0) / AVG(s.qty)
+                            ELSE 0
+                        END AS cv_demand
+                    FROM dim_sku d
+                    INNER JOIN fact_sales_monthly s
+                        ON s.item_id = d.item_id
+                        AND s.customer_group = d.customer_group
+                        AND s.loc = d.loc
+                    WHERE d.{col} IS NOT NULL AND d.{col} != ''
+                        AND s.qty IS NOT NULL
+                    GROUP BY d.{col}
+                )
                 SELECT
-                    d.{col} AS cluster_label,
-                    AVG(s.qty) AS avg_demand,
-                    CASE
-                        WHEN AVG(s.qty) > 0 THEN COALESCE(STDDEV(s.qty), 0) / AVG(s.qty)
-                        ELSE 0
-                    END AS cv_demand
-                FROM dim_sku d
-                INNER JOIN fact_sales_monthly s
-                    ON s.item_id = d.item_id
-                    AND s.customer_group = d.customer_group
-                    AND s.loc = d.loc
-                WHERE d.{col} IS NOT NULL AND d.{col} != ''
-                    AND s.qty IS NOT NULL
-                GROUP BY d.{col}
-            )
-            SELECT
-                cc.cluster_label,
-                cc.dfu_count,
-                ROUND(cc.dfu_count * 100.0 / t.total_assigned, 2) AS pct_of_total,
-                COALESCE(cd.avg_demand, 0) AS avg_demand,
-                COALESCE(cd.cv_demand, 0) AS cv_demand
-            FROM cluster_counts cc
-            CROSS JOIN total t
-            LEFT JOIN cluster_demand cd ON cd.cluster_label = cc.cluster_label
-            ORDER BY cc.dfu_count DESC
-        """).format(col=col_id))
+                    cc.cluster_label,
+                    cc.dfu_count,
+                    ROUND(cc.dfu_count * 100.0 / t.total_assigned, 2) AS pct_of_total,
+                    COALESCE(cd.avg_demand, 0) AS avg_demand,
+                    COALESCE(cd.cv_demand, 0) AS cv_demand
+                FROM cluster_counts cc
+                CROSS JOIN total t
+                LEFT JOIN cluster_demand cd ON cd.cluster_label = cc.cluster_label
+                ORDER BY cc.dfu_count DESC
+            """).format(col=col_id))
         rows = cur.fetchall()
 
         clusters = []
@@ -464,7 +506,7 @@ def get_clustering_scenario(scenario_id: str):
 
 @router.post("/clustering/scenario/{scenario_id}/promote", dependencies=[Depends(require_api_key)])
 def promote_clustering_scenario(scenario_id: str):
-    """Promote a scenario to production (updates dim_sku.ml_cluster)."""
+    """Promote a scenario to production (writes sku_cluster_assignment)."""
     _validate_scenario_id(scenario_id)
     from scripts.ml.run_clustering_scenario import promote_scenario
 

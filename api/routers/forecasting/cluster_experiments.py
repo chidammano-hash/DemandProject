@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
+from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables
 from common.core.sql_helpers import parse_db_json as _parse_json
 
 logger = logging.getLogger(__name__)
@@ -806,7 +808,7 @@ def promote_experiment(experiment_id: int):
     """Promote a completed cluster experiment to production.
 
     Verifies status='completed', clears previous is_promoted flags,
-    calls promote_scenario() to update dim_sku.ml_cluster, then sets
+    calls promote_scenario() to write sku_cluster_assignment, then sets
     is_promoted=TRUE and promoted_at=NOW() on this experiment.
     """
     # Fetch the experiment
@@ -876,6 +878,16 @@ def promote_experiment(experiment_id: int):
     except Exception:
         logger.exception("Failed to update promotion flags for experiment %d", experiment_id)
         raise HTTPException(status_code=500, detail="Promotion succeeded but flag update failed")
+
+    try:
+        refresh_for_tables(
+            ["sku_cluster_assignment"],
+            db_params=get_db_params(),
+            include_heavy=False,
+        )
+    except Exception:
+        logger.exception("Failed to refresh cluster-assignment dependent MVs")
+        raise HTTPException(status_code=500, detail="Promotion succeeded but refresh failed")
 
     dfus_updated = result.get("dfus_updated", 0) if isinstance(result, dict) else 0
 

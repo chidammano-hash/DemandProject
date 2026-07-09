@@ -1074,7 +1074,7 @@ def promote_model(
             # Generation-lineage gate (sql/198): refuse when clustering was
             # re-promoted AFTER this champion experiment ran — the winners CSV
             # and per-cluster model artifacts would route against a different
-            # dim_sku.ml_cluster membership than the one currently live.
+            # promoted SKU cluster membership than the one currently live.
             cur.execute(
                 """
                 SELECT 1 FROM information_schema.columns

@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 
 from common.core.db import get_db_params
-from common.core.mv_refresh import refresh_for_tables
+from common.ml.clustering.assignment_store import write_cluster_assignments
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
@@ -194,10 +194,12 @@ def _load_label_bytes(scenario_id: str, labels_path: Path) -> bytes | None:
 
 
 def promote_scenario(scenario_id: str) -> dict[str, Any]:
-    """Promote a scenario to production by updating dim_sku.ml_cluster.
+    """Promote a scenario to production by writing SKU cluster assignments.
 
-    After updating the SKU dimension table, this also refreshes accuracy
-    materialized views so that Accuracy Comparison reflects the new clusters.
+    ``sku_cluster_assignment`` is the source of truth. ``dim_sku.ml_cluster`` is
+    still refreshed as a compatibility/cache column during the migration. The
+    caller refreshes assignment-dependent materialized views after the promoted
+    experiment flag is updated, so the current view resolves to this experiment.
 
     Labels are loaded from the working scenario dir when present, else from the
     durable copy on the experiment row — so any completed experiment stays
@@ -251,26 +253,22 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
 
         with psycopg.connect(**db) as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TEMP TABLE _cluster_updates (
-                        sku_ck TEXT PRIMARY KEY,
-                        cluster_label TEXT NOT NULL
-                    ) ON COMMIT DROP
-                """)
-
-                valid = df.dropna(subset=["cluster_label"])
-                with cur.copy("COPY _cluster_updates (sku_ck, cluster_label) FROM STDIN") as copy:
-                    for _, r in valid.iterrows():
-                        copy.write_row((str(r["sku_ck"]), str(r["cluster_label"])))
-
-                cur.execute("""
-                    UPDATE dim_sku d
-                    SET ml_cluster = u.cluster_label,
-                        modified_ts = NOW()
-                    FROM _cluster_updates u
-                    WHERE d.sku_ck = u.sku_ck
-                """)
-                updated_count = cur.rowcount
+                cur.execute(
+                    "SELECT experiment_id FROM cluster_experiment WHERE scenario_id = %s",
+                    (scenario_id,),
+                )
+                exp_row = cur.fetchone()
+                if exp_row is None:
+                    raise RuntimeError(
+                        f"Cluster experiment row not found for scenario {scenario_id}"
+                    )
+                experiment_id = int(exp_row[0])
+                write_result = write_cluster_assignments(
+                    df,
+                    conn,
+                    experiment_id=experiment_id,
+                    update_dim_sku_cache=True,
+                )
 
                 # Gen-4 SC-9: mark per-cluster tuning profiles stale so the
                 # next tuning run re-trains them against the new partitions.
@@ -307,15 +305,6 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
 
                 conn.commit()
 
-        # Refresh every MV that embeds dim_sku attributes (accuracy slices,
-        # coverage, fill rate, inventory bridge, ...) so dashboards reflect the
-        # new clusters. Runs on its own autocommit connection (CONCURRENTLY is
-        # illegal inside a transaction block). include_heavy=False: a label
-        # change does not justify the 10-30 min mv_intramonth_stockout rebuild
-        # — the scheduled refresh_all_mvs safety net covers it.
-        logger.info("Refreshing dim_sku-dependent materialized views after cluster promotion ...")
-        refresh_for_tables(["dim_sku"], db_params=db, include_heavy=False)
-
     # Build distribution
     distribution: dict[str, int] = {}
     if "cluster_label" in df.columns:
@@ -325,6 +314,7 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
     return {
         "status": "promoted",
         "scenario_id": scenario_id,
-        "dfus_updated": updated_count,
+        "dfus_updated": write_result.assignments_upserted,
+        "dim_sku_cache_updated": write_result.dim_sku_updated,
         "cluster_distribution": distribution,
     }

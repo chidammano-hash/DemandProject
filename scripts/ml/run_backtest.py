@@ -1271,7 +1271,7 @@ def main() -> None:
         "--cluster-override",
         type=str,
         default=None,
-        help="CSV path with sku_ck,cluster_label columns to override dim_sku.ml_cluster",
+        help="CSV path with sku_ck,cluster_label columns to override promoted ml_cluster assignments",
     )
     parser.add_argument(
         "--clusters",

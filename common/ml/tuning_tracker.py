@@ -283,10 +283,15 @@ def register_cluster_month_breakdowns(
         logger.warning("No valid predictions — skipping breakdowns")
         return
 
-    # Fetch cluster mappings from dim_sku
+    # Fetch cluster mappings from the promoted assignment view.
     with psycopg.connect(**get_db_params()) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT item_id, loc, ml_cluster, cluster_assignment FROM dim_sku")
+            cur.execute("""
+                SELECT d.item_id, d.loc, ca.ml_cluster, d.cluster_assignment
+                FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
+            """)
             sku_rows = cur.fetchall()
 
     sku_df = pd.DataFrame(sku_rows, columns=["item_id", "loc", "ml_cluster", "cluster_assignment"])

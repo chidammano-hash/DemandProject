@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params  # noqa: E402
+from common.core.mv_refresh import refresh_for_tables  # noqa: E402
 from scripts.ml.run_clustering_scenario import (  # noqa: E402
     generate_scenario_id,
     promote_scenario,
@@ -220,6 +221,9 @@ def _finalize_pipeline_experiment(db: dict, experiment_id: int, promoted: bool) 
                     [experiment_id],
                 )
             conn.commit()
+        if promoted:
+            logger.info("Refreshing cluster-assignment-dependent materialized views ...")
+            refresh_for_tables(["sku_cluster_assignment"], db_params=db, include_heavy=False)
     except psycopg.Error:
         logger.exception("Failed to finalize pipeline experiment %d", experiment_id)
 

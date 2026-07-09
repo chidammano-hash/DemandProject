@@ -27,7 +27,7 @@ SELECT
   f.customer_group,
   f.loc,
   COALESCE(d.cluster_assignment, '(unassigned)')       AS cluster_assignment,
-  COALESCE(d.ml_cluster, '(unassigned)')               AS ml_cluster,
+  COALESCE(ca.cluster_label, '(unassigned)')           AS ml_cluster,
   COALESCE(d.supplier_desc, '(unknown)')               AS supplier_desc,
   COALESCE(d.abc_vol, '(unknown)')                     AS abc_vol,
   COALESCE(d.region, '(unknown)')                      AS region,
@@ -45,6 +45,14 @@ JOIN dim_sku d
   ON f.item_id = d.item_id
  AND f.customer_group = d.customer_group
  AND f.loc = d.loc
+LEFT JOIN (
+  SELECT a.sku_ck, a.cluster_label
+  FROM sku_cluster_assignment a
+  JOIN cluster_experiment e
+    ON e.experiment_id = a.experiment_id
+   AND e.is_promoted IS TRUE
+) ca
+  ON ca.sku_ck = d.sku_ck
 WHERE f.tothist_dmd IS NOT NULL
   AND f.basefcst_pref IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13

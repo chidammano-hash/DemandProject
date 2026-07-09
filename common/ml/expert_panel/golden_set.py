@@ -101,11 +101,13 @@ def _log_cluster_distribution(golden_skus: list[str]) -> None:
         with psycopg.connect(**db) as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COALESCE(ml_cluster::text, 'unassigned') AS cluster,
+                SELECT COALESCE(ca.ml_cluster::text, 'unassigned') AS cluster,
                        COUNT(*) AS cnt
-                FROM dim_sku
-                WHERE sku_ck = ANY(%s)
-                GROUP BY ml_cluster
+                FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
+                WHERE d.sku_ck = ANY(%s)
+                GROUP BY ca.ml_cluster
                 ORDER BY cnt DESC
                 """,
                 (golden_skus,),

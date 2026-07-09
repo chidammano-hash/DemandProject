@@ -81,13 +81,15 @@ def _load_monthly_errors(
 
 def _load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
     sql = """
-        SELECT item_id, customer_group, loc,
-               ml_cluster, abc_vol, execution_lag, total_lt,
-               brand, region,
-               seasonality_profile, seasonality_strength,
-               is_yearly_seasonal, peak_month, trough_month,
-               peak_trough_ratio
-        FROM dim_sku
+        SELECT d.item_id, d.customer_group, d.loc,
+               ca.ml_cluster, d.abc_vol, d.execution_lag, d.total_lt,
+               d.brand, d.region,
+               d.seasonality_profile, d.seasonality_strength,
+               d.is_yearly_seasonal, d.peak_month, d.trough_month,
+               d.peak_trough_ratio
+        FROM dim_sku d
+        LEFT JOIN current_sku_cluster_assignment ca
+               ON ca.sku_ck = d.sku_ck
     """
     # dim_sku is dimension-shaped (one row per SKU) so it's much smaller than
     # fact tables, but we still stream defensively: at 40x scale dim_sku

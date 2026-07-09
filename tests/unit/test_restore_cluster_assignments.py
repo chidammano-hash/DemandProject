@@ -69,37 +69,54 @@ def test_load_assignments_drops_null_rows(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# restore_ml_cluster — DB UPDATE contract (re-apply + idempotency + grain)
+# restore_ml_cluster — DB contract (assignment table + dim_sku cache)
 # ---------------------------------------------------------------------------
 # A small in-memory fake stands in for psycopg: dim_sku is a {sku_ck: ml_cluster}
-# map and the function's COPY + IS-DISTINCT-FROM UPDATE are emulated so the
-# re-apply / idempotency / full-grain-join behaviour is pinned without a live DB.
+# map, sku_cluster_assignment is a {(experiment_id, sku_ck): label} map, and
+# the function's COPY + UPSERT + cache update are emulated so the re-apply /
+# idempotency / full-grain-join behaviour is pinned without a live DB.
 
 
 class _FakeCursor:
     """Emulates the exact SQL restore_ml_cluster issues against a dim_sku map."""
 
-    def __init__(self, dim_sku: dict[str, str | None]):
+    def __init__(
+        self,
+        dim_sku: dict[str, str | None],
+        assignments: dict[tuple[int, str], str],
+    ):
         self.dim_sku = dim_sku          # sku_ck -> ml_cluster (full-grain key)
-        self._updates: dict[str, str] = {}  # staged sku_ck -> cluster_label
+        self.assignments = assignments
+        self._updates: dict[str, tuple[str | None, str]] = {}
         self._last_count = 0
+        self._last_one = None
         self.commits = 0
         self.rollbacks = 0
         self.rowcount = 0
 
     def execute(self, sql, params=None):
         s = " ".join(sql.split())
-        if "CREATE TEMP TABLE _cluster_updates" in s:
+        if s.startswith("SELECT experiment_id FROM cluster_experiment"):
+            self._last_one = (7,)
+        elif "CREATE TEMP TABLE _cluster_updates" in s:
             self._updates = {}
         elif s.startswith("SELECT COUNT(*)") and "_cluster_updates" in s:
             # rows that match on the full sku_ck grain AND would change
             self._last_count = sum(
-                1 for ck, lbl in self._updates.items()
+                1 for ck, (_, lbl) in self._updates.items()
                 if ck in self.dim_sku and self.dim_sku[ck] != lbl
             )
+        elif s.startswith("INSERT INTO sku_cluster_assignment"):
+            experiment_id = int(params[0])
+            changed = 0
+            for ck, (_, lbl) in self._updates.items():
+                if ck in self.dim_sku:
+                    self.assignments[(experiment_id, ck)] = lbl
+                    changed += 1
+            self.rowcount = changed
         elif s.startswith("UPDATE dim_sku"):
             changed = 0
-            for ck, lbl in self._updates.items():
+            for ck, (_, lbl) in self._updates.items():
                 # full-grain match: join is on d.sku_ck = u.sku_ck (no fan-out)
                 if ck in self.dim_sku and self.dim_sku[ck] != lbl:
                     self.dim_sku[ck] = lbl
@@ -109,6 +126,10 @@ class _FakeCursor:
             raise AssertionError(f"unexpected SQL: {s}")
 
     def fetchone(self):
+        if self._last_one is not None:
+            row = self._last_one
+            self._last_one = None
+            return row
         return (self._last_count,)
 
     @contextmanager
@@ -116,8 +137,12 @@ class _FakeCursor:
         yield self  # COPY ctx: write_row stages into _updates
 
     def write_row(self, row):
-        sku_ck, cluster_label = row
-        self._updates[sku_ck] = cluster_label
+        if len(row) == 2:
+            sku_ck, cluster_label = row
+            cluster_id = None
+        else:
+            sku_ck, cluster_id, cluster_label = row
+        self._updates[sku_ck] = (cluster_id, cluster_label)
 
     def __enter__(self):
         return self
@@ -128,7 +153,8 @@ class _FakeCursor:
 
 class _FakeConn:
     def __init__(self, dim_sku):
-        self._cur = _FakeCursor(dim_sku)
+        self.assignments: dict[tuple[int, str], str] = {}
+        self._cur = _FakeCursor(dim_sku, self.assignments)
 
     def cursor(self):
         return self._cur
@@ -163,6 +189,8 @@ def test_restore_reapplies_labels_to_null_rows():
     assert dim_sku["84587_ALL_1401-BULK"] == "very_high_volume_periodic"
     assert dim_sku["11286_ALL_1401-BULK"] == "high_volume_periodic"
     assert dim_sku["99999_ALL_9999-BULK"] is None  # absent from source -> NULL
+    assert conn.assignments[(7, "84587_ALL_1401-BULK")] == "very_high_volume_periodic"
+    assert conn.assignments[(7, "11286_ALL_1401-BULK")] == "high_volume_periodic"
     assert conn._cur.commits == 1
 
 
@@ -177,6 +205,7 @@ def test_restore_is_idempotent_second_run_noop():
     conn2 = _FakeConn(dim_sku)  # labels now present
     assert restore_ml_cluster(df, conn2) == 0
     assert dim_sku["84587_ALL_1401-BULK"] == "very_high_volume_periodic"
+    assert conn2.assignments[(7, "84587_ALL_1401-BULK")] == "very_high_volume_periodic"
 
 
 def test_restore_dry_run_does_not_write():

@@ -455,7 +455,9 @@ make customer-features-python   # Python-based alternative
 
 | Table | Read/Write | Purpose |
 |---|---|---|
-| `dim_sku` | Read + Write | Read attributes; write `ml_cluster` column |
+| `dim_sku` | Read + cache refresh | Read attributes; refresh `ml_cluster` compatibility cache |
+| `sku_cluster_assignment` | Write | Durable promoted ML cluster labels keyed by `(experiment_id, sku_ck)` |
+| `current_sku_cluster_assignment` | Read | Current promoted `ml_cluster` labels for downstream pipelines |
 | `fact_sales_monthly` | Read | Source time series for feature engineering |
 | `cluster_experiment` | Write | Experiment lifecycle tracking (UI experiments) |
 
@@ -479,7 +481,8 @@ make cluster-train     # Step 2: KMeans training (via run_cluster_pipeline.py)
 - Model Tuning Tab > **Clustering** stage card > `ClusterExperimentsPanel`
 - "New Experiment" opens builder with 7 templates: Production Baseline, High-K Granular, Low-K Broad, Seasonal Focus, Intermittent Specialist, PCA Compressed, Recent Data Focus
 - Completed experiments can be **compared** (migration matrix, quality metrics, profile comparison)
-- A completed experiment can be **promoted** to production (overwrites `dim_sku.ml_cluster`)
+- A completed experiment can be **promoted** to production (upserts `sku_cluster_assignment`;
+  downstream reads use `current_sku_cluster_assignment`)
 
 API endpoints (prefix `/cluster-experiments`):
 - `POST /` -- create + launch experiment (combined, returns 201)
@@ -512,7 +515,11 @@ API endpoints (prefix `/cluster-experiments`):
 
 **Validation:**
 ```sql
-SELECT ml_cluster, COUNT(*) FROM dim_sku WHERE ml_cluster IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;
+SELECT ml_cluster, COUNT(*)
+FROM current_sku_cluster_assignment
+WHERE ml_cluster IS NOT NULL
+GROUP BY 1
+ORDER BY 2 DESC;
 ```
 Verify no cluster is below the minimum size threshold (2% of total).
 
@@ -921,7 +928,7 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 7. Monitor status: queued -> running -> completed/failed
 8. View results: optimal_k, silhouette_score, cluster_sizes, profiles
 9. **Compare** two experiments: select two rows -> migration matrix, quality comparison
-10. **Promote** winning experiment -> overwrites `dim_sku.ml_cluster`
+10. **Promote** winning experiment -> upserts `sku_cluster_assignment`
 11. Downstream: re-run backtests and champion selection with new clusters
 
 ### 3.2 Tuning Experiments (UI Flow)
@@ -953,7 +960,7 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 ### 3.4 Promotion Workflow (Experiment to Production)
 
 **Clustering promotion:**
-1. Experiment completes -> user clicks "Promote" -> `dim_sku.ml_cluster` updated
+1. Experiment completes -> user clicks "Promote" -> `sku_cluster_assignment` upserted
 2. Downstream: re-run backtests with new clusters, re-run champion selection
 
 **Tuning promotion:**
@@ -1023,7 +1030,7 @@ make fresh-champion # Full ML pipeline
 3. Re-run: `make champion-select`
 
 **Clustering rollback:**
-- Use a previous cluster experiment's data to restore `dim_sku.ml_cluster`
+- Use a previous cluster experiment's data to restore `sku_cluster_assignment`
 - Or re-run `make cluster-all` with original config
 
 ### 4.4 Adding a New Algorithm

@@ -237,7 +237,10 @@ Priority-ordered evaluation (first match wins):
 | 5 | Volatility | `volatile_erratic` |
 | 6 | Volume (5 tiers) | `steady_high_volume` |
 
-Compound labels (e.g., `high_volume_seasonal_growing`). Stored in `dim_sku.ml_cluster`.
+Compound labels (e.g., `high_volume_seasonal_growing`). Promoted labels are
+stored in `sku_cluster_assignment` and exposed through
+`current_sku_cluster_assignment`; `dim_sku.ml_cluster` is a transition/cache
+column only.
 
 ---
 
@@ -261,8 +264,8 @@ User: "New Experiment" -> ClusterExperimentBuilder modal
   -> User compares experiments (config diff + metric comparison)
   -> User promotes best experiment
     -> POST /cluster-experiments/{id}/promote
-      -> promote_scenario() updates dim_sku.ml_cluster
-      -> Refreshes 4 accuracy MVs
+      -> promote_scenario() upserts sku_cluster_assignment
+      -> Refreshes cluster-dependent accuracy/coverage MVs
       -> Sets is_promoted=TRUE on experiment row
 ```
 
@@ -363,17 +366,20 @@ Heatmap cells: tooltip on hover "2,345 SKUs moved from [source] to [target]"
 
 ## Promotion & Downstream Impact
 
-`promote_scenario()` performs:
+The promotion flow performs:
 1. Load per-SKU labels — from the working `cluster_labels.csv` if present, else from
    the durable gzip copy on the experiment row (`cluster_experiment.cluster_labels_gz`,
    sql/191), reconstructing the production CSV
 2. Copy artifacts to `data/clustering/` (production location)
-3. Bulk UPDATE `dim_sku.ml_cluster` for all SKUs
-4. REFRESH MATERIALIZED VIEW CONCURRENTLY:
+3. Bulk UPSERT `sku_cluster_assignment` for all SKUs and refresh
+   `dim_sku.ml_cluster` as a compatibility cache
+4. Refresh cluster-dependent accuracy/coverage materialized views after the
+   promoted experiment flag is set:
    - `agg_accuracy_by_dim`
    - `agg_accuracy_lag_archive`
    - `agg_dfu_coverage`
    - `agg_dfu_coverage_lag_archive`
+   - `agg_accuracy_by_dfu`
 
 **Durable re-promotion:** on completion, `store_durable_labels()` saves the per-SKU
 assignments (gzip) onto the experiment row, so any completed experiment can be
@@ -383,7 +389,8 @@ re-promoted later without re-running clustering — even after the working
 
 ### Cluster Experiment Promotion
 
-`POST /cluster-experiments/{id}/promote` writes results to `dim_sku.ml_cluster`.
+`POST /cluster-experiments/{id}/promote` writes results to
+`sku_cluster_assignment`; downstream readers use `current_sku_cluster_assignment`.
 
 A warning modal (`ClusterPromoteModal.tsx`) displays:
 - Downstream impact warnings (backtests, forecasts, inventory planning)
@@ -396,7 +403,7 @@ A warning modal (`ClusterPromoteModal.tsx`) displays:
 | System | How it uses clusters |
 |---|---|
 | **Per-cluster backtests** | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` train separate models per cluster |
-| **Accuracy analysis** | `agg_accuracy_by_dim` slices accuracy by `ml_cluster` |
+| **Accuracy analysis** | `agg_accuracy_by_dim` slices accuracy by promoted `ml_cluster` |
 | **Champion selection** | Champion model selected per cluster |
 | **Production forecast** | Routes SKUs to cluster-specific models |
 | **Cluster-aware tuning** | `lgbm_tuning_run.cluster_experiment_id` FK |
@@ -419,7 +426,7 @@ Cluster experiments cannot be deleted if:
 
 ```python
 parser.add_argument("--cluster-override", type=str, default=None,
-    help="CSV with sku_ck,cluster_label to override dim_sku.ml_cluster")
+    help="CSV with sku_ck,cluster_label to override promoted ml_cluster assignments")
 ```
 
 Read from config if not on CLI:
@@ -510,7 +517,7 @@ Router: `api/routers/forecasting/cluster_experiments.py` -- mounted in `api/main
 | POST | `/cluster-experiments` | Create + launch experiment (202 async) |
 | PATCH | `/cluster-experiments/{id}` | Update label/notes |
 | DELETE | `/cluster-experiments/{id}` | Delete (with guards: 409 if running/queued/promoted/referenced) |
-| POST | `/cluster-experiments/{id}/promote` | Promote to production `dim_sku.ml_cluster` |
+| POST | `/cluster-experiments/{id}/promote` | Promote to production `sku_cluster_assignment` |
 | GET | `/cluster-experiments/compare/{a}/{b}` | Compare two experiments |
 | GET | `/cluster-experiments/templates` | Cluster experiment templates from YAML config |
 | GET | `/cluster-experiments/completed` | Completed experiments only (for algorithm experiment dropdown) |
@@ -636,7 +643,9 @@ CREATE INDEX idx_tuning_run_cluster_exp
 | `cluster_experiment.model_params` | JSONB | KMeans training params |
 | `cluster_experiment.label_params` | JSONB | Labeling threshold params |
 | `cluster_experiment.is_promoted` | BOOLEAN | Current production config flag |
-| `dim_sku.ml_cluster` | TEXT | Production cluster label (updated on promotion) |
+| `sku_cluster_assignment.cluster_label` | TEXT | Production cluster label for a promoted experiment |
+| `current_sku_cluster_assignment.ml_cluster` | TEXT | Current promoted cluster label view for downstream reads |
+| `dim_sku.ml_cluster` | TEXT | Compatibility/cache copy only; not the source of truth |
 | `dim_sku.cluster_assignment` | TEXT | Production cluster label (alias) |
 | `lgbm_tuning_run.cluster_experiment_id` | INTEGER FK | Links tuning runs to cluster experiments |
 | `cluster_experiment_comparison` | Table | Cached comparison results (ON DELETE CASCADE) |
@@ -822,7 +831,7 @@ Unified entry point: `scripts/ml/run_cluster_pipeline.py`
 | Feature engineering | `common/ml/clustering/features` | Feature matrix |
 | Train + select K | `common/ml/clustering/training` | MLflow experiment `sku_clustering` |
 | Label clusters | `common/ml/clustering/labeling` | Labeled cluster assignments |
-| Write to DB | `common/ml/clustering/scenario` / `promote_scenario()` | `dim_sku.ml_cluster` updated |
+| Write to DB | `common/ml/clustering/scenario` / `promote_scenario()` | `sku_cluster_assignment` upserted; `dim_sku.ml_cluster` cache refreshed |
 
 ### Job Pipeline
 

@@ -2,7 +2,7 @@
 --
 -- champion_experiment previously carried no link to the cluster generation its
 -- backtest data was computed under. Production generation joins the promoted
--- champion's winners CSV with the CURRENT dim_sku.ml_cluster and the current
+-- champion's winners CSV with the CURRENT promoted SKU cluster assignments and the current
 -- data/models/*.pkl artifacts, with no way to detect that clustering had been
 -- re-promoted since the champion ran (winners routing and per-cluster models
 -- could silently belong to different generations).

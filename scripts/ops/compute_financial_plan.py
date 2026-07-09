@@ -172,13 +172,15 @@ def fetch_planned_order_spend(
     sql = """
         SELECT
             COALESCE(d.abc_vol, 'X')     AS abc_class,
-            COALESCE(d.ml_cluster, 'unknown') AS cluster,
+            COALESCE(ca.ml_cluster, 'unknown') AS cluster,
             e.item_id,
             e.loc,
             e.recommended_order_qty,
             COALESCE(ic.unit_cost, 0)    AS unit_cost
         FROM fact_replenishment_exceptions e
         LEFT JOIN dim_sku d ON d.item_id = e.item_id AND d.loc = e.loc
+        LEFT JOIN current_sku_cluster_assignment ca
+               ON ca.sku_ck = d.sku_ck
         LEFT JOIN (
             SELECT DISTINCT ON (item_id, loc) item_id, loc, unit_cost
             FROM dim_item_cost

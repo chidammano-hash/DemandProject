@@ -14,7 +14,7 @@
 --          seasonality_profile)
 -- Stores pre-summed forecast, actual, and abs-error so all KPIs can be derived
 -- at the API layer with simple arithmetic: WAPE, Bias, Accuracy %.
--- Source: fact_external_forecast_monthly JOIN dim_sku
+-- Source: fact_external_forecast_monthly JOIN dim_sku LEFT JOIN promoted sku_cluster_assignment
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS agg_accuracy_by_dim AS
 SELECT
@@ -22,7 +22,7 @@ SELECT
   f.lag,
   date_trunc('month', f.startdate)::date               AS month_start,
   COALESCE(d.cluster_assignment, '(unassigned)')       AS cluster_assignment,
-  COALESCE(d.ml_cluster, '(unassigned)')               AS ml_cluster,
+  COALESCE(ca.cluster_label, '(unassigned)')           AS ml_cluster,
   COALESCE(d.supplier_desc, '(unknown)')               AS supplier_desc,
   COALESCE(d.abc_vol, '(unknown)')                     AS abc_vol,
   COALESCE(d.region, '(unknown)')                      AS region,
@@ -38,6 +38,14 @@ JOIN dim_sku d
   ON f.item_id = d.item_id
  AND f.customer_group = d.customer_group
  AND f.loc = d.loc
+LEFT JOIN (
+  SELECT a.sku_ck, a.cluster_label
+  FROM sku_cluster_assignment a
+  JOIN cluster_experiment e
+    ON e.experiment_id = a.experiment_id
+   AND e.is_promoted IS TRUE
+) ca
+  ON ca.sku_ck = d.sku_ck
 WHERE f.tothist_dmd IS NOT NULL
   AND f.basefcst_pref IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
@@ -63,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_agg_accuracy_by_dim_seasonality
 -- Grain: (model_id, lag, timeframe, month_start, cluster_assignment,
 --          ml_cluster, supplier_desc, abc_vol, region, brand_desc,
 --          seasonality_profile)
--- Source: backtest_lag_archive JOIN dim_sku
+-- Source: backtest_lag_archive JOIN dim_sku LEFT JOIN promoted sku_cluster_assignment
 -- Used for lag-horizon accuracy curves (how accuracy degrades lag 0 -> lag 4).
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS agg_accuracy_lag_archive AS
@@ -73,7 +81,7 @@ SELECT
   COALESCE(a.timeframe, '(none)')                      AS timeframe,
   date_trunc('month', a.startdate)::date               AS month_start,
   COALESCE(d.cluster_assignment, '(unassigned)')       AS cluster_assignment,
-  COALESCE(d.ml_cluster, '(unassigned)')               AS ml_cluster,
+  COALESCE(ca.cluster_label, '(unassigned)')           AS ml_cluster,
   COALESCE(d.supplier_desc, '(unknown)')               AS supplier_desc,
   COALESCE(d.abc_vol, '(unknown)')                     AS abc_vol,
   COALESCE(d.region, '(unknown)')                      AS region,
@@ -88,6 +96,14 @@ JOIN dim_sku d
   ON a.item_id = d.item_id
  AND a.customer_group = d.customer_group
  AND a.loc = d.loc
+LEFT JOIN (
+  SELECT a.sku_ck, a.cluster_label
+  FROM sku_cluster_assignment a
+  JOIN cluster_experiment e
+    ON e.experiment_id = a.experiment_id
+   AND e.is_promoted IS TRUE
+) ca
+  ON ca.sku_ck = d.sku_ck
 WHERE a.tothist_dmd IS NOT NULL
   AND a.basefcst_pref IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11

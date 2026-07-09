@@ -110,7 +110,7 @@ _ACCURACY_SLICE_DIMS = {
 
 _RAW_BUCKET_EXPR: dict[str, str] = {
     "cluster_assignment": "COALESCE(d.cluster_assignment, '(unassigned)')",
-    "ml_cluster": "COALESCE(d.ml_cluster, '(unassigned)')",
+    "ml_cluster": "COALESCE(ca.ml_cluster, '(unassigned)')",
     "supplier_desc": "COALESCE(d.supplier_desc, '(unknown)')",
     "abc_vol": "COALESCE(d.abc_vol, '(unknown)')",
     "region": "COALESCE(d.region, '(unknown)')",
@@ -240,6 +240,8 @@ def forecast_accuracy_slice(
                 FROM fact_external_forecast_monthly f
                 JOIN dim_sku d
                   ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
+                LEFT JOIN current_sku_cluster_assignment ca
+                  ON ca.sku_ck = d.sku_ck
                 WHERE (f.item_id, f.customer_group, f.loc) IN (SELECT item_id, customer_group, loc FROM cd)
                   AND f.tothist_dmd IS NOT NULL AND f.basefcst_pref IS NOT NULL
                   AND {where_sql}
@@ -370,6 +372,8 @@ def forecast_accuracy_slice(
                 FROM fact_external_forecast_monthly f
                 JOIN dim_sku d
                   ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
+                LEFT JOIN current_sku_cluster_assignment ca
+                  ON ca.sku_ck = d.sku_ck
                 WHERE {where_sql_raw}
                 GROUP BY 1, 2
             ),

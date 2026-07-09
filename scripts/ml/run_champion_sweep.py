@@ -449,13 +449,20 @@ def _segment_map(
     """Map each DFU -> segment label on the chosen axis."""
     if segment_axis == "demand_class":
         return _classify_demand_segments(monthly_errors_df, _ADI_THRESHOLD, _CV2_THRESHOLD)
-    # ml_cluster / abc_xyz: read from dim_sku (diagnostic-only axes)
-    col = "ml_cluster" if segment_axis == "ml_cluster" else "abc_xyz_segment"
+    # ml_cluster / abc_xyz: diagnostic-only axes.
     out: dict[tuple[str, str, str], str] = {}
     with psycopg.connect(**db) as conn:
-        rows = conn.execute(
-            f"SELECT item_id, customer_group, loc, {col} FROM dim_sku"
-        ).fetchall()
+        if segment_axis == "ml_cluster":
+            rows = conn.execute("""
+                SELECT d.item_id, d.customer_group, d.loc, ca.ml_cluster
+                FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
+            """).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT item_id, customer_group, loc, abc_xyz_segment FROM dim_sku"
+            ).fetchall()
     for item_id, cust, loc, seg in rows:
         out[(str(item_id), str(cust), str(loc))] = str(seg) if seg is not None else "unassigned"
     return out

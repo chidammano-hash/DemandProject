@@ -149,7 +149,7 @@ def accuracy_budget_decomposition(
 
             # --- c) Accuracy by cluster ---
             cur.execute("""
-                SELECT COALESCE(d.ml_cluster, '(unassigned)') AS cluster,
+                SELECT COALESCE(ca.ml_cluster, '(unassigned)') AS cluster,
                        SUM(ABS(f.basefcst_pref - f.tothist_dmd)),
                        SUM(f.basefcst_pref),
                        SUM(f.tothist_dmd),
@@ -159,12 +159,14 @@ def accuracy_budget_decomposition(
                 JOIN dim_sku d ON d.item_id = f.item_id
                                 AND d.customer_group = f.customer_group
                                 AND d.loc = f.loc
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
                 WHERE f.model_id = %s
                   AND f.lag = COALESCE(d.execution_lag, 0)
                   AND f.tothist_dmd IS NOT NULL
-                GROUP BY COALESCE(d.ml_cluster, '(unassigned)'),
+                GROUP BY COALESCE(ca.ml_cluster, '(unassigned)'),
                          COALESCE(d.intermittency_ratio, 0)
-                ORDER BY COALESCE(d.ml_cluster, '(unassigned)')
+                ORDER BY COALESCE(ca.ml_cluster, '(unassigned)')
             """, [model_id])
             cluster_rows = cur.fetchall()
 

@@ -44,11 +44,21 @@ MV_SOURCES: dict[str, frozenset[str]] = {
     "agg_sales_weekly": frozenset({"fact_sales_monthly"}),
     "agg_forecast_monthly": frozenset({"fact_external_forecast_monthly"}),
     "agg_inventory_monthly": frozenset({"fact_inventory_snapshot"}),
-    "agg_accuracy_by_dim": frozenset({"fact_external_forecast_monthly", "dim_sku"}),
-    "agg_accuracy_by_dfu": frozenset({"fact_external_forecast_monthly", "dim_sku"}),
-    "agg_dfu_coverage": frozenset({"fact_external_forecast_monthly", "dim_sku"}),
-    "agg_accuracy_lag_archive": frozenset({"backtest_lag_archive", "dim_sku"}),
-    "agg_dfu_coverage_lag_archive": frozenset({"backtest_lag_archive", "dim_sku"}),
+    "agg_accuracy_by_dim": frozenset(
+        {"fact_external_forecast_monthly", "dim_sku", "sku_cluster_assignment", "cluster_experiment"}
+    ),
+    "agg_accuracy_by_dfu": frozenset(
+        {"fact_external_forecast_monthly", "dim_sku", "sku_cluster_assignment", "cluster_experiment"}
+    ),
+    "agg_dfu_coverage": frozenset(
+        {"fact_external_forecast_monthly", "dim_sku", "sku_cluster_assignment", "cluster_experiment"}
+    ),
+    "agg_accuracy_lag_archive": frozenset(
+        {"backtest_lag_archive", "dim_sku", "sku_cluster_assignment", "cluster_experiment"}
+    ),
+    "agg_dfu_coverage_lag_archive": frozenset(
+        {"backtest_lag_archive", "dim_sku", "sku_cluster_assignment", "cluster_experiment"}
+    ),
     "agg_dfu_naive_scale": frozenset({"fact_sales_monthly", "fact_external_forecast_monthly"}),
     "mv_fill_rate_monthly": frozenset({"fact_sales_monthly", "dim_sku"}),
     "mv_intramonth_stockout": frozenset({"fact_inventory_snapshot", "dim_sku"}),

@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import pickle
 import re
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from api.core import get_conn
 from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 
 router = APIRouter(tags=["shap"])
+logger = logging.getLogger(__name__)
 
 # Root of the model-scoped backtest output directories
 _BACKTEST_DATA_DIR = Path(os.environ.get("BACKTEST_DATA_DIR", "data/backtest"))
@@ -86,12 +88,15 @@ def _resolve_filter_clusters(
         params.extend(markets)
         need_loc_join = True
 
-    sql = "SELECT DISTINCT d.ml_cluster::TEXT FROM dim_sku d"
+    sql = (
+        "SELECT DISTINCT ca.ml_cluster::TEXT FROM dim_sku d "
+        "LEFT JOIN current_sku_cluster_assignment ca ON ca.sku_ck = d.sku_ck"
+    )
     if need_item_join:
         sql += " LEFT JOIN dim_item i ON i.item_id = d.item_id"
     if need_loc_join:
         sql += " LEFT JOIN dim_location l ON l.location_id = d.loc"
-    sql += f" WHERE {' AND '.join(conditions)} AND d.ml_cluster IS NOT NULL"
+    sql += f" WHERE {' AND '.join(conditions)} AND ca.ml_cluster IS NOT NULL"
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -394,9 +399,12 @@ def _build_cat_encoders_from_distinct(conn) -> dict[str, dict]:
     with conn.cursor() as cur:
         # Query each column independently to get ALL unique values per column
         # (not just combinations) — same as build_cat_encoders() in generate_production_forecasts.py
-        cur.execute(
-            "SELECT ml_cluster, region, brand, abc_vol FROM dim_sku"
-        )
+        cur.execute("""
+            SELECT ca.ml_cluster, d.region, d.brand, d.abc_vol
+            FROM dim_sku d
+            LEFT JOIN current_sku_cluster_assignment ca
+                   ON ca.sku_ck = d.sku_ck
+        """)
         rows = cur.fetchall()
 
     if not rows:
@@ -531,11 +539,13 @@ async def shap_dfu(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT d.ml_cluster, d.execution_lag, d.total_lt,
+                SELECT ca.ml_cluster, d.execution_lag, d.total_lt,
                        d.brand, d.region, d.abc_vol,
                        d.customer_group,
                        i.bpc, i.item_proof, i.case_weight
                 FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
                 LEFT JOIN dim_item i ON i.item_id = d.item_id
                 WHERE d.item_id = %s AND d.loc = %s
                 ORDER BY d.customer_group ASC

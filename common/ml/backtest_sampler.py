@@ -42,7 +42,7 @@ def _load_sampling_config() -> dict[str, Any]:
 
 
 def compute_cluster_strata(conn: psycopg.Connection) -> dict[int, dict[str, Any]]:
-    """Query dim_sku for ml_cluster assignments and fact_sales_monthly for demand stats.
+    """Query current cluster assignments and fact_sales_monthly for demand stats.
 
     For each cluster: count DFUs, compute mean_demand, cv, zero_pct.
 
@@ -60,18 +60,20 @@ def compute_cluster_strata(conn: psycopg.Connection) -> dict[int, dict[str, Any]
         WITH dfu_demand AS (
             SELECT
                 d.sku_ck,
-                COALESCE(NULLIF(d.ml_cluster, ''), 'unassigned') AS ml_cluster,
+                COALESCE(NULLIF(ca.ml_cluster, ''), 'unassigned') AS ml_cluster,
                 AVG(s.qty)                                       AS avg_qty,
                 STDDEV(s.qty)                                    AS std_qty,
                 SUM(CASE WHEN s.qty = 0 THEN 1 ELSE 0 END)::float
                     / GREATEST(COUNT(*), 1)                      AS zero_pct
             FROM dim_sku d
+            LEFT JOIN current_sku_cluster_assignment ca
+                   ON ca.sku_ck = d.sku_ck
             INNER JOIN fact_sales_monthly s
                 ON d.item_id = s.item_id
                AND d.customer_group = s.customer_group
                AND d.loc = s.loc
             WHERE s.qty IS NOT NULL
-            GROUP BY d.sku_ck, d.ml_cluster
+            GROUP BY d.sku_ck, ca.ml_cluster
         )
         SELECT
             ml_cluster,

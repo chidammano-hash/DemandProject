@@ -374,7 +374,7 @@ SS/EOQ/policy/health targets see [07-inventory-planning.md](07-inventory-plannin
 | `make load-all` | Load all domains into Postgres (dimensions first, facts second) | ~1 min |
 | `make refresh-mvs-tiered` | Refresh all 13 MVs in 4-tier dependency order | ~30 sec |
 | `make features-compute` | SKU feature pipeline (volume, trend, seasonality, variability, lifecycle) → `dim_sku` | ~5 min |
-| `make cluster-all` | KMeans clustering → `dim_sku.ml_cluster` | ~10 min |
+| `make cluster-all` | KMeans clustering → `sku_cluster_assignment` / `current_sku_cluster_assignment` | ~10 min |
 | `make lt-profile-all` | Lead time profiles → `dim_item_lead_time_profile` | ~2 min |
 | `make backtest-all` | All 4 competing backtests (lgbm, catboost, xgboost, chronos2_enriched) | several hours, dominated by the foundation-model backtest |
 | `make backtest-load-all` | Load all backtest predictions into DB | ~5 min |
@@ -417,40 +417,36 @@ fresh-all
 ### SKU-dimension reload & downstream staleness
 
 A **full reload of the `sku` dataset truncates `dim_sku` and re-INSERTs from
-`dfu.txt`**, which carries **no** ML-computed `ml_cluster` label. Two safeguards
-now keep `ml_cluster` from being silently wiped (loop-4):
+`dfu.txt`**, which carries **no** ML-computed `ml_cluster` label. Promoted ML
+cluster output is now stored in `sku_cluster_assignment` and exposed through
+`current_sku_cluster_assignment`; `dim_sku.ml_cluster` is only a compatibility
+cache during the transition. Two safeguards keep promoted labels from being
+silently lost during reloads:
 
-1. **The loader preserves the label across its own TRUNCATE.** The `sku`-domain
-   branch of `scripts/etl/load_dataset_postgres.py` snapshots the existing
-   `(sku_ck, ml_cluster)` into a temp table *before* TRUNCATE and re-merges it onto
-   the freshly loaded rows *after* INSERT — matched on the full `sku_ck` grain
-   `(item_id, customer_group, loc)`, filling only rows the feed left NULL. So a
-   reload of a database that already has labels keeps them. (Guarded to the `sku`
-   domain; other domains are unaffected. `make pipeline-refresh` is covered too —
-   its refresh path calls the same `load_domain`.)
+1. **The durable table is outside the SKU reload path.** `sku_cluster_assignment`
+   is keyed by `(experiment_id, sku_ck)` and is not truncated by the `sku` domain
+   loader, so promoted assignments survive `dim_sku` reloads.
 2. **`make load-all` re-applies promoted labels after the sku load.** Immediately
    after `--dataset sku`, `load-all` runs
-   `scripts/ml/restore_cluster_assignments.py --skip-if-missing`, which re-applies
-   `data/clustering/cluster_labels.csv` onto `dim_sku.ml_cluster`. This is the
-   recovery path for the case the in-DB snapshot is empty — e.g. the **first** load
-   after a clustering scenario was promoted, or a load into a freshly truncated DB.
-   It is **idempotent** (a no-op when labels already match) and `--skip-if-missing`
-   exits cleanly on a fresh DB before any clustering scenario exists.
+   `scripts/ml/restore_cluster_assignments.py --skip-if-missing`, which upserts
+   `data/clustering/cluster_labels.csv` into `sku_cluster_assignment` for the
+   promoted experiment and refreshes `dim_sku.ml_cluster` as a cache. It is
+   **idempotent** and exits cleanly on a fresh DB before any clustering scenario
+   exists.
 
 - **Full pipelines self-heal.** `fresh-all` / `fresh-features` re-run `cluster-all`
-  + `features-compute` right after the load, so `ml_cluster` is repopulated before
-  anything reads it (and `fresh-load` inherits the restore step via `load-all`).
-- **Manual recovery.** If `ml_cluster` is somehow NULL after a load (e.g. a labels
-  CSV that lagged behind the data), run
+  + `features-compute` right after the load, so `current_sku_cluster_assignment`
+  is populated before per-cluster consumers read it.
+- **Manual recovery.** If `current_sku_cluster_assignment` is empty or stale after
+  a load (e.g. a labels CSV that lagged behind the data), run
   `uv run python scripts/ml/restore_cluster_assignments.py` (add `--dry-run` to
   preview) to re-apply the promoted labels without re-fitting clustering, or
   `make cluster-all` to re-run + re-promote. Per-cluster tree models trained against
-  a fully-NULL `ml_cluster` collapse to the global/fallback model and score ~0%.
+  missing promoted assignments collapse to the global/fallback model and score ~0%.
 
 This is surfaced **non-blockingly**: `GET /dashboard/pipeline-readiness` derives the
-condition live and flags it **only on a total loss of clustering** — i.e. when *no*
-SKUs at all have `ml_cluster` (most SKUs are inactive and legitimately NULL, so the
-NULL *fraction* is meaningless and is **not** used). The **Dashboard** and **Model
+condition live and flags it **only on a total loss of clustering** — i.e. when
+`current_sku_cluster_assignment` has no promoted rows. The **Dashboard** and **Model
 Tuning** pages then show a calm *"Clustering needs to be re-run"* banner with an
 **Open Clustering** button that deep-links to the Cluster Experimentation Studio
 (where you run and promote a scenario) — it does **not** kick off a job itself. The
@@ -462,7 +458,7 @@ to reset). To fix from the CLI instead, run `make cluster-all`.
 - **Cluster Experimentation Studio** (Cluster tab → `cluster_scenario` job) is the
   canonical flow: create an experiment → it records full metrics (K, silhouette,
   cluster sizes, profiles) → click the **crown** to *promote* it, which writes
-  `ml_cluster` into `dim_sku` from the experiment's stored per-SKU labels
+  `sku_cluster_assignment` from the experiment's stored per-SKU labels
   **without re-running** clustering.
 - **Full Clustering Pipeline** (`cluster_pipeline` job, also `make cluster-all`)
   runs a scenario *and* auto-promotes it in one shot. The experiment row now stays
@@ -477,6 +473,7 @@ are stored gzip-compressed on its row (`cluster_experiment.cluster_labels_gz`,
 sql/191). `promote_scenario` reads the working `cluster_labels.csv` when present and
 falls back to this durable copy otherwise — so a completed experiment can be
 re-promoted at any time even after the working `/tmp/clustering_scenarios/<id>/`
+directory is gone.
 artifacts are cleared (reboot, OS cleanup, `make clean-artifacts`). Experiments that
 completed **before** sql/191 landed have no durable copy; if their `/tmp` artifacts
 are gone they can't be re-promoted and must be re-run.

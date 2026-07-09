@@ -1,11 +1,11 @@
-"""Restore ``dim_sku.ml_cluster`` from the promoted cluster-label assignment.
+"""Restore promoted SKU cluster assignments from the cluster-label artifact.
 
 WHY THIS EXISTS
 ---------------
-The per-cluster tree models (lgbm/catboost/xgboost) are partitioned by
-``dim_sku.ml_cluster`` — the semantic label (``high_volume_periodic``,
-``very_high_volume_periodic``, …) that ``promote_scenario`` writes and the
-trained ``cluster_<label>.pkl`` artifacts are keyed on.
+The per-cluster tree models (lgbm/catboost/xgboost) are partitioned by the
+promoted ``ml_cluster`` label. The durable source of truth is now
+``sku_cluster_assignment`` / ``current_sku_cluster_assignment``; the legacy
+``dim_sku.ml_cluster`` column is still maintained as a compatibility/cache field.
 
 A ``dim_sku`` rebuild / reload (e.g. the SKU-features pipeline) recreates the
 row set with ``ml_cluster = NULL`` and does NOT re-apply the clustering
@@ -19,11 +19,11 @@ foundation models are unaffected (they ignore the cluster), so the symptom is
 fine".
 
 This script re-applies the already-promoted ``data/clustering/cluster_labels.csv``
-(the SAME assignment the production trees were trained on) back onto
-``dim_sku.ml_cluster``. It is the database half of
-``run_clustering_scenario.promote_scenario`` — it does NOT re-fit clustering, so
-the restored labels still match the trained ``.pkl`` keys. Idempotent: safe to
-re-run.
+(the SAME assignment the production trees were trained on) into
+``sku_cluster_assignment`` and refreshes ``dim_sku.ml_cluster`` as a cache. It is
+the database half of ``run_clustering_scenario.promote_scenario`` — it does NOT
+re-fit clustering, so the restored labels still match the trained ``.pkl`` keys.
+Idempotent: safe to re-run.
 
 Usage::
 
@@ -53,6 +53,10 @@ import psycopg  # noqa: E402
 
 from common.core.db import get_db_params  # noqa: E402
 from common.core.paths import DATA_DIR  # noqa: E402
+from common.ml.clustering.assignment_store import (  # noqa: E402
+    get_promoted_experiment_id,
+    write_cluster_assignments,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +84,8 @@ def load_assignments(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-def restore_ml_cluster(df: pd.DataFrame, conn, dry_run: bool = False) -> int:
-    """Re-apply ``cluster_label`` onto ``dim_sku.ml_cluster`` matched by ``sku_ck``.
-
-    Mirrors ``run_clustering_scenario.promote_scenario``'s DB update. Returns the
-    number of ``dim_sku`` rows updated (or that WOULD be updated under --dry-run).
-    """
+def _count_cache_changes(df: pd.DataFrame, conn) -> int:
+    """Count how many dim_sku cache rows would change."""
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TEMP TABLE _cluster_updates (
@@ -93,27 +93,31 @@ def restore_ml_cluster(df: pd.DataFrame, conn, dry_run: bool = False) -> int:
                 cluster_label TEXT NOT NULL
             ) ON COMMIT DROP
         """)
-        # psycopg3 COPY escapes + type-adapts each value (never hand-built buffers).
-        with cur.copy(
-            "COPY _cluster_updates (sku_ck, cluster_label) FROM STDIN"
-        ) as copy:
+        with cur.copy("COPY _cluster_updates (sku_ck, cluster_label) FROM STDIN") as copy:
             for sku_ck, cluster_label in zip(df["sku_ck"], df["cluster_label"]):
                 copy.write_row((sku_ck, cluster_label))
 
-        # How many dim_sku rows will actually change (match + new/changed label)?
         cur.execute("""
             SELECT COUNT(*)
             FROM dim_sku d
             JOIN _cluster_updates u ON d.sku_ck = u.sku_ck
             WHERE d.ml_cluster IS DISTINCT FROM u.cluster_label
         """)
-        to_change = cur.fetchone()[0]
+        return cur.fetchone()[0]
 
-        if dry_run:
-            logger.info("[DRY RUN] %s dim_sku row(s) would get ml_cluster set/updated",
-                        f"{to_change:,}")
-            conn.rollback()
-            return to_change
+
+def _restore_dim_sku_cache_only(df: pd.DataFrame, conn) -> int:
+    """Compatibility fallback when no promoted experiment row exists."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TEMP TABLE _cluster_updates (
+                sku_ck TEXT PRIMARY KEY,
+                cluster_label TEXT NOT NULL
+            ) ON COMMIT DROP
+        """)
+        with cur.copy("COPY _cluster_updates (sku_ck, cluster_label) FROM STDIN") as copy:
+            for sku_ck, cluster_label in zip(df["sku_ck"], df["cluster_label"]):
+                copy.write_row((sku_ck, cluster_label))
 
         cur.execute("""
             UPDATE dim_sku d
@@ -123,9 +127,45 @@ def restore_ml_cluster(df: pd.DataFrame, conn, dry_run: bool = False) -> int:
             WHERE d.sku_ck = u.sku_ck
               AND d.ml_cluster IS DISTINCT FROM u.cluster_label
         """)
-        updated = cur.rowcount
+        return cur.rowcount
+
+
+def restore_ml_cluster(df: pd.DataFrame, conn, dry_run: bool = False) -> int:
+    """Restore promoted cluster labels matched by full ``sku_ck`` grain.
+
+    Mirrors ``run_clustering_scenario.promote_scenario``'s DB update. Returns the
+    number of ``dim_sku`` cache rows updated (or that WOULD be updated under
+    --dry-run). The durable assignment table is upserted when a promoted
+    ``cluster_experiment`` row exists.
+    """
+    if dry_run:
+        to_change = _count_cache_changes(df, conn)
+        logger.info("[DRY RUN] %s dim_sku row(s) would get ml_cluster set/updated",
+                    f"{to_change:,}")
+        conn.rollback()
+        return to_change
+
+    experiment_id = get_promoted_experiment_id(conn)
+    if experiment_id is None:
+        logger.warning(
+            "No promoted cluster_experiment row found; updating dim_sku.ml_cluster "
+            "cache only and skipping sku_cluster_assignment"
+        )
+        updated = _restore_dim_sku_cache_only(df, conn)
+    else:
+        result = write_cluster_assignments(
+            df,
+            conn,
+            experiment_id=experiment_id,
+            update_dim_sku_cache=True,
+        )
+        updated = result.dim_sku_updated
+
     conn.commit()
-    logger.info("Updated ml_cluster on %s dim_sku row(s)", f"{updated:,}")
+    logger.info(
+        "Restored promoted cluster assignments; updated ml_cluster cache on %s dim_sku row(s)",
+        f"{updated:,}",
+    )
     return updated
 
 
@@ -152,11 +192,18 @@ def main() -> None:
     with psycopg.connect(**get_db_params()) as conn:
         restore_ml_cluster(df, conn, dry_run=args.dry_run)
 
-        # Post-condition visibility: how much of dim_sku now carries a cluster.
+        # Post-condition visibility: how much of the promoted assignment view now
+        # carries a cluster.
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM dim_sku WHERE ml_cluster IS NOT NULL")
+            cur.execute(
+                "SELECT COUNT(*) FROM current_sku_cluster_assignment "
+                "WHERE ml_cluster IS NOT NULL"
+            )
             non_null = cur.fetchone()[0]
-        logger.info("dim_sku.ml_cluster non-null after run: %s", f"{non_null:,}")
+        logger.info(
+            "current_sku_cluster_assignment non-null after run: %s",
+            f"{non_null:,}",
+        )
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@
 Hard constraints. Violations cause bugs, test failures, or silent data corruption.
 
 ### Mechanically enforced (the pre-commit gate hard-blocks NEW violations)
-These 8 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
+These 9 are checked by `scripts/ai_checks/check_unenforced_rules.sh` (allowlist-pinned to
 existing files) and hard-block a commit that adds a new one — so they need no prose vigilance,
 just don't add them:
 - `date.today()` only in `common/core/planning_date.py` → use `get_planning_date()`.
@@ -51,6 +51,8 @@ just don't add them:
   `api/routers/forecasting/accuracy.py` must use `@cached_sync(...)` and
   `get_read_only_conn()`; `get_planning_date_info` is the only uncached dashboard
   exception.
+- Promoted ML cluster reads use `current_sku_cluster_assignment` /
+  `sku_cluster_assignment`; `dim_sku.ml_cluster` is a transition/cache column only.
 
 ### Workflow (applies to every change)
 - **Self-review + refactor at each step** before reporting done (also a global habit). In
@@ -90,6 +92,7 @@ just don't add them:
   `LGBMRegressor()`/`CatBoostRegressor()`/`XGBRegressor()` elsewhere is a defect.
 - **All ML hyperparameters live in `forecast_pipeline_config.yaml`** — no `kwargs.get()` defaults.
 - **`ml_cluster` is metadata, NOT a feature** (in `METADATA_COLS`, merged for partitioning only).
+  Promoted labels are sourced from `current_sku_cluster_assignment`, not `dim_sku`.
 - **`FORECAST_QTY_COL`** constant, never the literal `"basefcst_pref"`.
 
 ### Testing

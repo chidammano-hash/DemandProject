@@ -301,7 +301,9 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - Priority-ordered taxonomy labeling: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers)
    - Compound labels: `high_volume_seasonal_growing`, `low_volume_intermittent`, `very_high_volume_growing`, etc.
    - MLflow experiment tracking (`sku_clustering`)
-   - Cluster assignments stored in `dim_sku.cluster_assignment`
+   - Source-provided cluster assignments stored in `dim_sku.cluster_assignment`; promoted
+     ML assignments stored in `sku_cluster_assignment` and exposed by
+     `current_sku_cluster_assignment`
    - Master switch: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` controls whether the clustering pipeline runs; when `false`, all backtest scripts auto-fall back to `global` strategy
    - Pipeline config references: `cluster_tuning_profiles.yaml`, `cluster_experiment_templates.yaml`
 9. LGBM backtesting (Feature 44):
@@ -839,7 +841,7 @@ flowchart TD
 
     subgraph P4["Phase 4: ML Features"]
         FEAT["features-compute<br/>compute_sku_features.py<br/>→ dim_sku (all feature cols)"]
-        CL["cluster-all<br/>train → label → update<br/>→ dim_sku.ml_cluster"]
+        CL["cluster-all<br/>train → label → promote<br/>→ sku_cluster_assignment"]
     end
 
     subgraph P5["Phase 5: Backtesting"]
@@ -904,7 +906,7 @@ flowchart TD
 |----------|--------------------|-------|--------|--------|
 | **Customer Demand** | `normalize_customer_demand_csv.py` → `load_customer_demand_postgres.py` | `{YYYY}_customer_demand.csv`, `dim_location` | `fact_customer_demand_monthly` | — (flags: `--replace`, `--month YYYY-MM`) |
 | **SKU Features** | `compute_sku_features.py` | `fact_sales_monthly`, `dim_sku` | `dim_sku` (all feature columns: volume, trend, seasonality, variability, lifecycle + derived classifications) | `sku_features_config.yaml` |
-| **Clustering** | `run_cluster_pipeline.py` (unified: train → label → promote) | `dim_sku` (pre-computed features), `dim_item` | `dim_sku.ml_cluster`, `data/clustering/` | `forecast_pipeline_config.yaml` (`clustering` section) |
+| **Clustering** | `run_cluster_pipeline.py` (unified: train → label → promote) | `dim_sku` (pre-computed features), `dim_item` | `sku_cluster_assignment`, `current_sku_cluster_assignment`, `data/clustering/` | `forecast_pipeline_config.yaml` (`clustering` section) |
 | **Seasonality** | Alias for `features-compute` — now computed by `compute_sku_features.py` | `fact_sales_monthly`, `dim_sku` | `dim_sku.seasonality_*` (6 cols) | `sku_features_config.yaml` |
 | **Variability** | Alias for `features-compute` — now computed by `compute_sku_features.py` | `fact_sales_monthly` | `dim_sku.cv_demand` + variability cols | `sku_features_config.yaml` |
 | **Lead Time** | `compute_lead_time_variability.py` | `fact_inventory_snapshot` | lead time profile table | `inventory_planning_config.yaml` (lead_time section) |
@@ -918,7 +920,7 @@ flowchart TD
 | **Investment** | `compute_investment_plan.py` | `fact_safety_stock_targets`, `dim_sku` | `fact_inventory_investment_plan` | — |
 | **Rebalancing** | `compute_rebalancing.py` | `agg_inventory_monthly`, SS, `dim_transfer_lane` | `fact_rebalancing_plan`, `fact_rebalancing_transfer` | `rebalancing_config.yaml` |
 | **Tuning** | `tune_hyperparams.py` | `fact_sales_monthly`, `fact_external_forecast_monthly` | `data/tuning/best_params_*.json` | `hyperparameter_tuning.yaml` |
-| **LGBM Backtest** | `run_backtest.py` | sales, forecast, `dim_sku.ml_cluster` | `data/backtest/lgbm_cluster/` | `forecast_pipeline_config.yaml` (`algorithms.lgbm_cluster`, `backtest_sampling`) |
+| **LGBM Backtest** | `run_backtest.py` | sales, forecast, `current_sku_cluster_assignment` | `data/backtest/lgbm_cluster/` | `forecast_pipeline_config.yaml` (`algorithms.lgbm_cluster`, `backtest_sampling`) |
 | **CatBoost Backtest** | `run_backtest_catboost.py` | same | `data/backtest/catboost_cluster/` | `forecast_pipeline_config.yaml` (`algorithms.catboost_cluster`, `backtest_sampling`) |
 | **XGBoost Backtest** | `run_backtest_xgboost.py` | same | `data/backtest/xgboost_cluster/` | `forecast_pipeline_config.yaml` (`algorithms.xgboost_cluster`, `backtest_sampling`) |
 | **MSTL Backtest** | `run_backtest_mstl.py` | sales, forecast | `data/backtest/mstl/` | `forecast_pipeline_config.yaml` (`algorithms.mstl`) |
@@ -1681,7 +1683,7 @@ make control-tower-refresh   # Control tower KPIs (needs all above)
 
 # --- Phase 4: ML Features ----------------------------------------------------
 make features-compute        # SKU features (volume, trend, seasonality, variability, lifecycle) -> dim_sku
-make cluster-all             # train -> label -> update dim_sku (reads pre-computed features from dim_sku)
+make cluster-all             # train -> label -> promote assignments (reads pre-computed features from dim_sku)
 # Aliases: seasonality-all, variability-compute -> features-compute
 
 # --- Phase 5: Backtesting ----------------------------------------------------

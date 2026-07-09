@@ -148,7 +148,8 @@ The script `run_unified_pipeline()` does the following in one shot:
 4. Updates the experiment row with `optimal_k`, `silhouette_score`, `inertia`, `cluster_sizes`, `profiles`, `k_selection_results`, `artifacts_path`.
 5. **Auto-promotes** the new experiment by default — clears `is_promoted` on the old champion and sets it on the new row, then calls `promote_scenario()` which:
    - Copies `cluster_labels.csv`, `cluster_centroids.csv`, `scenario_result.json`, `cluster_metadata.json` to `data/clustering/`.
-   - `UPDATE dim_sku SET ml_cluster = u.cluster_label` via a `COPY`-loaded temp table.
+   - Upserts promoted labels into `sku_cluster_assignment` via a `COPY`-loaded temp
+     table and refreshes `dim_sku.ml_cluster` only as a transition/cache column.
    - Best-effort marks `cluster_tuning_profile_state.stale = TRUE` for each new cluster name (sql/148) so the next tuning run knows to re-train.
 
 Skip auto-promotion with `--no-promote` for a dry segmentation evaluated only via the experiment row.
@@ -229,7 +230,7 @@ Each row captures one clustering attempt:
 | `experiment_id`, `scenario_id`, `label`, `status` | Identity & lifecycle (`running` / `completed` / `failed`) |
 | `feature_params`, `model_params`, `label_params` | JSONB — full param set for reproducibility |
 | `optimal_k`, `silhouette_score`, `inertia`, `cluster_sizes`, `profiles`, `k_selection_results` | Outcome metrics |
-| `is_promoted`, `promoted_at` | Exactly one row may be `is_promoted = TRUE`; that row drives `dim_sku.ml_cluster` |
+| `is_promoted`, `promoted_at` | Exactly one row may be `is_promoted = TRUE`; that row drives `current_sku_cluster_assignment` |
 | `artifacts_path`, `runtime_seconds`, `total_dfus`, `n_clusters` | Bookkeeping |
 
 DDL: `/Users/manoharchidambaram/projects/DemandProject/sql/101_cluster_experiments.sql`.
@@ -243,7 +244,8 @@ Cluster assignments are filterable in the Data Explorer via the `cluster_assignm
 ### 4.3 Promotion semantics
 
 - A new promotion clears `is_promoted` on the previous champion and sets it on the new row in a single transaction.
-- Promotion writes `dim_sku.ml_cluster` (the only DB column propagated from clustering).
+- Promotion writes `sku_cluster_assignment` as the source of truth and refreshes
+  `dim_sku.ml_cluster` only as a temporary compatibility/cache column.
 - Per-cluster tuning profile staleness flags are best-effort updated in `cluster_tuning_profile_state` so downstream tuning knows to re-train against the new partitions.
 
 ---
@@ -290,7 +292,7 @@ The stats used for matching come from `compute_cluster_demand_stats()`:
 |---|---|
 | SKU features | `dim_sku` columns (see 1.3); CSV mirror at `data/staged/clustering_features.csv` |
 | Cluster experiment metadata | `cluster_experiment` table (one row per run) |
-| Promoted cluster labels | `dim_sku.ml_cluster` (TEXT) |
+| Promoted cluster labels | `sku_cluster_assignment` table; `current_sku_cluster_assignment` view |
 | Promotion artifacts | `data/clustering/cluster_labels.csv`, `cluster_centroids.csv`, `cluster_metadata.json`, `scenario_result.json` |
 | Per-cluster tuning overrides | `config/forecasting/cluster_tuning_profiles.yaml` |
 | Profile staleness flags | `cluster_tuning_profile_state` (sql/148) |
@@ -312,12 +314,12 @@ ORDER BY experiment_id DESC LIMIT 10;
 
 -- Cluster distribution on dim_sku
 SELECT ml_cluster, COUNT(*) AS skus
-FROM dim_sku
+FROM current_sku_cluster_assignment
 GROUP BY ml_cluster
 ORDER BY skus DESC;
 
 -- SKUs missing a cluster assignment
-SELECT COUNT(*) FROM dim_sku WHERE ml_cluster IS NULL OR ml_cluster = '';
+SELECT COUNT(*) FROM current_sku_cluster_assignment WHERE ml_cluster IS NULL OR ml_cluster = '';
 ```
 
 ---

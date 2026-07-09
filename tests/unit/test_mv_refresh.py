@@ -105,6 +105,17 @@ class TestClosure:
         # lag-archive MVs read backtest_lag_archive, not the main table
         assert "agg_accuracy_lag_archive" not in mvs
 
+    def test_cluster_assignment_reaches_clustered_accuracy_mvs(self):
+        mvs = mvs_for_tables(["sku_cluster_assignment"])
+        for expected in (
+            "agg_accuracy_by_dim",
+            "agg_accuracy_by_dfu",
+            "agg_dfu_coverage",
+            "agg_accuracy_lag_archive",
+            "agg_dfu_coverage_lag_archive",
+        ):
+            assert expected in mvs
+
     def test_lag_archive_reaches_archive_mvs_only(self):
         mvs = mvs_for_tables(["backtest_lag_archive"])
         assert "agg_accuracy_lag_archive" in mvs
