@@ -1,4 +1,5 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Job } from "../../api/queries/integration";
 import { JobStatusBadge } from "./JobStatusBadge";
 
@@ -66,25 +67,15 @@ const HEADER_CELL =
 const BODY_CELL = "px-3 py-2 text-sm align-middle";
 
 export function JobHistoryTable(props: JobHistoryTableProps): JSX.Element {
-  const {
-    jobs,
-    onSelect,
-    emptyMessage = "No jobs.",
-    showRowsLoaded = true,
-  } = props;
+  const { jobs, onSelect, emptyMessage = "No jobs.", showRowsLoaded = true } = props;
+  const [expandedFailureIds, setExpandedFailureIds] = useState<Set<string>>(() => new Set());
 
   if (jobs.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-4 text-center">
-        {emptyMessage}
-      </p>
-    );
+    return <p className="text-sm text-muted-foreground py-4 text-center">{emptyMessage}</p>;
   }
 
   const clickable = Boolean(onSelect);
-  const rowClass = `border-t border-border ${
-    clickable ? "cursor-pointer hover:bg-muted/50" : ""
-  }`;
+  const rowClass = `border-t border-border ${clickable ? "cursor-pointer hover:bg-muted/50" : ""}`;
 
   return (
     <div className="overflow-x-auto rounded border border-border">
@@ -105,11 +96,43 @@ export function JobHistoryTable(props: JobHistoryTableProps): JSX.Element {
           {jobs.map((job) => {
             const colSpan = showRowsLoaded ? 8 : 7;
             const handleClick = onSelect ? () => onSelect(job) : undefined;
+            const hasError = job.status === "failed" && Boolean(job.error_message);
+            const errorExpanded = expandedFailureIds.has(job.id);
+            const toggleError = (): void => {
+              setExpandedFailureIds((current) => {
+                const next = new Set(current);
+                if (next.has(job.id)) next.delete(job.id);
+                else next.add(job.id);
+                return next;
+              });
+            };
             return (
               <Fragment key={job.id}>
                 <tr className={rowClass} onClick={handleClick}>
                   <td className={BODY_CELL}>
-                    <JobStatusBadge status={job.status} />
+                    <div className="flex items-center gap-2">
+                      <JobStatusBadge status={job.status} />
+                      {hasError && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleError();
+                          }}
+                          aria-expanded={errorExpanded}
+                          aria-controls={`job-error-${job.id}`}
+                          aria-label={`${errorExpanded ? "Hide" : "Show"} error details for ${job.domain}`}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {errorExpanded ? (
+                            <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                          )}
+                          {errorExpanded ? "Hide error" : "Details"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className={BODY_CELL}>{job.domain}</td>
                   <td className={BODY_CELL}>{job.mode}</td>
@@ -124,21 +147,16 @@ export function JobHistoryTable(props: JobHistoryTableProps): JSX.Element {
                       )}
                     </td>
                   )}
-                  <td className={`${BODY_CELL} tabular-nums`}>
-                    {formatStartedAt(job.started_at)}
-                  </td>
-                  <td className={`${BODY_CELL} tabular-nums`}>
-                    {formatDuration(job.duration_ms)}
-                  </td>
+                  <td className={`${BODY_CELL} tabular-nums`}>{formatStartedAt(job.started_at)}</td>
+                  <td className={`${BODY_CELL} tabular-nums`}>{formatDuration(job.duration_ms)}</td>
                   <td className={BODY_CELL}>{job.triggered_by ?? "—"}</td>
                 </tr>
-                {job.status === "failed" && job.error_message && (
-                  <tr className="border-t-0">
-                    <td
-                      colSpan={colSpan}
-                      className="px-3 pb-2 pt-0 text-xs text-red-600/80 dark:text-red-400/80"
-                    >
-                      {job.error_message}
+                {hasError && errorExpanded && (
+                  <tr id={`job-error-${job.id}`} className="border-t-0 bg-destructive/[0.03]">
+                    <td colSpan={colSpan} className="px-3 pb-3 pt-1">
+                      <div className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs leading-relaxed text-destructive break-words">
+                        {job.error_message}
+                      </div>
                     </td>
                   </tr>
                 )}

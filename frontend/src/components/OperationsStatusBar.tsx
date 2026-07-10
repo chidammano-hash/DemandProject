@@ -50,7 +50,7 @@ function StatusPill({
     <span
       className={cn(
         "inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 text-xs text-foreground/80",
-        className,
+        className
       )}
     >
       {children}
@@ -100,24 +100,19 @@ export function OperationsStatusBar({
 
   const activeLabel = useMemo(
     () => NAV_ITEMS.find((item) => item.key === activeTab)?.label ?? activeTab,
-    [activeTab],
+    [activeTab]
   );
 
-  const activeJobCount = Math.max(
-    localActiveJobCount,
-    activeJobsQuery.data?.jobs.length ?? 0,
-  );
+  const activeJobCount = Math.max(localActiveJobCount, activeJobsQuery.data?.jobs.length ?? 0);
   const staleChecks = readinessQuery.data?.checks.filter((check) => check.status === "stale") ?? [];
   const firstReadinessTarget =
     staleChecks.find((check) => check.action?.kind === "navigate")?.action?.target ?? "dataQuality";
   const isSyncing =
-    planningDateQuery.isFetching ||
-    readinessQuery.isFetching ||
-    activeJobsQuery.isFetching;
+    planningDateQuery.isFetching || readinessQuery.isFetching || activeJobsQuery.isFetching;
 
   return (
     <div className="border-b border-border/50 bg-background/95 px-4 py-2 md:px-6">
-      <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2">
+      <div className="mx-auto flex max-w-[1600px] min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
         <span className="mr-1 hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground md:inline">
           Operations
         </span>
@@ -140,7 +135,11 @@ export function OperationsStatusBar({
         <StatusPill
           onClick={() => onNavigate("jobs")}
           title="Open Jobs"
-          className={activeJobCount > 0 ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300" : undefined}
+          className={
+            activeJobCount > 0
+              ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+              : undefined
+          }
         >
           <PlayCircle className="h-3.5 w-3.5" strokeWidth={1.7} />
           <span>
@@ -172,7 +171,7 @@ export function OperationsStatusBar({
         </StatusPill>
 
         {isSyncing && (
-          <span className="ml-auto inline-flex h-7 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="inline-flex h-7 items-center gap-1.5 text-xs text-muted-foreground sm:ml-auto">
             <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.7} />
             Syncing
           </span>

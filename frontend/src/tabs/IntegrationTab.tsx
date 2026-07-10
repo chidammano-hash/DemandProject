@@ -72,12 +72,10 @@ export default function IntegrationTab(): JSX.Element {
     onSuccess: (data) => {
       setFeedback({ type: "success", msg: `Job ${data.job_id} submitted` });
       queryClient.invalidateQueries({
-        predicate: (q) =>
-          q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
+        predicate: (q) => q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
       });
     },
-    onError: (err: Error) =>
-      setFeedback({ type: "error", msg: `Failed: ${err.message}` }),
+    onError: (err: Error) => setFeedback({ type: "error", msg: `Failed: ${err.message}` }),
   });
 
   const purgeMutation = useMutation({
@@ -85,12 +83,10 @@ export default function IntegrationTab(): JSX.Element {
     onSuccess: (data) => {
       setFeedback({ type: "success", msg: `Cleared ${data.deleted} job(s)` });
       queryClient.invalidateQueries({
-        predicate: (q) =>
-          q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
+        predicate: (q) => q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
       });
     },
-    onError: (err: Error) =>
-      setFeedback({ type: "error", msg: `Clear failed: ${err.message}` }),
+    onError: (err: Error) => setFeedback({ type: "error", msg: `Clear failed: ${err.message}` }),
   });
 
   const domains = domainsQuery.data ?? [];
@@ -100,8 +96,7 @@ export default function IntegrationTab(): JSX.Element {
   const cascadeTargets = selectedDomainInfo?.cascade_targets ?? [];
   // File mode is only meaningful for partitioned domains (per-slice reload).
   // For non-partitioned ones it has no useful operation, so block it in the UI.
-  const fileBlocked = selectedDomainInfo !== undefined
-    && selectedDomainInfo.partitioned === false;
+  const fileBlocked = selectedDomainInfo !== undefined && selectedDomainInfo.partitioned === false;
 
   // Auto-flip to delta when the user lands on a mode that's blocked for the
   // currently-selected domain (onetime → cascade-risk, file → non-partitioned).
@@ -113,14 +108,14 @@ export default function IntegrationTab(): JSX.Element {
 
   const sliceRequired = mode === "file" && selectedDomainInfo?.partitioned === true;
   const submitDisabled =
-    submitMutation.isPending ||
-    !domain ||
-    (sliceRequired && slice.trim() === "");
+    submitMutation.isPending || !domain || (sliceRequired && slice.trim() === "");
 
   const allJobs = jobsQuery.data ?? [];
   const activeJobs = allJobs.filter((j) => ACTIVE_STATUSES.includes(j.status));
   const recentJobsBase = allJobs.filter((j) => !ACTIVE_STATUSES.includes(j.status));
-  const recentJobs = filterDomain ? recentJobsBase.filter((j) => j.domain === filterDomain) : recentJobsBase;
+  const recentJobs = filterDomain
+    ? recentJobsBase.filter((j) => j.domain === filterDomain)
+    : recentJobsBase;
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
@@ -162,10 +157,7 @@ export default function IntegrationTab(): JSX.Element {
         : `terminal jobs older than ${purgeOlderDays} day${purgeOlderDays === 1 ? "" : "s"}`;
     setPendingPurge({
       label,
-      filter:
-        purgeOlderDays === "all"
-          ? {}
-          : { older_than_hours: purgeOlderDays * 24 },
+      filter: purgeOlderDays === "all" ? {} : { older_than_hours: purgeOlderDays * 24 },
     });
   };
 
@@ -195,136 +187,144 @@ export default function IntegrationTab(): JSX.Element {
           onSubmitted={(chainId) => {
             setActiveChainId(chainId);
             queryClient.invalidateQueries({
-              predicate: (q) =>
-                q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
+              predicate: (q) => q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
             });
           }}
         />
       )}
       {activeChainId && (
-        <ChainProgress
-          chainId={activeChainId}
-          onClose={() => setActiveChainId(null)}
-        />
+        <ChainProgress chainId={activeChainId} onClose={() => setActiveChainId(null)} />
       )}
 
-      {/* Run whole pipeline (full reload / incremental refresh) */}
-      <CollapsibleSection title="Run Pipeline" storageKey="integration.run_pipeline">
-        <PipelineRunner />
-      </CollapsibleSection>
+      <section aria-labelledby="manual-operations-heading" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2 px-1">
+          <div>
+            <h2 id="manual-operations-heading" className="text-sm font-semibold text-foreground">
+              Manual Operations
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Run a full pipeline or submit a single domain job when you need direct control.
+            </p>
+          </div>
+          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Advanced
+          </span>
+        </div>
 
-      {/* Submit Job */}
-      <CollapsibleSection title="Submit Job" storageKey="integration.submit_job">
-        {domainsQuery.isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading domains...</p>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <DomainSelector
-                  value={domain}
-                  onChange={setDomain}
-                  domains={domains}
-                  disabled={submitMutation.isPending}
-                />
-              </div>
+        {/* Run whole pipeline (full reload / incremental refresh) */}
+        <CollapsibleSection title="Run Pipeline" storageKey="integration.run_pipeline">
+          <PipelineRunner />
+        </CollapsibleSection>
 
-              <div>
-                <ModeSelector
-                  value={mode}
-                  onChange={setMode}
-                  disabled={submitMutation.isPending}
-                  disabledModes={(() => {
-                    const blocks: Partial<Record<"onetime" | "delta" | "file", string>> = {};
-                    if (onetimeBlocked) {
-                      blocks.onetime =
-                        `Cascades to ${cascadeTargets.join(", ")} — use Delta instead`;
-                    }
-                    if (fileBlocked) {
-                      blocks.file =
-                        "File mode requires a partitioned domain — use Delta instead";
-                    }
-                    return Object.keys(blocks).length > 0 ? blocks : undefined;
-                  })()}
-                  descriptionOverrides={
-                    selectedDomainInfo?.partitioned
-                      ? {
-                          delta: "Upsert ALL partitions (use File for one slice)",
-                          file: `Replace one slice (${selectedDomainInfo.partition_format ?? "YYYY-MM"})`,
-                        }
-                      : undefined
-                  }
-                />
-              </div>
-
-              {sliceRequired && (
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="integration-slice"
-                    className="text-xs font-medium text-foreground/80"
-                  >
-                    Slice ({selectedDomainInfo?.partition_format ?? "YYYY-MM"})
-                  </label>
-                  <input
-                    id="integration-slice"
-                    type="text"
-                    placeholder="YYYY-MM"
-                    value={slice}
-                    onChange={(e) => setSlice(e.target.value)}
+        {/* Submit Job */}
+        <CollapsibleSection title="Submit Job" storageKey="integration.submit_job">
+          {domainsQuery.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading domains...</p>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <DomainSelector
+                    value={domain}
+                    onChange={setDomain}
+                    domains={domains}
                     disabled={submitMutation.isPending}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
                   />
                 </div>
-              )}
-            </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="submit"
-                disabled={submitDisabled}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {submitMutation.isPending ? "Submitting..." : "Submit Job"}
-              </button>
+                <div>
+                  <ModeSelector
+                    value={mode}
+                    onChange={setMode}
+                    disabled={submitMutation.isPending}
+                    disabledModes={(() => {
+                      const blocks: Partial<Record<"onetime" | "delta" | "file", string>> = {};
+                      if (onetimeBlocked) {
+                        blocks.onetime = `Cascades to ${cascadeTargets.join(", ")} — use Delta instead`;
+                      }
+                      if (fileBlocked) {
+                        blocks.file = "File mode requires a partitioned domain — use Delta instead";
+                      }
+                      return Object.keys(blocks).length > 0 ? blocks : undefined;
+                    })()}
+                    descriptionOverrides={
+                      selectedDomainInfo?.partitioned
+                        ? {
+                            delta: "Upsert ALL partitions (use File for one slice)",
+                            file: `Replace one slice (${selectedDomainInfo.partition_format ?? "YYYY-MM"})`,
+                          }
+                        : undefined
+                    }
+                  />
+                </div>
 
-              <label className="flex items-center gap-1.5 text-xs text-foreground/70 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={reindex}
-                  onChange={(e) => setReindex(e.target.checked)}
-                  disabled={submitMutation.isPending}
-                  className="h-3.5 w-3.5 rounded border-input"
-                />
-                <span title="Run REINDEX TABLE after upsert — slow, only useful for very large bulk loads">
-                  REINDEX after load
-                </span>
-              </label>
+                {sliceRequired && (
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="integration-slice"
+                      className="text-xs font-medium text-foreground/80"
+                    >
+                      Slice ({selectedDomainInfo?.partition_format ?? "YYYY-MM"})
+                    </label>
+                    <input
+                      id="integration-slice"
+                      type="text"
+                      placeholder="YYYY-MM"
+                      value={slice}
+                      onChange={(e) => setSlice(e.target.value)}
+                      disabled={submitMutation.isPending}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                    />
+                  </div>
+                )}
+              </div>
 
-              {feedback && (
-                <p
-                  role="status"
-                  className={
-                    feedback.type === "success"
-                      ? "text-sm text-emerald-600 dark:text-emerald-400"
-                      : "text-sm text-destructive"
-                  }
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={submitDisabled}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {feedback.msg}
-                </p>
-              )}
-            </div>
-          </form>
-        )}
-      </CollapsibleSection>
+                  {submitMutation.isPending ? "Submitting..." : "Submit Job"}
+                </button>
+
+                <label className="flex items-center gap-1.5 text-xs text-foreground/70 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={reindex}
+                    onChange={(e) => setReindex(e.target.checked)}
+                    disabled={submitMutation.isPending}
+                    className="h-3.5 w-3.5 rounded border-input"
+                  />
+                  <span title="Run REINDEX TABLE after upsert — slow, only useful for very large bulk loads">
+                    REINDEX after load
+                  </span>
+                </label>
+
+                {feedback && (
+                  <p
+                    role="status"
+                    className={
+                      feedback.type === "success"
+                        ? "text-sm text-emerald-600 dark:text-emerald-400"
+                        : "text-sm text-destructive"
+                    }
+                  >
+                    {feedback.msg}
+                  </p>
+                )}
+              </div>
+            </form>
+          )}
+        </CollapsibleSection>
+      </section>
 
       {/* Active Jobs */}
       <CollapsibleSection
         title="Active Jobs"
         storageKey="integration.active_jobs"
         headerRight={
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {activeJobs.length}
-          </span>
+          <span className="text-xs text-muted-foreground tabular-nums">{activeJobs.length}</span>
         }
       >
         <JobHistoryTable jobs={activeJobs} emptyMessage="No active jobs." />
@@ -335,7 +335,7 @@ export default function IntegrationTab(): JSX.Element {
         title="Recent Jobs"
         storageKey="integration.recent_jobs"
         headerRight={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <label
               htmlFor="integration-filter-domain"
               className="text-xs font-medium text-foreground/70"
@@ -409,7 +409,10 @@ export default function IntegrationTab(): JSX.Element {
         details={[
           { label: "Domain", value: pendingSubmit?.target ?? "" },
           { label: "Affected tables", value: pendingSubmit?.targetList ?? "" },
-          { label: "Running jobs", value: "Queued and running jobs are not cancelled automatically." },
+          {
+            label: "Running jobs",
+            value: "Queued and running jobs are not cancelled automatically.",
+          },
         ]}
         onConfirm={handleConfirmedSubmit}
       />

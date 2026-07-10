@@ -59,7 +59,7 @@ export function ModeSelector({
       <div
         role="radiogroup"
         aria-labelledby={`${id}-label`}
-        className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-2 lg:grid-cols-3"
       >
         {OPTIONS.map((option) => {
           const optionId = `${id}-${option.value}`;
@@ -92,14 +92,9 @@ export function ModeSelector({
                   aria-describedby={descriptionId}
                   className="h-4 w-4 accent-blue-500"
                 />
-                <span className="text-sm font-semibold text-foreground">
-                  {option.title}
-                </span>
+                <span className="text-sm font-semibold text-foreground">{option.title}</span>
               </div>
-              <span
-                id={descriptionId}
-                className="pl-6 text-xs text-muted-foreground"
-              >
+              <span id={descriptionId} className="pl-6 text-xs text-muted-foreground">
                 {perModeReason ?? descriptionOverrides?.[option.value] ?? option.description}
               </span>
             </label>

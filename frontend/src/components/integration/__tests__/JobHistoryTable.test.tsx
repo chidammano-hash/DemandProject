@@ -78,13 +78,11 @@ describe("JobHistoryTable", () => {
   });
 
   it("renders the slice value when provided", () => {
-    render(
-      <JobHistoryTable jobs={[buildJob({ slice: "2026-04", domain: "sales" })]} />,
-    );
+    render(<JobHistoryTable jobs={[buildJob({ slice: "2026-04", domain: "sales" })]} />);
     expect(screen.getByText("2026-04")).toBeInTheDocument();
   });
 
-  it("renders the error message under a failed row", () => {
+  it("reveals a failed job error only when details are expanded", () => {
     render(
       <JobHistoryTable
         jobs={[
@@ -94,17 +92,25 @@ describe("JobHistoryTable", () => {
             error_message: "Bad CSV",
           }),
         ]}
-      />,
+      />
     );
+    expect(screen.queryByText("Bad CSV")).not.toBeInTheDocument();
+    const details = screen.getByRole("button", {
+      name: "Show error details for sales",
+    });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(details);
+
     expect(screen.getByText("Bad CSV")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide error details for sales" })).toHaveAttribute(
+      "aria-expanded",
+      "true"
+    );
   });
 
   it("does not render a failure row when error_message is null", () => {
-    render(
-      <JobHistoryTable
-        jobs={[buildJob({ status: "failed", error_message: null })]}
-      />,
-    );
+    render(<JobHistoryTable jobs={[buildJob({ status: "failed", error_message: null })]} />);
     // tbody should still have only one row (primary), no expansion row.
     const tbody = document.querySelector("tbody")!;
     expect(tbody.querySelectorAll("tr").length).toBe(1);
@@ -139,19 +145,13 @@ describe("JobHistoryTable", () => {
   });
 
   it("renders an em-dash when duration is null", () => {
-    render(
-      <JobHistoryTable
-        jobs={[buildJob({ duration_ms: null, slice: "abc" })]}
-      />,
-    );
+    render(<JobHistoryTable jobs={[buildJob({ duration_ms: null, slice: "abc" })]} />);
     // slice="abc" so the only "—" should be the duration cell.
     expect(screen.getByText("—")).toBeInTheDocument();
   });
 
   it("hides the Rows Loaded column when showRowsLoaded=false", () => {
-    render(
-      <JobHistoryTable jobs={[buildJob()]} showRowsLoaded={false} />,
-    );
+    render(<JobHistoryTable jobs={[buildJob()]} showRowsLoaded={false} />);
     const head = document.querySelector("thead")!;
     const headerText = within(head).queryByText("Rows Loaded");
     expect(headerText).toBeNull();
@@ -164,11 +164,7 @@ describe("JobHistoryTable", () => {
   });
 
   it("formats rows_loaded with thousands separator for success jobs", () => {
-    render(
-      <JobHistoryTable
-        jobs={[buildJob({ status: "success", rows_loaded: 12345 })]}
-      />,
-    );
+    render(<JobHistoryTable jobs={[buildJob({ status: "success", rows_loaded: 12345 })]} />);
     // Intl.NumberFormat default for en/US-like locales -> "12,345".
     // Allow either comma- or non-comma-separated to keep test locale-tolerant.
     const candidates = ["12,345", "12.345", "12345"];

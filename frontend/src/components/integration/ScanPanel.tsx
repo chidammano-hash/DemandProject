@@ -59,7 +59,9 @@ export function ScanPanel(props: ScanPanelProps): JSX.Element {
   const activePlan = plan ?? mutation.data ?? null;
   const questions = activePlan?.questions ?? [];
   const hasQuestions = questions.length > 0;
-  const canSubmitAnswers = questions.every((q) => !q.required || (answers[q.id] ?? "").trim() !== "");
+  const canSubmitAnswers = questions.every(
+    (q) => !q.required || (answers[q.id] ?? "").trim() !== ""
+  );
 
   const submitPlan = (nextAnswers: PlannerAnswer[] = []): void => {
     mutation.mutate({ answers: nextAnswers });
@@ -97,6 +99,7 @@ export function ScanPanel(props: ScanPanelProps): JSX.Element {
       subtitle="Scan data/input/ and let the AI planner choose the safest next sequence."
       storageKey="integration.scan"
       headerRight={headerRight}
+      className="border-primary/25 bg-gradient-to-br from-primary/[0.04] to-transparent"
     >
       {mutation.isError ? (
         <p
@@ -109,7 +112,8 @@ export function ScanPanel(props: ScanPanelProps): JSX.Element {
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground">
             Click <strong>Scan Now</strong> to compare every source file under{" "}
-            <code>data/input/</code>, check the current job queue, and ask the AI for the safest load sequence.
+            <code>data/input/</code>, check the current job queue, and ask the AI for the safest
+            load sequence.
           </p>
 
           {activePlan && (
@@ -184,7 +188,9 @@ export function ScanPanel(props: ScanPanelProps): JSX.Element {
                             }
                             rows={2}
                             className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                            placeholder={question.answer_type === "boolean" ? "yes / no" : "Type your answer"}
+                            placeholder={
+                              question.answer_type === "boolean" ? "yes / no" : "Type your answer"
+                            }
                           />
                         )}
                       </label>
@@ -208,7 +214,10 @@ export function ScanPanel(props: ScanPanelProps): JSX.Element {
                   </p>
                   <ul className="space-y-1">
                     {activePlan.evidence.map((item) => (
-                      <li key={`${item.kind}-${item.label}-${item.value}`} className="text-xs text-muted-foreground">
+                      <li
+                        key={`${item.kind}-${item.label}-${item.value}`}
+                        className="text-xs text-muted-foreground"
+                      >
                         <span className="font-medium text-foreground">{item.label}</span>
                         <span className="mx-1">·</span>
                         <span>{item.value}</span>

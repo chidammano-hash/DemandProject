@@ -190,6 +190,9 @@ The Integration tab should evolve from a one-click detector into a guided planni
 - If the planner is confident, `ChainComposer` shows the recommended sequence and the evidence behind it.
 - The run button should read something like `Run Suggested Chain`, so the distinction between generated plan and actual execution is obvious.
 - The UI should show whether the current plan is using local development inference or production OpenAI inference.
+- The AI-guided scan remains the visually primary workflow; whole-pipeline and single-domain controls are grouped under **Manual Operations**.
+- Recent-job failures show a compact **Details** affordance and reveal the full error only on demand.
+- Operational status chips wrap at narrow widths, and load-mode cards stack until enough width is available for three readable columns.
 
 The experience should feel like a planning copilot, not a chatbot:
 
