@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import _get_pool
+from common.ai.integration_scan.planner import run_scan_planner
 from common.services.integration_chain_jobs import ChainJobRunner
 from common.services.integration_scanner import scan_input_dir
 
@@ -77,6 +78,64 @@ class ScanResponse(BaseModel):
     proposed_chain: list[ChainStepModel] = Field(
         default_factory=list,
         description="Ordered chain of jobs the runner suggests to bring the warehouse up to date.",
+    )
+
+
+class PlannerAnswerModel(BaseModel):
+    """One answer returned from the UI's follow-up question loop."""
+
+    question_id: str = Field(..., description="Stable question identifier from the planner response.")
+    answer: str = Field(..., description="User response text.")
+
+
+class PlannerQuestionModel(BaseModel):
+    """One question the AI planner wants the user to answer."""
+
+    id: str = Field(..., description="Stable question identifier.")
+    prompt: str = Field(..., description="Question text shown to the user.")
+    answer_type: Literal["text", "choice", "boolean"] = Field(
+        default="text",
+        description="How the UI should capture the answer.",
+    )
+    options: list[str] = Field(default_factory=list, description="Choice options for select-style questions.")
+    required: bool = Field(default=True, description="Whether the question must be answered.")
+    reason: str | None = Field(default=None, description="Why the planner asked the question.")
+
+
+class PlannerEvidenceModel(BaseModel):
+    """One evidence item the UI can render alongside the plan."""
+
+    kind: Literal["scan", "job", "batch"] = Field(..., description="Evidence source bucket.")
+    label: str = Field(..., description="Short evidence label.")
+    value: str = Field(..., description="Human-readable evidence value.")
+
+
+class ScanPlanRequest(BaseModel):
+    """Request body for ``POST /integration/scan/plan``."""
+
+    answers: list[PlannerAnswerModel] = Field(default_factory=list, description="Optional follow-up answers from the user.")
+
+
+class ScanPlanResponse(ScanResponse):
+    """Response body for ``POST /integration/scan/plan``."""
+
+    plan_id: str = Field(..., description="Stable identifier for this planning turn.")
+    provider: str = Field(..., description="Planner provider used for this turn (e.g. ollama/openai).")
+    model: str = Field(..., description="Model id used for the planning turn.")
+    status: Literal["questions", "planned", "fallback"] = Field(
+        ..., description="Whether the planner needs more information or has a final sequence."
+    )
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Planner confidence in the returned sequence.")
+    explanation: str = Field(..., description="Short rationale for the recommendation.")
+    risk_flags: list[str] = Field(default_factory=list, description="Ambiguities or cautions to surface in the UI.")
+    questions: list[PlannerQuestionModel] = Field(default_factory=list, description="Optional clarifying questions.")
+    recommended_chain: list[ChainStepModel] = Field(
+        default_factory=list,
+        description="Final AI-recommended execution chain (or deterministic fallback if the model is unavailable).",
+    )
+    evidence: list[PlannerEvidenceModel] = Field(
+        default_factory=list,
+        description="Supporting scan / job / batch facts used to justify the planner output.",
     )
 
 
@@ -218,6 +277,38 @@ def scan() -> ScanResponse:
         scanned_at=str(payload.get("scanned_at", "")),
         changes=[DomainChangeModel(**c) for c in payload.get("changes", [])],
         proposed_chain=[ChainStepModel(**s) for s in payload.get("proposed_chain", [])],
+    )
+
+
+@router.post(
+    "/scan/plan",
+    response_model=ScanPlanResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def scan_plan(req: ScanPlanRequest) -> ScanPlanResponse:
+    """Run the deterministic scan, then ask the AI planner for the safest sequence.
+
+    The planner rescan happens server-side so the UI can simply POST user
+    answers back to the same endpoint and receive a fresh recommendation.
+    """
+    payload: dict[str, Any] = run_scan_planner(
+        _get_pool(),
+        answers=[a.model_dump() for a in req.answers],
+    ) or {}
+    return ScanPlanResponse(
+        scanned_at=str(payload.get("scanned_at", "")),
+        changes=[DomainChangeModel(**c) for c in payload.get("changes", [])],
+        proposed_chain=[ChainStepModel(**s) for s in payload.get("proposed_chain", [])],
+        plan_id=str(payload.get("plan_id", "")),
+        provider=str(payload.get("provider", "")),
+        model=str(payload.get("model", "")),
+        status=str(payload.get("status", "fallback")),
+        confidence=float(payload.get("confidence", 0.0)),
+        explanation=str(payload.get("explanation", "")),
+        risk_flags=[str(v) for v in payload.get("risk_flags", [])],
+        questions=[PlannerQuestionModel(**q) for q in payload.get("questions", [])],
+        recommended_chain=[ChainStepModel(**s) for s in payload.get("recommended_chain", [])],
+        evidence=[PlannerEvidenceModel(**e) for e in payload.get("evidence", [])],
     )
 
 

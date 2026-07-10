@@ -159,6 +159,7 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | 05 | [Decision Ledger + Policy](06-ai-platform/05-decision-ledger-and-policy.md) | Hash-chained append-only AI decision ledger (**Partial** — ledger shipped; policy engine not yet wired) |
 | 06 | [Forecast Explain API](06-ai-platform/06-explain-api.md) | SHAP-based forecast explanation per DFU |
 | 07 | [SKU Chatbot](06-ai-platform/07-sku-chatbot.md) | Conversational per-SKU assistant on the Claude Agent SDK; tiered Haiku/Sonnet/Opus routing; standalone tab + Item Analysis side chat; best-effort persistence (sql/196). Subscription auth in Claude Code, API key/Bedrock/Vertex standalone (**Partial** — Phases 1+3 shipped; needs `uv sync --extra agent` for the live path) |
+| 08 | [AI Integration Scan Orchestrator](06-ai-platform/08-integration-scan-orchestrator.md) | AI-assisted Scan Now planner that asks clarifying questions and returns the safest load sequence |
 
 ---
 

@@ -12,13 +12,13 @@ import {
   type ChainStep,
   type DomainChange,
   type LoadMode,
-  type ScanResult,
+  type ScanPlanResult,
   type SubmitChainRequest,
 } from "../../api/queries/integration_chain";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 interface ChainComposerProps {
-  scan: ScanResult;
+  scan: ScanPlanResult;
   onSubmitted: (chainId: string) => void;
 }
 
@@ -123,7 +123,8 @@ export function ChainComposer(props: ChainComposerProps): JSX.Element {
   const dimChanges = detected.filter((c) => c.kind === "dim");
   const factChanges = detected.filter((c) => c.kind === "fact");
   const total = detected.length;
-  const stepCount = scan.proposed_chain.length;
+  const chain: ChainStep[] = scan.recommended_chain.length > 0 ? scan.recommended_chain : scan.proposed_chain;
+  const stepCount = chain.length;
 
   const mutation = useMutation({
     mutationFn: submitChain,
@@ -132,7 +133,7 @@ export function ChainComposer(props: ChainComposerProps): JSX.Element {
 
   const handleRun = (): void => {
     const body: SubmitChainRequest = {
-      jobs: scan.proposed_chain.map((s) => ({
+      jobs: chain.map((s) => ({
         domain: s.domain,
         mode: s.mode,
         ...(s.slice ? { slice: s.slice } : {}),
@@ -150,9 +151,16 @@ export function ChainComposer(props: ChainComposerProps): JSX.Element {
       : "Run Chain";
 
   const headerRight = (
-    <span className="text-sm text-muted-foreground">
-      {total === 0 ? "All files up to date" : `${total} change${total === 1 ? "" : "s"} detected`}
-    </span>
+    <div className="flex flex-col items-end gap-1 text-right">
+      <span className="text-sm text-muted-foreground">
+        {total === 0 ? "All files up to date" : `${total} change${total === 1 ? "" : "s"} detected`}
+      </span>
+      {scan.status !== "questions" && (
+        <span className="text-xs text-muted-foreground">
+          {scan.provider} · {scan.model} · {(scan.confidence * 100).toFixed(0)}% confidence
+        </span>
+      )}
+    </div>
   );
 
   return (
@@ -162,6 +170,24 @@ export function ChainComposer(props: ChainComposerProps): JSX.Element {
       headerRight={headerRight}
     >
       <div className="space-y-4">
+        {scan.status !== "questions" && (
+          <div className="rounded-lg border border-border bg-muted/25 p-3">
+            <p className="text-sm text-foreground">{scan.explanation}</p>
+            {scan.risk_flags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {scan.risk_flags.map((flag) => (
+                  <span
+                    key={flag}
+                    className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+                  >
+                    {flag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid gap-3 md:grid-cols-2">
           <ChangeGroup title="Masters (dimensions)" kind="dim" changes={dimChanges} />
           <ChangeGroup title="Details (facts)" kind="fact" changes={factChanges} />
@@ -171,19 +197,24 @@ export function ChainComposer(props: ChainComposerProps): JSX.Element {
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Execution Order
           </h4>
-          <ProposedChain steps={scan.proposed_chain} />
+          <ProposedChain steps={chain} />
         </div>
 
         <div className="flex flex-col items-start gap-2">
           <button
             type="button"
             onClick={handleRun}
-            disabled={runDisabled}
+            disabled={runDisabled || scan.status === "questions"}
             aria-label={buttonLabel}
             className="inline-flex items-center gap-2 rounded-md border border-border bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {buttonLabel}
           </button>
+          {scan.status === "questions" && (
+            <p className="text-xs text-muted-foreground">
+              Answer the follow-up questions above before running the chain.
+            </p>
+          )}
           {mutation.isError && (
             <p
               role="alert"

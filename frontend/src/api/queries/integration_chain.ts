@@ -53,11 +53,53 @@ export type ChainStep = {
   slice: string | null;
 };
 
+/** One answer sent back to the planner. */
+export type PlannerAnswer = {
+  question_id: string;
+  answer: string;
+};
+
+/** One planner question shown in the UI. */
+export type PlannerQuestion = {
+  id: string;
+  prompt: string;
+  answer_type: "text" | "choice" | "boolean";
+  options: string[];
+  required: boolean;
+  reason: string | null;
+};
+
+/** Evidence item exposed by the planner. */
+export type PlannerEvidence = {
+  kind: "scan" | "job" | "batch";
+  label: string;
+  value: string;
+};
+
 /** Full result of a scan operation. */
 export type ScanResult = {
   scanned_at: string;
   changes: DomainChange[];
   proposed_chain: ChainStep[];
+};
+
+/** Planner result returned by POST /integration/scan/plan. */
+export type ScanPlanResult = ScanResult & {
+  plan_id: string;
+  provider: string;
+  model: string;
+  status: "questions" | "planned" | "fallback";
+  confidence: number;
+  explanation: string;
+  risk_flags: string[];
+  questions: PlannerQuestion[];
+  recommended_chain: ChainStep[];
+  evidence: PlannerEvidence[];
+};
+
+/** Body for POST /integration/scan/plan. */
+export type ScanPlanRequest = {
+  answers?: PlannerAnswer[];
 };
 
 /** High-level summary row for a chain (used in list views). */
@@ -130,6 +172,17 @@ type ListEnvelope<T> = { items: T[] };
 /** GET /integration/scan — scan `data/input/` for changed source files. */
 export async function scanInputs(): Promise<ScanResult> {
   return fetchJson<ScanResult>("/integration/scan");
+}
+
+/** POST /integration/scan/plan — ask the AI planner for the safest sequence. */
+export async function planScan(
+  req: ScanPlanRequest = {},
+): Promise<ScanPlanResult> {
+  return fetchJson<ScanPlanResult>("/integration/scan/plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
 }
 
 /** GET /integration/chains — list recent chains, optionally limited. */

@@ -1,0 +1,27 @@
+# Integration Scan Orchestrator configuration.
+# The local-dev path is free: use a local OpenAI-compatible runtime (ollama).
+# Production can switch provider to "openai" and consume OPENAI_API_KEY.
+
+provider: ollama # Local development default; set to "openai" in production.
+
+models:
+  ollama: llama3.1:8b # Free local development model.
+  openai: gpt-4o-mini # Production OpenAI model for the planner.
+  openai_compat: gpt-4o-mini # Optional OpenAI-compatible gateway model.
+
+endpoints:
+  ollama: http://localhost:11434/v1 # Local OpenAI-compatible endpoint.
+  openai_compat: ${LLM_BASE_URL} # Enterprise gateway URL, if used.
+
+temperature: 0.0 # Deterministic planning output.
+max_tokens: 1200 # Enough for a compact structured response.
+confidence_threshold: 0.8 # Below this, the planner should ask questions.
+max_questions_per_scan: 3 # Keep the UI focused and fast.
+
+cost_controls:
+  per_call_timeout_seconds: 45 # Keep the planner responsive.
+
+ollama:
+  keep_alive: 15m # Keep the local model warm between clicks.
+  request_timeout_seconds: 90 # Local inference may take longer than API calls.
+  num_ctx: 8192 # Plenty for the scan + db context payload.

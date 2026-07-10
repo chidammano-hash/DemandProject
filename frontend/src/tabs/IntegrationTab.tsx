@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   integrationKeys,
@@ -10,7 +10,7 @@ import {
   type PurgeFilter,
   type SubmitJobRequest,
 } from "@/api/queries/integration";
-import type { ScanResult } from "@/api/queries/integration_chain";
+import type { ScanPlanResult } from "@/api/queries/integration_chain";
 import { DomainSelector } from "@/components/integration/DomainSelector";
 import { PipelineRunner } from "@/components/integration/PipelineRunner";
 import { ModeSelector } from "@/components/integration/ModeSelector";
@@ -44,7 +44,7 @@ export default function IntegrationTab(): JSX.Element {
   const [slice, setSlice] = useState<string>("");
   const [filterDomain, setFilterDomain] = useState<string>("");
   const [feedback, setFeedback] = useState<Feedback>(null);
-  const [scan, setScan] = useState<ScanResult | null>(null);
+  const [scan, setScan] = useState<ScanPlanResult | null>(null);
   const [activeChainId, setActiveChainId] = useState<string | null>(null);
   // "all" = drop every terminal job; otherwise N = drop jobs older than N days
   const [purgeOlderDays, setPurgeOlderDays] = useState<"all" | number>("all");
@@ -94,10 +94,7 @@ export default function IntegrationTab(): JSX.Element {
   });
 
   const domains = domainsQuery.data ?? [];
-  const selectedDomainInfo = useMemo(
-    () => domains.find((d) => d.name === domain),
-    [domains, domain],
-  );
+  const selectedDomainInfo = domains.find((d) => d.name === domain);
 
   const onetimeBlocked = selectedDomainInfo?.onetime_cascades === true;
   const cascadeTargets = selectedDomainInfo?.cascade_targets ?? [];
@@ -121,14 +118,9 @@ export default function IntegrationTab(): JSX.Element {
     (sliceRequired && slice.trim() === "");
 
   const allJobs = jobsQuery.data ?? [];
-  const activeJobs = useMemo(
-    () => allJobs.filter((j) => ACTIVE_STATUSES.includes(j.status)),
-    [allJobs],
-  );
-  const recentJobs = useMemo(() => {
-    const recent = allJobs.filter((j) => !ACTIVE_STATUSES.includes(j.status));
-    return filterDomain ? recent.filter((j) => j.domain === filterDomain) : recent;
-  }, [allJobs, filterDomain]);
+  const activeJobs = allJobs.filter((j) => ACTIVE_STATUSES.includes(j.status));
+  const recentJobsBase = allJobs.filter((j) => !ACTIVE_STATUSES.includes(j.status));
+  const recentJobs = filterDomain ? recentJobsBase.filter((j) => j.domain === filterDomain) : recentJobsBase;
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
@@ -196,8 +188,8 @@ export default function IntegrationTab(): JSX.Element {
 
       {/* Smart change detection + chain composer (top-level so it's the
           first thing the user sees — one-click to scan + run masters→facts) */}
-      <ScanPanel onScanned={setScan} />
-      {scan && (
+      <ScanPanel onPlanned={setScan} />
+      {scan && scan.status !== "questions" && (
         <ChainComposer
           scan={scan}
           onSubmitted={(chainId) => {
