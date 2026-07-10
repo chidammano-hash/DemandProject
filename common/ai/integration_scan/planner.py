@@ -142,6 +142,41 @@ def _normalize_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _ground_recommended_chain(
+    recommended_chain: list[dict[str, Any]], scan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep AI-selected ordering, but take executable step details from the scan.
+
+    The model can choose to omit a safe step or change the order. It must never
+    invent a load mode, slice, or file: those values are determined by the
+    scanner and enforced at the submission endpoint.
+    """
+    proposed = list(scan.get("proposed_chain") or [])
+    by_domain = {
+        str(step.get("domain")): step
+        for step in proposed
+        if isinstance(step, dict) and step.get("domain")
+    }
+    grounded: list[dict[str, Any]] = []
+    included: set[str] = set()
+    for recommendation in recommended_chain:
+        if not isinstance(recommendation, dict):
+            continue
+        domain = str(recommendation.get("domain") or "")
+        if domain not in by_domain or domain in included:
+            continue
+        included.add(domain)
+        source = by_domain[domain]
+        grounded.append({
+            "step": len(grounded) + 1,
+            "domain": domain,
+            "mode": source.get("mode"),
+            "slice": source.get("slice"),
+            "file": source.get("file"),
+        })
+    return grounded
+
+
 def _row_dicts(cur) -> list[dict[str, Any]]:
     cols = [d[0] for d in (cur.description or [])]
     return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
@@ -290,7 +325,8 @@ def _build_prompt(
                 "Return JSON only with keys: status, confidence, explanation, risk_flags, questions, recommended_chain. "
                 "If certainty is low or an answer would change the safe sequence, ask concise questions first. "
                 "When finalizing a plan, keep the existing scan order unless evidence clearly supports a safer order. "
-                "Do not invent domains or steps. Do not write to the database."
+                "Use only domains, modes, slices, and files supplied in scan.proposed_chain. "
+                "Do not write to the database."
             ),
         },
         {
@@ -355,7 +391,9 @@ def _build_decision(
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as exc:
             raise LLMJSONParseError("Could not parse JSON from codex") from exc
-        return PlannerDecision.model_validate(_normalize_decision_payload(parsed))
+        decision = PlannerDecision.model_validate(_normalize_decision_payload(parsed))
+        decision.recommended_chain = _ground_recommended_chain(decision.recommended_chain, scan)
+        return decision
 
     openai_cfg = {**cfg, "provider": "openai"}
     client = build_from_config(openai_cfg)

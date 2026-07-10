@@ -129,3 +129,20 @@ def test_codex_decision_normalizes_question_status_and_plain_strings():
             "reason": "The answer may change the safe execution sequence.",
         }
     ]
+
+
+def test_ground_recommended_chain_uses_scanner_load_details():
+    from common.ai.integration_scan.planner import _ground_recommended_chain
+
+    grounded = _ground_recommended_chain(
+        [{"domain": "inventory", "mode": "replace_from_aggregate_cleaned_source"}],
+        {
+            "proposed_chain": [
+                {"step": 1, "domain": "inventory", "mode": "delta", "slice": None, "file": None},
+            ]
+        },
+    )
+
+    assert grounded == [
+        {"step": 1, "domain": "inventory", "mode": "delta", "slice": None, "file": None},
+    ]

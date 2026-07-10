@@ -65,4 +65,18 @@ describe("fetchJson error handling (U2.1)", () => {
     }
     expect(formatApiError(caught)).toBe("That record could not be found.");
   });
+
+  it("formats FastAPI validation details without object coercion", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 422,
+      text: () => Promise.resolve(JSON.stringify({
+        detail: [{ loc: ["body", "jobs", 3, "mode"], msg: "Input should be 'onetime', 'delta' or 'file'" }],
+      })),
+    });
+
+    await expect(fetchJson("/integration/chains")).rejects.toThrow(
+      "body.jobs.3.mode: Input should be 'onetime', 'delta' or 'file'",
+    );
+  });
 });

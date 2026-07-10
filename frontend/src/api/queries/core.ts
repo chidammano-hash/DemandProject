@@ -98,6 +98,21 @@ export const STALE = {
   NONE: 0,
 } as const;
 
+function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .filter((entry): entry is { loc?: unknown; msg?: unknown } => Boolean(entry) && typeof entry === "object")
+      .map((entry) => {
+        const location = Array.isArray(entry.loc) ? entry.loc.join(".") : "request";
+        const message = typeof entry.msg === "string" ? entry.msg : "Invalid value";
+        return `${location}: ${message}`;
+      });
+    return messages.join("; ") || "Request validation failed";
+  }
+  return "Request failed";
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
@@ -114,10 +129,9 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
     } catch {
       /* non-JSON body — keep the raw text */
     }
-    const message =
-      detail && typeof detail === "object" && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : text || `HTTP ${res.status}`;
+    const message = detail && typeof detail === "object" && "detail" in detail
+      ? formatErrorDetail((detail as { detail: unknown }).detail)
+      : text || `HTTP ${res.status}`;
     const err = new Error(message);
     Object.assign(err, { status: res.status, detail });
     throw err;

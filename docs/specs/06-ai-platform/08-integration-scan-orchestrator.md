@@ -46,6 +46,11 @@ The key design choice is separation of concerns:
 - reasoning is AI-driven
 - execution stays deterministic and already audited
 
+The AI may recommend an order, omission, or clarification, but every submitted
+`domain`, `mode`, `slice`, and `file` is grounded in the scanner's proposed
+chain. This prevents a conversational model from emitting internal strategy
+labels that are not valid chain-runner load modes.
+
 ---
 
 ## How It Works
