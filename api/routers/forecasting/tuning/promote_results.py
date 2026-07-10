@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.core.utils import get_pipeline_config_path
+from common.core.paths import DATA_DIR
 
 from ._helpers import MODEL_ID_MAP, _model_id, _validate_model
 
@@ -54,7 +54,7 @@ def promote_results(model: str, run_id: int):
 
     # Check prediction files exist
     output_dir = MODEL_ID_MAP[model]
-    pred_path = get_pipeline_config_path().parent.parent / "data" / "backtest" / output_dir / "backtest_predictions.csv"
+    pred_path = DATA_DIR / "backtest" / output_dir / "backtest_predictions.csv"
     if not pred_path.exists():
         raise HTTPException(
             status_code=400,

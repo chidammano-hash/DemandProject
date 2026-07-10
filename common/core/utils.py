@@ -242,7 +242,7 @@ def get_algorithm_config_key(model_id: str) -> str:
 
 def get_pipeline_config_path() -> Path:
     """Return the absolute path to forecast_pipeline_config.yaml."""
-    return _CONFIG_DIR / _FORECAST_PIPELINE_CFG
+    return _CONFIG_DIR / "forecasting" / _FORECAST_PIPELINE_CFG
 
 
 def reset_config(name: str | None = None) -> None:

@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from common.core.utils import _deep_merge
-from common.core.utils import _ts, load_config, reset_config
+from common.core.utils import _ts, get_pipeline_config_path, load_config, reset_config
 
 # ---------------------------------------------------------------------------
 # _ts() tests
@@ -291,6 +291,23 @@ class TestLoadConfig:
             assert result["extra_from_shared"] == "preserved"
         finally:
             del _config_validators[name]
+
+
+# ---------------------------------------------------------------------------
+# get_pipeline_config_path() tests
+# ---------------------------------------------------------------------------
+
+class TestGetPipelineConfigPath:
+    def test_points_at_existing_file(self):
+        # Regression: the helper once returned config/forecast_pipeline_config.yaml
+        # after the file moved to config/forecasting/, breaking every open() caller
+        # (tuning launch, promote, tuning-chat backtest) with FileNotFoundError.
+        path = get_pipeline_config_path()
+        assert path.exists(), f"pipeline config not found at {path}"
+
+    def test_matches_config_dir_layout(self):
+        path = get_pipeline_config_path()
+        assert path.parts[-3:] == ("config", "forecasting", "forecast_pipeline_config.yaml")
 
 
 # ---------------------------------------------------------------------------
