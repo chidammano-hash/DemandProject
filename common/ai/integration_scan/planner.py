@@ -119,10 +119,24 @@ def _normalize_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
     status = str(normalized.get("status", "")).strip().lower()
     if status.startswith("no_change") or status in {"ready", "safe", "final", "complete"}:
         normalized["status"] = "planned"
-    elif status.startswith("need") or "clarif" in status:
+    elif status.startswith("question") or status.startswith("need") or "clarif" in status:
         normalized["status"] = "questions"
+
+    raw_questions = normalized.get("questions") or []
+    normalized["questions"] = [
+        {
+            "id": f"planner_question_{index}",
+            "prompt": question,
+            "answer_type": "text",
+            "options": [],
+            "required": True,
+            "reason": "The answer may change the safe execution sequence.",
+        }
+        if isinstance(question, str)
+        else question
+        for index, question in enumerate(raw_questions, start=1)
+    ]
     normalized.setdefault("risk_flags", [])
-    normalized.setdefault("questions", [])
     normalized.setdefault("recommended_chain", [])
     normalized.setdefault("explanation", "")
     return normalized

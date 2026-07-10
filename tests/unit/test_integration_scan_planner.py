@@ -105,3 +105,27 @@ def test_codex_decision_normalizes_safe_terminal_status_alias():
     assert payload["risk_flags"] == []
     assert payload["questions"] == []
     assert payload["recommended_chain"] == []
+
+
+def test_codex_decision_normalizes_question_status_and_plain_strings():
+    from common.ai.integration_scan.planner import _normalize_decision_payload
+
+    payload = _normalize_decision_payload(
+        {
+            "status": "questions_required",
+            "confidence": 0.74,
+            "questions": ["Should inventory snapshots be loaded independently?"],
+        }
+    )
+
+    assert payload["status"] == "questions"
+    assert payload["questions"] == [
+        {
+            "id": "planner_question_1",
+            "prompt": "Should inventory snapshots be loaded independently?",
+            "answer_type": "text",
+            "options": [],
+            "required": True,
+            "reason": "The answer may change the safe execution sequence.",
+        }
+    ]
