@@ -759,7 +759,12 @@ def _table_count(domain: str) -> int | None:
         return None
 
 
-def _filter_orphan_fks(cur, table: str, stg: str = "_upsert_stg") -> int:
+def _filter_orphan_fks(
+    cur,
+    table: str,
+    stg: str = "_upsert_stg",
+    available_columns: set[str] | None = None,
+) -> int:
     """Delete rows from the staging table whose outgoing FKs don't resolve.
 
     Source CSVs sometimes contain rows referencing dim ids that aren't in the
@@ -786,8 +791,22 @@ def _filter_orphan_fks(cur, table: str, stg: str = "_upsert_stg") -> int:
     fks = cur.fetchall()
     total_removed = 0
     for ref_table, local_cols, ref_cols in fks:
+        if available_columns is not None and any(
+            local_col not in available_columns for local_col in local_cols
+        ):
+            logger.info(
+                "skipping orphan-FK filter for %s -> %s: incoming staging data "
+                "does not provide %s",
+                table,
+                ref_table,
+                ", ".join(
+                    local_col for local_col in local_cols
+                    if local_col not in available_columns
+                ),
+            )
+            continue
         join = " AND ".join(
-            f's."{lc}" = r."{rc}"' for lc, rc in zip(local_cols, ref_cols)
+        f's."{lc}" = r."{rc}"' for lc, rc in zip(local_cols, ref_cols, strict=True)
         )
         cur.execute(
             f'DELETE FROM {stg} s WHERE NOT EXISTS '
@@ -953,7 +972,12 @@ def _safe_upsert(domain: str) -> dict[str, int]:
         # Pre-filter staging to drop rows whose outgoing FKs don't resolve.
         # Surfaces upstream data-quality issues as warnings rather than
         # transaction-killing FK violations.
-        skipped_orphan_fks = _filter_orphan_fks(cur, table, "_upsert_stg")
+        _filter_orphan_fks(
+            cur,
+            table,
+            "_upsert_stg",
+            available_columns=set(csv_header),
+        )
 
         # Auto-discover ON CONFLICT target from pg_index — handles single-col
         # (sales_ck), composite (forecast_ck+model_id), and partition-aware
@@ -1118,7 +1142,7 @@ def _delete_orphans(cur, table: str, bk_cols: list[str]) -> tuple[int, int]:
     fk_protect_sql = ""
     for ref_table, ref_cols, dim_cols in fk_refs:
         join_clause = " AND ".join(
-            f't."{dc}" = r."{rc}"' for dc, rc in zip(dim_cols, ref_cols)
+            f't."{dc}" = r."{rc}"' for dc, rc in zip(dim_cols, ref_cols, strict=True)
         )
         fk_protect_sql += (
             f' AND NOT EXISTS (SELECT 1 FROM "{ref_table}" r WHERE {join_clause})'

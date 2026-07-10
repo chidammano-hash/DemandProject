@@ -84,6 +84,39 @@ class TestResolveConflictTarget:
         assert ld._resolve_conflict_target(cur, "t", "ck") == []
 
 
+class TestFilterOrphanFks:
+    def test_skips_fk_when_incoming_staging_omits_optional_local_column(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [
+            ("champion_experiment", ["champion_experiment_id"], ["experiment_id"]),
+        ]
+
+        removed = ld._filter_orphan_fks(
+            cur,
+            "fact_external_forecast_monthly",
+            available_columns={"forecast_ck", "model_id"},
+        )
+
+        assert removed == 0
+        assert cur.execute.call_count == 1
+
+    def test_filters_fk_when_incoming_staging_provides_local_column(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [
+            ("dim_item", ["item_id"], ["item_id"]),
+        ]
+        cur.rowcount = 3
+
+        removed = ld._filter_orphan_fks(
+            cur,
+            "fact_external_forecast_monthly",
+            available_columns={"item_id"},
+        )
+
+        assert removed == 3
+        assert cur.execute.call_count == 2
+
+
 class TestOnetimeDelegatesToBulkLoader:
     """US7 verify: load.py's onetime path delegates the bulk insert to the
     canonical load_dataset_postgres.py engine (not a separate implementation)."""
