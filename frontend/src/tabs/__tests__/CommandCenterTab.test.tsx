@@ -8,10 +8,10 @@ vi.mock("@/lib/navigation", () => ({
   navigateToItem: vi.fn(),
 }));
 
-// The dependency-readiness banner self-fetches; stub it out — its own behaviour
-// is covered by PipelineReadinessBanner.test.tsx.
-vi.mock("@/components/PipelineReadinessBanner", () => ({
-  PipelineReadinessBanner: () => null,
+// The release-readiness card self-fetches; stub it out because its states are
+// covered by ForecastReleaseGateCard.test.tsx.
+vi.mock("@/components/ForecastReleaseGateCard", () => ({
+  ForecastReleaseGateCard: () => null,
 }));
 
 vi.mock("@/api/queries", () => ({

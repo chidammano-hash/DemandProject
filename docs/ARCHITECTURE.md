@@ -993,12 +993,13 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Champion Experiments** | `/champion-experiments`, `/{id}`, `/{id}/lags`, `/{id}/months`, `/{id}/logs`, `/templates`, `/promoted`, `/promotions`, `/compare`, `/{id}/promote`, `/{id}/promote-results`, `/{id}/promote-results/status`, `/{id}/cancel` | `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log` |
 | **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions` |
 | **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`, `/{model_id}/train` | `fact_candidate_forecast`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
+| **Forecast Release Readiness** | `/forecast-release/readiness` | `fact_external_forecast_monthly`, `dim_sku`, `champion_experiment`, `cluster_experiment`, `fact_production_forecast`, `fact_forecast_snapshot` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
 All API prefixes proxied to FastAPI at `http://127.0.0.1:8000`:
 
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`, `/forecast-release`
 
 > **CRITICAL:** When adding a new API path prefix, add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON.
 
@@ -1941,6 +1942,8 @@ Three tree-based backtest models (LightGBM, CatBoost, XGBoost) plus three custom
 **Champion Strategy Sweep (tournament):** fans out a grid of candidate champion configs (each a real `champion_experiment`), ranks them globally **and** within demand segments, assembles a per-segment composite (promotable as a `per_segment` config), and recommends a gate-eligible winner. Per-segment scoring is post-hoc slicing — no extra runs. Job `champion_sweep` → `scripts/ml/run_champion_sweep.py`; API `/champion-sweeps`; tables `champion_sweep`, `champion_sweep_member`, `champion_sweep_segment_score` (`sql/192`); frontend `SweepBuilder`/`SweepResultsPanel` in `src/tabs/champion/`. Spec `docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
 
 **Production Forecast Panel:** staged candidate→production workflow — predictions land in `fact_candidate_forecast`, only the promoted model is copied to `fact_production_forecast`. Model Readiness table (Train → Generate → Load → Promote per model) + Algorithm Selection. Audit trail in `model_promotion_log`. Frontend `src/tabs/forecast/`.
+
+**Forecast Release Readiness:** the Command Center verifies the active planning-month release across one fixed, full-grain execution-lag common cohort plus unambiguous promotion state, freshness-fenced champion results, exactly one matching promoted cluster generation, promoted assignments, generation freshness, six-month eligible-DFU coverage, coherent run/value/confidence-interval integrity, and bounded structural evidence that the preceding champion-plus-three plan was archived during its active lifetime before replacement. All evidence is read under one repeatable-read, read-only snapshot. API `/forecast-release/readiness`; policy in `champion.release_readiness`; spec `docs/specs/02-forecasting/34-forecast-release-readiness.md`. This is post-release planner readiness; transactional candidate promotion enforcement and persisted run/value checksums remain a separate follow-up.
 
 **Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
 

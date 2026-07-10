@@ -209,7 +209,7 @@ POST /backtest-management/{model_id}/promote
 | Mode | `model_id` | DFU Coverage | Source File |
 |---|---|---|---|
 | **Single** | A specific algorithm (e.g. `lgbm_cluster`) | All DFUs use the **same** model | Rows copied from `fact_candidate_forecast` WHERE `model_id = <id>` |
-| **Champion** | `champion` (per `champion_model_id` config) | Per-DFU best from assignments file | `data/champion/dfu_assignments.csv` joined back to `fact_candidate_forecast` |
+| **Champion** | `champion` (per `champion_model_id` config) | Per-DFU, per-month winner from the promoted experiment | `data/champion/experiment_<id>_winners.csv` routed against production staging |
 
 The promoted rows land in `fact_production_forecast` and an audit row is
 written to `model_promotion_log` with `promotion_type = single | champion`.
@@ -224,6 +224,32 @@ unless **both** of the following hold:
 
 A `bypass_token` may be configured to override the gate for emergency
 rollouts.
+
+### Post-release planner readiness
+
+After promotion, inspect the Command Center card or call:
+
+```bash
+curl -sS http://127.0.0.1:8000/forecast-release/readiness | jq
+```
+
+The response fails closed unless its fixed six-month quality population,
+active champion-results/cluster lineage, promoted cluster assignments,
+generation freshness, current six-month plan coverage, coherent run/value/CI
+integrity, and outgoing champion-plus-three archive evidence all pass. The
+lookback is configured under `champion.release_readiness`; query parameters
+cannot shorten it. The card shows all blockers through its disclosure and polls
+every 60 seconds while open, including after a green result.
+
+`model-refresh` ends by rewriting the canonical champion rows. After it
+completes, explicitly promote the selected champion experiment's results; the
+readiness gate compares champion `modified_ts` with `results_promoted_at` and
+fails closed if the rows were rewritten later.
+
+This is a post-release planner-use scorecard, not yet a transactional database
+constraint on `POST /backtest-management/champion/promote`. Do not proceed to
+inventory planning while `ready=false`; follow `next_action.tab`, inspect the
+evidence, and rerun the appropriate controlled workflow.
 
 ### Auto-tune ranking & baseline (2026-06-20 fixes)
 
@@ -595,13 +621,15 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 1. `make test-all` — backend + frontend test suites pass.
 2. `make audit-routers` — confirms routes/proxies still aligned.
 3. Inspect `data/tuning/<model>_<timestamp>.json` for the promoted trial.
-4. Inspect `data/champion/champion_summary.json` and `dfu_assignments.csv` for
-   coverage and per-strategy ceiling deltas.
+4. Inspect `data/champion/champion_summary.json` and the promoted experiment's
+   `experiment_<id>_winners.csv` for coverage and per-strategy ceiling deltas.
 5. Spot-check the **Lgbm Tuning** and **Champion Experiments** tabs for the
    new run rows.
 6. Promote via `POST /backtest-management/{model_id}/promote` and confirm the
    `model_promotion_log` row.
-7. Run `make expert-panel-quick` to validate selection quality before opening
+7. Require `GET /forecast-release/readiness` to return `ready=true` before
+   inventory planning consumes the release.
+8. Run `make expert-panel-quick` to validate selection quality before opening
    the gate to a full `make expert-panel`.
 
 ---

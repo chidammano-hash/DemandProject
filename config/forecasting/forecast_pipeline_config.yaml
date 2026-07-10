@@ -402,6 +402,24 @@ champion:
     min_wape_improvement_pct: 1.0
     min_coverage_frac: 0.8
     bypass_token: null
+  # Planner-facing post-release readiness policy. Thresholds are provisional
+  # pilot targets grounded in the documented 1401-BULK July 2026 baseline.
+  # A separate transactional candidate gate is required before promotion.
+  release_readiness:
+    enabled: true  # Fail closed when false; disabled policy never means planner-ready.
+    lookback_months: 6  # Fixed authoritative quality window; callers cannot override it.
+    min_relative_wape_lift_vs_naive_pct: 10.0  # Relative WAPE improvement floor.
+    min_accuracy_delta_vs_external_pct_points: 0.0  # Do not trail the incumbent forecast.
+    max_abs_bias_pct: 5.0  # Absolute portfolio bias ceiling.
+    min_current_plan_coverage_frac: 0.95  # Eligible DFUs with all six release months.
+    min_common_cohort_coverage_frac: 0.95  # Valid champion rows retained in comparison.
+    min_common_cohort_closed_months: 6  # Require the entire configured evidence window.
+    min_common_cohort_dfus: 1000  # Avoid release decisions on a tiny favorable subset.
+    min_common_cohort_actual_volume: 1.0  # Metrics require positive aggregate demand.
+    min_confidence_interval_coverage_frac: 0.95  # Inventory uncertainty evidence floor.
+    require_current_cluster_lineage: true  # Active release experiment must match clusters.
+    require_fresh_sales: true  # Release generation must follow the latest sales load.
+    require_outgoing_archive: true  # Previous plan must be archived before replacement.
   meta_learner:
     model_type: random_forest
     n_estimators: 200

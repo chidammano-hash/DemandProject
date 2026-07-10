@@ -760,12 +760,12 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 ### 5.3 Component Architecture
 
-#### API Layer (83 Routers)
+#### API Layer (84 Mounted Routers)
 
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
 | `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
-| `api/routers/forecasting/` | 10 (incl. `tuning/` package — 15 sub-routers) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion (`/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`). The legacy `unified_model_tuning.py` god-module was split into `forecasting/tuning/` (15 sub-routers preserving the `/model-tuning/*` prefix and all 15 endpoints). |
+| `api/routers/forecasting/` | 26 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion, plus planner-facing post-release quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
 | `api/routers/intelligence/` | 3 (incl. `customer_analytics/` package — 5 sub-routers) | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*`, `/customer-analytics/*` | AI agent, forecast explain, market intel. The `customer_analytics.py` god-module was split into `intelligence/customer_analytics/` (5 sub-routers + helpers, 16 GET endpoints preserved). |

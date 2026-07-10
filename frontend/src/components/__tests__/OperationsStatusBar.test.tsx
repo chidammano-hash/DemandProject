@@ -56,7 +56,7 @@ describe("OperationsStatusBar", () => {
     expect(await screen.findByText("Command Center")).toBeInTheDocument();
     expect(await screen.findByText(/Jul .*2026/)).toBeInTheDocument();
     expect(screen.getByText("No active jobs")).toBeInTheDocument();
-    expect(screen.getByText("Pipeline ready")).toBeInTheDocument();
+    expect(screen.getByText("ML inputs current")).toBeInTheDocument();
   });
 
   it("opens Jobs when the active job pill is clicked", async () => {

@@ -167,7 +167,7 @@ export function OperationsStatusBar({
           <span>
             {staleChecks.length > 0
               ? `${staleChecks.length} stale stage${staleChecks.length === 1 ? "" : "s"}`
-              : "Pipeline ready"}
+              : "ML inputs current"}
           </span>
         </StatusPill>
 

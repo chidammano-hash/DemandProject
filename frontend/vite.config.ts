@@ -57,6 +57,7 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/expsys",
   "/customer-analytics",
   "/backtest-management",
+  "/forecast-release",
   "/integration",
 ];
 

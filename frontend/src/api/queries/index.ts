@@ -34,4 +34,5 @@ export * from "./customer-analytics";
 export * from "./sku-features";
 export * from "./sku-chat";
 export * from "./backtest-management";
+export * from "./forecast-release";
 export * from "./ai-champion";

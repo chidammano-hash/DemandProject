@@ -278,6 +278,7 @@ from api.routers.forecasting import feature_lab  # noqa: E402  # Feature Lab
 from api.routers.forecasting import tuning as unified_model_tuning  # noqa: E402  # Unified model tuning
 from api.routers.forecasting import cluster_experiments  # noqa: E402  # Cluster experiments
 from api.routers.forecasting import backtest_management  # noqa: E402  # Backtest management
+from api.routers.forecasting import forecast_release  # noqa: E402  # Planner release readiness
 from api.routers.forecasting import champion_experiments  # noqa: E402  # Champion experiments
 from api.routers.forecasting import champion_sweeps  # noqa: E402  # Champion strategy sweep (tournament)
 from api.routers.forecasting import expsys_accuracy  # noqa: E402  # ExpSys backtest accuracy
@@ -365,6 +366,7 @@ app.include_router(feature_lab.router)
 app.include_router(unified_model_tuning.router, prefix="/model-tuning", tags=["model-tuning"])
 app.include_router(cluster_experiments.router)
 app.include_router(backtest_management.router)
+app.include_router(forecast_release.router)
 app.include_router(champion_experiments.router)
 app.include_router(champion_sweeps.router)
 app.include_router(expsys_accuracy.router)

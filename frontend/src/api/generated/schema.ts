@@ -38,6 +38,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/forecast/accuracy/lag-leaderboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Forecast Accuracy Lag Leaderboard
+         * @description Per-lag model leaderboard ranked by accuracy (data: agg_accuracy_lag_archive).
+         *
+         *     Returns WAPE and bias for each model at execution lags 0-4. Pinball loss
+         *     requires quantile forecast rows and is not computed here.
+         */
+        get: operations["forecast_accuracy_lag_leaderboard_forecast_accuracy_lag_leaderboard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/forecast/accuracy/decomposition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Forecast Accuracy Decomposition */
+        get: operations["forecast_accuracy_decomposition_forecast_accuracy_decomposition_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/forecast/accuracy/error-contributors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Forecast Accuracy Error Contributors */
+        get: operations["forecast_accuracy_error_contributors_forecast_accuracy_error_contributors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sku/analysis": {
         parameters: {
             query?: never;
@@ -69,7 +126,7 @@ export interface paths {
          * Dfu Clusters
          * @description Get cluster summary statistics for DFU clustering.
          *
-         *     source=ml    -> pipeline-generated clusters (ml_cluster column)
+         *     source=ml    -> promoted ML clusters (current_sku_cluster_assignment)
          *     source=source -> original source-file clusters (cluster_assignment column)
          */
         get: operations["dfu_clusters_domains_sku_clusters_get"];
@@ -274,7 +331,7 @@ export interface paths {
         put?: never;
         /**
          * Promote Clustering Scenario
-         * @description Promote a scenario to production (updates dim_sku.ml_cluster).
+         * @description Promote a scenario to production (writes sku_cluster_assignment).
          */
         post: operations["promote_clustering_scenario_clustering_scenario__scenario_id__promote_post"];
         delete?: never;
@@ -363,6 +420,58 @@ export interface paths {
          * @description Return the current planning date and whether it is frozen (dev mode).
          */
         get: operations["get_planning_date_info_dashboard_planning_date_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/pipeline-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pipeline Readiness
+         * @description Report whether downstream ML stages are in sync with their inputs.
+         *
+         *     Staleness is *derived live* from generation lineage and timestamps —
+         *     there are no stored flags to get stuck. Four checks:
+         *
+         *     1. **clustering** — total loss of promoted ``sku_cluster_assignment`` rows.
+         *        Most SKUs are inactive and legitimately unclustered, so only **nothing
+         *        clustered** is flagged (the state where per-cluster models silently
+         *        collapse).
+         *     2. **tuning** — ``cluster_tuning_profile_state`` rows flagged stale by a
+         *        cluster promotion that no tuning run has covered.
+         *     3. **champion** — the promoted champion experiment's
+         *        ``cluster_experiment_id`` (sql/198) differs from the currently promoted
+         *        cluster experiment.
+         *     4. **forecast** — a sales load completed after the promoted champion ran.
+         *
+         *     Checks 2-4 skip silently when their tables/columns are not migrated yet.
+         *
+         *     Response shape::
+         *
+         *         {
+         *           "ready": bool,                 # true when nothing is stale
+         *           "checks": [
+         *             {
+         *               "stage": "clustering",
+         *               "status": "stale" | "ok",
+         *               "severity": "high" | "medium" | "low",
+         *               "title": str,
+         *               "detail": str,
+         *               "action": {"kind": "navigate", "target": str, "label": str} | null
+         *             }
+         *           ]
+         *         }
+         */
+        get: operations["get_pipeline_readiness_dashboard_pipeline_readiness_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2274,6 +2383,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs/pipelines/named": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Named Pipelines
+         * @description List the named pipeline presets (config/forecasting/pipelines.yaml).
+         */
+        get: operations["list_named_pipelines_jobs_pipelines_named_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/jobs/pipelines/named/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Named Pipeline
+         * @description Launch a named pipeline preset as a sequential JobManager pipeline.
+         *
+         *     This is the one-call way to bring a whole lifecycle current (e.g.
+         *     ``data-refresh``, ``model-refresh``, ``forecast-publish``, ``full-refresh``)
+         *     instead of manually stepping each job.
+         */
+        post: operations["run_named_pipeline_jobs_pipelines_named__name__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{job_id}/logs": {
         parameters: {
             query?: never;
@@ -2501,6 +2654,110 @@ export interface paths {
         get: operations["get_memos_ai_planner_memos_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sku-chat/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Config
+         * @description Return the active routing config for the UI (never leaks credentials).
+         */
+        get: operations["get_config_sku_chat_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sku-chat/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Session
+         * @description Create a session id the client uses to correlate a conversation.
+         */
+        post: operations["create_session_sku_chat_session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sku-chat/session/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session History
+         * @description Return a session and its ordered message history (Phase 3).
+         *
+         *     Key-guarded like its write siblings: the history contains conversation
+         *     content, so it must not be readable by an unauthenticated caller who guesses
+         *     or enumerates session ids.
+         */
+        get: operations["get_session_history_sku_chat_session__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sku-chat/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stream Turn
+         * @description Stream one SKU-scoped chat turn as Server-Sent Events.
+         */
+        post: operations["stream_turn_sku_chat_stream_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sku-chat/adjustment/{approval_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Adjustment
+         * @description Approve (apply) or reject a champion-forecast adjustment the agent staged.
+         */
+        post: operations["decide_adjustment_sku_chat_adjustment__approval_id__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2771,6 +3028,45 @@ export interface paths {
          *     that have generated forecasts for this item+loc combination.
          */
         get: operations["get_staging_forecasts_forecast_production_staging_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/forecast/candidate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Candidate Forecasts
+         * @description Return per-model backtest (past, out-of-sample) predictions for a DFU.
+         *
+         *     Reads ``fact_candidate_forecast`` — the historical predictions each model
+         *     produced during backtest evaluation, alongside the realized ``actual_qty``
+         *     and per-row accuracy. This is the past-period counterpart to the
+         *     future-period staging forecasts served by ``/forecast/production/staging``.
+         *
+         *     Together they let the Item Analysis chart overlay, for a chosen model, its
+         *     backtest fit over history (``backtest_<model>``) and its forward forecast
+         *     (``staging_<model>``) on one timeline.
+         *
+         *     Args:
+         *         item_id: Item number (exact match).
+         *         loc: Location code (exact match).
+         *         model_id: Optional — restrict to a single model's predictions.
+         *
+         *     Returns:
+         *         ``{item_id, loc, models}`` where ``models`` maps model_id → time-ordered
+         *         backtest rows (forecast vs actual + accuracy metrics). Empty ``models``
+         *         when the table is absent (clean install) or no backtests have loaded.
+         */
+        get: operations["get_candidate_forecasts_forecast_candidate_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3878,7 +4174,15 @@ export interface paths {
          */
         get: operations["list_sop_cycles_sop_cycles_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Sop Cycle
+         * @description Seed a new S&OP cycle at the Demand-Review stage (auth required).
+         *
+         *     U2.21 — gives the S&OP tab an in-app "Start new cycle" action so a planner
+         *     no longer has to drop to the CLI/API. The cycle month defaults to the first
+         *     of the current planning-date month; a duplicate month returns 409.
+         */
+        post: operations["create_sop_cycle_sop_cycles_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4947,17 +5251,16 @@ export interface paths {
         put?: never;
         /**
          * Admin Invalidate Stale Tuning
-         * @description Invalidate per-cluster tuning profiles whose cluster has been re-promoted.
+         * @description Handle per-cluster tuning profiles flagged stale by a cluster promotion.
          *
-         *     Stream F owns the data-side of this feature: a ``stale`` column on
-         *     ``cluster_tuning_profile`` (or equivalent) that flips ``true`` whenever the
-         *     referenced cluster is replaced.  When the column exists we pick up the
-         *     stale profiles and notify the tuning scheduler so they re-tune on the next
-         *     cycle.
+         *     ``promote_scenario`` marks rows in ``cluster_tuning_profile_state`` stale
+         *     whenever a clustering scenario is promoted (sql/148). Two modes:
          *
-         *     Until Stream F lands, this endpoint is intentionally a no-op that only
-         *     logs intent — it returns ``{"status": "noop", "reason": "..."}`` so the
-         *     UI / scheduler can wire against it safely.
+         *     - default: clear the stale flags (acknowledge without re-tuning — e.g.
+         *       after a manual full ``make tune-clusters`` run already covered them).
+         *     - ``?retune=true``: submit the ``tune_stale_clusters`` background job,
+         *       which runs ``tune_cluster_hyperparams.py --stale-only``; the script
+         *       clears the flags for the clusters it successfully re-tunes.
          */
         post: operations["admin_invalidate_stale_tuning_admin_tuning_invalidate_stale_post"];
         delete?: never;
@@ -4995,7 +5298,14 @@ export interface paths {
         };
         /**
          * Dq Checks
-         * @description List all configured checks with last-run status.
+         * @description List all checks with last-run status.
+         *
+         *     Existence is driven by ``fact_dq_check_results`` (the table the run actually
+         *     writes), not by ``dim_dq_check_catalog`` — which may be empty even after a
+         *     full DQ battery. The catalog dimension, when populated, is LEFT-JOINed in to
+         *     enrich each row with its configured ``check_type``; absent that, the type is
+         *     sourced from the latest result. This keeps the Check Catalog populated and
+         *     "Last Run" honest whenever results exist (F4.2 / U4.1).
          */
         get: operations["dq_checks_data_quality_checks_get"];
         put?: never;
@@ -5481,8 +5791,52 @@ export interface paths {
         /**
          * Fva Waterfall
          * @description FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages.
+         *
+         *     ``months`` windows every measured stage to the trailing horizon. Accuracy is
+         *     always measured at each DFU's execution lag (the horizon it is operationally
+         *     forecast at).
          */
         get: operations["fva_waterfall_fva_waterfall_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fva/snapshot-accuracy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Snapshot Accuracy
+         * @description Live accuracy for the frozen champion-plus-three archive roster.
+         */
+        get: operations["snapshot_accuracy_fva_snapshot_accuracy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fva/snapshot-months": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Snapshot Months
+         * @description Available snapshot months and their closed-lag coverage.
+         */
+        get: operations["snapshot_months_fva_snapshot_months_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5890,6 +6244,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integration/pipeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Pipeline
+         * @description Run the whole ingestion pipeline (full reload or incremental refresh).
+         *
+         *     Submits the managed ``etl_pipeline`` job (JobManager); poll status/logs via
+         *     the unified ``/jobs/{id}`` endpoints.
+         */
+        post: operations["run_pipeline_integration_pipeline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integration/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -5973,6 +6350,29 @@ export interface paths {
         get: operations["scan_integration_scan_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integration/scan/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan Plan
+         * @description Run the deterministic scan, then ask the AI planner for the safest sequence.
+         *
+         *     The planner rescan happens server-side so the UI can simply POST user
+         *     answers back to the same endpoint and receive a fresh recommendation.
+         */
+        post: operations["scan_plan_integration_scan_plan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7064,7 +7464,7 @@ export interface paths {
          *
          *     1. Computes stratified sample of DFUs.
          *     2. Registers a tuning run with note ``sampled_n=<N>``.
-         *     3. Launches backtest subprocess.
+         *     3. Submits the sampled_backtest job (JobManager).
          *     4. Returns ``{run_id, sample_size, estimated_deviation}``.
          */
         post: operations["trigger_sampled_run_lgbm_tuning_sampled_run_post"];
@@ -7605,7 +8005,7 @@ export interface paths {
          * @description Promote a completed cluster experiment to production.
          *
          *     Verifies status='completed', clears previous is_promoted flags,
-         *     calls promote_scenario() to update dim_sku.ml_cluster, then sets
+         *     calls promote_scenario() to write sku_cluster_assignment, then sets
          *     is_promoted=TRUE and promoted_at=NOW() on this experiment.
          */
         post: operations["promote_experiment_cluster_experiments__experiment_id__promote_post"];
@@ -7758,6 +8158,20 @@ export interface paths {
          *
          *     Validates model_id exists in pipeline config, maps to the correct job type,
          *     inserts a tracking row into backtest_run, and submits the job.
+         *
+         *     Concurrency is non-blocking by design — a submission is never rejected:
+         *       - If THIS model already has a run queued or running, no duplicate is
+         *         started; the response is ``status="already_running"`` (HTTP 200) so the
+         *         UI can show a calm "already in progress" note instead of an error.
+         *       - Otherwise the job is submitted. When another backtest is active it simply
+         *         queues — the JobManager serialises per group — and the response is
+         *         ``status="queued"`` (HTTP 201).
+         *       - ``parallel=False`` (default): the job uses the shared ``backtest`` group, so
+         *         backtests run one at a time (extra submissions queue and run sequentially).
+         *       - ``parallel=True``: the job uses a per-job-type group, so DIFFERENT model
+         *         families run concurrently (bounded by the scheduler's worker pool). Each
+         *         model writes its own output dir, so sequential same-family runs never
+         *         clobber each other.
          */
         post: operations["submit_backtest_run_backtest_management__model_id__run_post"];
         delete?: never;
@@ -7866,6 +8280,16 @@ export interface paths {
         /**
          * Submit Generate Forecast
          * @description Submit production forecast generation for a model, writing to staging.
+         *
+         *     Args:
+         *         model_id: Algorithm to generate forecasts for.
+         *         horizon: Months ahead to forecast. Omitted → pipeline config default.
+         *         confidence_intervals: Force CI (P10/P90) bands on/off. Omitted → config
+         *             default (``confidence_interval.enabled`` in the pipeline config).
+         *
+         *     The horizon and CI flags are threaded into the job params so they reach
+         *     ``generate_production_forecasts.py`` — previously they were dropped for
+         *     single-model generation, silently ignoring the panel's controls.
          */
         post: operations["submit_generate_forecast_backtest_management__model_id__generate_post"];
         delete?: never;
@@ -7895,6 +8319,26 @@ export interface paths {
          *     is recorded to the AI decision ledger.
          */
         post: operations["promote_model_backtest_management__model_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/forecast-release/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Forecast Release Readiness
+         * @description Return whether the active release meets the planner evidence policy.
+         */
+        get: operations["get_forecast_release_readiness_forecast_release_readiness_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8181,6 +8625,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/champion-sweeps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sweeps
+         * @description List sweeps, newest first.
+         */
+        get: operations["list_sweeps_champion_sweeps_get"];
+        put?: never;
+        /**
+         * Create Sweep
+         * @description Create a champion sweep and launch it as a background job.
+         */
+        post: operations["create_sweep_champion_sweeps_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/champion-sweeps/{sweep_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sweep
+         * @description Sweep detail + recommendation summary.
+         */
+        get: operations["get_sweep_champion_sweeps__sweep_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Sweep
+         * @description Delete a sweep (not while running). Members cascade; child experiments remain.
+         */
+        delete: operations["delete_sweep_champion_sweeps__sweep_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/champion-sweeps/{sweep_id}/leaderboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Leaderboard
+         * @description Global-ranked members joined to their champion_experiment rows.
+         */
+        get: operations["get_leaderboard_champion_sweeps__sweep_id__leaderboard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/champion-sweeps/{sweep_id}/segments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Segments
+         * @description Per-segment winner map + per-segment scores.
+         */
+        get: operations["get_segments_champion_sweeps__sweep_id__segments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/champion-sweeps/{sweep_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Sweep
+         * @description Cancel a queued/running sweep.
+         */
+        post: operations["cancel_sweep_champion_sweeps__sweep_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/champion-sweeps/{sweep_id}/promote-winner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote Winner
+         * @description Promote the sweep's recommended experiment via the existing Stage-1 promote.
+         *
+         *     Refuses unless the recommendation passed the gate (gate-eligible). For a
+         *     per-segment composite, only the demand_class axis yields a promotable winner;
+         *     diagnostic axes (ml_cluster/abc_xyz) leave composite_experiment_id NULL.
+         */
+        post: operations["promote_winner_champion_sweeps__sweep_id__promote_winner_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/expsys/lag-accuracy": {
         parameters: {
             query?: never;
@@ -8319,6 +8895,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ai-champion/forecast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ai Champion Forecast
+         * @description Latest saved ai_champion adjustment for a DFU (champion vs AI, per month).
+         *
+         *     Scoped to the most recently saved plan_version for the DFU. Fully
+         *     parameterized (no SQL-string interpolation) — psycopg3 + CLAUDE.md rule.
+         */
+        get: operations["ai_champion_forecast_ai_champion_forecast_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-champion/adjust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ai Champion Adjust
+         * @description Call the configured LLM once for one DFU and return a preview (no DB write).
+         */
+        post: operations["ai_champion_adjust_ai_champion_adjust_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-champion/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ai Champion Save
+         * @description Persist a previewed adjustment. Quantities are re-derived server-side.
+         */
+        post: operations["ai_champion_save_ai_champion_save_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/customer-analytics/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask Customer Analytics
+         * @description Answer a question using KPIs and customer rankings for the active filters.
+         */
+        post: operations["ask_customer_analytics_customer_analytics_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/customer-analytics/map": {
         parameters: {
             query?: never;
@@ -8369,6 +9028,16 @@ export interface paths {
         /**
          * Customer Analytics Heatmap
          * @description Item x State heatmap matrix.
+         *
+         *     F5.1: sources the (item_id, item_desc, state) aggregate from the
+         *     pre-joined/pre-aggregated ``mv_ca_item_state`` instead of the raw
+         *     fact_customer_demand_monthly JOIN dim_customer JOIN dim_item — the same
+         *     fast-path pattern the other CA panels use. Cold load dropped from ~9.4 s
+         *     to well under 1.5 s. The MV's ``item_desc`` is pre-resolved, so the
+         *     endpoint never touches the ~500k-row dim_item. ``customer_count`` is the
+         *     sum of per-(channel, store_type, month) distinct customer counts — a
+         *     close upper-bound used only as a secondary cell metric (the headline
+         *     metric is demand_qty).
          */
         get: operations["customer_analytics_heatmap_customer_analytics_heatmap_get"];
         put?: never;
@@ -8449,6 +9118,11 @@ export interface paths {
         /**
          * Customer Analytics Filter Options
          * @description Distinct dropdown values for channel, store type, state.
+         *
+         *     Reads from ``mv_customer_filter_options`` (sql/173) — a 3-row MV that
+         *     pre-aggregates the three DISTINCT scans over the 1M-row ``dim_customer``
+         *     table. Refresh the MV after dim_customer reloads via
+         *     ``make refresh-customer-filter-options`` (also chained into ``load-customer``).
          */
         get: operations["customer_analytics_filter_options_customer_analytics_filter_options_get"];
         put?: never;
@@ -8643,6 +9317,28 @@ export interface paths {
         get: operations["customer_analytics_alerts_customer_analytics_alerts_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/customer-analytics/recalculate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recalculate Customer Analytics
+         * @description Submit a background job to refresh the customer-analytics MVs.
+         *
+         *     Returns 202 with a job_id that can be polled via GET /jobs/{job_id}.
+         */
+        post: operations["recalculate_customer_analytics_customer_analytics_recalculate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9391,12 +10087,65 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdjustRequest */
+        AdjustRequest: {
+            /** Item Id */
+            item_id: string;
+            /** Loc */
+            loc: string;
+            /**
+             * Provider
+             * @description ollama|google|anthropic|openai (default: config)
+             */
+            provider?: string | null;
+            /**
+             * User Comment
+             * @description Optional free-text steer the planner typed for this DFU
+             */
+            user_comment?: string | null;
+        };
+        /** AdjustmentDecision */
+        AdjustmentDecision: {
+            /** Decision */
+            decision: string;
+        };
         /** AnalyzeRequest */
         AnalyzeRequest: {
             /** Item Id */
             item_id: string;
             /** Loc */
             loc: string;
+        };
+        /**
+         * AssistantFilters
+         * @description Current dashboard filters used to ground the answer.
+         */
+        AssistantFilters: {
+            /** Item Id */
+            item_id?: string | null;
+            /** Date From */
+            date_from?: string | null;
+            /** Date To */
+            date_to?: string | null;
+            /** Channel */
+            channel?: string | null;
+            /** Store Type */
+            store_type?: string | null;
+            /** State */
+            state?: string | null;
+        };
+        /**
+         * AssistantHistoryMessage
+         * @description One bounded prior chat turn.
+         */
+        AssistantHistoryMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
         };
         /** AutoAcceptRequest */
         AutoAcceptRequest: {
@@ -9659,6 +10408,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ChatHistoryMessage */
+        ChatHistoryMessage: {
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+        };
         /** ClusteringScenarioRequest */
         ClusteringScenarioRequest: {
             feature_params?: components["schemas"]["api__routers__forecasting__clusters__FeatureParams"] | null;
@@ -9862,6 +10618,45 @@ export interface components {
              */
             is_public: boolean;
         };
+        /**
+         * CreateSweepBody
+         * @description Request body for POST /champion-sweeps.
+         */
+        CreateSweepBody: {
+            /** Label */
+            label: string;
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Mode
+             * @default both
+             */
+            mode: string;
+            /**
+             * Segment Axis
+             * @default demand_class
+             */
+            segment_axis: string;
+            /**
+             * Objective
+             * @default robust
+             */
+            objective: string;
+            /**
+             * Grid Spec
+             * @description templates × models_variants × metric, or an explicit 'configs' list
+             */
+            grid_spec: {
+                [key: string]: unknown;
+            };
+            /**
+             * Parallel
+             * @default false
+             */
+            parallel: boolean;
+            /** Baseline Experiment Id */
+            baseline_experiment_id?: number | null;
+        };
         /** CreateUserRequest */
         CreateUserRequest: {
             /** Email */
@@ -9878,6 +10673,39 @@ export interface components {
             role: string;
             /** Password */
             password: string;
+        };
+        /**
+         * CustomerAnalyticsAskRequest
+         * @description Question plus its visible dashboard scope.
+         */
+        CustomerAnalyticsAskRequest: {
+            /** Question */
+            question: string;
+            filters?: components["schemas"]["AssistantFilters"];
+            /**
+             * Active View
+             * @default overview
+             * @enum {string}
+             */
+            active_view: "overview" | "customers" | "segments" | "service" | "behavior";
+            /** History */
+            history?: components["schemas"]["AssistantHistoryMessage"][];
+        };
+        /**
+         * CustomerAnalyticsAskResponse
+         * @description Grounded answer and runtime disclosure for the UI.
+         */
+        CustomerAnalyticsAskResponse: {
+            /** Answer */
+            answer: string;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Tier */
+            tier: string;
+            /** Evidence */
+            evidence: string[];
         };
         /**
          * DomainChangeModel
@@ -9980,6 +10808,211 @@ export interface components {
         FixApplyRequest: {
             /** Fix Ids */
             fix_ids: number[];
+        };
+        /** ForecastReleaseArchive */
+        ForecastReleaseArchive: {
+            /** Active Plan Version */
+            active_plan_version: string | null;
+            /** Outgoing Promotion Id */
+            outgoing_promotion_id: number | null;
+            /** Outgoing Plan Version */
+            outgoing_plan_version: string | null;
+            /** Outgoing Promoted At */
+            outgoing_promoted_at: string | null;
+            /** Replacement At */
+            replacement_at: string | null;
+            /** Staging Record Month */
+            staging_record_month: string | null;
+            /** Models */
+            models: number;
+            /** Roster Rows */
+            roster_rows: number;
+            /** Champion Roster Rows */
+            champion_roster_rows: number;
+            /** Contender Ranks */
+            contender_ranks: number;
+            /** Model Lag Pairs */
+            model_lag_pairs: number;
+            /** Minimum Rows */
+            minimum_rows: number;
+            /** Champion Run Ids */
+            champion_run_ids: number;
+            /** Lineage Mismatches */
+            lineage_mismatches: number;
+            /** Complete */
+            complete: boolean;
+        };
+        /** ForecastReleaseCheck */
+        ForecastReleaseCheck: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "readiness_policy" | "common_cohort" | "common_cohort_coverage" | "common_cohort_months" | "common_cohort_dfus" | "common_cohort_actual_volume" | "lift_vs_naive" | "delta_vs_external" | "champion_bias" | "actual_alignment" | "active_promotion_state" | "champion_results_lineage" | "cluster_lineage" | "cluster_assignments" | "sales_freshness" | "tuning_freshness" | "current_plan_version" | "current_plan_coverage" | "release_integrity" | "outgoing_archive";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "block";
+            /** Value */
+            value: unknown;
+            /** Threshold */
+            threshold: unknown;
+            /** Message */
+            message: string;
+        };
+        /** ForecastReleaseCoverage */
+        ForecastReleaseCoverage: {
+            /** Eligible Dfus */
+            eligible_dfus: number;
+            /** Complete Plan Dfus */
+            complete_plan_dfus: number;
+            /** Covered Eligible Dfus */
+            covered_eligible_dfus: number;
+            /** Current Plan Rows */
+            current_plan_rows: number;
+            /** Coverage Frac */
+            coverage_frac: number | null;
+            /** Forecast Start */
+            forecast_start: string | null;
+            /** Forecast End */
+            forecast_end: string | null;
+            /** Required End */
+            required_end: string;
+            /** Minimum History Months */
+            minimum_history_months: number;
+        };
+        /** ForecastReleaseFreshness */
+        ForecastReleaseFreshness: {
+            /** Release Promoted At */
+            release_promoted_at: string | null;
+            /** Release Generated At */
+            release_generated_at: string | null;
+            /** Latest Sales Load */
+            latest_sales_load: string | null;
+            /** Fresh */
+            fresh: boolean;
+        };
+        /** ForecastReleaseIntegrity */
+        ForecastReleaseIntegrity: {
+            /** Run Ids */
+            run_ids: number;
+            /** Invalid Quantity Rows */
+            invalid_quantity_rows: number;
+            /** Missing Source Rows */
+            missing_source_rows: number;
+            /** Invalid Interval Rows */
+            invalid_interval_rows: number;
+            /** Confidence Interval Rows */
+            confidence_interval_rows: number;
+            /** Confidence Interval Coverage Frac */
+            confidence_interval_coverage_frac: number | null;
+            /** Minimum Confidence Interval Coverage Frac */
+            minimum_confidence_interval_coverage_frac: number;
+            /** Valid */
+            valid: boolean;
+        };
+        /** ForecastReleaseLineage */
+        ForecastReleaseLineage: {
+            /** Active Promotion Id */
+            active_promotion_id: number | null;
+            /** Active Promotion Count */
+            active_promotion_count: number;
+            /** Champion Results Promoted */
+            champion_results_promoted: boolean;
+            /** Results Promoted At */
+            results_promoted_at: string | null;
+            /** Champion Rows Modified At */
+            champion_rows_modified_at: string | null;
+            /** Results Promoted Experiment Count */
+            results_promoted_experiment_count: number;
+            /** Champion Cluster Experiment Id */
+            champion_cluster_experiment_id: number | null;
+            /** Current Cluster Experiment Id */
+            current_cluster_experiment_id: number | null;
+            /** Promoted Cluster Experiment Count */
+            promoted_cluster_experiment_count: number;
+            /** Matches */
+            matches: boolean;
+            /** Cluster Assignment Count */
+            cluster_assignment_count: number;
+            /** Stale Tuning Profiles */
+            stale_tuning_profiles: number;
+        };
+        /** ForecastReleaseNextAction */
+        ForecastReleaseNextAction: {
+            /**
+             * Tab
+             * @enum {string}
+             */
+            tab: "jobs" | "fva" | "dataQuality" | "clusters" | "lgbmTuning";
+            /** Pipeline */
+            pipeline: string | null;
+            /** Label */
+            label: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ForecastReleaseQuality */
+        ForecastReleaseQuality: {
+            /** Lookback Months */
+            lookback_months: number;
+            /** First Month */
+            first_month: string | null;
+            /** Last Month */
+            last_month: string | null;
+            /** Dfu Months */
+            dfu_months: number;
+            /** Dfus */
+            dfus: number;
+            /** Closed Months */
+            closed_months: number;
+            /** Actual Volume */
+            actual_volume: number;
+            /** Champion Observations */
+            champion_observations: number;
+            /** Champion Dfus */
+            champion_dfus: number;
+            /** Common Observation Coverage Frac */
+            common_observation_coverage_frac: number | null;
+            /** Common Dfu Coverage Frac */
+            common_dfu_coverage_frac: number | null;
+            /** Champion Wape Pct */
+            champion_wape_pct: number | null;
+            /** Champion Accuracy Pct */
+            champion_accuracy_pct: number | null;
+            /** Champion Bias Pct */
+            champion_bias_pct: number | null;
+            /** Naive Wape Pct */
+            naive_wape_pct: number | null;
+            /** External Wape Pct */
+            external_wape_pct: number | null;
+            /** Relative Wape Lift Vs Naive Pct */
+            relative_wape_lift_vs_naive_pct: number | null;
+            /** Accuracy Delta Vs External Pct Points */
+            accuracy_delta_vs_external_pct_points: number | null;
+        };
+        /** ForecastReleaseReadinessResponse */
+        ForecastReleaseReadinessResponse: {
+            /** Ready */
+            ready: boolean;
+            /** Policy Enabled */
+            policy_enabled: boolean;
+            /** Release Version */
+            release_version: string;
+            /** Planning Month */
+            planning_month: string;
+            /** Champion Experiment Id */
+            champion_experiment_id: number | null;
+            quality: components["schemas"]["ForecastReleaseQuality"];
+            lineage: components["schemas"]["ForecastReleaseLineage"];
+            freshness: components["schemas"]["ForecastReleaseFreshness"];
+            coverage: components["schemas"]["ForecastReleaseCoverage"];
+            release_integrity: components["schemas"]["ForecastReleaseIntegrity"];
+            archive: components["schemas"]["ForecastReleaseArchive"];
+            /** Checks */
+            checks: components["schemas"]["ForecastReleaseCheck"][];
+            next_action: components["schemas"]["ForecastReleaseNextAction"] | null;
         };
         /** GeneratePlannedOrdersRequest */
         GeneratePlannedOrdersRequest: {
@@ -10290,6 +11323,54 @@ export interface components {
             /** Statistical Qty */
             statistical_qty?: number | null;
         };
+        /**
+         * PipelineRunRequest
+         * @description Request body for ``POST /integration/pipeline`` (whole-pipeline run).
+         */
+        PipelineRunRequest: {
+            /**
+             * Mode
+             * @description 'full' = reload everything; 'refresh' = change-detected incremental load.
+             * @default refresh
+             * @enum {string}
+             */
+            mode: "full" | "refresh";
+            /**
+             * Domains
+             * @description Optional subset of domains to run (default: all). Each must be in KNOWN_DOMAINS.
+             */
+            domains?: string[] | null;
+            /**
+             * Parallel
+             * @description Parallelize normalize/load/MV refresh (full mode).
+             * @default false
+             */
+            parallel: boolean;
+        };
+        /**
+         * PipelineRunResponse
+         * @description Response body for ``POST /integration/pipeline``.
+         */
+        PipelineRunResponse: {
+            /**
+             * Job Id
+             * @description ID of the queued etl_pipeline job (poll via /jobs/{id}).
+             */
+            job_id: string;
+            /**
+             * Mode
+             * @description Mode the pipeline was started in.
+             * @enum {string}
+             */
+            mode: "full" | "refresh";
+            /**
+             * Status
+             * @description Initial status — always 'queued'.
+             * @default queued
+             * @constant
+             */
+            status: "queued";
+        };
         /** PipelineStep */
         PipelineStep: {
             /** Job Type */
@@ -10303,6 +11384,22 @@ export interface components {
             };
             /** Label */
             label?: string | null;
+        };
+        /**
+         * PlannerAnswerModel
+         * @description One answer returned from the UI's follow-up question loop.
+         */
+        PlannerAnswerModel: {
+            /**
+             * Question Id
+             * @description Stable question identifier from the planner response.
+             */
+            question_id: string;
+            /**
+             * Answer
+             * @description User response text.
+             */
+            answer: string;
         };
         /** PlannerDecision */
         PlannerDecision: {
@@ -10319,6 +11416,67 @@ export interface components {
              * @default planner
              */
             decided_by: string | null;
+        };
+        /**
+         * PlannerEvidenceModel
+         * @description One evidence item the UI can render alongside the plan.
+         */
+        PlannerEvidenceModel: {
+            /**
+             * Kind
+             * @description Evidence source bucket.
+             * @enum {string}
+             */
+            kind: "scan" | "job" | "batch";
+            /**
+             * Label
+             * @description Short evidence label.
+             */
+            label: string;
+            /**
+             * Value
+             * @description Human-readable evidence value.
+             */
+            value: string;
+        };
+        /**
+         * PlannerQuestionModel
+         * @description One question the AI planner wants the user to answer.
+         */
+        PlannerQuestionModel: {
+            /**
+             * Id
+             * @description Stable question identifier.
+             */
+            id: string;
+            /**
+             * Prompt
+             * @description Question text shown to the user.
+             */
+            prompt: string;
+            /**
+             * Answer Type
+             * @description How the UI should capture the answer.
+             * @default text
+             * @enum {string}
+             */
+            answer_type: "text" | "choice" | "boolean";
+            /**
+             * Options
+             * @description Choice options for select-style questions.
+             */
+            options?: string[];
+            /**
+             * Required
+             * @description Whether the question must be answered.
+             * @default true
+             */
+            required: boolean;
+            /**
+             * Reason
+             * @description Why the planner asked the question.
+             */
+            reason?: string | null;
         };
         /** PolicyAssignBody */
         PolicyAssignBody: {
@@ -10401,6 +11559,29 @@ export interface components {
              */
             deleted: number;
         };
+        /** RecommendationPayload */
+        RecommendationPayload: {
+            /** Recommendation Code */
+            recommendation_code: string;
+            /** Pct Change */
+            pct_change?: number | null;
+            /** Proposed Qty */
+            proposed_qty?: number[] | null;
+            /**
+             * Apply Horizon Months
+             * @default 3
+             */
+            apply_horizon_months: number;
+            /**
+             * Confidence
+             * @default 0
+             */
+            confidence: number;
+            /** Rationale */
+            rationale: string;
+            /** Evidence Keys */
+            evidence_keys?: string[];
+        };
         /** RefreshRequest */
         RefreshRequest: {
             /** Refresh Token */
@@ -10457,6 +11638,99 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** SaveRequest */
+        SaveRequest: {
+            /** Item Id */
+            item_id: string;
+            /** Loc */
+            loc: string;
+            /** Provider */
+            provider?: string | null;
+            recommendation: components["schemas"]["RecommendationPayload"];
+        };
+        /**
+         * ScanPlanRequest
+         * @description Request body for ``POST /integration/scan/plan``.
+         */
+        ScanPlanRequest: {
+            /**
+             * Answers
+             * @description Optional follow-up answers from the user.
+             */
+            answers?: components["schemas"]["PlannerAnswerModel"][];
+        };
+        /**
+         * ScanPlanResponse
+         * @description Response body for ``POST /integration/scan/plan``.
+         */
+        ScanPlanResponse: {
+            /**
+             * Scanned At
+             * @description ISO-8601 timestamp of when the scan ran.
+             */
+            scanned_at: string;
+            /**
+             * Changes
+             * @description Per-domain changes detected against the last successful load.
+             */
+            changes?: components["schemas"]["DomainChangeModel"][];
+            /**
+             * Proposed Chain
+             * @description Ordered chain of jobs the runner suggests to bring the warehouse up to date.
+             */
+            proposed_chain?: components["schemas"]["ChainStepModel"][];
+            /**
+             * Plan Id
+             * @description Stable identifier for this planning turn.
+             */
+            plan_id: string;
+            /**
+             * Provider
+             * @description Planner provider used for this turn (e.g. ollama/openai).
+             */
+            provider: string;
+            /**
+             * Model
+             * @description Model id used for the planning turn.
+             */
+            model: string;
+            /**
+             * Status
+             * @description Whether the planner needs more information or has a final sequence.
+             * @enum {string}
+             */
+            status: "questions" | "planned" | "fallback";
+            /**
+             * Confidence
+             * @description Planner confidence in the returned sequence.
+             */
+            confidence: number;
+            /**
+             * Explanation
+             * @description Short rationale for the recommendation.
+             */
+            explanation: string;
+            /**
+             * Risk Flags
+             * @description Ambiguities or cautions to surface in the UI.
+             */
+            risk_flags?: string[];
+            /**
+             * Questions
+             * @description Optional clarifying questions.
+             */
+            questions?: components["schemas"]["PlannerQuestionModel"][];
+            /**
+             * Recommended Chain
+             * @description Final AI-recommended execution chain (or deterministic fallback if the model is unavailable).
+             */
+            recommended_chain?: components["schemas"]["ChainStepModel"][];
+            /**
+             * Evidence
+             * @description Supporting scan / job / batch facts used to justify the planner output.
+             */
+            evidence?: components["schemas"]["PlannerEvidenceModel"][];
+        };
         /**
          * ScanResponse
          * @description Response body for ``GET /integration/scan``.
@@ -10500,6 +11774,18 @@ export interface components {
         SendMessageBody: {
             /** Content */
             content: string;
+        };
+        /** SessionRequest */
+        SessionRequest: {
+            /** Item Id */
+            item_id: string;
+            /** Loc */
+            loc: string;
+            /**
+             * Customer Group
+             * @default
+             */
+            customer_group: string;
         };
         /** SnoozeRequest */
         SnoozeRequest: {
@@ -10552,6 +11838,33 @@ export interface components {
             /** Min Prior Months */
             min_prior_months?: number | null;
         };
+        /** StreamRequest */
+        StreamRequest: {
+            /** Question */
+            question: string;
+            /** Item Id */
+            item_id: string;
+            /** Loc */
+            loc: string;
+            /**
+             * Customer Group
+             * @default
+             */
+            customer_group: string;
+            /** Session Id */
+            session_id?: string | null;
+            /**
+             * History
+             * @default []
+             */
+            history: components["schemas"]["ChatHistoryMessage"][];
+            /** Model Tier */
+            model_tier?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Page Focus */
+            page_focus?: string | null;
+        };
         /**
          * SubmitChainRequest
          * @description Request body for ``POST /integration/chains``.
@@ -10598,7 +11911,7 @@ export interface components {
         SubmitJobResponse: {
             /**
              * Job Id
-             * @description UUID of the queued integration job.
+             * @description ID of the queued load_domain job (poll via /integration/jobs/{id} or /jobs/{id}).
              */
             job_id: string;
             /**
@@ -10817,6 +12130,16 @@ export interface components {
             requested_delivery_date?: string | null;
             /** Notes */
             notes?: string | null;
+        };
+        /** _CreateRequest */
+        _CreateRequest: {
+            /**
+             * Facilitated By
+             * @default planner
+             */
+            facilitated_by: string;
+            /** Cycle Month */
+            cycle_month?: string | null;
         };
         /** _EventCreate */
         _EventCreate: {
@@ -11281,6 +12604,7 @@ export interface operations {
                 market?: string | null;
                 item?: string | null;
                 location?: string | null;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -11326,6 +12650,119 @@ export interface operations {
                 market?: string | null;
                 item?: string | null;
                 location?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forecast_accuracy_lag_leaderboard_forecast_accuracy_lag_leaderboard_get: {
+        parameters: {
+            query?: {
+                month_from?: string;
+                month_to?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forecast_accuracy_decomposition_forecast_accuracy_decomposition_get: {
+        parameters: {
+            query?: {
+                group_by?: string;
+                models?: string;
+                lag?: number;
+                month_from?: string;
+                month_to?: string;
+                cluster_assignment?: string;
+                supplier_desc?: string;
+                abc_vol?: string;
+                region?: string;
+                seasonality_profile?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forecast_accuracy_error_contributors_forecast_accuracy_error_contributors_get: {
+        parameters: {
+            query?: {
+                models?: string;
+                lag?: number;
+                limit?: number;
+                month_from?: string;
+                month_to?: string;
+                cluster_assignment?: string;
+                supplier_desc?: string;
+                abc_vol?: string;
+                region?: string;
+                seasonality_profile?: string;
             };
             header?: never;
             path?: never;
@@ -11800,6 +13237,26 @@ export interface operations {
         };
     };
     get_planning_date_info_dashboard_planning_date_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_pipeline_readiness_dashboard_pipeline_readiness_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -15022,6 +16479,59 @@ export interface operations {
             };
         };
     };
+    list_named_pipelines_jobs_pipelines_named_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    run_named_pipeline_jobs_pipelines_named__name__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_job_logs_jobs__job_id__logs_get: {
         parameters: {
             query?: {
@@ -15412,12 +16922,181 @@ export interface operations {
             };
         };
     };
+    get_config_sku_chat_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    create_session_sku_chat_session_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_history_sku_chat_session__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_turn_sku_chat_stream_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_adjustment_sku_chat_adjustment__approval_id__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdjustmentDecision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_exceptions_storyboard_exceptions_get: {
         parameters: {
             query?: {
                 status?: string;
                 exception_type?: string;
                 severity_min?: number;
+                severity_max?: number;
                 item?: string;
                 loc?: string;
                 limit?: number;
@@ -15754,6 +17433,39 @@ export interface operations {
             query: {
                 item_id: string;
                 loc: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_candidate_forecasts_forecast_candidate_get: {
+        parameters: {
+            query: {
+                item_id: string;
+                loc: string;
+                model_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -17545,6 +19257,39 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_sop_cycle_sop_cycles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_CreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19379,7 +21124,12 @@ export interface operations {
     };
     admin_invalidate_stale_tuning_admin_tuning_invalidate_stale_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Submit a tune_stale_clusters job (re-tunes stale clusters and clears their flags on success) instead of just clearing flags */
+                retune?: boolean;
+                /** @description Tree model to re-tune when retune=true (lgbm/catboost/xgboost) */
+                model?: string;
+            };
             header?: {
                 "x-api-key"?: string | null;
             };
@@ -19490,7 +21240,9 @@ export interface operations {
                 /** @description Run checks for specific domain only */
                 domain?: string;
             };
-            header?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -19551,7 +21303,9 @@ export interface operations {
     dq_fix_apply_data_quality_fix_apply_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -19670,7 +21424,9 @@ export interface operations {
                 /** @description Set true to apply fixes; false for dry-run preview */
                 apply?: boolean;
             };
-            header?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -20327,6 +22083,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_accuracy_fva_snapshot_accuracy_get: {
+        parameters: {
+            query: {
+                /** @description Archived planning month */
+                record_month: string;
+                /** @description Optional snapshot lag */
+                lag?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_months_fva_snapshot_months_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -21089,6 +22899,41 @@ export interface operations {
             };
         };
     };
+    run_pipeline_integration_pipeline_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PipelineRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_job_integration_jobs__job_id__get: {
         parameters: {
             query?: never;
@@ -21176,6 +23021,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScanResponse"];
+                };
+            };
+        };
+    };
+    scan_plan_integration_scan_plan_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -21794,7 +23674,9 @@ export interface operations {
     create_run_lgbm_tuning_runs_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -21858,7 +23740,9 @@ export interface operations {
     update_run_lgbm_tuning_runs__run_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path: {
                 run_id: number;
             };
@@ -21987,7 +23871,9 @@ export interface operations {
     promote_run_lgbm_tuning_runs__run_id__promote_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path: {
                 run_id: number;
             };
@@ -24270,7 +26156,9 @@ export interface operations {
     };
     submit_backtest_run_backtest_management__model_id__run_post: {
         parameters: {
-            query?: never;
+            query?: {
+                parallel?: boolean;
+            };
             header?: {
                 "x-api-key"?: string | null;
             };
@@ -24398,7 +26286,10 @@ export interface operations {
     };
     submit_generate_forecast_backtest_management__model_id__generate_post: {
         parameters: {
-            query?: never;
+            query?: {
+                horizon?: number | null;
+                confidence_intervals?: boolean | null;
+            };
             header?: {
                 "x-api-key"?: string | null;
             };
@@ -24435,6 +26326,7 @@ export interface operations {
                 notes?: string | null;
                 promoted_by?: string | null;
                 bypass_token?: string | null;
+                allow_cluster_mismatch?: boolean;
             };
             header?: {
                 "x-api-key"?: string | null;
@@ -24462,6 +26354,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_forecast_release_readiness_forecast_release_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForecastReleaseReadinessResponse"];
                 };
             };
         };
@@ -24933,6 +26845,266 @@ export interface operations {
             };
         };
     };
+    list_sweeps_champion_sweeps_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_sweep_champion_sweeps_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSweepBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sweep_champion_sweeps__sweep_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_sweep_champion_sweeps__sweep_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_leaderboard_champion_sweeps__sweep_id__leaderboard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_segments_champion_sweeps__sweep_id__segments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_sweep_champion_sweeps__sweep_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_winner_champion_sweeps__sweep_id__promote_winner_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_lag_accuracy_expsys_lag_accuracy_get: {
         parameters: {
             query?: {
@@ -25099,6 +27271,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_champion_forecast_ai_champion_forecast_get: {
+        parameters: {
+            query: {
+                /** @description Item id (required) */
+                item_id: string;
+                /** @description Location id; empty = all locations for the item */
+                loc?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_champion_adjust_ai_champion_adjust_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdjustRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_champion_save_ai_champion_save_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_customer_analytics_customer_analytics_ask_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomerAnalyticsAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerAnalyticsAskResponse"];
                 };
             };
             /** @description Validation Error */
@@ -25352,6 +27663,7 @@ export interface operations {
                 date_to?: string | null;
                 channel?: string | null;
                 store_type?: string | null;
+                state?: string | null;
                 min_demand?: number;
             };
             header?: never;
@@ -25623,6 +27935,37 @@ export interface operations {
                 date_to?: string | null;
             };
             header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recalculate_customer_analytics_customer_analytics_recalculate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

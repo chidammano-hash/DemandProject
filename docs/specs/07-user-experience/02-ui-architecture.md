@@ -66,17 +66,21 @@ Six filter dimensions applied across Dashboard, Accuracy, and auto-populated int
 
 Filter state is managed via `useGlobalFilters` hook with debounced URL synchronization. The filter bar is hidden on tabs where it does not apply (AI Planner, Chat, Jobs).
 
-### Dashboard Overview
+### Command Center Overview
 
-The landing page renders five zones:
+The landing page renders four primary triage zones:
 
 | Zone | Component | Data Source |
 |---|---|---|
-| KPI cards | `KpiCard` (4 cards with sparklines) | `/dashboard/kpis` |
-| Alert panel | Severity-coded alert list | `/dashboard/alerts` |
-| Heatmap | `HeatmapGrid` (CSS Grid with color scale) | `/dashboard/heatmap` |
-| Top movers | `TopMovers` (period-over-period changes) | `/dashboard/top-movers` |
-| Trend chart | `ForecastTrendChart` (recharts `ComposedChart`) | `/dashboard/trend` |
+| Forecast release readiness | `ForecastReleaseGateCard` | `/forecast-release/readiness` |
+| KPI summary | `KpiSummaryCard` (health, exceptions, fill rate, value at risk) | `/control-tower/kpis` |
+| Unified exception feed | `ExceptionFeedCard` with source/severity/status filters | `/ai-planner/insights`, `/storyboard/exceptions` |
+| Portfolio trend | Collapsible Recharts line chart | `/control-tower/trend` |
+
+The release card shows the first six blockers and provides an accessible
+Show-all/Collapse disclosure for the complete evidence list. It refreshes every
+60 seconds while open, including after a green result. Degraded-data banners
+remain state-specific warnings, not separate dashboard zones.
 
 ### Code Splitting
 
