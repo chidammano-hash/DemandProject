@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 #     no promoted experiment exists, so it presents consistently with the
 #     AI/Planner reserved stages on a fresh DB.
 STAGE_DEFS = [
-    ("seasonal_naive", "Naive Seasonal", "Same-month-last-year baseline for measuring planning lift.", "actual", "missing"),
     ("external", "External", "Current ERP or external forecast before model selection.", "actual", "missing"),
     ("champion", "Champion", "Best measured statistical or ML model once champion-vs-actual outcomes are available.", "actual", "planned"),
     ("ai_adjusted", "AI Adjusted", "Reserved for AI-assisted forecast interventions once they are measured.", "planned", "planned"),
@@ -65,7 +64,7 @@ def _build_stage(
 async def fva_waterfall(
     months: int = Query(12, ge=1, le=36),
 ):
-    """FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages.
+    """FVA ladder data: external -> champion -> future adjustment stages.
 
     ``months`` windows every measured stage to the trailing horizon. Accuracy is
     always measured at each DFU's execution lag (the horizon it is operationally
@@ -107,39 +106,11 @@ async def fva_waterfall(
         )
         rows = cur.fetchall()
 
-        # Seasonal naive: same-month-last-year sales as the forecast, evaluated
-        # over the DFU-month universe at execution lag. Computed on the fly — no
-        # seasonal_naive rows are loaded into fact_external_forecast_monthly.
-        cur.execute(
-            f"""WITH dfu_months AS (
-                   SELECT DISTINCT f.item_id, f.customer_group, f.loc, f.startdate, f.tothist_dmd
-                   {dfu_filter}
-               )
-               SELECT
-                   100.0 - 100.0 * sum(abs(coalesce(s.qty, 0) - m.tothist_dmd))
-                       / NULLIF(abs(sum(m.tothist_dmd)), 0) AS accuracy_pct,
-                   count(*) AS n_rows
-               FROM dfu_months m
-               LEFT JOIN fact_sales_monthly s
-                 ON s.item_id = m.item_id
-                AND s.customer_group = m.customer_group
-                AND s.loc = m.loc
-                AND s.type = 1
-                AND s.startdate = m.startdate - interval '12 months'""",
-            dfu_params,
-        )
-        naive_row = cur.fetchone()
 
     models = {
         r[0]: {"model_id": r[0], "accuracy_pct": _round_or_none(r[1]), "n_rows": r[2]}
         for r in rows
     }
-    if naive_row and naive_row[0] is not None and naive_row[1]:
-        models["seasonal_naive"] = {
-            "model_id": "seasonal_naive",
-            "accuracy_pct": _round_or_none(naive_row[0]),
-            "n_rows": naive_row[1],
-        }
 
     # `ai_adjusted` and `planner_adjusted` remain reserved ("planned") stages in
     # the ladder — there is no measured AI accuracy to source. The forward-only

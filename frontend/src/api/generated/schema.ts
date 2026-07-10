@@ -3044,8 +3044,7 @@ export interface paths {
          * Get Staging Forecasts
          * @description Return ALL staged forecasts for a DFU, grouped by model_id.
          *
-         *     Returns forecasts from fact_production_forecast_staging for all models
-         *     that have generated forecasts for this item+loc combination.
+         *     Returns the latest immutable release-candidate run for each requested model.
          */
         get: operations["get_staging_forecasts_forecast_production_staging_get"];
         put?: never;
@@ -5810,7 +5809,7 @@ export interface paths {
         };
         /**
          * Fva Waterfall
-         * @description FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages.
+         * @description FVA ladder data: external -> champion -> future adjustment stages.
          *
          *     ``months`` windows every measured stage to the trailing horizon. Accuracy is
          *     always measured at each DFU's execution lag (the horizon it is operationally
@@ -6937,282 +6936,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/catboost-tuning/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb List Runs */
-        get: operations["cb_list_runs_catboost_tuning_runs_get"];
-        put?: never;
-        /** Cb Create Run */
-        post: operations["cb_create_run_catboost_tuning_runs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/runs/{run_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb Get Run */
-        get: operations["cb_get_run_catboost_tuning_runs__run_id__get"];
-        /** Cb Update Run */
-        put: operations["cb_update_run_catboost_tuning_runs__run_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/compare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb Compare Runs */
-        get: operations["cb_compare_runs_catboost_tuning_compare_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/runs/{run_id}/clusters": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb Get Clusters */
-        get: operations["cb_get_clusters_catboost_tuning_runs__run_id__clusters_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/runs/{run_id}/months": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb Get Months */
-        get: operations["cb_get_months_catboost_tuning_runs__run_id__months_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/runs/{run_id}/promote": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Cb Promote Run */
-        post: operations["cb_promote_run_catboost_tuning_runs__run_id__promote_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/promoted": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb Get Promoted */
-        get: operations["cb_get_promoted_catboost_tuning_promoted_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/catboost-tuning/comparisons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cb List Comparisons */
-        get: operations["cb_list_comparisons_catboost_tuning_comparisons_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb List Runs */
-        get: operations["xgb_list_runs_xgboost_tuning_runs_get"];
-        put?: never;
-        /** Xgb Create Run */
-        post: operations["xgb_create_run_xgboost_tuning_runs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/runs/{run_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb Get Run */
-        get: operations["xgb_get_run_xgboost_tuning_runs__run_id__get"];
-        /** Xgb Update Run */
-        put: operations["xgb_update_run_xgboost_tuning_runs__run_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/compare": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb Compare Runs */
-        get: operations["xgb_compare_runs_xgboost_tuning_compare_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/runs/{run_id}/clusters": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb Get Clusters */
-        get: operations["xgb_get_clusters_xgboost_tuning_runs__run_id__clusters_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/runs/{run_id}/months": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb Get Months */
-        get: operations["xgb_get_months_xgboost_tuning_runs__run_id__months_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/runs/{run_id}/promote": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Xgb Promote Run */
-        post: operations["xgb_promote_run_xgboost_tuning_runs__run_id__promote_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/promoted": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb Get Promoted */
-        get: operations["xgb_get_promoted_xgboost_tuning_promoted_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/xgboost-tuning/comparisons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Xgb List Comparisons */
-        get: operations["xgb_list_comparisons_xgboost_tuning_comparisons_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/lgbm-tuning/chat/sessions": {
         parameters: {
             query?: never;
@@ -8089,7 +7812,7 @@ export interface paths {
          * @description Submit a production model training job.
          *
          *     Use model_id='all' to train all forecastable tree models.
-         *     Only tree models (lgbm, catboost, xgboost variants) support training.
+         *     Only the LightGBM model supports a separate training step.
          */
         post: operations["submit_production_training_backtest_management__model_id__train_post"];
         delete?: never;
@@ -8277,7 +8000,7 @@ export interface paths {
         };
         /**
          * Get Staging Summary
-         * @description Summary of production forecasts in staging per model.
+         * @description Latest immutable release-candidate run per requested model.
          */
         get: operations["get_staging_summary_backtest_management_staging_summary_get"];
         put?: never;
@@ -8329,14 +8052,7 @@ export interface paths {
         put?: never;
         /**
          * Promote Model
-         * @description Promote a model's staged forecasts to production.
-         *
-         *     For model_id='champion', promotes per-DFU best-model selection.
-         *     For any other model_id, promotes all staged rows for that single model.
-         *
-         *     Gen-4 Cross-cutting #6: a gate enforces a minimum WAPE improvement and
-         *     DFU coverage against the currently active champion. Every allow/reject
-         *     is recorded to the AI decision ledger.
+         * @description Atomically promote one explicit, immutable release-candidate run.
          */
         post: operations["promote_model_backtest_management__model_id__promote_post"];
         delete?: never;
@@ -10562,9 +10278,10 @@ export interface components {
              * Models
              * @default [
              *       "lgbm_cluster",
-             *       "catboost_cluster",
-             *       "xgboost_cluster",
-             *       "chronos"
+             *       "nhits",
+             *       "nbeats",
+             *       "mstl",
+             *       "chronos2_enriched"
              *     ]
              */
             models: string[];
@@ -10583,6 +10300,24 @@ export interface components {
              * @default 3
              */
             min_sku_rows: number;
+        };
+        /** CreateRunBody */
+        CreateRunBody: {
+            /** Run Label */
+            run_label: string;
+            /**
+             * Model Id
+             * @default lgbm_cluster
+             */
+            model_id: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Features */
+            features?: string[] | null;
+            /** Notes */
+            notes?: string | null;
         };
         /** CreateScheduleRequest */
         CreateScheduleRequest: {
@@ -10828,6 +10563,45 @@ export interface components {
         FixApplyRequest: {
             /** Fix Ids */
             fix_ids: number[];
+        };
+        /** ForecastGenerationSubmittedResponse */
+        ForecastGenerationSubmittedResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Model Id */
+            model_id: string;
+            /**
+             * Source Run Id
+             * Format: uuid
+             */
+            source_run_id: string;
+        };
+        /** ForecastPromotionResponse */
+        ForecastPromotionResponse: {
+            /** Model Id */
+            model_id: string;
+            /** Promotion Type */
+            promotion_type: string;
+            /** Plan Version */
+            plan_version: string;
+            /**
+             * Source Run Id
+             * Format: uuid
+             */
+            source_run_id: string;
+            /**
+             * Production Run Id
+             * Format: uuid
+             */
+            production_run_id: string;
+            /** Candidate Checksum */
+            candidate_checksum: string;
+            /** Outgoing Archive Checksum */
+            outgoing_archive_checksum?: string | null;
+            /** Rows Promoted */
+            rows_promoted: number;
+            /** Dfu Count */
+            dfu_count: number;
         };
         /** ForecastReleaseArchive */
         ForecastReleaseArchive: {
@@ -12490,42 +12264,6 @@ export interface components {
             rejected_by: string;
             /** Rejection Reason */
             rejection_reason: string;
-        };
-        /** CreateRunBody */
-        api__routers__forecasting__lgbm_tuning__CreateRunBody: {
-            /** Run Label */
-            run_label: string;
-            /**
-             * Model Id
-             * @default lgbm_cluster
-             */
-            model_id: string;
-            /** Params */
-            params?: {
-                [key: string]: unknown;
-            } | null;
-            /** Features */
-            features?: string[] | null;
-            /** Notes */
-            notes?: string | null;
-        };
-        /** CreateRunBody */
-        api__routers__forecasting__model_tuning__CreateRunBody: {
-            /** Run Label */
-            run_label: string;
-            /**
-             * Model Id
-             * @default
-             */
-            model_id: string;
-            /** Params */
-            params?: {
-                [key: string]: unknown;
-            } | null;
-            /** Features */
-            features?: string[] | null;
-            /** Notes */
-            notes?: string | null;
         };
         /**
          * CreateExperimentBody
@@ -23749,7 +23487,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["api__routers__forecasting__lgbm_tuning__CreateRunBody"];
+                "application/json": components["schemas"]["CreateRunBody"];
             };
         };
         responses: {
@@ -23989,638 +23727,6 @@ export interface operations {
         };
     };
     list_comparisons_lgbm_tuning_comparisons_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_list_runs_catboost_tuning_runs_get: {
-        parameters: {
-            query?: {
-                status?: string;
-                model_id?: string;
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_create_run_catboost_tuning_runs_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-api-key"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["api__routers__forecasting__model_tuning__CreateRunBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_get_run_catboost_tuning_runs__run_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_update_run_catboost_tuning_runs__run_id__put: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-api-key"?: string | null;
-            };
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateRunBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_compare_runs_catboost_tuning_compare_get: {
-        parameters: {
-            query: {
-                baseline_id: number;
-                candidate_id: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_get_clusters_catboost_tuning_runs__run_id__clusters_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_get_months_catboost_tuning_runs__run_id__months_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_promote_run_catboost_tuning_runs__run_id__promote_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-api-key"?: string | null;
-            };
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cb_get_promoted_catboost_tuning_promoted_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    cb_list_comparisons_catboost_tuning_comparisons_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_list_runs_xgboost_tuning_runs_get: {
-        parameters: {
-            query?: {
-                status?: string;
-                model_id?: string;
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_create_run_xgboost_tuning_runs_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-api-key"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["api__routers__forecasting__model_tuning__CreateRunBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_get_run_xgboost_tuning_runs__run_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_update_run_xgboost_tuning_runs__run_id__put: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-api-key"?: string | null;
-            };
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateRunBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_compare_runs_xgboost_tuning_compare_get: {
-        parameters: {
-            query: {
-                baseline_id: number;
-                candidate_id: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_get_clusters_xgboost_tuning_runs__run_id__clusters_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_get_months_xgboost_tuning_runs__run_id__months_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_promote_run_xgboost_tuning_runs__run_id__promote_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-api-key"?: string | null;
-            };
-            path: {
-                run_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    xgb_get_promoted_xgboost_tuning_promoted_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    xgb_list_comparisons_xgboost_tuning_comparisons_get: {
         parameters: {
             query?: {
                 limit?: number;
@@ -26373,7 +25479,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ForecastGenerationSubmittedResponse"];
                 };
             };
             /** @description Validation Error */
@@ -26389,11 +25495,10 @@ export interface operations {
     };
     promote_model_backtest_management__model_id__promote_post: {
         parameters: {
-            query?: {
+            query: {
+                source_run_id: string;
                 notes?: string | null;
                 promoted_by?: string | null;
-                bypass_token?: string | null;
-                allow_cluster_mismatch?: boolean;
             };
             header?: {
                 "x-api-key"?: string | null;
@@ -26411,7 +25516,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ForecastPromotionResponse"];
                 };
             };
             /** @description Validation Error */

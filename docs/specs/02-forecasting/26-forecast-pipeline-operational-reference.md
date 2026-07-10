@@ -45,7 +45,6 @@
 | **Champion** | The model selected as best-performing for a given DFU based on historical backtest accuracy. Champion assignments are stored with `model_id = 'champion'` and `source_model_id` pointing to the winning algorithm. |
 | **Backtest** | Expanding-window historical evaluation: train on data up to a cutoff, predict forward, compare to actuals. Repeated across N timeframes to produce robust accuracy estimates. |
 | **Timeframe** | A single cutoff date in a backtest. With `n_timeframes: 10`, the backtest evaluates 10 different historical cutoff points. |
-| **Cold Start** | DFUs with insufficient sales history. DFUs with < `min_history_months` (12) months are routed to `cold_start_model_id` (rolling_mean). DFUs with < `cold_start_min_months` (3) are skipped entirely. |
 | **Cluster Strategy** | How tree models are trained: `per_cluster` trains a separate model per demand cluster; `global` trains one model across all DFUs. |
 | **Meta-Learner** | An ML classifier (Random Forest) that predicts the best-performing model for each DFU based on demand features and historical performance. Used in advanced champion selection strategies. |
 | **Promotion** | Moving an experimental configuration (hyperparameters, clusters, champion strategy) into the production pipeline config (`forecast_pipeline_config.yaml`). |
@@ -415,7 +414,6 @@ make abc-xyz-classify-dry   # Dry run (no DB writes)
 
 ### STAGE 4: Customer Features Generation
 
-**Purpose:** Pre-compute 34 customer-derived features from `fact_customer_demand_monthly` for use by customer-enriched tree models (lgbm_cust_enriched, catboost_cust_enriched, xgboost_cust_enriched).
 
 **Prerequisites:** `fact_customer_demand_monthly` populated (Stage 1 complete).
 
@@ -437,7 +435,6 @@ make customer-features-python   # Python-based alternative
 
 ### STAGE 5: Clustering
 
-**Purpose:** Segment DFUs into demand-pattern clusters using K-Means on engineered time-series features. Clusters drive per-cluster tree model training (each cluster gets its own LGBM/CatBoost/XGBoost model).
 
 **Prerequisites:** `fact_sales_monthly` and `dim_sku` populated. Seasonality/variability profiling is recommended but not strictly required.
 
@@ -538,10 +535,7 @@ Verify no cluster is below the minimum size threshold (2% of total).
   - `forecast_horizon`: 6
   - `early_stop_pct`: 0.03 -- **Why:** 3% patience for early stopping prevents overfitting
 - `config/forecasting/forecast_pipeline_config.yaml` -- `algorithms` section (10 algorithms):
-  - **Tree models (3):** `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`
   - **Foundation models (1):** `chronos2_enriched` -- the only Chronos variant remaining; T5, Bolt,
-    non-enriched Chronos 2, and `bolt_hierarchical` were removed in commit `5ab8d593`
-  - **Statistical models (4):** `mstl`, `seasonal_naive`, `rolling_mean`, `rolling_median`
   - **Deep learning models (2):** `nbeats`, `nhits`
   - Each algorithm has lifecycle flags: `enabled`, `tune`, `backtest`, `compete`, `forecast`, `expert`
 - `config/forecasting/forecast_pipeline_config.yaml` -- `backtest_sampling` section:
@@ -558,29 +552,21 @@ Verify no cluster is below the minimum size threshold (2% of total).
 **CLI commands:**
 
 The `backtest-all` target runs every `compete: true` model that trains cleanly on a rebuild -- the 4
-core algorithms: lgbm, catboost, xgboost, chronos2e. The remaining 6 algorithms (cheap or
 operator-gated baselines) require separate targets.
 
 ```bash
 # Core 4 (run by backtest-all)
 make backtest-lgbm             # LightGBM (--parallel --workers 8, defaults to lgbm)
-make backtest-catboost         # CatBoost
-make backtest-xgboost          # XGBoost
 make backtest-chronos2e        # Chronos 2 Enriched (~6h) -- the only remaining foundation model
 
 # Additional 6 (separate targets, cheap/operator-gated)
 make backtest-mstl             # MSTL statistical
 make backtest-nhits            # N-HiTS deep learning
 make backtest-nbeats           # N-BEATS deep learning
-make backtest-seasonal-naive   # Seasonal naive baseline
-make backtest-rolling-mean     # Rolling mean baseline
-# rolling_median has no dedicated Make target; run directly:
-#   uv run python scripts/ml/run_backtest.py --model rolling_median
 
 # Composite targets
 make backtest-all              # 4 core algorithms sequentially
 make backtest-all-parallel     # 4 core algorithms concurrently (logs in data/backtest/logs/)
-make backtest-baselines        # seasonal_naive + rolling_mean
 
 # Convenience targets (backtest + load combined)
 make backtest-chronos2e-full   # Chronos 2 Enriched backtest + load
@@ -590,11 +576,8 @@ make backtest-nbeats-full      # N-BEATS backtest + load
 ```
 
 **Scripts:**
-- `scripts/ml/run_backtest.py` -- LightGBM backtest, and the shared entry point for `seasonal_naive` /
-  `rolling_mean` / `rolling_median` via `--model`. Supports `--parallel`, `--workers`. Defaults to lgbm
   when no `--model` flag. Per-cluster training with SHAP feature selection, Tweedie objective for
   intermittent clusters, recursive multi-step prediction.
-- `scripts/ml/run_backtest_catboost.py`, `scripts/ml/run_backtest_xgboost.py` -- CatBoost / XGBoost backtest entry points
 - `scripts/ml/run_backtest_chronos2_enriched.py` -- the sole remaining foundation-model backtest (Chronos 2 Enriched)
 - `scripts/ml/run_backtest_dl.py` -- deep learning backtest (N-HiTS, N-BEATS) via NeuralForecast
 - `scripts/ml/run_backtest_mstl.py` -- MSTL statistical backtest
@@ -648,8 +631,6 @@ make backtest-load-chronos2e
 make backtest-load-mstl
 make backtest-load-nhits
 make backtest-load-nbeats
-make backtest-load-seasonal-naive
-make backtest-load-rolling-mean
 
 # After loading, refresh accuracy materialized views
 make refresh-accuracy-mvs
@@ -683,7 +664,6 @@ SELECT model_id, COUNT(*) FROM backtest_lag_archive GROUP BY 1 ORDER BY 2 DESC;
   - `n_trials`: 50 -- **When to change:** Increase to 100-200 for thorough search; reduce to 20 for quick exploration
   - `n_splits`: 5, `gap_months`: 1, `val_months_per_fold`: 3, `min_train_months`: 13
   - Per-model search spaces with `type`, `low`/`high` bounds, optional `log` flag
-- `config/forecasting/tune_strategies.yaml` -- 43 named strategies (13 LGBM + 15 CatBoost + 15 XGBoost)
 - `config/forecasting/tuning_templates.yaml` -- UI experiment templates (production_baseline + 4 expert templates per model)
 
 **Database tables:**
@@ -703,8 +683,6 @@ SELECT model_id, COUNT(*) FROM backtest_lag_archive GROUP BY 1 ORDER BY 2 DESC;
 ```bash
 # Bayesian tuning (Optuna)
 make tune-lgbm              # 50 trials, walk-forward CV
-make tune-catboost
-make tune-xgboost
 make tune-all               # All 3 sequentially
 make tune-cust-enriched-all # All 3 customer-enriched models
 
@@ -715,7 +693,6 @@ make lgbm-auto-tune-dry-run RUNS=10    # Dry run (print strategies)
 ```
 
 **UI actions (Model Tuning Experiments):**
-- Model Tuning Tab > select a tunable model card (LightGBM, CatBoost, XGBoost)
 - View experiment **leaderboard** (table of all runs sorted by accuracy)
 - **"New Experiment"** -> `ExperimentBuilder` dialog with template selection and hyperparameter adjustment
 - Select 2 experiments -> **"Compare"** -> `EnhancedComparisonPanel`
@@ -772,7 +749,6 @@ Per-cluster tuning writes cluster-specific overrides to `config/forecasting/clus
 - `config/forecasting/forecast_pipeline_config.yaml` -- `champion` section:
   - `strategy`: rolling -- **When to change:** Try `ensemble_top3_inverse` or `meta_learner_rf` if single-model selection leaves accuracy on the table vs. oracle ceiling
   - `strategy_params.window_months`: 6
-  - `fallback_model_id`: seasonal_naive -- **Why:** Safe baseline for DFUs with insufficient backtest data
   - `metric`: wape, `lag`: execution
 - `config/forecasting/champion_experiment_templates.yaml` -- **36 strategy templates** organized by category:
   - Core: expanding, rolling_6m, rolling_3m, decay_090/095
@@ -868,7 +844,6 @@ Compare champion accuracy to ceiling (oracle): gap_bps should be <100 bps.
 - `config/forecasting/forecast_pipeline_config.yaml` -- `production_forecast` section:
   - `horizon_months`: 24 -- **When to change:** Reduce to 12 if only short-term planning needed; increase to 36 for long-range S&OP
   - `min_history_months`: 12 -- **Why:** DFUs below this threshold use cold-start model instead of champion
-  - `cold_start_model_id`: rolling_mean -- **Why:** Simple, robust baseline for DFUs without enough history for ML models
   - `cold_start_min_months`: 3 -- **Why:** Absolute floor; DFUs below this are skipped entirely (not enough data for any model)
   - `confidence_interval.z_lower/z_upper`: 1.282 (80% CI)
   - `scheduler.cron`: `0 6 2 * *` (2nd of every month at 6am)
@@ -902,7 +877,6 @@ make forecast-prod-all         # Schema + generate
 - If forecast generation fails for some DFUs: check logs for specific model loading errors. Individual DFU failures are logged but do not block other DFUs.
 - Dry run first: `make forecast-generate-dry` previews without writing to DB
 - Plan versions are immutable once written; re-running creates a new version
-- Cold-start routing: DFUs with 3-11 months history use rolling_mean; <3 months are skipped
 
 **Validation:**
 ```sql
@@ -933,7 +907,6 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 
 ### 3.2 Tuning Experiments (UI Flow)
 
-1. Navigate to **Model Tuning Tab** > select a tunable model card (LightGBM, CatBoost, XGBoost)
 2. View the experiment leaderboard with accuracy_pct, wape, bias, status
 3. Click **"New Experiment"**
 4. In `ExperimentBuilder`: select template, adjust hyperparameters, configure training settings
@@ -1109,7 +1082,6 @@ make expsys-backtest-dry       # Accuracy only, no DB load
 
 ### 5.4 Known Gotchas
 
-- **Erratic fallback is catastrophic:** If a model wins on biased 10% coverage, the rest falls back to seasonal_naive. Fixed with demand-aware cascade fallback and `min_dfu_coverage_pct: 0.5`.
 - **Ridge alpha must be 100.0** (not 1.0) to avoid LinAlgWarning. Also: drop constant columns before fitting, use `solver='lsqr'`.
 - **Oracle ceiling is ~75.9%**: Champion = ~75.24%, portfolio = ~72.4%. Very little headroom above champion for single-model selection; hybrid/ensemble strategies are needed.
 
@@ -1121,7 +1093,6 @@ make expsys-backtest-dry       # Accuracy only, no DB load
 
 The primary experimentation interface. Shows a pipeline layout with stage cards:
 - **Clustering** card -> `ClusterExperimentsPanel` (create, compare, promote cluster experiments)
-- **Tunable model cards** (LightGBM, CatBoost, XGBoost) -> experiment leaderboard, builder, comparison, promotion
 - **Champion** card -> `ChampionExperimentsPanel` (strategy experiments, comparison, two-stage promotion)
 
 ### 6.2 Aggregate Analysis Tab (`AggregateAnalysisTab.tsx`)
@@ -1160,13 +1131,11 @@ The accuracy monitoring dashboard. Shows:
 | `etl_config.yaml` | ETL pipeline config | Domain load order, MV refresh tiers, parallel workers | Stage 1 |
 | `cluster_experiment` table | Clustering ML params | k_range, min_cluster_size_pct, labeling thresholds | Stage 5 |
 | `hyperparameter_tuning.yaml` | Optuna search spaces | n_trials, search_space per model, pruner settings | Stage 8 |
-| `tune_strategies.yaml` | Auto-tune strategy overrides | 13 LGBM + 15 CatBoost + 15 XGBoost named strategies | Stage 8 |
 | `tuning_templates.yaml` | UI experiment templates | Per-model: production_baseline + 4 expert templates | Stage 8 UI |
 | `champion_experiment_templates.yaml` | Champion strategy templates | 36 strategies: expanding, rolling, decay, ensemble, meta_learner, bandit, etc. | Stage 9 UI |
 | `cluster_experiment_templates.yaml` | Cluster experiment templates | 7 templates: baseline, high-K, low-K, seasonal, intermittent, PCA, recent | Stage 5 UI |
 | `cluster_tuning_profiles.yaml` | Per-cluster tuning profiles | Cluster-specific hyperparameter overrides | Stage 8 |
 | `forecast_domain_config.yaml` | Seasonality + variability + quantile + bias | seasonality thresholds, variability CV classes, quantile model | Stage 2 |
-| `forecast_pipeline_config.yaml` (`algorithms.<id>.params`) | Model hyperparameters (replaces the deleted `algorithm_config.yaml`) | LGBM, CatBoost, XGBoost, Chronos params | Stage 6 |
 | `expert_system_backtest.yaml` | Expert system backtest config | Segment-algorithm routing, DFU classification rules | Expert Panel |
 | `ext_ml_forecasts.yaml` | External ML forecast config | External model registration, source mapping | Stage 1 |
 | `data_quality_config.yaml` | Data quality rules | Validation rules, outlier thresholds, completeness checks | Stage 1 |
@@ -1186,9 +1155,7 @@ The accuracy monitoring dashboard. Shows:
 | `backtest_sampling.enabled` | true | Set false for production-quality evaluation | Full population backtest (slower) |
 | `backtest_sampling.default_target_n` | 5000 | Increase if you need broader DFU coverage | Longer backtest, better champion quality |
 | `champion.strategy` | rolling | Try ensemble if oracle ceiling >> champion | Different model selection approach |
-| `champion.fallback_model_id` | seasonal_naive | Change if baseline model performs poorly | Affects DFUs without backtest data |
 | `production_forecast.horizon_months` | 24 | Reduce for short-term planning | Fewer forecast months generated |
-| `production_forecast.cold_start_min_months` | 3 | Increase if rolling_mean is unreliable at 3 months | More DFUs skipped |
 
 ---
 
@@ -1286,7 +1253,6 @@ The accuracy monitoring dashboard. Shows:
 
 ### Gap 3: Foundation and DL models cannot be tuned through the UI
 
-**What's missing:** The `tune` flag is `false` for all non-tree models. The tuning experiment builder only supports LGBM, CatBoost, and XGBoost.
 
 **Impact:** Foundation model parameters (batch_size, num_samples) and DL hyperparameters (max_steps, learning_rate) require manual YAML edits.
 
@@ -1304,7 +1270,6 @@ The accuracy monitoring dashboard. Shows:
 
 ### Gap 5: Backtest sampling impacts champion selection accuracy without UI awareness
 
-**What's missing:** With `backtest_sampling.enabled: true` and `default_target_n: 5000`, only 5,000 DFUs are backtested. Champion selection queries all DFUs, so most fall back to `fallback_model_id: seasonal_naive`.
 
 **Impact:** Champion selection quality is silently degraded. The UI does not surface sampling status or coverage percentage.
 

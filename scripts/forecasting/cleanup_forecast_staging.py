@@ -1,4 +1,5 @@
 """Delete old forecast staging generations only after bounded-archive reconciliation."""
+
 from __future__ import annotations
 
 import argparse
@@ -29,10 +30,15 @@ def _target_generations(cur: psycopg.Cursor, generation: date | None) -> list[da
     if generation is not None:
         return [generation]
     cur.execute(
-        """SELECT DISTINCT forecast_month_generated
-           FROM fact_production_forecast_staging
-           WHERE forecast_month_generated < %s
-           ORDER BY forecast_month_generated""",
+        """SELECT DISTINCT roster.record_month
+           FROM forecast_snapshot_roster roster
+           JOIN fact_production_forecast_staging staging
+             ON staging.run_id = roster.generation_run_id
+            AND staging.generation_purpose = 'snapshot_contender'
+            AND staging.candidate_model_id = roster.model_id
+           WHERE roster.snapshot_role = 'contender'
+             AND roster.record_month < %s
+           ORDER BY roster.record_month""",
         (get_planning_date().replace(day=1),),
     )
     return [row[0] for row in cur.fetchall()]
@@ -47,7 +53,9 @@ def _expected_contender_counts(cur: psycopg.Cursor, generation: date) -> dict[tu
         (generation,),
     )
     roster = cur.fetchall()
-    if roster.count(("champion", None)) != 1 or [row[1] for row in roster if row[0] == "contender"] != [1, 2, 3]:
+    if roster.count(("champion", None)) != 1 or [
+        row[1] for row in roster if row[0] == "contender"
+    ] != [1, 2, 3]:
         raise ValueError("snapshot roster must contain champion and contender ranks 1, 2, and 3")
     cur.execute(
         """SELECT r.model_id, r.generation_run_id, COUNT(s.run_id)
@@ -55,6 +63,8 @@ def _expected_contender_counts(cur: psycopg.Cursor, generation: date) -> dict[tu
            LEFT JOIN fact_production_forecast_staging s
              ON s.model_id = r.model_id
             AND s.run_id = r.generation_run_id
+            AND s.generation_purpose = 'snapshot_contender'
+            AND s.candidate_model_id = r.model_id
             AND s.forecast_month_generated = r.record_month
             AND s.forecast_month >= r.record_month
             AND s.forecast_month < r.record_month + INTERVAL '6 months'
@@ -63,7 +73,9 @@ def _expected_contender_counts(cur: psycopg.Cursor, generation: date) -> dict[tu
            GROUP BY r.model_id, r.generation_run_id""",
         (generation,),
     )
-    counts = {(str(model_id), str(run_id)): int(count) for model_id, run_id, count in cur.fetchall()}
+    counts = {
+        (str(model_id), str(run_id)): int(count) for model_id, run_id, count in cur.fetchall()
+    }
     if len(counts) != 3 or any(count <= 0 for count in counts.values()):
         raise ValueError("selected contender staging rows are incomplete")
     return counts
@@ -92,6 +104,8 @@ def _validate_lag_coverage(cur: psycopg.Cursor, generation: date) -> None:
             JOIN fact_production_forecast_staging s
               ON s.model_id = r.model_id
              AND s.run_id = r.generation_run_id
+             AND s.generation_purpose = 'snapshot_contender'
+             AND s.candidate_model_id = r.model_id
              AND s.forecast_month_generated = r.record_month
              AND s.forecast_month >= r.record_month
              AND s.forecast_month < r.record_month + INTERVAL '6 months'
@@ -144,7 +158,14 @@ def cleanup_generation(cur: psycopg.Cursor, generation: date, *, dry_run: bool) 
     if issues:
         raise ValueError("archive reconciliation failed: " + "; ".join(issues))
     cur.execute(
-        "SELECT COUNT(*) FROM fact_production_forecast_staging WHERE forecast_month_generated = %s",
+        """SELECT COUNT(*)
+           FROM fact_production_forecast_staging staging
+           JOIN forecast_snapshot_roster roster
+             ON roster.record_month = %s
+            AND roster.snapshot_role = 'contender'
+            AND roster.generation_run_id = staging.run_id
+            AND roster.model_id = staging.candidate_model_id
+           WHERE staging.generation_purpose = 'snapshot_contender'""",
         (generation,),
     )
     total = int(cur.fetchone()[0])
@@ -152,10 +173,28 @@ def cleanup_generation(cur: psycopg.Cursor, generation: date, *, dry_run: bool) 
         logger.info("[DRY RUN] Would delete %d staging rows for %s", total, generation)
         return total
     cur.execute(
-        "DELETE FROM fact_production_forecast_staging WHERE forecast_month_generated = %s",
+        """DELETE FROM fact_production_forecast_staging staging
+           USING forecast_snapshot_roster roster
+           WHERE roster.record_month = %s
+             AND roster.snapshot_role = 'contender'
+             AND roster.generation_run_id = staging.run_id
+             AND roster.model_id = staging.candidate_model_id
+             AND staging.generation_purpose = 'snapshot_contender'""",
         (generation,),
     )
-    return cur.rowcount
+    deleted = cur.rowcount
+    cur.execute(
+        """UPDATE forecast_generation_run generation_run
+           SET run_status = 'archived', promotion_eligible = FALSE
+           FROM forecast_snapshot_roster roster
+           WHERE roster.record_month = %s
+             AND roster.snapshot_role = 'contender'
+             AND roster.generation_run_id = generation_run.run_id
+             AND generation_run.generation_purpose = 'snapshot_contender'
+             AND generation_run.run_status = 'ready'""",
+        (generation,),
+    )
+    return deleted
 
 
 def cleanup_staging(generation: date | None = None, *, dry_run: bool = False) -> int:
@@ -170,12 +209,18 @@ def cleanup_staging(generation: date | None = None, *, dry_run: bool = False) ->
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Safely clean forecast staging after snapshot archive")
+    parser = argparse.ArgumentParser(
+        description="Safely clean forecast staging after snapshot archive"
+    )
     parser.add_argument("--generation", default=None, help="One generation to clean (YYYY-MM)")
-    parser.add_argument("--dry-run", action="store_true", help="Validate and report without deleting")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Validate and report without deleting"
+    )
     args = parser.parse_args()
     try:
-        deleted = cleanup_staging(_parse_month(args.generation) if args.generation else None, dry_run=args.dry_run)
+        deleted = cleanup_staging(
+            _parse_month(args.generation) if args.generation else None, dry_run=args.dry_run
+        )
     except (psycopg.Error, ValueError):
         logger.exception("Failed to clean forecast staging")
         return 2

@@ -1,13 +1,11 @@
 # Unified Model Tuning Studio
 
-> A production-grade, UI-driven hyperparameter tuning platform for LightGBM, CatBoost, and XGBoost. Users configure experiment parameters directly in the browser, launch backtest runs that survive API restarts, monitor real-time logs in the Jobs tab, compare results with execution-lag filtering (lags 0-4), and promote winners to the champion pipeline — all without touching the command line.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **Replaces** | Feature 45 (Model Tuning) — full rewrite of UI, API, and job integration |
 | **UI Tab** | Model Tuning (sidebar: Demand section) |
-| **API Prefix** | `/model-tuning/{model}` (model = lgbm, catboost, xgboost) |
 | **Router** | `api/routers/forecasting/tuning/` (15-module package; `__init__.py` re-exports the unified router for `api/main.py` to mount) |
 | **Frontend** | `frontend/src/api/queries/unified-model-tuning.ts`, `frontend/src/tabs/LgbmTuningTab.tsx` |
 | **Tests** | `tests/api/test_unified_model_tuning.py` (40 tests), `frontend/src/tabs/__tests__/ModelTuningTab.test.tsx` |
@@ -47,13 +45,11 @@ The current tuning system (Feature 45) has critical gaps:
 
 2. **No execution-lag filtering** — The comparison panel shows portfolio-level accuracy but cannot break down results by execution lag (0, 1, 2, 3, 4). Demand planners need to evaluate model quality at each lag horizon to understand how accuracy degrades over time.
 
-3. **Confusing Jobs integration** — The existing `tuning_backtest` job type is only triggered by the AI chat advisor. There is no dedicated "Launch Experiment" flow. When a tuning job appears in the Jobs tab, it is labeled generically ("AI Tuning Backtest") with no model type indicator, making it hard to distinguish LGBM vs CatBoost vs XGBoost runs.
 
 4. **Promotion is opaque** — The promote modal writes to `forecast_pipeline_config.yaml` but does not record which champion pipeline version will use the promoted params. Users cannot see promoted parameters alongside champion selection results.
 
 5. **No experiment templates** — Each experiment requires manually typing every hyperparameter. There are no "start from current production" or "start from recommended strategy" shortcuts.
 
-6. **Fragmented model UX** — LGBM has its own router (`lgbm_tuning.py`), CatBoost/XGBoost share a different router (`model_tuning.py`), and the UI dispatches via a `model-tuning.ts` abstraction layer. This creates inconsistency in API paths, response shapes, and error handling.
 
 ---
 
@@ -157,11 +153,9 @@ The current production LGBM parameters (from `forecast_pipeline_config.yaml`) ar
 
 ---
 
-### CatBoost — 5 Runs (Expert Recommendations)
 
 #### Run 1 — Current Production Baseline
 
-Uses current `forecast_pipeline_config.yaml` CatBoost section as-is (champion_v2 params from Phase 3).
 
 | Parameter | Value |
 |-----------|-------|
@@ -188,7 +182,6 @@ Uses current `forecast_pipeline_config.yaml` CatBoost section as-is (champion_v2
 
 #### Run 2 — Ordered Boosting + Symmetric Trees
 
-**Hypothesis:** CatBoost's default ordered boosting with symmetric trees (depth-wise growth) reduces prediction shift on time-series data. Removing Lossguide and using depth=8 symmetric trees with ordered boosting may better handle the temporal autocorrelation in demand data.
 
 | Parameter | Value | Delta from Run 1 |
 |-----------|-------|-------------------|
@@ -214,7 +207,6 @@ Uses current `forecast_pipeline_config.yaml` CatBoost section as-is (champion_v2
 
 #### Run 4 — Langevin Gradient Boosting
 
-**Hypothesis:** CatBoost's Langevin boosting adds diffusion noise to gradients, acting as implicit regularization. This can improve generalization on volatile demand clusters without explicit L2/L1 penalties.
 
 | Parameter | Value | Delta from Run 1 |
 |-----------|-------|-------------------|
@@ -244,11 +236,9 @@ Uses current `forecast_pipeline_config.yaml` CatBoost section as-is (champion_v2
 
 ---
 
-### XGBoost — 5 Runs (Expert Recommendations)
 
 #### Run 1 — Current Production Baseline
 
-Uses current `forecast_pipeline_config.yaml` XGBoost section as-is.
 
 | Parameter | Value |
 |-----------|-------|
@@ -261,7 +251,6 @@ Uses current `forecast_pipeline_config.yaml` XGBoost section as-is.
 
 #### Run 2 — Lossguide + Heavy Regularization
 
-**Hypothesis:** XGBoost's hist tree method with lossguide growth and heavy L1/L2 regularization brings it closer to LightGBM's leaf-wise splitting while controlling overfitting. The current baseline uses depth-wise (max_depth=6) which limits expressiveness.
 
 | Parameter | Value | Delta from Run 1 |
 |-----------|-------|-------------------|
@@ -295,7 +284,6 @@ Uses current `forecast_pipeline_config.yaml` XGBoost section as-is.
 
 #### Run 4 — Ultra-High Tree Count + Micro Learning Rate
 
-**Hypothesis:** XGBoost's current baseline uses only 500 trees at LR=0.05, which is extremely aggressive compared to the LGBM champion (1500 trees at 0.02). Increasing to 3000 trees at 0.008 LR with histogram binning should close the accuracy gap with LGBM.
 
 | Parameter | Value | Delta from Run 1 |
 |-----------|-------|-------------------|
@@ -344,7 +332,6 @@ The Model Tuning tab is a single sidebar entry under the **Demand** section. It 
 
 ```
 Model Tuning Tab
-├── Model Selector Bar (LGBM | CatBoost | XGBoost pills)
 ├── Execution Lag Filter (All | Lag 0 | Lag 1 | Lag 2 | Lag 3 | Lag 4)
 ├── Sub-Tab Navigation
 │   ├── Experiments (default)
@@ -356,7 +343,6 @@ Model Tuning Tab
 
 ### 4.2 Model Selector Bar
 
-- Three pill buttons: **LGBM**, **CatBoost**, **XGBoost**
 - Active pill has solid background + ring indicator
 - Each pill shows a small status badge:
   - Green dot: has a promoted champion
@@ -519,11 +505,6 @@ A full-screen modal (or slide-over panel) for configuring and launching a new ex
 - Launch button shows spinner immediately on click, re-enables only on error (prevents double-submit)
 
 **Cross-Parameter Validation Rules:**
-- CatBoost: `langevin=true` requires `bootstrap_type=Bayesian` (show inline error if MVS/Ordered selected)
-- CatBoost: `subsample` is ignored when `bootstrap_type=Ordered` (show yellow warning: "subsample has no effect with Ordered bootstrap")
-- CatBoost: `max_leaves` is disabled when `grow_policy=SymmetricTree` (grayed out with tooltip: "SymmetricTree uses depth to control tree size")
-- XGBoost: `rate_drop` and `skip_drop` are hidden until `booster=dart` is selected (show info on booster field: "DART unlocks dropout parameters")
-- XGBoost: `max_leaves` is disabled when `grow_policy=depthwise` (only active with `lossguide`)
 
 **Launch Behavior:**
 1. Validate all parameters
@@ -538,7 +519,6 @@ A full-screen modal (or slide-over panel) for configuring and launching a new ex
 
 The hyperparameter form adapts to the selected model:
 
-| LGBM | CatBoost | XGBoost |
 |------|----------|---------|
 | n_estimators | iterations | n_estimators |
 | learning_rate | learning_rate | learning_rate |
@@ -742,7 +722,6 @@ Tuning experiments appear in the Jobs tab with clear differentiation:
 
 Replace the current split between `lgbm_tuning.py` and `model_tuning.py` with a single parametrized router.
 
-**Path prefix:** `/model-tuning/{model}` where `model` is one of `lgbm`, `catboost`, `xgboost`.
 
 #### Router Layout
 
@@ -923,7 +902,6 @@ Importers should reference the package, not the module: `from api.routers.foreca
 
 ### 5.3 Backward Compatibility
 
-The existing endpoints (`/lgbm-tuning/*`, `/catboost-tuning/*`, `/xgboost-tuning/*`) continue to work as aliases that redirect to the new unified router. This ensures existing frontend code and scripts continue to function during the migration.
 
 ```python
 # In lgbm_tuning.py — add redirect aliases
@@ -1033,7 +1011,6 @@ Register in `JOB_TYPE_REGISTRY`:
     callable=_run_model_tuning_experiment,
     params_schema={
         "run_id": 0,
-        "model": "",          # "lgbm", "catboost", "xgboost"
         "config_path": "",    # path to temp forecast_pipeline_config.yaml
         "run_label": "",
     },
@@ -1069,10 +1046,7 @@ def _run_model_tuning_experiment(params, progress_cb, cancel_event, job_id):
 The `tuning` job group allows **one job per model type**. This is enforced by extending the group to be model-specific:
 
 - LGBM tuning jobs use group `tuning_lgbm`
-- CatBoost tuning jobs use group `tuning_catboost`
-- XGBoost tuning jobs use group `tuning_xgboost`
 
-This allows parallel execution across models (LGBM + CatBoost can run simultaneously) while preventing two LGBM experiments from colliding on the same output directory.
 
 ### 7.4 Detailed Logging
 
@@ -1104,7 +1078,6 @@ To prevent confusion between tuning jobs and other jobs:
 
 1. **Label Format**: `"{Model} Tuning — {run_label}"` (always includes model name)
 2. **Icon**: Beaker icon (`Flask` from lucide-react)
-3. **Type Badge**: Shows model pill (blue for LGBM, green for CatBoost, orange for XGBoost)
 4. **Progress Format**: `"Timeframe {X}/{N} — {pct}%"` (not generic "Running...")
 5. **Quick Link**: "Open in Tuning Tab" button navigates to Model Tuning tab with run auto-selected
 6. **Group Label**: Shows as "Tuning (LightGBM)" not just "Tuning"
@@ -1241,7 +1214,6 @@ The experiment system is designed to survive API restarts at any point:
 ### 10.3 Concurrent Experiment Safety
 
 - Per-model group concurrency prevents two LGBM experiments from running simultaneously
-- Different models can run in parallel (LGBM + CatBoost)
 - Each experiment writes to a unique temp config path: `/tmp/tuning_run_{run_id}/forecast_pipeline_config.yaml`
 - Backtest output goes to model-specific dirs: `data/backtest/{model_id}/`
 - File locking on `forecast_pipeline_config.yaml` during promotion prevents race conditions
@@ -1360,7 +1332,6 @@ templates:
         path_smooth: 6.0
         min_child_samples: 50
 
-  catboost:
     - id: production_baseline
       label: "Production Baseline"
       source: algorithm_config
@@ -1408,7 +1379,6 @@ templates:
         reg_lambda: 2.0
         model_size_reg: 0.04
 
-  xgboost:
     - id: production_baseline
       label: "Production Baseline"
       source: algorithm_config
@@ -1515,7 +1485,6 @@ model_tuning:
       max_bin: { min: 15, max: 512, type: int }
       bagging_freq: { min: 0, max: 100, type: int }
       min_gain_to_split: { min: 0.0, max: 10.0, type: float }
-    catboost:
       iterations: { min: 100, max: 10000, type: int }
       learning_rate: { min: 0.001, max: 0.5, type: float }
       depth: { min: 1, max: 16, type: int }
@@ -1531,7 +1500,6 @@ model_tuning:
       reg_lambda: { min: 0.0, max: 100.0, type: float }
       max_ctr_complexity: { min: 1, max: 10, type: int }
       diffusion_temperature: { min: 1, max: 100000, type: int }
-    xgboost:
       n_estimators: { min: 100, max: 10000, type: int }
       learning_rate: { min: 0.001, max: 0.5, type: float }
       max_depth: { min: 0, max: 20, type: int }
@@ -1559,16 +1527,12 @@ model_tuning:
 | Test | Description | Key Assertions |
 |------|-------------|----------------|
 | `test_list_experiments_lgbm` | GET /model-tuning/lgbm/experiments returns paginated runs | Status 200, response has `runs` array, pagination metadata |
-| `test_list_experiments_catboost` | Same for CatBoost | Status 200, model_id filter applies |
-| `test_list_experiments_xgboost` | Same for XGBoost | Status 200, model_id filter applies |
 | `test_list_experiments_invalid_model` | GET /model-tuning/invalid/experiments | Status 422 or 400 |
 | `test_list_experiments_status_filter` | GET with `?status=completed` | Only completed runs returned |
 | `test_list_experiments_lag_filter` | GET with `?exec_lag=0` | Accuracy comes from lgbm_tuning_lag not lgbm_tuning_run |
 | `test_get_experiment_detail` | GET /model-tuning/lgbm/experiments/1 | Full run + timeframes |
 | `test_get_experiment_not_found` | GET /model-tuning/lgbm/experiments/999 | Status 404 |
 | `test_create_experiment_lgbm` | POST with valid LGBM params | Status 201, run_id + job_id returned |
-| `test_create_experiment_catboost` | POST with valid CatBoost params | Status 201, correct model_id |
-| `test_create_experiment_xgboost` | POST with valid XGBoost params | Status 201, correct model_id |
 | `test_create_experiment_invalid_params` | POST with out-of-range learning_rate | Status 422, validation error |
 | `test_create_experiment_missing_label` | POST without run_label | Status 422 |
 | `test_create_experiment_unknown_param` | POST with unknown param key | Ignored (only known keys stored) |
@@ -1588,9 +1552,7 @@ model_tuning:
 | `test_promote_creates_audit_log` | After promotion | tuning_promotion_log has 1 row |
 | `test_get_promoted_run` | GET /model-tuning/lgbm/promoted | Returns promoted run or 404 |
 | `test_get_templates` | GET /model-tuning/lgbm/templates | Returns 5 templates |
-| `test_get_templates_catboost` | GET /model-tuning/catboost/templates | CatBoost-specific templates |
 | `test_legacy_endpoint_redirect` | GET /lgbm-tuning/runs | Same data as GET /model-tuning/lgbm/experiments |
-| `test_concurrent_model_experiments` | Submit LGBM + CatBoost simultaneously | Both accepted (different groups) |
 | `test_concurrent_same_model` | Submit two LGBM experiments | First runs, second queues |
 
 ### 13.2 Backend Tests — Job Integration
@@ -1631,8 +1593,6 @@ model_tuning:
 
 | Test | Description |
 |------|-------------|
-| `renders model selector pills` | 3 pills visible: LGBM, CatBoost, XGBoost |
-| `switches model on pill click` | Clicking CatBoost reloads data with model=catboost |
 | `renders lag filter bar` | 6 segments: All, Lag 0-4 |
 | `filters by lag on click` | Clicking "Lag 2" passes exec_lag=2 to API |
 | `renders KPI summary cards` | Best Accuracy, Production Accuracy, Total Runs, Active Runs |
@@ -1663,8 +1623,6 @@ model_tuning:
 | `shows error banner on API failure` | Network error displays red alert, modal stays open |
 | `closes modal on successful submit` | Modal hidden after 201 response |
 | `shows toast notification on success` | Toast with experiment name appears |
-| `adapts form to CatBoost params` | Shows iterations, depth, l2_leaf_reg (not n_estimators, max_depth) |
-| `adapts form to XGBoost params` | Shows booster, rate_drop, skip_drop fields for DART |
 | `renders training config section` | Cluster strategy, recursive, SHAP toggles visible |
 
 ### 13.6 Frontend Tests — Comparison Panel
@@ -1732,7 +1690,6 @@ model_tuning:
 | Test | Description |
 |------|-------------|
 | `navigate to Model Tuning tab` | Sidebar click opens tuning tab |
-| `switch between model pills` | LGBM → CatBoost → XGBoost switches content |
 | `open experiment builder` | "New Experiment" button opens modal |
 | `select template and launch` | Full flow: template → launch → toast |
 | `view running experiment in Jobs` | Navigate to Jobs tab, see tuning job |
@@ -1895,34 +1852,21 @@ vi.mock("@/api/queries", () => ({
 These must be resolved **before** any spec implementation begins.
 
 > **Status update:** Blockers 1 & 2 are resolved by the tuning fit-path refactor.
-> `common/ml/tuning.py` now constructs estimators via `model_registry.build_tree_model(algorithm_id, params)` and trains via `model_registry.fit_model(...)`. `to_native_params()` translates the canonical YAML keys to the appropriate native constructor arguments for `LGBMRegressor`/`CatBoostRegressor`/`XGBRegressor`, so all keys in `forecast_pipeline_config.yaml` `algorithms.<model_id>.params` reach the model. The legacy 6-parameter `default_params` lambda in `scripts/run_backtest.py`'s MODEL_REGISTRY no longer applies -- backtest, tuning, and production all share the same registry-driven fit path.
 
-### Blocker 1: CatBoost `default_params` Drops Most Parameters (CRITICAL)
 
-**File:** `scripts/run_backtest.py` (CatBoost model registry entry)
 
-The CatBoost `default_params` lambda in the MODEL_REGISTRY only extracts 6 parameters (`iterations`, `learning_rate`, `depth`, `l2_leaf_reg`, `border_count`, `max_ctr_complexity`). All other CatBoost parameters in `forecast_pipeline_config.yaml` are **silently discarded** before reaching `CatBoostRegressor`. This means:
 
 - `grow_policy`, `max_leaves`, `subsample`, `reg_lambda`, `random_strength`, `min_data_in_leaf`, `colsample_bylevel`, `bagging_temperature`, `bootstrap_type`, `model_size_reg`, `score_function`, `boost_from_average`, `leaf_estimation_method`, `leaf_estimation_iterations` are all **ignored**
-- All prior CatBoost tuning experiments may have tested parameters that never reached the model
-- All 5 proposed CatBoost experiments would produce identical results to the baseline
 
-**Fix:** Extend `default_params` to pass through all keys from the algo config section that are valid `CatBoostRegressor` constructor arguments.
 
-### Blocker 2: XGBoost `default_params` Drops Most Parameters (CRITICAL)
 
-**File:** `scripts/run_backtest.py` (XGBoost model registry entry)
 
-Same issue. XGBoost's `default_params` only extracts 6 parameters (`n_estimators`, `learning_rate`, `max_depth`, `min_child_weight`, `subsample`, `colsample_bytree`). All proposed tuning parameters are dropped:
 
 - `grow_policy`, `max_leaves`, `max_bin`, `reg_lambda`, `reg_alpha`, `gamma`, `colsample_bylevel`, `booster`, `rate_drop`, `skip_drop` are all **ignored**
-- XGBoost Runs 2-5 (lossguide, DART, high-tree-count, champion blend) would silently degrade to the 6-parameter baseline
 
 **Fix:** Extend `default_params` to include all valid `XGBRegressor` constructor arguments.
 
-### Blocker 3: Verify Prior CatBoost/XGBoost Results
 
-Given Blockers 1 and 2, the production accuracy numbers for CatBoost (72.15%) and XGBoost (71.23%) may have been achieved with only 6 parameters despite the config showing 15+ parameters. Before building the tuning UI, verify whether the existing champion results actually used the full parameter set or the truncated one.
 
 ---
 
@@ -1943,7 +1887,6 @@ This spec was reviewed by 4 AI expert agents. Below is the consolidated gap repo
 
 | # | Gap | Reviewer | Fix Applied |
 |---|-----|----------|-------------|
-| 1 | CatBoost/XGBoost `default_params` silently drop most parameters | ML Engineer | Added [Pre-Implementation Blockers](#pre-implementation-blockers) section |
 | 2 | `lgbm_tuning_run.status` CHECK constraint missing 'queued' | Product Manager | Fixed in Section 6.3 — ALTER constraint to include 'queued' and 'cancelled' |
 | 3 | Execution lag pseudocode references non-existent `abs_error` column | ML Engineer | Fixed in Section 9.2 — compute abs_error inline from basefcst_pref - tothist_dmd |
 | 4 | Comparison sub-tab not explicitly specified vs inline panel confusion | UX Engineer | Clarified: Comparison is inline side-panel (not a separate sub-tab), sub-tabs are Experiments/Cluster EDA/Feature Lab/Accuracy Budget |
@@ -1957,7 +1900,6 @@ This spec was reviewed by 4 AI expert agents. Below is the consolidated gap repo
 | 7 | Execution lag filter has no contextual explanation | UX Engineer | Added help tooltip, first-visit callout, horizon labels "(1mo)" in Section 4.3 |
 | 8 | Empty states not specified | Product/UX | Added empty state specifications for zero runs, no champion, legacy runs in Section 4.4.2 |
 | 9 | Custom template starts blank | Product/UX | Changed to "Custom (from Production)" with pre-filled baseline values |
-| 10 | Cross-parameter validation missing | ML Engineer | Added CatBoost Langevin, bootstrap_type, SymmetricTree rules; XGBoost DART conditional rendering |
 | 11 | Per-lag comparison response missing WAPE/bias | Product Manager | Extended per_lag array to include baseline/candidate WAPE and bias with deltas |
 | 12 | AI Tuning Advisor integration unaddressed | UX Engineer | Added AI Advisor section with "Use in Experiment Builder" button |
 | 13 | Promotion rollback not specified | Product/UX | Added POST .../promotions/rollback endpoint |
@@ -1982,7 +1924,6 @@ This spec was reviewed by 4 AI expert agents. Below is the consolidated gap repo
 | 22 | Model_id mapping (lgbm → lgbm_cluster) not documented as constant | Product Manager | Add `MODEL_ID_MAP` constant in router code |
 | 23 | No rate limiting on experiment submission | Product Manager | Disable Launch button immediately on click (already added to spec) |
 | 24 | Verdict inconsistency (mixed vs neutral) | Product Manager | Standardize on "neutral" across all tables and endpoints |
-| 25 | DART prediction-time cost not mentioned | ML Engineer | Add note to XGBoost Run 3: "DART is slower at inference due to tree renormalization" |
 | 26 | No run tagging system (W&B pattern) | UX Engineer | P2 feature — add optional `tags: string[]` to run schema |
 | 27 | No parallel coordinates or hyperparameter importance charts | UX Engineer | P2 feature — after 10+ runs accumulated |
 | 28 | No artifact tracking (model files, SHAP plots) | UX Engineer | P2 feature — add artifact links to run detail view |
@@ -2003,8 +1944,6 @@ The following test cases were identified as missing from Section 13 and must be 
 - `test_compare_same_run_id_rejected` — Returns 400
 - `test_promotion_rollback` — Restores previous champion params to forecast_pipeline_config.yaml
 - `test_promotions_audit_trail` — GET /promotions returns ordered list
-- `test_legacy_redirect_catboost` — /catboost-tuning/runs returns same as /model-tuning/catboost/experiments
-- `test_legacy_redirect_xgboost` — Same for XGBoost
 - `test_sql_injection_in_run_label` — Malicious label stored as literal text
 
 **Frontend (8 additional tests):**
@@ -2021,9 +1960,7 @@ The following test cases were identified as missing from Section 13 and must be 
 
 **LGBM gap:** No run explores `bagging_freq` changes or disabling SHAP selection to test full feature set. Consider adding a P1 Run 6 that sets `shap_select: false`.
 
-**CatBoost gap:** No run explores `score_function=Cosine` or `leaf_estimation_method=Gradient`. These could be future experiment candidates.
 
-**XGBoost gap:** The production baseline is severely under-parameterized (500 trees, no regularization). Consider adding a "minimal upgrade" run that only increases trees to 2000 + basic reg_lambda=1.0 to establish how much improvement comes from "more trees" alone vs architectural changes.
 
 ### Strengths Acknowledged by All Reviewers
 
@@ -2049,9 +1986,7 @@ implementation"; this section **is** that existing-implementation reference.
 There are four ways to run tuning experiments, from simplest to most sophisticated:
 
 1. **Auto-Tune Campaign** (CLI, batch) - runs predefined strategies from
-   `config/forecasting/tune_strategies.yaml` (organized by model key: `lgbm`, `catboost`, `xgboost`).
    Each strategy overrides specific params, runs a full backtest, registers the result, and prints a
-   leaderboard. `uv run python scripts/ml/auto_tune.py --model <lgbm|catboost|xgboost> --runs N`, or
    `make lgbm-auto-tune RUNS=N` / `make lgbm-auto-tune-promote RUNS=N` for LGBM. Also seedable via
    `uv run python scripts/ml/seed_model_tuning.py`.
 2. **Manual Single Run** (CLI) - edit `algorithms.<model_id>.params` in

@@ -60,11 +60,6 @@ _ARCHIVE_COLS = [
     "fcstdate", "startdate", "lag", "execution_lag",
     FORECAST_QTY_COL, "tothist_dmd", "model_id", "timeframe",
 ]
-_PROD_COLS = [
-    "plan_version", "item_id", "loc", "forecast_month",
-    "forecast_qty", "model_id", "cluster_id", "horizon_months",
-    "is_recursive", "lag_source", "run_id",
-]
 
 
 # ---------------------------------------------------------------------------
@@ -784,88 +779,6 @@ def load_archive(
     logger.info("backtest_lag_archive load complete: %d rows", len(archive))
 
 
-def load_production_forecast(
-    predictions_df: pd.DataFrame,
-    plan_version: str,
-    model_id: str,
-    run_id: str,
-    db: dict[str, Any],
-) -> None:
-    """Load execution-lag predictions into fact_production_forecast.
-
-    Aggregates to item+loc grain (sums across customer groups).
-    Uses the most recent timeframe's prediction per (item, loc, month).
-    """
-    # Keep only predictions at each DFU's execution lag
-    exec_preds = predictions_df[
-        predictions_df["lag"] == predictions_df["execution_lag"]
-    ].copy()
-
-    if exec_preds.empty:
-        logger.warning("No execution-lag predictions found — skipping fact_production_forecast")
-        return
-
-    # Most recent timeframe per (sku_ck, startdate)
-    if "timeframe_label" in exec_preds.columns:
-        exec_preds = (
-            exec_preds.sort_values("timeframe_label", ascending=False)
-            .drop_duplicates(subset=["sku_ck", "startdate"])
-        )
-
-    exec_preds["forecast_month"] = exec_preds["startdate"].dt.strftime("%Y-%m-%d")
-
-    # Aggregate customer groups → item + loc level
-    prod_df = (
-        exec_preds
-        .groupby(["item_id", "loc", "forecast_month"], as_index=False)
-        .agg(
-            forecast_qty=(FORECAST_QTY_COL, "sum"),
-            horizon_months=("lag", lambda x: int(x.median()) + 1),
-        )
-    )
-    prod_df["plan_version"] = plan_version
-    prod_df["model_id"] = model_id
-    prod_df["cluster_id"] = None
-    prod_df["is_recursive"] = False
-    prod_df["lag_source"] = "execution_lag"
-    prod_df["run_id"] = run_id
-
-    prod_df = prod_df[_PROD_COLS]
-    logger.info(
-        "Loading %d rows into fact_production_forecast (plan_version=%s)...",
-        len(prod_df), plan_version,
-    )
-
-    col_list = ", ".join(_PROD_COLS)
-    placeholders = ", ".join(["%s"] * len(_PROD_COLS))
-
-    with psycopg.connect(**db) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM fact_production_forecast WHERE plan_version = %s AND model_id = %s",
-                (plan_version, model_id),
-            )
-            rows = [
-                (
-                    r.plan_version, r.item_id, r.loc, r.forecast_month,
-                    float(r.forecast_qty), r.model_id, r.cluster_id,
-                    int(r.horizon_months), bool(r.is_recursive),
-                    r.lag_source, r.run_id,
-                )
-                for r in prod_df.itertuples(index=False)
-            ]
-            cur.executemany(
-                f"INSERT INTO fact_production_forecast ({col_list}) VALUES ({placeholders}) "
-                "ON CONFLICT (plan_version, item_id, loc, forecast_month) "
-                "DO UPDATE SET forecast_qty = EXCLUDED.forecast_qty, "
-                "model_id = EXCLUDED.model_id, run_id = EXCLUDED.run_id",
-                rows,
-            )
-        conn.commit()
-
-    logger.info("fact_production_forecast load complete: %d rows", len(prod_df))
-
-
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
@@ -882,7 +795,6 @@ def run_backtest(
         cfg = {**cfg, "experiment": exp_cfg}
     n_timeframes = exp_cfg.get("n_timeframes", 10)
     model_id = exp_cfg.get("algorithm_id", _DEFAULT_MODEL_ID)
-    plan_version = exp_cfg.get("plan_version", f"{model_id}_v1")
     output_dir = Path(exp_cfg.get("output_dir", "data/expert_system_backtest"))
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid.uuid4())
@@ -1001,9 +913,6 @@ def run_backtest(
 
     # 6. Load backtest_lag_archive (all lags 0–4)
     load_archive(all_preds, model_id, tothist_map, replace=replace, db=db)
-
-    # 7. Load fact_production_forecast (execution-lag only)
-    load_production_forecast(all_preds, plan_version, model_id, run_id, db=db)
 
     logger.info("ExpSys backtest complete. run_id=%s", run_id)
 

@@ -52,7 +52,6 @@ Each exception card includes a visual causal chain showing how the anomaly propa
 
 `[Trigger] -> [Root Cause] -> [Impact] -> [Recommended Action]`
 
-Example: `[WAPE 62%] -> [Model bias +35%] -> [Excess 45 DOS] -> [Switch to CatBoost model, reduce safety stock]`
 
 ### Deduplication
 

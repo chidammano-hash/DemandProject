@@ -29,15 +29,13 @@ vi.mock("@/api/queries/backtest-management", () => ({
       has_predictions: true,
       current_accuracy: 66.5,
     },
-    catboost_cluster: { latest_run: null, has_predictions: false, current_accuracy: null },
   }),
   submitBacktestRun: (...args: unknown[]) => submitBacktestRun(...args),
 }));
 
 const MODELS: ModelInfo[] = [
   { id: "lgbm_cluster", label: "LightGBM", type: "tree", tunable: true },
-  { id: "catboost_cluster", label: "CatBoost", type: "tree", tunable: true },
-  { id: "chronos", label: "Chronos T5", type: "foundation", tunable: false },
+  { id: "chronos2_enriched", label: "Chronos 2E", type: "foundation", tunable: false },
   { id: "mstl", label: "MSTL", type: "statistical", tunable: false },
   { id: "nbeats", label: "N-BEATS", type: "deep_learning", tunable: false },
 ];

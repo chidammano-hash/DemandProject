@@ -43,9 +43,9 @@ describe("submitGenerateForecast threads horizon + confidence_intervals", () => 
   });
 
   it("emits no query string when no options are passed", async () => {
-    await submitGenerateForecast("catboost_cluster");
+    await submitGenerateForecast("chronos2_enriched");
     const url = fetchMock.mock.calls[0][0] as string;
-    expect(url).toBe("/backtest-management/catboost_cluster/generate");
+    expect(url).toBe("/backtest-management/chronos2_enriched/generate");
     expect(url).not.toContain("?");
   });
 

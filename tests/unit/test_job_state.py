@@ -455,6 +455,23 @@ class TestGenerateProductionForecastCmd:
         assert "--confidence-intervals" not in cmd
         assert "--no-confidence-intervals" not in cmd
 
+    def test_allocates_run_id_and_threads_generation_purpose(self):
+        fixed = "00000000-0000-0000-0000-000000000099"
+        from common.services.job_state import _run_generate_production_forecast
+
+        with (
+            patch("common.services.job_state.uuid.uuid4", return_value=fixed),
+            patch("common.services.job_state._run_subprocess", return_value="ok") as m_sub,
+        ):
+            result = _run_generate_production_forecast(
+                {"generation_purpose": "snapshot_contender"}
+            )
+
+        cmd = m_sub.call_args[0][0]
+        assert cmd[cmd.index("--run-id") + 1] == fixed
+        assert cmd[cmd.index("--generation-purpose") + 1] == "snapshot_contender"
+        assert result["run_id"] == fixed
+
 
 # ---------------------------------------------------------------------------
 # Tests: auto-load after a successful backtest (no manual Load needed)
@@ -494,7 +511,7 @@ class TestAutoLoadBacktest:
             patch(f"{_MOD}._run_load_backtest_model", side_effect=RuntimeError("boom")),
         ):
             # Must not raise — a load failure cannot fail a completed backtest.
-            _auto_load_backtest("xgboost", 9)
+            _auto_load_backtest("lgbm", 9)
 
     def test_non_tree_model_uses_identity_dir(self):
         from common.services.job_state import _auto_load_backtest
@@ -502,32 +519,8 @@ class TestAutoLoadBacktest:
             patch("pathlib.Path.exists", return_value=True),
             patch(f"{_MOD}._run_load_backtest_model") as m_load,
         ):
-            _auto_load_backtest("chronos_bolt", 1)
-        assert m_load.call_args[0][0] == {"model_id": "chronos_bolt", "run_id": 1}
-
-    def test_customer_enriched_tree_model_uses_own_output_dir(self):
-        from common.services.job_state import _auto_load_backtest
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch(f"{_MOD}._run_load_backtest_model") as m_load,
-        ):
-            _auto_load_backtest("xgboost_cust_enriched", 11)
-        assert m_load.call_args[0][0] == {
-            "model_id": "xgboost_cust_enriched",
-            "run_id": 11,
-        }
-
-    def test_rolling_median_model_uses_own_output_dir(self):
-        from common.services.job_state import _auto_load_backtest
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch(f"{_MOD}._run_load_backtest_model") as m_load,
-        ):
-            _auto_load_backtest("rolling_median", 12)
-        assert m_load.call_args[0][0] == {
-            "model_id": "rolling_median",
-            "run_id": 12,
-        }
+            _auto_load_backtest("chronos2_enriched", 1)
+        assert m_load.call_args[0][0] == {"model_id": "chronos2_enriched", "run_id": 1}
 
 
 class TestRunBacktestAutoLoadsBeforeCompletion:
@@ -554,36 +547,3 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         # ordering: auto-load before completion update
         names = [c[0] for c in manager.mock_calls]
         assert names.index("auto") < names.index("update")
-
-    def test_customer_enriched_tree_model_id_threads_to_subprocess_and_outputs(self):
-        from common.services.job_state import _run_backtest
-        with (
-            patch(f"{_MOD}._run_subprocess", return_value="ok") as m_run,
-            patch(f"{_MOD}._get_conn"),
-            patch(f"{_MOD}._auto_load_backtest") as m_auto,
-            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
-        ):
-            _run_backtest(
-                "catboost",
-                {"backtest_run_id": 8, "model_id": "catboost_cust_enriched"},
-            )
-
-        cmd = m_run.call_args[0][0]
-        assert cmd[cmd.index("--model-id") + 1] == "catboost_cust_enriched"
-        assert m_auto.call_args[0][0] == "catboost_cust_enriched"
-        assert m_update.call_args[0][1] == "catboost_cust_enriched"
-
-    def test_rolling_median_invokes_registered_baseline_script(self):
-        from common.services.job_state import _run_backtest
-        with (
-            patch(f"{_MOD}._run_subprocess", return_value="ok") as m_run,
-            patch(f"{_MOD}._get_conn"),
-            patch(f"{_MOD}._auto_load_backtest") as m_auto,
-            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
-        ):
-            _run_backtest("rolling_median", {"backtest_run_id": 13})
-
-        cmd = m_run.call_args[0][0]
-        assert cmd[-2:] == ["--model", "rolling_median"]
-        assert m_auto.call_args[0][0] == "rolling_median"
-        assert m_update.call_args[0][1] == "rolling_median"

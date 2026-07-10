@@ -138,6 +138,8 @@ def _staging_run_ids(cur: psycopg.Cursor, record_month: date, model_ids: list[st
            FROM fact_production_forecast_staging
            WHERE forecast_month_generated = %s
              AND model_id = ANY(%s)
+             AND generation_purpose = 'snapshot_contender'
+             AND candidate_model_id = model_id
              AND forecast_month >= %s
              AND forecast_month < %s + INTERVAL '6 months'
            GROUP BY model_id""",
@@ -194,6 +196,8 @@ def _verify_staged_lags(cur: psycopg.Cursor, record_month: date, contenders: lis
            WHERE forecast_month_generated = %s
              AND model_id = ANY(%s)
              AND run_id = ANY(%s::uuid[])
+             AND generation_purpose = 'snapshot_contender'
+             AND candidate_model_id = model_id
              AND forecast_month >= %s
              AND forecast_month < %s + INTERVAL '6 months'
            GROUP BY model_id, 2""",
@@ -261,6 +265,8 @@ def prepare_contenders(record_month: date, *, dry_run: bool = False, from_existi
             "6",
             "--run-id",
             str(contender["generation_run_id"]),
+            "--generation-purpose",
+            "snapshot_contender",
         ]
         if dry_run:
             logger.info("[DRY RUN] Would run %s", " ".join(command))

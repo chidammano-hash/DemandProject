@@ -74,11 +74,10 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Accuracy KPIs (WAPE, bias, accuracy%) | [../02-forecasting/01-accuracy-kpis.md](../02-forecasting/01-accuracy-kpis.md) | Forecasting |
 | Multi-Model Forecast Support | [../02-forecasting/02-multi-model.md](../02-forecasting/02-multi-model.md) | Forecasting |
 | Backtest Framework (timeframes A-J) | [../02-forecasting/03-backtest-framework.md](../02-forecasting/03-backtest-framework.md) | Forecasting |
-| Tree Model Implementations (LGBM, CatBoost, XGBoost) | [../02-forecasting/04-tree-models.md](../02-forecasting/04-tree-models.md) | Forecasting |
 | Champion Model Selection (5 strategies) | [../02-forecasting/07-champion-selection.md](../02-forecasting/07-champion-selection.md) | Forecasting |
 | Advanced Backtest (tuning, SHAP, recursive) | [../02-forecasting/05-advanced-backtest.md](../02-forecasting/05-advanced-backtest.md) | Forecasting |
 | Forecast Pipeline Config (YAML-driven algorithm roster) | [../02-forecasting/19-forecast-pipeline-config.md](../02-forecasting/19-forecast-pipeline-config.md) | Forecasting |
-| Forecast Release Readiness (common cohort + lineage/freshness/coverage/archive checks) | [../02-forecasting/34-forecast-release-readiness.md](../02-forecasting/34-forecast-release-readiness.md) | Forecasting / Operations |
+| Forecast Release Control (immutable run manifests, transactional archive/promotion checksums, plus post-release common-cohort readiness) | [../02-forecasting/34-forecast-release-readiness.md](../02-forecasting/34-forecast-release-readiness.md) | Forecasting / Operations |
 | Production Forecast Pipeline | [../02-forecasting/08-production-forecast.md](../02-forecasting/08-production-forecast.md) | Forecasting |
 | Bias Correction Engine | [../02-forecasting/09-bias-correction.md](../02-forecasting/09-bias-correction.md) | Forecasting |
 | SKU Clustering + What-If Scenarios | [../03-demand-intelligence/01-sku-clustering.md](../03-demand-intelligence/01-sku-clustering.md) | Demand Intelligence |
@@ -108,7 +107,6 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Job Scheduler (APScheduler) | [../07-user-experience/04-job-scheduler.md](../07-user-experience/04-job-scheduler.md) | UI |
 | Testing Strategy (pytest + Vitest + Playwright) | [../07-user-experience/05-testing.md](../07-user-experience/05-testing.md) | UI |
 | Performance Profiling (decorator, suggestions, production-safe) | [05-performance-profiling.md](05-performance-profiling.md) | Foundation |
-| Unified Model Tuning Studio (LGBM, CatBoost, XGBoost) | [../02-forecasting/11-unified-model-tuning-v2.md](../02-forecasting/11-unified-model-tuning-v2.md) | Forecasting |
 | Unified Pipeline Orchestrator (full/incremental modes) | — | Integration |
 | RBAC + User Management | [../08-integration/02-rbac.md](../08-integration/02-rbac.md) | Integration |
 | Notifications + Webhooks | [../08-integration/04-notifications.md](../08-integration/04-notifications.md) | Integration |

@@ -314,6 +314,49 @@ async def test_dfu_promoted_run_null_when_no_promoted():
 
 
 # ---------------------------------------------------------------------------
+# /forecast/production/staging — latest immutable release candidates
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_staging_overlay_uses_latest_candidate_run_and_preserves_source_model():
+    pool, _, cursor = _make_pool()
+    run_id = "00000000-0000-0000-0000-000000000111"
+    cursor.fetchall.return_value = [
+        (
+            "champion",
+            "rolling_mean",
+            datetime.date(2026, 7, 1),
+            100.0,
+            90.0,
+            110.0,
+            1,
+            "stable",
+            "actual",
+            datetime.datetime(2026, 7, 10, 12, 0, 0),
+            run_id,
+        )
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/forecast/production/staging?item_id=ITEM001&loc=1401-BULK"
+            )
+
+    assert response.status_code == 200
+    row = response.json()["models"]["champion"][0]
+    assert row["source_model_id"] == "rolling_mean"
+    assert row["source_run_id"] == run_id
+    sql = cursor.execute.call_args.args[0]
+    assert "forecast_generation_run" in sql
+    assert "generation.run_rank = 1" in sql
+    assert "staging.run_id = generation.run_id" in sql
+
+
+# ---------------------------------------------------------------------------
 # /forecast/candidate — per-model backtest (past, out-of-sample) predictions
 # ---------------------------------------------------------------------------
 

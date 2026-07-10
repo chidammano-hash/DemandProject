@@ -6,7 +6,6 @@
 
 ## Overview
 
-Tree-based backtest models (LightGBM, CatBoost, XGBoost) use a 4-stage feature selection pipeline that runs per-timeframe to maintain causal correctness. Each stage operates only on training data up to the backtest cutoff — no future information leaks into feature selection.
 
 ## Pipeline Stages
 
@@ -80,7 +79,6 @@ PCA is dimensionality reduction, not feature selection. For tree models:
 
 ### Why same logic for all tree algorithms?
 
-SHAP values are model-agnostic in interpretation (Lundberg et al. 2020). Feature importance rankings show >90% overlap across LGBM/XGBoost/CatBoost on the same data. Only the SHAP extractors differ (native `pred_contribs` vs CatBoost `ShapValues`).
 
 ### Why per-timeframe, not global?
 

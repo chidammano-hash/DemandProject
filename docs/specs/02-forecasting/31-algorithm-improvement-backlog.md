@@ -50,19 +50,14 @@ work is worth doing. Read-only; ~1 query. **Do this first.**
 The only remaining foundation model, `chronos2_enriched`, runs **zero-shot** today (`tune: false` in
 `forecast_pipeline_config.yaml`). It already beats trees on low-volume zero-shot; fine-tuning / LoRA on
 the 41M-row history should raise the ceiling, esp. for low-volume. **Not started** - an earlier
-`finetune_chronos_bolt.py` smoke-test pipeline and its spec (`32-finetuned-foundation-models.md`,
-a different number space than this domain's own spec 32) were both removed in commit `5ab8d593`
-along with the other zero-shot Chronos variants (`chronos`, `chronos2`, `bolt_hierarchical`); no
-fine-tuning work has landed.
+Earlier fine-tuning experiments were retired during the lite-roster consolidation.
 - **Test:** fine-tune on the train window, backtest the hard clusters on the holdout, check oracle
   ceiling movement. GPU via `DEMAND_GPU`. **Retrain-scale.**
 - **Where:** `common/ml/foundation_backtest.py`, foundation loaders; new `fine_tune` params per algo.
 
 ### 2. ⬜ Hierarchical / temporal aggregation for low-volume
-Model where signal is denser, then disaggregate. `bolt_hierarchical` (customer bottom-up + top-down
-true-demand reconciliation) already exists and *won* `medium_volume_moderate` causally. Extend it /
-route low-volume clusters through it, or forecast at quarterly grain and split down.
-- **Test:** backtest `bolt_hierarchical` + a temporal-aggregation baseline on low-volume clusters.
+Model where signal is denser, then disaggregate retained-model forecasts without adding another
+forecasting algorithm to the production roster.
 
 ### 3. ⬜ Exogenous drivers (events/promotions) for volatile SKUs — *conditional on item 0*
 Driven volatility (promo spikes, events) is reducible once the driver is a feature. Event schema exists

@@ -35,7 +35,6 @@ Both scripts refresh 5 materialized views after deletion and support `--dry-run`
 | Flag | Purpose | Example |
 |---|---|---|
 | `--list` | Show row counts by model_id in both tables | `make backtest-list` |
-| `MODELS="lgbm_cluster catboost_cluster"` | Remove specific models | `make backtest-clean MODELS="lgbm_cluster"` |
 | `--all-backtest` | Remove all non-external models | Clears all ML predictions |
 | `--dry-run` | Preview deletions without executing | Safe inspection |
 
@@ -77,7 +76,6 @@ After deletion, both scripts refresh these 5 views to keep aggregates consistent
 | Command | What It Does |
 |---|---|
 | `make backtest-list` | Show model row counts in forecast + archive |
-| `make backtest-clean MODELS="lgbm_cluster catboost_cluster"` | Remove specific models |
 | `make forecast-clean-list` | Show row counts by model + month |
 | `make forecast-clean ARGS="--before 2025-04-01 --model external"` | Delete external forecasts before April 2025 |
 | `make forecast-clean ARGS="--between 2024-01-01 2024-07-01"` | Delete all models in date range |

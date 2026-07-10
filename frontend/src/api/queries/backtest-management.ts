@@ -71,6 +71,12 @@ export interface PromotionStatus {
   total_rows: number | null;
   promoted_by: string;
   notes: string | null;
+  source_run_id: string | null;
+  production_run_id: string | null;
+  candidate_checksum: string | null;
+  production_checksum: string | null;
+  archive_checksum: string | null;
+  archived_at: string | null;
 }
 
 /** Candidate forecast summary per model. */
@@ -87,8 +93,13 @@ export type CandidateSummaryMap = Record<string, CandidateSummary>;
 /** Staging forecast summary per model. */
 export interface StagingSummary {
   model_id: string;
+  source_run_id: string;
+  run_status: "ready" | "promoted";
+  promotion_eligible: boolean;
+  generation_purpose: "release_candidate";
   row_count: number;
   dfu_count: number;
+  source_model_count: number;
   forecast_month_generated: string | null;
   last_generated_at: string | null;
   min_forecast_month: string | null;
@@ -101,6 +112,10 @@ export interface PromoteResponse {
   model_id: string;
   promotion_type: string;
   plan_version: string;
+  source_run_id: string;
+  production_run_id: string;
+  candidate_checksum: string;
+  outgoing_archive_checksum: string | null;
   rows_promoted: number;
   dfu_count: number;
 }
@@ -115,10 +130,8 @@ export const backtestMgmtKeys = {
   promotionStatus: ["backtest-management", "promotion-status"] as const,
   candidateSummary: ["backtest-management", "candidate-summary"] as const,
   stagingSummary: ["backtest-management", "staging-summary"] as const,
-  runs: (modelId: string) =>
-    ["backtest-management", "runs", modelId] as const,
-  current: (modelId: string) =>
-    ["backtest-management", "current", modelId] as const,
+  runs: (modelId: string) => ["backtest-management", "runs", modelId] as const,
+  current: (modelId: string) => ["backtest-management", "current", modelId] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -143,16 +156,12 @@ export async function fetchBacktestSummary(): Promise<BacktestSummary> {
 }
 
 /** Fetch run history for a specific model. */
-export async function fetchBacktestRuns(
-  modelId: string,
-): Promise<BacktestRun[]> {
+export async function fetchBacktestRuns(modelId: string): Promise<BacktestRun[]> {
   return fetchJson<BacktestRun[]>(`/backtest-management/${modelId}/runs`);
 }
 
 /** Fetch current metadata from disk for a model. */
-export async function fetchBacktestCurrent(
-  modelId: string,
-): Promise<Record<string, unknown>> {
+export async function fetchBacktestCurrent(modelId: string): Promise<Record<string, unknown>> {
   return fetchJson<Record<string, unknown>>(`/backtest-management/${modelId}/current`);
 }
 
@@ -174,7 +183,7 @@ export async function fetchStagingSummary(): Promise<StagingSummaryMap> {
  *  created (it runs now or queues behind active backtests) or "already_running"
  *  when this model already has a run in flight (no duplicate is started). */
 export interface SubmitBacktestRunResult {
-  run_id: number | null;   // null when status === "already_running"
+  run_id: number | null; // null when status === "already_running"
   job_id: string;
   model_id: string;
   status: "queued" | "already_running";
@@ -191,22 +200,19 @@ export interface SubmitBacktestRunResult {
  */
 export async function submitBacktestRun(
   modelId: string,
-  parallel = false,
+  parallel = false
 ): Promise<SubmitBacktestRunResult> {
   const qs = parallel ? "?parallel=true" : "";
-  return fetchJson<SubmitBacktestRunResult>(
-    `/backtest-management/${modelId}/run${qs}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    },
-  );
+  return fetchJson<SubmitBacktestRunResult>(`/backtest-management/${modelId}/run${qs}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /** Load backtest predictions into the database. */
 export async function submitBacktestLoad(
   modelId: string,
-  runId?: number,
+  runId?: number
 ): Promise<{ job_id: string }> {
   const body = runId != null ? JSON.stringify({ run_id: runId }) : undefined;
   return fetchJson<{ job_id: string }>(`/backtest-management/${modelId}/load`, {
@@ -217,9 +223,7 @@ export async function submitBacktestLoad(
 }
 
 /** Submit a training job for a model (train on full history for production). */
-export async function submitTraining(
-  modelId: string,
-): Promise<{ job_id: string }> {
+export async function submitTraining(modelId: string): Promise<{ job_id: string }> {
   return fetchJson<{ job_id: string }>(`/backtest-management/${modelId}/train`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -235,20 +239,20 @@ export async function submitTraining(
  */
 export async function submitGenerateForecast(
   modelId: string,
-  opts?: { horizon?: number; confidenceIntervals?: boolean },
-): Promise<{ job_id: string; model_id: string }> {
+  opts?: { horizon?: number; confidenceIntervals?: boolean }
+): Promise<{ job_id: string; model_id: string; source_run_id: string }> {
   const qs = new URLSearchParams();
   if (opts?.horizon != null) qs.set("horizon", String(opts.horizon));
   if (opts?.confidenceIntervals != null) {
     qs.set("confidence_intervals", String(opts.confidenceIntervals));
   }
   const suffix = qs.toString() ? `?${qs}` : "";
-  return fetchJson<{ job_id: string; model_id: string }>(
+  return fetchJson<{ job_id: string; model_id: string; source_run_id: string }>(
     `/backtest-management/${modelId}/generate${suffix}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-    },
+    }
   );
 }
 
@@ -258,9 +262,7 @@ export async function submitGenerateForecast(
 
 /** Fetch current promotion status (which model is in production). */
 export async function fetchPromotionStatus(): Promise<{ promoted: PromotionStatus | null }> {
-  return fetchJson<{ promoted: PromotionStatus | null }>(
-    "/backtest-management/promotion-status",
-  );
+  return fetchJson<{ promoted: PromotionStatus | null }>("/backtest-management/promotion-status");
 }
 
 /** Fetch candidate forecast summary per model. */
@@ -269,8 +271,12 @@ export async function fetchCandidateSummary(): Promise<CandidateSummaryMap> {
 }
 
 /** Promote a model (or 'champion') to production. Copies candidates → fact_production_forecast. */
-export async function submitPromote(modelId: string): Promise<PromoteResponse> {
-  return fetchJson<PromoteResponse>(`/backtest-management/${modelId}/promote`, {
+export async function submitPromote(
+  modelId: string,
+  sourceRunId: string
+): Promise<PromoteResponse> {
+  const qs = new URLSearchParams({ source_run_id: sourceRunId });
+  return fetchJson<PromoteResponse>(`/backtest-management/${modelId}/promote?${qs}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

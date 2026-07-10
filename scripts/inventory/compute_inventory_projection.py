@@ -111,13 +111,26 @@ def get_daily_demand_rates(
     # --- Priority 1: production or staging forecast ---
     if forecast_source == "staging" and staging_model_id:
         sql_prod = """
-            SELECT forecast_month, forecast_qty
-            FROM fact_production_forecast_staging
-            WHERE item_id = %s AND loc = %s AND model_id = %s
-            ORDER BY forecast_month
+            WITH selected_run AS (
+                SELECT run_id
+                FROM forecast_generation_run
+                WHERE generation_purpose = 'release_candidate'
+                  AND run_status IN ('ready', 'promoted')
+                  AND requested_model_id = %s
+                ORDER BY completed_at DESC NULLS LAST, created_at DESC, run_id
+                LIMIT 1
+            )
+            SELECT staging.forecast_month, staging.forecast_qty
+            FROM fact_production_forecast_staging staging
+            JOIN selected_run ON selected_run.run_id = staging.run_id
+            WHERE staging.item_id = %s
+              AND staging.loc = %s
+              AND staging.generation_purpose = 'release_candidate'
+              AND staging.candidate_model_id = %s
+            ORDER BY staging.forecast_month
         """
         with conn.cursor() as cur:
-            cur.execute(sql_prod, (item_id, loc, staging_model_id))
+            cur.execute(sql_prod, (staging_model_id, item_id, loc, staging_model_id))
             prod_rows = cur.fetchall()
 
         if prod_rows:

@@ -1,7 +1,7 @@
 /**
  * Unified Model Tuning API — Feature 46
  *
- * Single query module for LightGBM, CatBoost, and XGBoost tuning experiments.
+ * Query module for LightGBM tuning experiments.
  * Replaces the split between lgbm-tuning.ts and model-tuning.ts with a
  * parametrized `/model-tuning/{model}/` prefix.
  */
@@ -14,13 +14,11 @@ import { buildSearchParams } from "./helpers";
 // Core types
 // ---------------------------------------------------------------------------
 
-export type ModelType = "lgbm" | "catboost" | "xgboost";
+export type ModelType = "lgbm";
 
 /** API path prefix per tree-model family (e.g. "/model-tuning/lgbm"). */
 export const MODEL_PREFIX: Record<ModelType, string> = {
   lgbm: "/model-tuning/lgbm",
-  catboost: "/model-tuning/catboost",
-  xgboost: "/model-tuning/xgboost",
 };
 
 export interface TuningExperiment {
@@ -229,27 +227,21 @@ export const modelTuningKeys = {
     ["model-tuning", model, "experiments", params] as const,
   experiment: (model: ModelType, runId: number) =>
     ["model-tuning", model, "experiment", runId] as const,
-  // Aliases used by LgbmTuningTab for CatBoost/XGBoost
+  // Aliases used by the LightGBM tuning tab.
   runs: (model: ModelType, params?: Record<string, unknown>) =>
     ["model-tuning", model, "experiments", params] as const,
-  run: (model: ModelType, runId: number) =>
-    ["model-tuning", model, "experiment", runId] as const,
-  lags: (model: ModelType, runId: number) =>
-    ["model-tuning", model, "lags", runId] as const,
+  run: (model: ModelType, runId: number) => ["model-tuning", model, "experiment", runId] as const,
+  lags: (model: ModelType, runId: number) => ["model-tuning", model, "lags", runId] as const,
   clusters: (model: ModelType, runId: number, execLag?: number) =>
     ["model-tuning", model, "clusters", runId, execLag] as const,
-  months: (model: ModelType, runId: number) =>
-    ["model-tuning", model, "months", runId] as const,
+  months: (model: ModelType, runId: number) => ["model-tuning", model, "months", runId] as const,
   logs: (model: ModelType, runId: number, offset?: number) =>
     ["model-tuning", model, "logs", runId, offset] as const,
   compare: (model: ModelType, baselineId: number, candidateId: number, execLag?: number) =>
     ["model-tuning", model, "compare", baselineId, candidateId, execLag] as const,
-  promoted: (model: ModelType) =>
-    ["model-tuning", model, "promoted"] as const,
-  templates: (model: ModelType) =>
-    ["model-tuning", model, "templates"] as const,
-  promotions: (model: ModelType) =>
-    ["model-tuning", model, "promotions"] as const,
+  promoted: (model: ModelType) => ["model-tuning", model, "promoted"] as const,
+  templates: (model: ModelType) => ["model-tuning", model, "templates"] as const,
+  promotions: (model: ModelType) => ["model-tuning", model, "promotions"] as const,
   promoteResultsStatus: (model: ModelType, runId: number) =>
     ["model-tuning", model, "promote-results-status", runId] as const,
 };
@@ -259,13 +251,13 @@ export const modelTuningKeys = {
 // ---------------------------------------------------------------------------
 
 export const MODEL_TUNING_STALE = {
-  EXPERIMENTS: 10_000,     // 10s — active runs refresh frequently
-  EXPERIMENT: 30_000,      // 30s — single experiment detail
-  LAGS: 60_000,            // 1min — lag data is static after completion
-  COMPARE: 60_000,         // 1min — comparison data
-  TEMPLATES: 600_000,      // 10min — templates rarely change
-  LOGS: 2_000,             // 2s — log polling interval
-  PROMOTED: 60_000,        // 1min — promoted run
+  EXPERIMENTS: 10_000, // 10s — active runs refresh frequently
+  EXPERIMENT: 30_000, // 30s — single experiment detail
+  LAGS: 60_000, // 1min — lag data is static after completion
+  COMPARE: 60_000, // 1min — comparison data
+  TEMPLATES: 600_000, // 10min — templates rarely change
+  LOGS: 2_000, // 2s — log polling interval
+  PROMOTED: 60_000, // 1min — promoted run
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -292,7 +284,7 @@ export async function fetchModelExperiments(
     exec_lag?: number;
     page?: number;
     page_size?: number;
-  },
+  }
 ): Promise<{ experiments: TuningExperiment[]; total: number }> {
   const sp = buildSearchParams({
     status: params?.status,
@@ -309,7 +301,7 @@ export async function fetchModelExperiments(
 /** Get a single experiment with full detail. */
 export async function fetchModelExperiment(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<TuningExperiment> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}`);
 }
@@ -317,7 +309,7 @@ export async function fetchModelExperiment(
 /** Per-execution-lag accuracy breakdown for a run. */
 export async function fetchModelExperimentLags(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<{ run_id: number; model: string; lags: TuningLag[] }> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}/lags`);
 }
@@ -326,19 +318,17 @@ export async function fetchModelExperimentLags(
 export async function fetchModelExperimentClusters(
   model: ModelType,
   runId: number,
-  execLag?: number,
+  execLag?: number
 ): Promise<{ run_id: number; clusters: UnifiedClusterComparison[] }> {
   const sp = buildSearchParams({ exec_lag: execLag });
   const qs = sp.toString();
-  return fetchOrThrow(
-    `${prefix(model)}/experiments/${runId}/clusters${qs ? `?${qs}` : ""}`,
-  );
+  return fetchOrThrow(`${prefix(model)}/experiments/${runId}/clusters${qs ? `?${qs}` : ""}`);
 }
 
 /** Per-month accuracy for a run, optionally filtered by exec_lag. */
 export async function fetchModelExperimentMonths(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<{ run_id: number; months: UnifiedMonthComparison[] }> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}/months`);
 }
@@ -347,14 +337,13 @@ export async function fetchModelExperimentMonths(
 export async function fetchModelExperimentLogs(
   model: ModelType,
   runId: number,
-  offset?: number,
+  offset?: number
 ): Promise<ExperimentLogsResponse> {
   const sp = buildSearchParams({ offset });
   const qs = sp.toString();
-  return fetchOrThrow(
-    `${prefix(model)}/experiments/${runId}/logs${qs ? `?${qs}` : ""}`,
-    { cache: "no-cache" },
-  );
+  return fetchOrThrow(`${prefix(model)}/experiments/${runId}/logs${qs ? `?${qs}` : ""}`, {
+    cache: "no-cache",
+  });
 }
 
 /** Compare two runs with lag-level deltas, optionally for a specific exec_lag. */
@@ -362,7 +351,7 @@ export async function fetchTuningComparison2(
   model: ModelType,
   baselineId: number,
   candidateId: number,
-  execLag?: number,
+  execLag?: number
 ): Promise<UnifiedTuningComparison> {
   const sp = buildSearchParams({
     baseline_id: baselineId,
@@ -377,10 +366,10 @@ export async function fetchUnifiedModelTuningComparison(
   model: ModelType,
   baselineId: number,
   candidateId: number,
-  execLag?: number,
+  execLag?: number
 ): Promise<TuningComparison & { per_lag?: ModelLagComparison[] }> {
   const data = await fetchTuningComparison2(model, baselineId, candidateId, execLag);
-  return ({
+  return {
     ...data,
     per_lag: data.per_lag?.map((lag) => ({
       exec_lag: lag.exec_lag,
@@ -390,13 +379,13 @@ export async function fetchUnifiedModelTuningComparison(
       baseline_wape: lag.baseline_wape,
       candidate_wape: lag.candidate_wape,
     })),
-  } as unknown) as TuningComparison & { per_lag?: ModelLagComparison[] };
+  } as unknown as TuningComparison & { per_lag?: ModelLagComparison[] };
 }
 
 /** Convenience fetcher for panels that only need lag accuracy rows. */
 export async function fetchModelLagAccuracy(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<ModelLagAccuracy[]> {
   const data = await fetchModelExperimentLags(model, runId);
   return data.lags;
@@ -404,21 +393,21 @@ export async function fetchModelLagAccuracy(
 
 /** Get available experiment templates for a model. */
 export async function fetchModelTemplates(
-  model: ModelType,
+  model: ModelType
 ): Promise<{ model: string; templates: ExperimentTemplate[] }> {
   return fetchOrThrow(`${prefix(model)}/templates`);
 }
 
 /** Get the currently promoted (champion) run for a model. */
 export async function fetchModelPromoted(
-  model: ModelType,
+  model: ModelType
 ): Promise<{ promoted: TuningExperiment | null }> {
   return fetchOrThrow(`${prefix(model)}/promoted`, { cache: "no-cache" });
 }
 
 /** List the promotion audit trail for a model. */
 export async function fetchModelPromotions(
-  model: ModelType,
+  model: ModelType
 ): Promise<{ promotions: PromotionLogEntry[] }> {
   return fetchOrThrow(`${prefix(model)}/promotions`);
 }
@@ -430,7 +419,7 @@ export async function fetchModelPromotions(
 /** Create and launch a new tuning experiment. */
 export async function submitModelExperiment(
   model: ModelType,
-  payload: CreateExperimentPayload,
+  payload: CreateExperimentPayload
 ): Promise<CreateExperimentResponse> {
   return fetchOrThrow(`${prefix(model)}/experiments`, {
     method: "POST",
@@ -442,7 +431,7 @@ export async function submitModelExperiment(
 /** Promote a completed run to production champion. */
 export async function promoteModelExperiment(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<{ promoted: boolean; run_id: number; params_written: Record<string, unknown> }> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}/promote`, {
     method: "POST",
@@ -452,7 +441,7 @@ export async function promoteModelExperiment(
 /** Cancel a running or queued experiment. */
 export async function cancelModelExperiment(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<{ cancelled: boolean; run_id: number; status: string }> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}/cancel`, {
     method: "POST",
@@ -462,7 +451,7 @@ export async function cancelModelExperiment(
 /** Delete a completed, failed, or cancelled experiment. */
 export async function deleteModelExperiment(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<{ deleted: boolean; run_id: number }> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}`, {
     method: "DELETE",
@@ -492,7 +481,7 @@ export interface PromoteResultsStatus {
 /** Promote results — load backtest predictions into DB. */
 export async function promoteModelResults(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<PromoteResultsResponse> {
   return fetchOrThrow(`${prefix(model)}/experiments/${runId}/promote-results`, {
     method: "POST",
@@ -502,11 +491,9 @@ export async function promoteModelResults(
 /** Poll the status of a results promotion job. */
 export async function fetchPromoteResultsStatus(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<PromoteResultsStatus> {
-  return fetchOrThrow(
-    `${prefix(model)}/experiments/${runId}/promote-results/status`,
-  );
+  return fetchOrThrow(`${prefix(model)}/experiments/${runId}/promote-results/status`);
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +551,12 @@ export interface PipelineConfig {
     default_method: string;
   };
   pipeline: {
-    stages: Array<{ name: string; description: string; makefile_target: string; depends_on: string[] }>;
+    stages: Array<{
+      name: string;
+      description: string;
+      makefile_target: string;
+      depends_on: string[];
+    }>;
   };
 }
 
@@ -574,7 +566,7 @@ export const pipelineConfigKeys = {
 
 export async function fetchPipelineConfig(): Promise<PipelineConfig> {
   const data = await fetchJson<{ raw?: PipelineConfig; values?: PipelineConfig } & PipelineConfig>(
-    "/config/forecast_pipeline_config",
+    "/config/forecast_pipeline_config"
   );
   return data.raw || data.values || data;
 }

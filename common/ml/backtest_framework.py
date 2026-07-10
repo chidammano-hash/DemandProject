@@ -1256,7 +1256,7 @@ def run_tree_backtest(
     embargo_months: int = 0,
     resume: bool = False,
 ) -> None:
-    """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
+    """Run a complete LightGBM per-cluster backtest.
 
     All algorithms use per-cluster strategy. Options (recursive, SHAP, tuning)
     are passed via closures rather than CLI flags; see forecast_pipeline_config.yaml.
@@ -1396,7 +1396,7 @@ def run_tree_backtest(
         predict_mask = masked_grid["startdate"].isin(predict_months)
 
         # Drop only rows missing the most recent lag (qty_lag_1).
-        # LightGBM, CatBoost, and XGBoost handle NaN natively — they create
+        # LightGBM handles NaN natively by creating
         # a separate "missing" bin during histogram splits.  Requiring all 12
         # lags to be non-NaN was overly aggressive: a DFU with 8 months of
         # history would have NaN for lags 9-12 in ALL rows, losing the DFU

@@ -14,7 +14,6 @@
 
 ## 1. Overview
 
-The platform's internal ML pipeline trains LGBM, CatBoost, and XGBoost models using the backtest framework and stores their predictions under model IDs `lgbm`, `catboost`, and `xgboost`. Occasionally, forecast predictions generated outside the platform (for example, by an external modelling team or a partner system) need to be evaluated alongside these internal models using the same accuracy infrastructure.
 
 This feature defines a standalone ETL script that ingests four externally-supplied CSV files and loads them into the database as first-class model IDs: `ext_lgbm`, `ext_cat`, `ext_xg`, and `ext_best`. Once loaded, every existing accuracy API endpoint — slicing, lag-curve analysis, and available-model enumeration — returns results for the external models automatically, with no API or frontend changes required.
 
@@ -100,7 +99,6 @@ Identical to `fact_external_forecast_monthly` with the addition of:
 
 ### 3.3 Key Differences from Internal Backtest Mapping
 
-| Aspect | Internal LGBM/CatBoost/XGBoost | External ML (`ext_*`) |
 |---|---|---|
 | DFU identifier | Split columns (`item_id`, `customer_group`, `loc`) | Single `DFU` column (`sku_ck`) |
 | Forecast qty column | `basefcst_pref` | `PREDICTED_ORDERS` (renamed on load) |

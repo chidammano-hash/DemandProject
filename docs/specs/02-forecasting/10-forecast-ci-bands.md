@@ -79,8 +79,6 @@ confidence_interval:
   sigma_cap_multiplier: 3.0 # Cap = multiplier x global median sigma
   source_model_ids:
     - lgbm_cluster
-    - catboost_cluster
-    - xgboost_cluster
   residual_lag: 0           # Which lag from archive to use
 ```
 

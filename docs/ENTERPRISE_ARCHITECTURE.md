@@ -2,7 +2,7 @@
 
 ## Supply Chain Command Center
 
-**TOGAF ADM Framework | Version 1.0 | 2026-03-31**
+**TOGAF ADM Framework | Version 1.1 | 2026-07-10**
 
 | Attribute | Value |
 |---|---|
@@ -10,7 +10,7 @@
 | Classification | Internal |
 | TOGAF Version | 10 |
 | Status | Baselined |
-| Last Updated | 2026-03-31 |
+| Last Updated | 2026-07-10 |
 
 ---
 
@@ -44,7 +44,6 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | # | Strategic Goal | Platform Capability |
 |---|---|---|
 | SG-1 | Unify demand sensing, forecasting, and inventory planning into one analytical platform | 10 data domains, 6 dimension tables, 4 fact tables, 28 materialized views serving 21 interactive UI tabs |
-| SG-2 | Replace manual Excel-based planning workflows with ML-driven decision support | 3 tree-based ML models (LightGBM, CatBoost, XGBoost) with automated champion selection across 5 strategies |
 | SG-3 | Reduce forecast error through automated model selection and ensemble methods | Expanding-window backtest (10 timeframes), 31-expert panel testing 30+ algorithms, champion accuracy 75.24% |
 | SG-4 | Optimize inventory investment by balancing service levels against working capital | Safety stock (Z-score + Monte Carlo), EOQ, 4 replenishment policy types, efficient frontier optimization |
 | SG-5 | Enable proactive exception management through AI-driven insight generation | Claude-powered AI Planning Agent with 10 tools, portfolio-wide scans, 5 insight types |
@@ -86,7 +85,6 @@ graph TB
     subgraph Supply Chain Command Center
         UI[React UI<br>17 Destinations]
         API[FastAPI Backend<br>83 Routers]
-        ML[ML Pipeline<br>LGBM/CatBoost/XGBoost]
         ETL[ETL Pipeline<br>Normalize + Load]
         DB[(PostgreSQL 16<br>349M+ Rows)]
         CACHE[(Redis Cache)]
@@ -207,7 +205,6 @@ Supply Chain Command Center
 │   ├── L2: Statistical Forecasting
 │   │   └── External model ingestion with execution-lag tracking (lags 0-4)
 │   ├── L2: ML-Based Forecasting
-│   │   └── LightGBM, CatBoost, XGBoost via unified model_registry.py
 │   ├── L2: Champion Model Selection
 │   │   └── 5 strategies: expanding, rolling, decay, ensemble, meta-learner
 │   ├── L2: Production Forecast Generation
@@ -309,8 +306,6 @@ Supply Chain Command Center
 │  Market   │───>│   Data    │───>│   Demand     │───>│   Forecast    │───>│  Champion    │
 │  Signal   │    │ Ingestion │    │   Sensing    │    │  Generation   │    │  Selection   │
 │           │    │           │    │              │    │              │    │              │
-│ CSV drops │    │ normalize │    │ variability  │    │ LGBM/CatBoost│    │ 5 strategies │
-│ from ERP  │    │ + load    │    │ + signals    │    │ /XGBoost     │    │ meta-learner │
 └──────────┘    └───────────┘    └──────────────┘    └───────────────┘    └──────────────┘
                                                                                 │
 ┌──────────────┐    ┌───────────────┐    ┌──────────────┐    ┌──────────────┐   │
@@ -567,10 +562,18 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 | Category | Table Count | Examples |
 |---|---|---|
 | Inventory Planning | 12 | `demand_variability`, `safety_stock`, `eoq_cycle_stock`, `replenishment_policy`, `replenishment_exceptions` |
-| Forecasting & Champion | 9 | `backtest_lag_archive`, `champion_model`, `production_forecast`, `bias_corrections`, `fact_candidate_forecast`, `model_promotion_log` |
+| Forecasting & Champion | 12+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot` |
 | AI & Exception | 5 | `ai_insights`, `ai_call_log`, `ai_recommendation_outcomes`, `storyboard_cards` |
 | Operations | 12 | `fact_sop_cycles`, `fact_financial_plan`, `fact_events`, `fact_scenarios` |
 | Platform | 8 | `dim_user`, `dim_role`, `fact_audit_log`, `notification_log`, `webhook_registrations` |
+
+`forecast_generation_run` is the immutable forward-release manifest. It
+separates promotable `release_candidate` runs from non-promotable
+`snapshot_contender` evidence and retained `legacy_invalid` staging. Migration
+203 also stamps champion history with its experiment id, persists exact winners
+and historical-results checksums, and extends production/model promotion with
+exact source/release/audit lineage and canonical SHA-256 payload checksums;
+unique indexes enforce one active release and one promotion per source run.
 
 ### 4.3 Data Flow Architecture
 
@@ -606,13 +609,15 @@ flowchart LR
         META --> CHAMP[Champion<br>Model per DFU]
     end
 
-    subgraph "Phase 6: Candidate Staging"
-        CHAMP --> GEN[Generate<br>Candidate<br>Forecast]
-        GEN --> CAND[(fact_candidate<br>_forecast)]
+    subgraph "Phase 6: Immutable Release Candidate"
+        CHAMP --> GEN[Generate one<br>coherent source run]
+        GEN --> MANIFEST[(forecast_generation_run)]
+        MANIFEST --> CAND[(production forecast<br>staging by run/purpose)]
     end
 
-    subgraph "Phase 7: Promotion"
-        CAND --> PROMOTE[Promote<br>Model]
+    subgraph "Phase 7: Transactional Promotion"
+        CAND --> PROMOTE[Validate + archive outgoing<br>+ publish exact run]
+        PROMOTE --> SNAP[(champion + top 3<br>lags 0-5 archive)]
         PROMOTE --> PROD[(fact_production<br>_forecast)]
         PROMOTE --> LOG[(model_promotion<br>_log)]
     end
@@ -626,7 +631,20 @@ flowchart LR
     end
 ```
 
-**Candidate Forecast & Model Promotion**: After champion selection (Phase 5), candidate forecasts are generated per model and staged in `fact_candidate_forecast` (Phase 6). A promotion step (Phase 7) moves validated candidates into `fact_production_forecast` with a full audit trail in `model_promotion_log`. This staged workflow ensures forecasts are reviewed before they reach downstream planning. DDL: `sql/121_candidate_forecast_and_promotion.sql`.
+**Forecast Generation & Transactional Promotion**: after champion selection,
+normal generation creates one immutable `release_candidate` manifest and
+run-scoped staging payload. Champion routing preserves each producing source
+model inside the coherent run. Promotion requires that exact `source_run_id`,
+executes under `SERIALIZABLE` plus a transaction advisory lock, revalidates
+the exact experiment-stamped historical common-cohort quality plus
+structural/lineage/freshness/coverage/CI evidence, archives the outgoing
+champion plus three frozen contenders for lags 0-5, publishes, and requires
+candidate/production checksum equality before commit. `model_promotion_log`
+stores the gate report and exact source, release, replacement, and archive
+evidence. Historical backtests continue to load
+`fact_external_forecast_monthly`/`backtest_lag_archive`; the legacy
+`fact_candidate_forecast` table is not a release source. DDL: `sql/121`,
+`sql/122`, and `sql/203_create_forecast_generation_run.sql`.
 
 #### Forecast Dual-Path Loading (Critical)
 
@@ -666,7 +684,6 @@ setup-all (~4-6 hours)
 │   │   ├── lt-profile-all
 │   │   ├── abc-xyz-all
 │   │   └── demand-signals-all
-│   ├── backtest-all (LGBM + CatBoost + XGBoost)
 │   ├── backtest-load-all
 │   ├── accuracy-slice-refresh
 │   └── champion-all (meta-learner + simulate + select)
@@ -734,7 +751,6 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 | 1 | **FastAPI Backend** | Python, FastAPI, Uvicorn | REST API serving 83 routers | `api/main.py`, `api/routers/` |
 | 2 | **React Frontend** | React 18, Vite, TypeScript | 17 lazy-loaded destinations; unified Workflows command center | `frontend/src/` |
 | 3 | **ETL Pipeline** | Python scripts, Make | Data normalization + loading for 10 domains | `scripts/etl/` |
-| 4 | **ML Pipeline** | scikit-learn, LightGBM, CatBoost, XGBoost | Training, backtesting, champion selection | `scripts/ml/`, `common/ml/` |
 | 5 | **Forecasting Pipeline** | Python scripts | Production forecast, consensus, blended demand | `scripts/forecasting/` |
 | 6 | **Inventory Pipeline** | Python scripts | Safety stock through rebalancing (18 scripts) | `scripts/inventory/` |
 | 7 | **AI Planning Agent** | Claude API (tool_use) | Proactive exception analysis across portfolio | `common/ai/ai_planner.py` |
@@ -767,7 +783,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
 | `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
-| `api/routers/forecasting/` | 26 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion, plus planner-facing post-release quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
+| `api/routers/forecasting/` | 26 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*` | Accuracy KPIs, SHAP, tuning, champion, immutable release generation, exact-run transactional promotion, and planner-facing post-release quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
 | `api/routers/intelligence/` | 3 (incl. `customer_analytics/` package — 5 sub-routers) | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*`, `/customer-analytics/*` | AI agent, forecast explain, market intel. The `customer_analytics.py` god-module was split into `intelligence/customer_analytics/` (5 sub-routers + helpers, 16 GET endpoints preserved). |
@@ -801,7 +817,6 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 | Module | Purpose |
 |---|---|
-| `model_registry.py` | Canonical-to-native parameter mapping for LGBM/CatBoost/XGBoost |
 | `backtest_framework.py` | Expanding-window evaluation (10 timeframes A-J), DFU cohort classification |
 | `champion/` (package, 9 sub-modules) | 31 champion selection strategies — split from former `champion_strategies.py` god-module into 9 sub-modules (expanding, rolling, decay, ensemble, meta-learner families) |
 | `feature_engineering.py` | Causal feature construction (lag 1-12, rolling stats, Fourier, Croston, calendar) |
@@ -810,7 +825,6 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 **Canonical Parameter Mapping** (model_registry.py):
 
-| Canonical | LightGBM | CatBoost | XGBoost |
 |---|---|---|---|
 | `estimators` | n_estimators | iterations | n_estimators |
 | `max_depth` | max_depth | depth | max_depth |
@@ -906,7 +920,6 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | **Charts** | Recharts | latest | Sole charting library after ECharts removal (ADR-015) | Adopt |
 | **Data Tables** | TanStack Table | 8.21.3 | Virtualized data grid + sorting + filtering | Adopt |
 | **Server State** | TanStack Query | 5.90.21 | React data fetching + caching | Adopt |
-| **ML: Gradient Boosting** | LightGBM, CatBoost, XGBoost | latest | Tree-based demand forecasting | Adopt |
 | **ML: Explainability** | SHAP | latest | Feature attribution for model interpretability | Adopt |
 | **ML: Tuning** | Optuna | latest | Bayesian hyperparameter optimization | Adopt |
 | **ML Tracking** | MLflow | v3.0.0 | Experiment logging + artifact storage | Trial |
@@ -1216,7 +1229,6 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │ Training & Evaluation                                    │     │
 │  │                                                          │     │
 │  │ ┌────────────┐  ┌────────────┐  ┌────────────┐         │     │
-│  │ │  LightGBM  │  │  CatBoost  │  │  XGBoost   │         │     │
 │  │ │ per_cluster │  │  global    │  │  global    │         │     │
 │  │ │ recursive  │  │            │  │            │         │     │
 │  │ │ SHAP select│  │            │  │            │         │     │
@@ -1244,7 +1256,6 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │                                                          │     │
 │  │ Expert Panel:                                            │     │
 │  │   31 experts testing 30+ algorithms (croston, tsb,      │     │
-│  │   theta, ETS, ARIMA, seasonal_naive, etc.)              │     │
 │  └─────────────────────────────────────────────────────────┘     │
 │                         │                                         │
 │  ┌─────────────────────────────────────────────────────────┐     │
@@ -1636,7 +1647,17 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Context** | Every fact-table writer (backtest loads, champion selection, ETL, DQ auto-fix, promotions) maintained its own hand-picked list of materialized views to refresh, and each list had holes — `agg_dfu_naive_scale` (the MASE denominator) had no automated refresher at all, `agg_accuracy_by_dfu` was skipped by three of its writers, and `mv_supplier_performance` (retired in sql/143) was still being "refreshed". The forecasting lifecycle (load → features → clusters → tuning → backtest → champion → generate → promote) had no chaining, no shared staleness signal (the `cluster_tuning_profile_state.stale` flag was write-only, the admin endpoint queried a wrong table name), and no generation lineage (a champion promoted under old clusters silently routed production forecasts against newly promoted SKU cluster assignments). |
 | **Decision** | (1) One table→MV dependency map in `common/core/mv_refresh.py`; all writers call `refresh_for_tables([tables written])`, gate rule 7 blocks inline `REFRESH MATERIALIZED VIEW`, and `tests/unit/test_mv_refresh.py` diffs the map against sql/ DDL. (2) A nightly `refresh_all_mvs` job as staleness safety net; persisted schedules re-register at API boot. (3) Generation lineage: cluster promotion flags tuning profiles stale (consumed by `--stale-only` re-tuning), `champion_experiment.cluster_experiment_id` (sql/198) gates production generation and promotion. (4) The lifecycle expressed as named JobManager pipelines (`config/forecasting/pipelines.yaml`) with readiness surfaced in `/dashboard/pipeline-readiness`. |
 | **Rationale** | Derived refreshes cannot silently miss a dependent the way hand-picked lists did; test-enforced map completeness turns "remember to refresh" into a mechanical gate. Invalidate-eagerly / recompute-deliberately keeps heavy ML runs operator-triggered (one pipeline call) while cheap MV refreshes happen automatically. |
-| **Consequences** | New MV DDL must register in `MV_SOURCES` in the same change or the suite fails. Writers refresh a slightly larger (but correct) dependent set; the heavy `mv_intramonth_stockout` is opt-out with the nightly net as backstop. `etl_config.yaml` no longer carries `mv_refresh:`/`always_refresh:` maps. Promotion of a champion built under a superseded clustering now 409s unless explicitly overridden. |
+| **Consequences** | New MV DDL must register in `MV_SOURCES` in the same change or the suite fails. Writers refresh a slightly larger (but correct) dependent set; the heavy `mv_intramonth_stockout` is opt-out with the nightly net as backstop. `etl_config.yaml` no longer carries `mv_refresh:`/`always_refresh:` maps. Generation can still expose an explicit diagnostic cluster-mismatch override, but transactional promotion itself fails closed on superseded cluster lineage. |
+
+### ADR-019: Immutable Forecast Generations and Transactional Release Promotion
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | Forward staging was keyed by model rather than generation, so snapshot-contender work could overwrite or mix release inputs. Promotion selected an ambient staging population, warned rather than failed on route gaps, deleted production before all evidence was checked, and did not persist an exact source or value checksum. The outgoing champion archive depended on orchestration timing rather than the database transaction that replaced it. |
+| **Decision** | Migration 203 introduces `forecast_generation_run` and purpose-scoped immutable staging (`release_candidate`, `snapshot_contender`, `legacy_invalid`), stamps promoted champion history with its experiment id, and freezes exact winners/historical-result checksums. Promotion requires an explicit source run, executes on the primary under `SERIALIZABLE` plus a transaction-scoped advisory lock, re-evaluates experiment-stamped historical common-cohort quality, revalidates current structural/lineage/freshness/coverage/CI evidence, archives the outgoing champion plus the frozen top three for lags 0-5 before delete, publishes with verified audit lineage, and requires canonical candidate/production SHA-256 equality before commit. The promotion audit stores gate, source, release, replacement, and archive evidence; unique indexes enforce one active release and one promotion per source run. |
+| **Rationale** | Release identity and value equality must be database-verifiable properties, not conclusions inferred from "latest" rows, job order, or counts after the fact. Purpose separation preserves bounded FVA evidence without contaminating promotable inputs. Putting archive and replacement in one transaction eliminates the loss window. |
+| **Consequences** | Pre-manifest staging is deliberately non-promotable, so migration 203 requires a fresh generation. An outgoing release without verifiable production lineage or a complete champion-plus-three archive blocks replacement until repaired. Promotion can serialize behind another release and may abort/retry under PostgreSQL serializable conflicts. The transaction gate re-evaluates WAPE/lift/incumbent/bias policy from exact experiment-stamped historical rows, but it does not stamp a "candidate WAPE" on future rows without actuals. Champion experiment review and the post-release common-cohort scorecard remain visible governance surfaces. Expert-system backtests are evaluation-only and cannot write production. |
 
 ---
 
@@ -1793,6 +1814,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | G-16 | ETL Streaming | Several ETL stages loaded full result sets into memory; risked OOM at 40× scale | Chunked streaming for large result sets | **Closed** — `stream_query_in_chunks` / `read_sql_chunked` helpers added in `common/core/db.py`; large ETL stages migrated | Closed |
 | G-17 | Scale Test Coverage | No quantitative baseline for endpoint cost at >1× data volume | Reproducible scale test harness | **Closed** — scale-test scripts added; baselines captured at 1× and 40× for the customer-analytics endpoints (drove ADR-016) | Closed |
 | G-18 | Weekly Partitioning | `fact_customer_demand_monthly` and similar tables partitioned monthly; growth at 40× scale projects out beyond comfortable per-partition row count | Weekly range partitioning for high-volume facts | **Open (DDL drafted)** — cutover SQL drafted and flagged for DBA review; not yet applied. Migration is destructive enough to require a maintenance window | Open |
+| G-19 | Forecast Release Atomicity | Mutable model-scoped staging, ambient promotion source, orchestration-only outgoing archive, and no exact release checksum | Immutable purpose-scoped generations and one atomic archive→publish transaction | **Closed** — migration 203, explicit `source_run_id`, serializable advisory-locked promotion, exact candidate/production/archive lineage, and database-enforced active singleton; see ADR-019 | Closed |
 
 ### 11.2 Migration Roadmap
 
@@ -1877,7 +1899,6 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | Ring | Technologies | Rationale |
 |---|---|---|
 | **Adopt** | PostgreSQL 16, FastAPI, React 18, psycopg3, psycopg-pool[async], Redis 7, Recharts, LightGBM, Tailwind CSS, TanStack Query, pytest, Vite, Docker Compose | Core production stack, proven at current scale (Redis promoted from Trial → Adopt, ADR-013) |
-| **Trial** | Claude API (tool_use), GPT-4o, MLflow v3, CatBoost, XGBoost, Playwright, pg-queue pattern (`FOR UPDATE SKIP LOCKED`, ADR-012) | In production, monitoring for stability and cost-effectiveness |
 | **Assess** | Kubernetes, OpenTelemetry, Snowflake connectors, Kafka/Debezium, Prometheus/Grafana | Planned for Phase 2-3; evaluating fit and effort |
 | **Hold / Retire** | SQLAlchemy ORM (see ADR-002), Django (see ADR-001), Celery (see ADR-004), RabbitMQ, ECharts (retired in favour of Recharts, ADR-015) | Evaluated and rejected (or removed) with documented rationale |
 

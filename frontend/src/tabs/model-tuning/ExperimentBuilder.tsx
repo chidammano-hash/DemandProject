@@ -7,14 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  X,
-  Loader2,
-  FlaskConical,
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-} from "lucide-react";
+import { X, Loader2, FlaskConical, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,19 +54,12 @@ export interface ExperimentBuilderProps {
 // ---------------------------------------------------------------------------
 const MODEL_LABELS: Record<ModelType, string> = {
   lgbm: "LightGBM",
-  catboost: "CatBoost",
-  xgboost: "XGBoost",
 };
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function ExperimentBuilder({
-  model,
-  open,
-  onClose,
-  onSubmitted,
-}: ExperimentBuilderProps) {
+export function ExperimentBuilder({ model, open, onClose, onSubmitted }: ExperimentBuilderProps) {
   const queryClient = useQueryClient();
   const templates = useMemo(() => getTemplates(model), [model]);
   const paramSpecs = useMemo(() => getParamSpecs(model), [model]);
@@ -98,14 +84,7 @@ export function ExperimentBuilder({
   });
   const completedExperiments = completedExperimentsData?.experiments ?? [];
 
-  // Cross-param warnings (non-blocking)
-  const warnings = useMemo(() => {
-    const w: string[] = [];
-    if (model === "catboost" && params.bootstrap_type === "Ordered") {
-      w.push("subsample has no effect with Ordered bootstrap");
-    }
-    return w;
-  }, [model, params]);
+  const warnings: string[] = [];
 
   // Reset form when model changes
   useEffect(() => {
@@ -138,7 +117,7 @@ export function ExperimentBuilder({
       setParamsExpanded(templateId === "custom");
       setErrors([]);
     },
-    [templates],
+    [templates]
   );
 
   const updateParam = useCallback((key: string, value: unknown) => {
@@ -179,7 +158,7 @@ export function ExperimentBuilder({
 
   const getError = useCallback(
     (field: string) => errors.find((e) => e.field === field)?.message,
-    [errors],
+    [errors]
   );
 
   // Count changed params
@@ -229,7 +208,9 @@ export function ExperimentBuilder({
                 className="text-xs font-medium text-foreground mb-1 block"
               >
                 Experiment Label
-                <span aria-hidden="true" className="ml-0.5 text-destructive">*</span>
+                <span aria-hidden="true" className="ml-0.5 text-destructive">
+                  *
+                </span>
                 <span className="sr-only"> (required)</span>
               </label>
               <Input
@@ -241,9 +222,7 @@ export function ExperimentBuilder({
                 aria-describedby={getError("run_label") ? "experiment-run-label-err" : undefined}
                 onChange={(e) => {
                   setRunLabel(e.target.value);
-                  setErrors((prev) =>
-                    prev.filter((er) => er.field !== "run_label"),
-                  );
+                  setErrors((prev) => prev.filter((er) => er.field !== "run_label"));
                 }}
                 onBlur={(e) => {
                   if (!e.target.value.trim()) {
@@ -254,13 +233,14 @@ export function ExperimentBuilder({
                   }
                 }}
                 placeholder="e.g., Aggressive Depth + Heavy Reg"
-                className={cn(
-                  "text-sm",
-                  getError("run_label") && "border-red-500",
-                )}
+                className={cn("text-sm", getError("run_label") && "border-red-500")}
               />
               {getError("run_label") && (
-                <p id="experiment-run-label-err" role="alert" className="text-[10px] text-red-600 mt-0.5">
+                <p
+                  id="experiment-run-label-err"
+                  role="alert"
+                  className="text-[10px] text-red-600 mt-0.5"
+                >
                   {getError("run_label")}
                 </p>
               )}
@@ -319,151 +299,154 @@ export function ExperimentBuilder({
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               )}
             </button>
-            {advancedOpen && <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-3 py-3">
-              {/* Cluster Source selector */}
-              <div>
-                <label className="text-[10px] text-muted-foreground mb-1 block">
-                  Cluster Source
-                </label>
-                <select
-                  value={clusterSource === "experimental" && clusterExperimentId ? String(clusterExperimentId) : "production"}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === "production") {
-                      setClusterSource("production");
-                      setClusterExperimentId(null);
-                    } else {
-                      setClusterSource("experimental");
-                      setClusterExperimentId(Number(val));
+            {advancedOpen && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-3 py-3">
+                {/* Cluster Source selector */}
+                <div>
+                  <label className="text-[10px] text-muted-foreground mb-1 block">
+                    Cluster Source
+                  </label>
+                  <select
+                    value={
+                      clusterSource === "experimental" && clusterExperimentId
+                        ? String(clusterExperimentId)
+                        : "production"
                     }
-                  }}
-                  className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                  aria-label="Cluster Source"
-                >
-                  <option value="production">Production Clusters</option>
-                  {completedExperiments.length > 0 && (
-                    <option disabled>---</option>
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "production") {
+                        setClusterSource("production");
+                        setClusterExperimentId(null);
+                      } else {
+                        setClusterSource("experimental");
+                        setClusterExperimentId(Number(val));
+                      }
+                    }}
+                    className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                    aria-label="Cluster Source"
+                  >
+                    <option value="production">Production Clusters</option>
+                    {completedExperiments.length > 0 && <option disabled>---</option>}
+                    {completedExperiments.length === 0 && (
+                      <option disabled>No cluster experiments yet</option>
+                    )}
+                    {completedExperiments.map((exp: ClusterExperiment) => (
+                      <option key={exp.experiment_id} value={String(exp.experiment_id)}>
+                        {exp.label} — K={exp.optimal_k ?? "?"}, Sil=
+                        {exp.silhouette_score != null ? exp.silhouette_score.toFixed(3) : "?"}
+                      </option>
+                    ))}
+                  </select>
+                  {clusterSource === "experimental" && clusterExperimentId && (
+                    <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                      Using clusters from experiment #{clusterExperimentId}
+                    </div>
                   )}
-                  {completedExperiments.length === 0 && (
-                    <option disabled>No cluster experiments yet</option>
+                  {completedExperiments.length === 0 && clusterSource === "production" && (
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      <a
+                        href="#"
+                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                        onClick={(e) => e.preventDefault()}
+                      >
+                        Create one in the Clusters tab &rarr;
+                      </a>
+                    </p>
                   )}
-                  {completedExperiments.map((exp: ClusterExperiment) => (
-                    <option key={exp.experiment_id} value={String(exp.experiment_id)}>
-                      {exp.label} — K={exp.optimal_k ?? "?"}, Sil=
-                      {exp.silhouette_score != null
-                        ? exp.silhouette_score.toFixed(3)
-                        : "?"}
-                    </option>
-                  ))}
-                </select>
-                {clusterSource === "experimental" && clusterExperimentId && (
-                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                    Using clusters from experiment #{clusterExperimentId}
-                  </div>
-                )}
-                {completedExperiments.length === 0 && clusterSource === "production" && (
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    <a href="#" className="text-blue-600 dark:text-blue-400 hover:underline" onClick={(e) => e.preventDefault()}>
-                      Create one in the Clusters tab &rarr;
-                    </a>
-                  </p>
-                )}
-              </div>
+                </div>
 
-              <div>
-                <label className="text-[10px] text-muted-foreground mb-1 block">
-                  Cluster Strategy
+                <div>
+                  <label className="text-[10px] text-muted-foreground mb-1 block">
+                    Cluster Strategy
+                  </label>
+                  <Select
+                    value={config.cluster_strategy}
+                    onValueChange={(v) => setConfig((prev) => ({ ...prev, cluster_strategy: v }))}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="per_cluster">per_cluster</SelectItem>
+                      <SelectItem value="global">global</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <label className="flex items-center gap-2 pt-4">
+                  <input
+                    type="checkbox"
+                    checked={config.recursive}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        recursive: e.target.checked,
+                      }))
+                    }
+                    className="rounded"
+                  />
+                  <span className="text-xs text-foreground">Recursive</span>
                 </label>
-                <Select
-                  value={config.cluster_strategy}
-                  onValueChange={(v) =>
-                    setConfig((prev) => ({ ...prev, cluster_strategy: v }))
-                  }
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="per_cluster">per_cluster</SelectItem>
-                    <SelectItem value="global">global</SelectItem>
-                  </SelectContent>
-                </Select>
+
+                <label className="flex items-center gap-2 pt-4">
+                  <input
+                    type="checkbox"
+                    checked={config.shap_select}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        shap_select: e.target.checked,
+                      }))
+                    }
+                    className="rounded"
+                  />
+                  <span className="text-xs text-foreground">SHAP Selection</span>
+                </label>
+
+                {config.shap_select && (
+                  <>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground mb-1 block">
+                        SHAP Threshold
+                      </label>
+                      <input
+                        type="number"
+                        value={config.shap_threshold}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            shap_threshold: parseFloat(e.target.value) || 0.95,
+                          }))
+                        }
+                        step="0.01"
+                        min="0.5"
+                        max="1.0"
+                        className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground mb-1 block">
+                        SHAP Sample Size
+                      </label>
+                      <input
+                        type="number"
+                        value={config.shap_sample_size}
+                        onChange={(e) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            shap_sample_size: parseInt(e.target.value, 10) || 500,
+                          }))
+                        }
+                        step="100"
+                        min="100"
+                        max="5000"
+                        className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
-
-              <label className="flex items-center gap-2 pt-4">
-                <input
-                  type="checkbox"
-                  checked={config.recursive}
-                  onChange={(e) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      recursive: e.target.checked,
-                    }))
-                  }
-                  className="rounded"
-                />
-                <span className="text-xs text-foreground">Recursive</span>
-              </label>
-
-              <label className="flex items-center gap-2 pt-4">
-                <input
-                  type="checkbox"
-                  checked={config.shap_select}
-                  onChange={(e) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      shap_select: e.target.checked,
-                    }))
-                  }
-                  className="rounded"
-                />
-                <span className="text-xs text-foreground">SHAP Selection</span>
-              </label>
-
-              {config.shap_select && (
-                <>
-                  <div>
-                    <label className="text-[10px] text-muted-foreground mb-1 block">
-                      SHAP Threshold
-                    </label>
-                    <input
-                      type="number"
-                      value={config.shap_threshold}
-                      onChange={(e) =>
-                        setConfig((prev) => ({
-                          ...prev,
-                          shap_threshold: parseFloat(e.target.value) || 0.95,
-                        }))
-                      }
-                      step="0.01"
-                      min="0.5"
-                      max="1.0"
-                      className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-muted-foreground mb-1 block">
-                      SHAP Sample Size
-                    </label>
-                    <input
-                      type="number"
-                      value={config.shap_sample_size}
-                      onChange={(e) =>
-                        setConfig((prev) => ({
-                          ...prev,
-                          shap_sample_size:
-                            parseInt(e.target.value, 10) || 500,
-                        }))
-                      }
-                      step="100"
-                      min="100"
-                      max="5000"
-                      className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                  </div>
-                </>
-              )}
-            </div>}
+            )}
           </div>
 
           {/* Warnings */}
@@ -484,26 +467,17 @@ export function ExperimentBuilder({
           {/* Summary */}
           <div className="rounded-md bg-muted/30 border border-border/60 px-4 py-3">
             <p className="text-xs text-muted-foreground">
-              Model:{" "}
-              <span className="font-medium text-foreground">
-                {MODEL_LABELS[model]}
-              </span>{" "}
-              | Strategy:{" "}
-              <span className="font-medium text-foreground">
-                {config.cluster_strategy}
-              </span>{" "}
-              | Recursive:{" "}
-              <span className="font-medium text-foreground">
-                {config.recursive ? "Yes" : "No"}
-              </span>
+              Model: <span className="font-medium text-foreground">{MODEL_LABELS[model]}</span> |
+              Strategy:{" "}
+              <span className="font-medium text-foreground">{config.cluster_strategy}</span> |
+              Recursive:{" "}
+              <span className="font-medium text-foreground">{config.recursive ? "Yes" : "No"}</span>
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {paramSpecs.length} hyperparameters configured |{" "}
               <span
                 className={cn(
-                  changedCount > 0
-                    ? "text-amber-700 dark:text-amber-400 font-medium"
-                    : "",
+                  changedCount > 0 ? "text-amber-700 dark:text-amber-400 font-medium" : ""
                 )}
               >
                 {changedCount} changed from production
@@ -539,9 +513,7 @@ export function ExperimentBuilder({
               disabled={submitMut.isPending}
               className="gap-1.5"
             >
-              {submitMut.isPending && (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              )}
+              {submitMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Launch Experiment
             </Button>
           </div>

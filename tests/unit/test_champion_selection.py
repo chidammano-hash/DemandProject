@@ -187,6 +187,7 @@ class TestInsertFallbackChampions:
             lag_mode=lag_mode,
             champion_model_id="champion",
             fallback_model_id="seasonal_naive",
+            champion_experiment_id=33,
         )
         sql, params = cur.execute.call_args[0]
         return sql, params
@@ -203,6 +204,11 @@ class TestInsertFallbackChampions:
         # is populated with the model whose forecast was copied (seasonal_naive).
         _, params = self._capture("execution")
         assert "seasonal_naive" in params
+
+    def test_fallback_insert_stamps_results_experiment(self):
+        sql, params = self._capture("execution")
+        assert "champion_experiment_id" in sql.split("SELECT")[0]
+        assert 33 in params
 
     def test_fallback_insert_binds_fallback_for_fixed_lag(self):
         _, params = self._capture("1")
@@ -546,6 +552,15 @@ class TestRunChampionResultsLoadCaching:
         mock_conn = MagicMock()
         mock_conn.__enter__ = MagicMock(return_value=mock_conn)
         mock_conn.__exit__ = MagicMock(return_value=False)
+        transaction = MagicMock()
+        transaction.__enter__ = MagicMock(return_value=transaction)
+        transaction.__exit__ = MagicMock(return_value=False)
+        mock_conn.transaction.return_value = transaction
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.rowcount = 1
+        mock_conn.cursor.return_value = cursor
         return mock_conn
 
     def test_uses_cached_winners_when_csv_exists(self, tmp_path):
@@ -565,6 +580,15 @@ class TestRunChampionResultsLoadCaching:
             with (
                 patch("common.services.job_state._run_subprocess", return_value="ok") as m_sub,
                 patch("common.services.job_state._get_conn", return_value=mock_conn),
+                patch(
+                    "common.services.forecast_lineage.compute_champion_results_stats",
+                    return_value=MagicMock(
+                        checksum="f" * 64,
+                        row_count=10,
+                        dfu_count=2,
+                        source_model_count=2,
+                    ),
+                ),
             ):
                 result = _run_champion_results_load(
                     {"experiment_id": experiment_id},
@@ -576,12 +600,14 @@ class TestRunChampionResultsLoadCaching:
             cmd = m_sub.call_args[0][0]
             assert "--load-winners-from" in cmd
             assert str(winners_csv) in cmd
+            assert cmd[cmd.index("--champion-experiment-id") + 1] == str(experiment_id)
             assert result["experiment_id"] == experiment_id
+            assert result["results_forecast_checksum"] == "f" * 64
         finally:
             winners_csv.unlink(missing_ok=True)
 
-    def test_falls_back_when_no_csv(self):
-        """When no cached CSV exists, the script runs without --load-winners-from."""
+    def test_missing_csv_fails_closed(self):
+        """An experiment cannot be recomputed under an existing results identity."""
         from common.services.job_state import _run_champion_results_load
 
         mock_conn = self._make_mock_conn()
@@ -590,15 +616,14 @@ class TestRunChampionResultsLoadCaching:
             patch("common.services.job_state._run_subprocess", return_value="ok") as m_sub,
             patch("common.services.job_state._get_conn", return_value=mock_conn),
         ):
-            result = _run_champion_results_load(
-                {"experiment_id": 99999},
-                progress_cb=MagicMock(),
-                job_id="job-test-2",
-            )
+            with pytest.raises(FileNotFoundError, match="no winners artifact"):
+                _run_champion_results_load(
+                    {"experiment_id": 99999},
+                    progress_cb=MagicMock(),
+                    job_id="job-test-2",
+                )
 
-        cmd = m_sub.call_args[0][0]
-        assert "--load-winners-from" not in cmd
-        assert result["experiment_id"] == 99999
+        m_sub.assert_not_called()
 
 
 class TestChampionCandidateRoster:

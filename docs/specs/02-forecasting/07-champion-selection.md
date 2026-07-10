@@ -17,7 +17,6 @@
 
 ## Problem
 
-With many competing models (tree models, foundation models, statistical baselines), no single algorithm wins for every product every month. Seasonal items might favor CatBoost in peak months and LightGBM in troughs, while intermittent items may be best served by Chronos 2 Enriched or seasonal naive. Without automated selection, planners must either pick one model for everything (suboptimal) or manually choose per item (impractical at scale with thousands of DFUs).
 
 ## Solution
 
@@ -66,7 +65,6 @@ With `execution_lag = 0`, the formula degrades to `shift(1)` -- fully backward c
 
 ### Warm-Up Period
 
-With `execution_lag = 1` and `min_dfu_rows = 3`, the first qualifying month requires 3 non-null prior observations after shifting. Earlier months get the fallback model (default: `seasonal_naive`), ensuring every DFU-month has a champion row.
 
 ## 31 Selection Strategies
 
@@ -142,7 +140,6 @@ These strategies treat model selection as an online learning problem with explor
 
 Current strategies (expanding, ensemble, etc.) are **purely greedy** — they pick the model that performed best historically. This fails when:
 
-1. **Model performance shifts** — CatBoost was best for 6 months but Chronos improved after a retraining. Greedy strategies stick with CatBoost; Thompson Sampling would explore Chronos.
 2. **Context matters** — A model might win during trend-up periods but lose during trend-down. LinUCB learns this mapping; expanding WAPE averages it away.
 3. **Adversarial dynamics** — Demand might shift in ways that systematically fool historical-WAPE strategies. EXP3 is robust to this by design.
 
@@ -205,9 +202,6 @@ Source of truth: `_MODEL_FAMILIES` in `common/ml/champion/helpers.py`.
 
 | Family | Models |
 |--------|--------|
-| chronos | chronos2_enriched (sole survivor — the T5, Bolt, and non-enriched Chronos 2 variants were removed in commit `5ab8d593`; the family has no within-family diversity penalty to apply until a second foundation model is added) |
-| tree | catboost_cluster, xgboost_cluster, lgbm_cluster |
-| baseline | seasonal_naive, rolling_mean, rolling_median |
 | statistical | mstl |
 | dl | nhits, nbeats |
 
@@ -259,7 +253,6 @@ champion:
     primary_strategy: adaptive_ensemble  # Phase 2: once enough history
     primary_top_k: 3                 # Top-K models for ensemble blending
     primary_weight_method: inverse_wape  # Weighting: inverse_wape | equal
-  fallback_model_id: seasonal_naive  # Used for warm-up gaps
   metric: accuracy_pct               # wape (lowest wins) or accuracy_pct
   lag: execution                     # "execution" (per-DFU) or fixed 0-4
   min_sku_rows: 3

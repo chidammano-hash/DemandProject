@@ -1,5 +1,5 @@
 /**
- * Generic model tuning API — CatBoost & XGBoost.
+ * LightGBM model-tuning API.
  * Reuses the same types as lgbm-tuning but points at model-specific prefixes.
  */
 import { fetchJson } from "./core";
@@ -20,15 +20,11 @@ import type { ModelType } from "./unified-model-tuning";
 // --- URL prefix map ---
 const MODEL_PREFIX: Record<ModelType, string> = {
   lgbm: "/lgbm-tuning",
-  catboost: "/catboost-tuning",
-  xgboost: "/xgboost-tuning",
 };
 
 // Prefix for the unified /model-tuning/<model>/experiments endpoints used by ModelTuningTab.
 const MODEL_TUNING_EXPERIMENTS_PREFIX: Record<ModelType, string> = {
   lgbm: "/model-tuning/lgbm",
-  catboost: "/model-tuning/catboost",
-  xgboost: "/model-tuning/xgboost",
 };
 
 export interface ModelExperimentsResponse {
@@ -46,7 +42,7 @@ export interface ModelSummary {
 /** Fetch the experiments list for a tunable model with optional filters. */
 export async function fetchModelExperiments(
   model: ModelType,
-  opts?: { limit?: number; status?: string; exec_lag?: number },
+  opts?: { limit?: number; status?: string; exec_lag?: number }
 ): Promise<ModelExperimentsResponse> {
   const sp = new URLSearchParams();
   if (opts?.limit) sp.set("limit", String(opts.limit));
@@ -54,7 +50,7 @@ export async function fetchModelExperiments(
   if (opts?.exec_lag !== undefined) sp.set("exec_lag", String(opts.exec_lag));
   return fetchJson<ModelExperimentsResponse>(
     `${MODEL_TUNING_EXPERIMENTS_PREFIX[model]}/experiments?${sp}`,
-    { cache: "no-cache" },
+    { cache: "no-cache" }
   );
 }
 
@@ -63,13 +59,13 @@ export async function fetchModelSummary(model: ModelType): Promise<ModelSummary>
   try {
     const data = await fetchJson<ModelExperimentsResponse>(
       `${MODEL_TUNING_EXPERIMENTS_PREFIX[model]}/experiments?limit=100`,
-      { cache: "no-cache" },
+      { cache: "no-cache" }
     );
     const exps: TuningRun[] = data.experiments ?? [];
     const completed = exps.filter((e) => e.status === "completed" && e.accuracy_pct != null);
     const best = completed.reduce<number | null>(
       (acc, e) => (!acc || (e.accuracy_pct ?? 0) > acc ? (e.accuracy_pct ?? 0) : acc),
-      null,
+      null
     );
     const promoted = exps.find((e) => e.is_promoted)?.accuracy_pct ?? null;
     return {
@@ -88,7 +84,7 @@ export async function fetchModelSummary(model: ModelType): Promise<ModelSummary>
 // --- Fetchers ---
 export async function fetchModelTuningRuns(
   model: ModelType,
-  params?: { limit?: number; status?: string },
+  params?: { limit?: number; status?: string }
 ): Promise<{ runs: TuningRun[]; total: number }> {
   const sp = new URLSearchParams();
   if (params?.limit) sp.set("limit", String(params.limit));
@@ -100,7 +96,7 @@ export async function fetchModelTuningRuns(
 
 export async function fetchModelTuningRun(
   model: ModelType,
-  runId: number,
+  runId: number
 ): Promise<TuningRun & { timeframes: TuningTimeframe[] }> {
   const res = await fetch(`${MODEL_PREFIX[model]}/runs/${runId}`);
   if (!res.ok) throw new Error(`Failed to fetch ${model} tuning run: ${res.status}`);
@@ -110,16 +106,18 @@ export async function fetchModelTuningRun(
 export async function fetchModelTuningComparison(
   model: ModelType,
   baselineId: number,
-  candidateId: number,
+  candidateId: number
 ): Promise<TuningComparison> {
-  const res = await fetch(`${MODEL_PREFIX[model]}/compare?baseline_id=${baselineId}&candidate_id=${candidateId}`);
+  const res = await fetch(
+    `${MODEL_PREFIX[model]}/compare?baseline_id=${baselineId}&candidate_id=${candidateId}`
+  );
   if (!res.ok) throw new Error(`Failed to fetch ${model} comparison: ${res.status}`);
   return res.json();
 }
 
 export async function fetchModelTuningComparisons(
   model: ModelType,
-  limit?: number,
+  limit?: number
 ): Promise<{ comparisons: TuningComparisonSummary[] }> {
   const sp = new URLSearchParams();
   if (limit) sp.set("limit", String(limit));
@@ -137,7 +135,9 @@ export async function promoteModelRun(model: ModelType, runId: number): Promise<
   return res.json();
 }
 
-export async function fetchModelPromotedRun(model: ModelType): Promise<{ promoted: PromotedRun | null }> {
+export async function fetchModelPromotedRun(
+  model: ModelType
+): Promise<{ promoted: PromotedRun | null }> {
   const res = await fetch(`${MODEL_PREFIX[model]}/promoted`, { cache: "no-cache" });
   if (!res.ok) throw new Error(`Failed to fetch ${model} promoted run: ${res.status}`);
   return res.json();

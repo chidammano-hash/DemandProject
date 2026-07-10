@@ -369,23 +369,42 @@ async def get_staging_forecasts(
 ):
     """Return ALL staged forecasts for a DFU, grouped by model_id.
 
-    Returns forecasts from fact_production_forecast_staging for all models
-    that have generated forecasts for this item+loc combination.
+    Returns the latest immutable release-candidate run for each requested model.
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
             try:
                 cur.execute("""
-                    SELECT model_id, forecast_month, forecast_qty,
+                    WITH ranked_runs AS (
+                        SELECT generation.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY requested_model_id
+                                   ORDER BY completed_at DESC NULLS LAST,
+                                            created_at DESC, run_id
+                               ) AS run_rank
+                        FROM forecast_generation_run generation
+                        WHERE generation_purpose = 'release_candidate'
+                          AND run_status IN ('ready', 'promoted')
+                    )
+                    SELECT generation.requested_model_id,
+                           staging.model_id AS source_model_id,
+                           staging.forecast_month, staging.forecast_qty,
                            forecast_qty_lower, forecast_qty_upper,
-                           horizon_months, cluster_id, lag_source,
-                           generated_at
-                    FROM fact_production_forecast_staging
-                    WHERE item_id = %s AND loc = %s
-                    ORDER BY model_id, forecast_month
+                           staging.horizon_months, staging.cluster_id,
+                           staging.lag_source, staging.generated_at,
+                           generation.run_id
+                    FROM ranked_runs generation
+                    JOIN fact_production_forecast_staging staging
+                      ON staging.run_id = generation.run_id
+                     AND staging.generation_purpose = generation.generation_purpose
+                     AND staging.candidate_model_id = generation.requested_model_id
+                    WHERE generation.run_rank = 1
+                      AND staging.item_id = %s AND staging.loc = %s
+                    ORDER BY generation.requested_model_id, staging.forecast_month
                 """, (item_id, loc))
                 rows = cur.fetchall()
-            except Exception:  # staging table may not exist yet
+            except psycopg.Error:  # staging schema may not exist yet
+                logger.exception("Failed to read immutable staging forecasts")
                 return {"item_id": item_id, "loc": loc, "models": {}}
 
     # Group by model_id
@@ -395,14 +414,16 @@ async def get_staging_forecasts(
         if mid not in models:
             models[mid] = []
         models[mid].append({
-            "forecast_month": r[1].isoformat() if r[1] else None,
-            "forecast_qty": float(r[2]) if r[2] is not None else None,
-            "forecast_qty_lower": float(r[3]) if r[3] is not None else None,
-            "forecast_qty_upper": float(r[4]) if r[4] is not None else None,
-            "horizon_months": r[5],
-            "cluster_id": r[6],
-            "lag_source": r[7],
-            "generated_at": r[8].isoformat() if r[8] else None,
+            "source_model_id": r[1],
+            "forecast_month": r[2].isoformat() if r[2] else None,
+            "forecast_qty": float(r[3]) if r[3] is not None else None,
+            "forecast_qty_lower": float(r[4]) if r[4] is not None else None,
+            "forecast_qty_upper": float(r[5]) if r[5] is not None else None,
+            "horizon_months": r[6],
+            "cluster_id": r[7],
+            "lag_source": r[8],
+            "generated_at": r[9].isoformat() if r[9] else None,
+            "source_run_id": str(r[10]),
         })
 
     return {

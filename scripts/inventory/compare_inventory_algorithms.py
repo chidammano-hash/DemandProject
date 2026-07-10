@@ -145,8 +145,14 @@ def _compute_effective_eoq(
 # ---------------------------------------------------------------------------
 
 def _load_models(cur: Any, model_filter: list[str] | None = None) -> list[str]:
-    """Get distinct model_ids from staging table."""
-    cur.execute("SELECT DISTINCT model_id FROM fact_production_forecast_staging ORDER BY model_id")
+    """Get requested models with an immutable release-candidate run."""
+    cur.execute(
+        """SELECT DISTINCT requested_model_id
+           FROM forecast_generation_run
+           WHERE generation_purpose = 'release_candidate'
+             AND run_status IN ('ready', 'promoted')
+           ORDER BY requested_model_id"""
+    )
     all_models = [row[0] for row in cur.fetchall()]
     if model_filter:
         all_models = [m for m in all_models if m in model_filter]
@@ -154,16 +160,27 @@ def _load_models(cur: Any, model_filter: list[str] | None = None) -> list[str]:
 
 
 def _load_forecast_stats(cur: Any, model_id: str) -> list[dict]:
-    """Aggregate forecast_qty per item_id + loc for a given model_id."""
+    """Aggregate the latest immutable candidate for one requested model."""
     sql = """
-        SELECT item_id, loc,
-               AVG(forecast_qty)::numeric(15,4)    AS avg_qty,
-               STDDEV(forecast_qty)::numeric(15,4)  AS std_qty
-        FROM fact_production_forecast_staging
-        WHERE model_id = %s
-        GROUP BY item_id, loc
+        WITH selected_run AS (
+            SELECT run_id
+            FROM forecast_generation_run
+            WHERE generation_purpose = 'release_candidate'
+              AND run_status IN ('ready', 'promoted')
+              AND requested_model_id = %s
+            ORDER BY completed_at DESC NULLS LAST, created_at DESC, run_id
+            LIMIT 1
+        )
+        SELECT staging.item_id, staging.loc,
+               AVG(staging.forecast_qty)::numeric(15,4) AS avg_qty,
+               STDDEV(staging.forecast_qty)::numeric(15,4) AS std_qty
+        FROM fact_production_forecast_staging staging
+        JOIN selected_run ON selected_run.run_id = staging.run_id
+        WHERE staging.generation_purpose = 'release_candidate'
+          AND staging.candidate_model_id = %s
+        GROUP BY staging.item_id, staging.loc
     """
-    cur.execute(sql, [model_id])
+    cur.execute(sql, (model_id, model_id))
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
 

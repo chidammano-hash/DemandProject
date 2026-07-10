@@ -86,6 +86,16 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                           AND d.customer_group = f.customer_group
                           AND d.loc = f.loc
                          WHERE f.model_id IN ('champion', 'external', 'seasonal_naive')
+                           AND (
+                               f.model_id <> 'champion'
+                               OR f.champion_experiment_id = (
+                                   SELECT champion_experiment_id
+                                   FROM model_promotion_log
+                                   WHERE is_active = TRUE
+                                   ORDER BY promoted_at DESC, id DESC
+                                   LIMIT 1
+                               )
+                           )
                            AND f.lag = COALESCE(d.execution_lag, 0)
                            AND f.lag BETWEEN 0 AND 4
                            AND f.basefcst_pref IS NOT NULL
@@ -197,7 +207,9 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                              WHERE p.model_id = 'champion'
                                AND p.plan_version = active.plan_version),
                             (SELECT MAX(forecast_month_generated)
-                             FROM fact_production_forecast_staging),
+                             FROM forecast_generation_run
+                             WHERE generation_purpose = 'release_candidate'
+                               AND run_status IN ('ready', 'promoted')),
                             outgoing.id,
                             outgoing.plan_version,
                             outgoing.promoted_at

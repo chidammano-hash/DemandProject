@@ -263,7 +263,6 @@ compute_service_level_actuals   compute_financial_plan
 generate_planned_orders     generate_replenishment_exceptions
 generate_production_forecasts   generate_storyboard_exceptions
 generate_consensus_plan     apply_event_adjustments
-run_backtest                run_backtest_catboost     run_backtest_xgboost
 run_ss_simulation           run_sop_cycle             populate_dq_checks
 fix_dq_issues
 ```

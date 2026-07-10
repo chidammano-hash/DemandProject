@@ -42,7 +42,6 @@ Supply chain planners cannot manually inspect thousands of DFUs for demand behav
 - **Safety stock formulas lack inputs.** Demand variability (sigma-D, CV) is a required input for statistical safety stock computation. Without per-DFU profiling, planners rely on blanket safety factors across the entire portfolio, misallocating buffer stock.
 - **ABC-XYZ classification is blocked.** The XYZ dimension requires a coefficient of variation (CV) per DFU to classify demand predictability.
 - **Clustering operates blind.** ML-based DFU clustering needs numeric features (CV, seasonality strength, trend slope, intermittency, etc.) as input vectors. Without pre-computed features, clustering must recompute them from scratch on every run.
-- **Backtest feature engineering is duplicated.** Each backtest model (LGBM, CatBoost, XGBoost) independently computes DFU-level statistics. Centralizing computation eliminates redundancy and guarantees consistent feature definitions across all models.
 
 ---
 

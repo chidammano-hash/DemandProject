@@ -10,7 +10,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-rolling-median backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all tune-lgbm-cust tune-catboost-cust tune-xgboost-cust tune-cust-enriched-all tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-ingestion perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run auto-create-partitions-weekly auto-create-partitions-weekly-dry-run refresh-customer-filter-options
+.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-mstl backtest-nhits backtest-nbeats backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-all tune-lgbm-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-ingestion perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router load-ext-lgbm load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run auto-create-partitions-weekly auto-create-partitions-weekly-dry-run refresh-customer-filter-options
 .PHONY: forecast-snapshot-contenders forecast-archive forecast-staging-clean
 
 # ---------------------------------------------------------------------------
@@ -214,9 +214,6 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  ui-init              - install frontend dependencies"
 	@echo "  ui                   - run shadcn React UI on :5173"
 	@echo "  backtest-lgbm        - run LGBM per-cluster backtest (settings from forecast_pipeline_config.yaml)"
-	@echo "  backtest-catboost    - run CatBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
-	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
-	@echo "  backtest-cust-enriched-all - run customer-feature-enriched LGBM/CatBoost/XGBoost backtests"
 	@echo "  backtest-chronos2e   - run Chronos 2 Enriched foundation model backtest"
 	@echo "  backtest-chronos2e-full - run Chronos 2 Enriched backtest + load predictions"
 	@echo "  backtest-all         - run all clean-rebuild backtests sequentially (cluster trees + foundation)"
@@ -224,10 +221,10 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
 	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after backtest-all)"
 	@echo "  backtest-load-all-bulk - load ALL models with single index cycle (~4x faster)"
-	@echo "  backtest-load-bulk   - load 7 core models (base/enriched trees + chronos2_enriched) in bulk"
+	@echo "  backtest-load-bulk   - load the five-model roster in bulk"
 	@echo "  backtest-load-main-only - load specific models to main table only (MODELS='...')"
 	@echo "  backtest-load-archive-only - load specific models to archive only (MODELS='...')"
-	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_cluster catboost_cluster')"
+	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_cluster mstl')"
 	@echo "  backtest-list        - list model_id row counts in database"
 	@echo "  forecast-clean       - delete forecasts by date range (ARGS='--before 2025-04-01 --model external')"
 	@echo "  forecast-clean-list  - list forecast row counts by model + month"
@@ -238,14 +235,9 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  champion-train-meta  - train meta-learner classifier for champion selection"
 	@echo "  champion-all         - train-meta + simulate + select (full pipeline)"
 	@echo "  tune-lgbm            - Bayesian hyperparameter tuning for LGBM (50 trials)"
-	@echo "  tune-catboost        - Bayesian hyperparameter tuning for CatBoost (50 trials)"
-	@echo "  tune-xgboost         - Bayesian hyperparameter tuning for XGBoost (50 trials)"
-	@echo "  tune-cust-enriched-all - Tune customer-enriched LGBM/CatBoost/XGBoost"
-	@echo "  tune-all             - Run all three tuning jobs sequentially"
+	@echo "  tune-all             - Tune LightGBM"
 	@echo "  tune-lgbm-clusters   - Per-cluster Bayesian tuning for LGBM (30 trials)"
-	@echo "  tune-catboost-clusters - Per-cluster Bayesian tuning for CatBoost (30 trials)"
-	@echo "  tune-xgboost-clusters - Per-cluster Bayesian tuning for XGBoost (30 trials)"
-	@echo "  tune-clusters        - Run all three per-cluster tuning jobs sequentially"
+	@echo "  tune-clusters        - Run LightGBM per-cluster tuning"
 	@echo "  expert-panel         - Expert Panel algorithm selection test (5000 DFUs, 5 TFs, ~30 min)"
 	@echo "  expert-panel-quick   - Quick Expert Panel test (1000 DFUs, 3 TFs, ~8 min)"
 	@echo "  expert-panel-mini    - Minimal Expert Panel test (200 DFUs, 2 TFs, ~2 min)"
@@ -682,28 +674,11 @@ ai-insights-dfu:
 ai-insights-all: ai-insights-schema ai-insights-scan
 
 # ---------------------------------------------------------------------------
-# Backtesting (LGBM / CatBoost / XGBoost / Chronos — per-cluster only)
+# Backtesting (lite five-model roster)
 # Options (recursive, SHAP, tuning, params) are set in config/forecasting/forecast_pipeline_config.yaml
 # ---------------------------------------------------------------------------
 backtest-lgbm:
 	$(UV) python scripts/ml/run_backtest.py --parallel --workers 8 $(ARGS)
-
-backtest-catboost:
-	$(UV) python scripts/ml/run_backtest_catboost.py --parallel --workers 8 $(ARGS)
-
-backtest-xgboost:
-	$(UV) python scripts/ml/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
-
-backtest-lgbm-cust:
-	$(UV) python scripts/ml/run_backtest.py --model lgbm --model-id lgbm_cust_enriched --parallel --workers 8 $(ARGS)
-
-backtest-catboost-cust:
-	$(UV) python scripts/ml/run_backtest_catboost.py --model-id catboost_cust_enriched --parallel --workers 8 $(ARGS)
-
-backtest-xgboost-cust:
-	$(UV) python scripts/ml/run_backtest_xgboost.py --model-id xgboost_cust_enriched --parallel --workers 8 $(ARGS)
-
-backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
 
 customer-features:
 	$(UV) python -m scripts.ml.generate_customer_features_sql
@@ -718,24 +693,6 @@ backtest-load-chronos2e:
 	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos2_enriched --replace
 
 backtest-chronos2e-full: backtest-chronos2e backtest-load-chronos2e
-
-backtest-seasonal-naive:
-	$(UV) python scripts/ml/run_backtest.py --model seasonal_naive $(ARGS)
-
-backtest-load-seasonal-naive:
-	$(UV) python scripts/etl/load_backtest_forecasts.py --model seasonal_naive --replace
-
-backtest-rolling-mean:
-	$(UV) python scripts/ml/run_backtest.py --model rolling_mean $(ARGS)
-
-backtest-load-rolling-mean:
-	$(UV) python scripts/etl/load_backtest_forecasts.py --model rolling_mean --replace
-
-backtest-rolling-median:
-	$(UV) python scripts/ml/run_backtest.py --model rolling_median $(ARGS)
-
-backtest-load-rolling-median:
-	$(UV) python scripts/etl/load_backtest_forecasts.py --model rolling_median --replace
 
 backtest-mstl:
 	$(UV) python scripts/ml/run_backtest_mstl.py $(ARGS)
@@ -761,29 +718,20 @@ backtest-load-nbeats:
 
 backtest-nbeats-full: backtest-nbeats backtest-load-nbeats
 
-backtest-baselines: backtest-seasonal-naive backtest-rolling-mean
-
-# backtest-all produces every compete:true model that runs on a clean rebuild:
-#   lgbm_cluster, catboost_cluster, xgboost_cluster (cluster trees),
-#   lgbm_cust_enriched, catboost_cust_enriched, xgboost_cust_enriched,
-#   chronos2_enriched (foundation).
-# Cheap/operator-gated baselines (mstl, nbeats, nhits, rolling_mean, rolling_median,
-# seasonal_naive) are run on demand via their own targets.
+# backtest-all produces the complete lite roster.
 # run_champion_selection.assert_competing_models_covered() fails loud if any
 # compete:true model is missing from fact_external_forecast_monthly after load.
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-cust-enriched-all backtest-chronos2e  ## Run all clean-rebuild backtests sequentially (cluster trees + foundation)
+backtest-all: backtest-lgbm backtest-chronos2e backtest-mstl backtest-nhits backtest-nbeats  ## Run the five-model roster sequentially
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
-	@echo "[parallel] Starting base/enriched cluster trees + Chronos2-enriched concurrently — logs in data/backtest/logs/"
+	@echo "[parallel] Starting the five-model roster — logs in data/backtest/logs/"
 	$(UV) python scripts/ml/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest.py --model lgbm --model-id lgbm_cust_enriched $(ARGS) > data/backtest/logs/lgbm_cust_enriched.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest_catboost.py --model-id catboost_cust_enriched $(ARGS) > data/backtest/logs/catboost_cust_enriched.log 2>&1 & \
-	$(UV) python scripts/ml/run_backtest_xgboost.py --model-id xgboost_cust_enriched $(ARGS) > data/backtest/logs/xgboost_cust_enriched.log 2>&1 & \
 	$(UV) python -m scripts.ml.run_backtest_chronos2_enriched > data/backtest/logs/chronos2_enriched.log 2>&1 & \
-	wait && echo "[parallel] All clean-rebuild backtests complete (base/enriched trees + chronos2e). Check data/backtest/logs/ for output."
+	$(UV) python scripts/ml/run_backtest_mstl.py $(ARGS) > data/backtest/logs/mstl.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest_dl.py --model nhits $(ARGS) > data/backtest/logs/nhits.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest_dl.py --model nbeats $(ARGS) > data/backtest/logs/nbeats.log 2>&1 & \
+	wait && echo "[parallel] Five-model backtests complete. Check data/backtest/logs/ for output."
 
 backtest-load:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --model $(MODEL) --replace
@@ -794,8 +742,8 @@ backtest-load-all:
 backtest-load-all-bulk:
 	$(UV) python scripts/etl/load_backtest_forecasts.py --all --replace --bulk
 
-backtest-load-bulk:  ## Load 7 core models with single index cycle (~4x faster)
-	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster lgbm_cust_enriched catboost_cust_enriched xgboost_cust_enriched chronos2_enriched --replace --bulk
+backtest-load-bulk:  ## Load the five-model roster with one index cycle
+	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster chronos2_enriched mstl nhits nbeats --replace --bulk
 
 backtest-load-main-only:  ## Load specific models to main table only (skip archive). Usage: make backtest-load-main-only MODELS="lgbm_cluster chronos2_enriched"
 	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --main-only
@@ -866,35 +814,12 @@ champion-all: champion-train-meta champion-simulate champion-select
 tune-lgbm:
 	$(UV) python scripts/ml/tune_hyperparams.py --model lgbm
 
-tune-catboost:
-	$(UV) python scripts/ml/tune_hyperparams.py --model catboost
-
-tune-xgboost:
-	$(UV) python scripts/ml/tune_hyperparams.py --model xgboost
-
-tune-all: tune-lgbm tune-catboost tune-xgboost
-
-tune-lgbm-cust:
-	$(UV) python scripts/ml/tune_hyperparams.py --model lgbm --model-id lgbm_cust_enriched
-
-tune-catboost-cust:
-	$(UV) python scripts/ml/tune_hyperparams.py --model catboost --model-id catboost_cust_enriched
-
-tune-xgboost-cust:
-	$(UV) python scripts/ml/tune_hyperparams.py --model xgboost --model-id xgboost_cust_enriched
-
-tune-cust-enriched-all: tune-lgbm-cust tune-catboost-cust tune-xgboost-cust
+tune-all: tune-lgbm
 
 tune-lgbm-clusters:
 	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model lgbm --trials 30
 
-tune-catboost-clusters:
-	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model catboost --trials 30
-
-tune-xgboost-clusters:
-	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model xgboost --trials 30
-
-tune-clusters: tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters
+tune-clusters: tune-lgbm-clusters
 
 # ── Production Baseline Seeding ──────────────────────────────────────────────
 seed-baselines:          ## Seed production baselines into experiment tables
@@ -1589,6 +1514,8 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE forecast_snapshot_roster CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast_staging CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
+	  'TRUNCATE TABLE model_promotion_log CASCADE;' \
+	  'TRUNCATE TABLE forecast_generation_run CASCADE;' \
 	  'TRUNCATE TABLE fact_ai_champion_forecast CASCADE;' \
 	  'TRUNCATE TABLE ai_champion_run CASCADE;' \
 	  'TRUNCATE TABLE fact_blended_demand_plan CASCADE;' \

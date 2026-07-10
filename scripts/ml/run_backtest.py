@@ -1,7 +1,7 @@
 """
 Run tree-model backtesting with per-cluster strategy and expanding-window timeframes.
 
-Supports LGBM (default), CatBoost, and XGBoost via the --model flag.
+Supports the LightGBM member of the lite forecasting roster.
 All run options (recursive, SHAP, tuning) are controlled via
 config/forecasting/forecast_pipeline_config.yaml rather than CLI flags.
 
@@ -70,8 +70,6 @@ def _model_cat_cols(cat_cols: list[str], feature_cols: list[str]) -> list[str]:
 # Objective override maps per model for Tweedie loss
 _TWEEDIE_OBJECTIVE: dict[str, dict[str, object]] = {
     "lgbm": {"objective": "tweedie"},
-    "catboost": {},  # loss_function handled separately (needs variance_power in string)
-    "xgboost": {"objective": "reg:tweedie"},
 }
 
 
@@ -139,21 +137,6 @@ def _apply_tweedie_objective(
         # Remove any residual Tweedie params
         merged = {**params, **overrides}
         merged.pop("tweedie_variance_power", None)
-    elif model_name == "catboost":
-        overrides["loss_function"] = "MAE"
-        merged = {**params, **overrides}
-        merged.pop("boost_from_average", None)
-        # CatBoost forbids the Newton leaf-estimation method under MAE (no
-        # Hessian). Drop the RMSE/Newton-oriented leaf-estimation settings so
-        # CatBoost falls back to its valid MAE default (Exact); otherwise
-        # intermittent clusters crash with "Newton leaves estimation method is
-        # not supported for MAE loss function".
-        merged.pop("leaf_estimation_method", None)
-        merged.pop("leaf_estimation_iterations", None)
-    elif model_name == "xgboost":
-        overrides["objective"] = "reg:absoluteerror"
-        merged = {**params, **overrides}
-        merged.pop("tweedie_variance_power", None)
     else:
         merged = {**params, **overrides}
 
@@ -183,313 +166,9 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "needs_cat_indices": False,
         "needs_cat_dtype_cast": False,
     },
-    "catboost": {
-        "class": "catboost.CatBoostRegressor",
-        "config_key": "catboost",
-        "config_section": "catboost_cluster",
-        "iter_param": "iterations",
-        "gpu_params": lambda: {"task_type": "GPU"},
-        "gpu_test_platform_check": False,
-        "fit_extras_per_cluster": lambda params, iter_param: {},
-        "fit_extras_global": lambda params, iter_param: {},
-        "default_params": lambda algo, seed=42: get_tree_default_params(
-            "catboost", algo, seed=seed
-        ),
-        "cat_dtype": "str",
-        "model_params_key": "catboost_params",
-        "model_type_tag": "catboost_backtest",
-        "shap_extractor": "compute_shap_catboost",
-        "best_iteration_attr": "best_iteration_",
-        "feature_importance_fn": lambda model: model.get_feature_importance(),
-        "constant_target_guard": True,
-        "needs_cat_indices": True,
-        "needs_cat_dtype_cast": False,
-    },
-    "xgboost": {
-        "class": "xgboost.XGBRegressor",
-        "config_key": "xgboost",
-        "config_section": "xgboost_cluster",
-        "iter_param": "n_estimators",
-        "gpu_params": lambda: {"device": "cuda"},
-        "gpu_test_platform_check": False,
-        "fit_extras_per_cluster": lambda params, iter_param: {},
-        "fit_extras_global": lambda params, iter_param: {},
-        "default_params": lambda algo, seed=42: get_tree_default_params("xgboost", algo, seed=seed),
-        "cat_dtype": "category",
-        "model_params_key": "xgboost_params",
-        "model_type_tag": "xgboost_backtest",
-        "shap_extractor": "compute_shap_global",
-        "best_iteration_attr": "best_iteration",  # no trailing underscore for XGBoost
-        "feature_importance_fn": lambda model: model.feature_importances_,
-        "constant_target_guard": True,
-        "needs_cat_indices": False,
-        "needs_cat_dtype_cast": True,  # XGBoost needs explicit .astype("category")
-    },
-    # ── Baseline benchmark models ─────────────────────────────────────────────
-    # Simple statistical methods — no gradient boosting.
-    "seasonal_naive": {
-        "baseline": True,
-        "predict_fn": "_predict_seasonal_naive",
-        "config_key": "seasonal_naive",
-        "config_section": "seasonal_naive",
-        "default_params": lambda algo: {},
-        "cat_dtype": "category",
-        "model_params_key": "seasonal_naive_params",
-        "model_type_tag": "seasonal_naive_backtest",
-    },
-    "rolling_mean": {
-        "baseline": True,
-        "predict_fn": "_predict_rolling_mean",
-        "config_key": "rolling_mean",
-        "config_section": "rolling_mean",
-        "default_params": lambda algo: {"window": algo.get("window", 6)},
-        "cat_dtype": "category",
-        "model_params_key": "rolling_mean_params",
-        "model_type_tag": "rolling_mean_backtest",
-    },
-    # rolling_median: outlier-robust sibling of rolling_mean (trailing-N MEDIAN).
-    # Added 2026-06-20 Cycle-8 after a Cycle-7 causal what-if showed it beats the
-    # champion on the F-07 level-step / F-01 spike segments; see BACKLOG F-08.
-    "rolling_median": {
-        "baseline": True,
-        "predict_fn": "_predict_rolling_median",
-        "config_key": "rolling_median",
-        "config_section": "rolling_median",
-        "default_params": lambda algo: {"window": algo.get("window", 6)},
-        "cat_dtype": "category",
-        "model_params_key": "rolling_median_params",
-        "model_type_tag": "rolling_median_backtest",
-    },
 }
 
 
-# ── Baseline prediction functions ─────────────────────────────────────────────
-# These compute forecasts from training data without fitting any model.
-
-
-_BASELINE_META_COLS = ["sku_ck", "item_id", "customer_group", "loc", "startdate"]
-
-
-def _predict_seasonal_naive(
-    train_df: pd.DataFrame,
-    pred_df: pd.DataFrame,
-    params: dict | None = None,
-) -> pd.DataFrame:
-    """Seasonal naive: predict each DFU-month using the same month from the prior year.
-
-    For each (item_id, customer_group, loc) in the prediction set, look up the
-    matching calendar month from the most recent prior year in training data.
-    If no matching month exists for a DFU, fall back to that DFU overall mean.
-    If the DFU has no training data at all, predict 0.
-    """
-    result = pred_df[_BASELINE_META_COLS].copy()
-
-    if len(train_df) == 0 or "qty" not in train_df.columns:
-        result[FORECAST_QTY_COL] = 0.0
-        return result
-
-    dfu_key = ["item_id", "customer_group", "loc"]
-    train = train_df.copy()
-    train["_month"] = pd.to_datetime(train["startdate"]).dt.month
-    train["_year"] = pd.to_datetime(train["startdate"]).dt.year
-
-    pred = pred_df[_BASELINE_META_COLS].copy()
-    pred["_month"] = pd.to_datetime(pred["startdate"]).dt.month
-
-    # For each DFU+month, get the most recent year value
-    train_sorted = train.sort_values("_year", ascending=False)
-    latest_by_dfu_month = (
-        train_sorted.groupby(dfu_key + ["_month"])["qty"]
-        .first()
-        .reset_index()
-        .rename(columns={"qty": "_seasonal_qty"})
-    )
-
-    # Per-DFU overall mean as fallback
-    dfu_means = (
-        train.groupby(dfu_key)["qty"].mean().reset_index().rename(columns={"qty": "_dfu_mean"})
-    )
-
-    merged = pred.merge(latest_by_dfu_month, on=dfu_key + ["_month"], how="left")
-    merged = merged.merge(dfu_means, on=dfu_key, how="left")
-
-    merged[FORECAST_QTY_COL] = merged["_seasonal_qty"].fillna(merged["_dfu_mean"]).fillna(0.0)
-    merged[FORECAST_QTY_COL] = np.maximum(merged[FORECAST_QTY_COL].values, 0.0)
-
-    result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
-    return result
-
-
-def _predict_rolling_mean(
-    train_df: pd.DataFrame,
-    pred_df: pd.DataFrame,
-    params: dict | None = None,
-) -> pd.DataFrame:
-    """Rolling mean: predict each DFU-month using the average of the last N months.
-
-    The window size is controlled by params["window"] (default 6).
-    For each (item_id, customer_group, loc), computes the mean of the last
-    window months of actual demand from training data.  If fewer than
-    window months are available, uses whatever history exists.
-    If the DFU has no training data at all, predict 0.
-    """
-    window = (params or {}).get("window", 6)
-    result = pred_df[_BASELINE_META_COLS].copy()
-
-    if len(train_df) == 0 or "qty" not in train_df.columns:
-        result[FORECAST_QTY_COL] = 0.0
-        return result
-
-    dfu_key = ["item_id", "customer_group", "loc"]
-    train = train_df.copy()
-    train["_startdate_ts"] = pd.to_datetime(train["startdate"])
-
-    train_sorted = train.sort_values("_startdate_ts", ascending=False)
-    rolling_means = (
-        train_sorted.groupby(dfu_key)
-        .apply(lambda g: g.head(window)["qty"].mean(), include_groups=False)
-        .reset_index()
-        .rename(columns={0: "_rolling_mean"})
-    )
-
-    pred = pred_df[_BASELINE_META_COLS].copy()
-    merged = pred.merge(rolling_means, on=dfu_key, how="left")
-    merged["_rolling_mean"] = merged["_rolling_mean"].fillna(0.0)
-    merged[FORECAST_QTY_COL] = np.maximum(merged["_rolling_mean"].values, 0.0)
-
-    result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
-    return result
-
-
-def _predict_rolling_median(
-    train_df: pd.DataFrame,
-    pred_df: pd.DataFrame,
-    params: dict | None = None,
-) -> pd.DataFrame:
-    """Rolling median: predict each DFU-month using the median of the last N months.
-
-    The outlier-robust sibling of :func:`_predict_rolling_mean`: a single spike
-    month or a stale-high tail moves the median far less than the mean, so this
-    baseline tracks the typical level rather than chasing extremes.
-
-    The window size is controlled by params["window"] (default 6).
-    For each (item_id, customer_group, loc), computes the median of the last
-    window months of actual demand from training data.  If fewer than
-    window months are available, uses whatever history exists.
-    If the DFU has no training data at all, predict 0.
-    """
-    window = (params or {}).get("window", 6)
-    result = pred_df[_BASELINE_META_COLS].copy()
-
-    if len(train_df) == 0 or "qty" not in train_df.columns:
-        result[FORECAST_QTY_COL] = 0.0
-        return result
-
-    dfu_key = ["item_id", "customer_group", "loc"]
-    train = train_df.copy()
-    train["_startdate_ts"] = pd.to_datetime(train["startdate"])
-
-    train_sorted = train.sort_values("_startdate_ts", ascending=False)
-    rolling_medians = (
-        train_sorted.groupby(dfu_key)
-        .apply(lambda g: g.head(window)["qty"].median(), include_groups=False)
-        .reset_index()
-        .rename(columns={0: "_rolling_median"})
-    )
-
-    pred = pred_df[_BASELINE_META_COLS].copy()
-    merged = pred.merge(rolling_medians, on=dfu_key, how="left")
-    merged["_rolling_median"] = merged["_rolling_median"].fillna(0.0)
-    merged[FORECAST_QTY_COL] = np.maximum(merged["_rolling_median"].values, 0.0)
-
-    result[FORECAST_QTY_COL] = merged[FORECAST_QTY_COL].values
-    return result
-
-
-# Map string references to actual functions (used by baseline registry entries)
-_BASELINE_PREDICT_FNS: dict[str, Callable] = {
-    "_predict_seasonal_naive": _predict_seasonal_naive,
-    "_predict_rolling_mean": _predict_rolling_mean,
-    "_predict_rolling_median": _predict_rolling_median,
-}
-
-
-class _RollingMeanModel:
-    """Placeholder model for intermittent clusters routed to rolling-mean baseline.
-
-    Stores the rolling mean per DFU so ``predict()`` can be called like a tree
-    model.  SHAP extraction will fail on this (no tree structure), which is
-    fine — the existing exception handler in shap_selector keeps all features.
-
-    The ``_sku_cks`` attribute is set by the caller after groupby so that
-    ``predict()`` can map feature-only DataFrames back to DFU means.
-    """
-
-    def __init__(self, rolling_means: dict[str, float]):
-        self._means = rolling_means
-        self._sku_cks: list[str] | None = None
-
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        if "sku_ck" in X.columns:
-            return np.maximum(X["sku_ck"].map(self._means).fillna(0.0).values, 0.0)
-        # In recursive mode, X only has feature_cols (no sku_ck).
-        # Use the pre-set _sku_cks from the caller.
-        if self._sku_cks is not None and len(self._sku_cks) == len(X):
-            vals = [self._means.get(sk, 0.0) for sk in self._sku_cks]
-            return np.maximum(np.array(vals), 0.0)
-        return np.zeros(len(X))
-
-
-class _SeasonalNaiveModel:
-    """Seasonal naive model for intermittent clusters.
-
-    Stores per-DFU per-calendar-month predictions using the most recent
-    same-month value from history.  Falls back to a per-DFU rolling mean
-    when no seasonal data exists for a given (sku, month) combination.
-
-    Attributes:
-        _seasonal_map: ``{(sku_ck, month_number): prediction}`` lookup.
-        _fallback_means: ``{sku_ck: rolling_mean}`` for DFUs without
-            seasonal history for a given month.
-        _sku_cks: Set by ``_predict_single_month`` before each call —
-            maps rows back to DFU keys when ``sku_ck`` is not in columns.
-        _months: Set by ``_predict_single_month`` before each call —
-            calendar month numbers corresponding to each row.
-    """
-
-    def __init__(
-        self,
-        seasonal_map: dict[tuple[str, int], float],
-        fallback_means: dict[str, float],
-    ):
-        self._seasonal_map = seasonal_map
-        self._fallback_means = fallback_means
-        self._sku_cks: list[str] | None = None
-        self._months: list[int] | None = None
-
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        # Determine sku keys and month numbers for each row
-        if "sku_ck" in X.columns and "startdate" in X.columns:
-            skus = X["sku_ck"].tolist()
-            months = pd.to_datetime(X["startdate"]).dt.month.tolist()
-        elif self._sku_cks is not None and self._months is not None:
-            skus = self._sku_cks
-            months = self._months
-        elif self._sku_cks is not None:
-            # No month info — fall back to rolling mean for all rows
-            vals = [self._fallback_means.get(sk, 0.0) for sk in self._sku_cks]
-            return np.maximum(np.array(vals), 0.0)
-        else:
-            return np.zeros(len(X))
-
-        vals = []
-        for sku, mo in zip(skus, months):
-            key = (sku, mo)
-            if key in self._seasonal_map:
-                vals.append(self._seasonal_map[key])
-            else:
-                vals.append(self._fallback_means.get(sku, 0.0))
-        return np.maximum(np.array(vals), 0.0)
 
 
 def _import_model_class(dotted_path: str) -> type:
@@ -651,73 +330,6 @@ def _train_single_cluster(
             fit_params.get("objective", fit_params.get("loss_function", "default")),
         )
 
-    # ── Route intermittent clusters to seasonal naive baseline ──────────
-    # Tree models consistently produce 0% accuracy on 80-98% zero-demand clusters.
-    # Seasonal naive captures monthly demand patterns (zero vs non-zero months)
-    # far better than a flat rolling mean which predicts the same constant
-    # value for every month, collapsing accuracy during recursive prediction.
-    baseline_intermittent = backtest_cfg.get("baseline_intermittent", True)
-    if baseline_intermittent and demand_pattern == "intermittent":
-        window = backtest_cfg.get("baseline_intermittent_window", 12)
-        # Use seasonal naive for the initial (non-recursive) prediction
-        result_df = _predict_seasonal_naive(train_c, pred_c)
-
-        # Build per-DFU per-calendar-month seasonal map for recursive steps
-        dfu_key = ["item_id", "customer_group", "loc"]
-        seasonal_map: dict[tuple[str, int], float] = {}
-        rm_by_sku: dict[str, float] = {}
-        if "sku_ck" in train_c.columns:
-            train_with_month = train_c.copy()
-            train_with_month["_month"] = pd.to_datetime(train_with_month["startdate"]).dt.month
-            train_with_month["_year"] = pd.to_datetime(train_with_month["startdate"]).dt.year
-            # For each DFU + calendar month, take the most recent year value
-            train_sorted_by_year = train_with_month.sort_values("_year", ascending=False)
-            for (sku_ck,), grp in train_sorted_by_year.groupby(["sku_ck"]):
-                for _, row in grp.iterrows():
-                    month_num = int(row["_month"])
-                    key = (sku_ck, month_num)
-                    if key not in seasonal_map:
-                        seasonal_map[key] = max(float(row["qty"]), 0.0)
-            # Per-DFU rolling mean as fallback for months without seasonal data
-            train_sorted = train_c.sort_values("startdate", ascending=False)
-            rm = (
-                train_sorted.groupby(dfu_key)
-                .apply(lambda g: g.head(window)["qty"].mean(), include_groups=False)
-                .reset_index()
-                .rename(columns={0: "_rm"})
-            )
-            sku_map = train_c.drop_duplicates(subset="sku_ck")[["sku_ck"] + dfu_key]
-            rm_merged = sku_map.merge(rm, on=dfu_key, how="left")
-            rm_by_sku = dict(zip(rm_merged["sku_ck"], rm_merged["_rm"].fillna(0.0)))
-        model = _SeasonalNaiveModel(seasonal_map, rm_by_sku)
-        val_wape = round(
-            float(
-                100.0
-                * abs(result_df[FORECAST_QTY_COL].sum() - y_train.sum())
-                / max(abs(y_train.sum()), 1.0)
-            ),
-            2,
-        )
-        val_accuracy = round(100.0 - val_wape, 2)
-        logger.info(
-            "Cluster %d/%d '%s': routed to seasonal_naive baseline (zero_pct=%.2f), "
-            "val_accuracy=%.1f%%, %s predictions (%.1fs)",
-            ci,
-            n_clusters,
-            cluster_label,
-            cluster_stats["zero_demand_pct"],
-            val_accuracy,
-            f"{len(pred_c):,}",
-            time.time() - t0,
-        )
-        meta = {
-            "val_wape": val_wape,
-            "train_rows": len(train_c),
-            "cluster_profile": "seasonal_naive_baseline",
-            "demand_pattern": demand_pattern,
-            "cluster_stats": cluster_stats,
-        }
-        return cluster_label, result_df, model, meta
 
     # In parallel mode, cap per-model thread count to avoid oversubscription.
     # With 8 workers each requesting all cores, thread contention degrades perf.
@@ -1147,7 +759,7 @@ def persist_cluster_models(
         prod_config: Loaded production_forecast section from forecast_pipeline_config.yaml (optional).
         model_meta: {cluster_label: {val_wape, train_rows}} from training functions.
         feature_importance_fn: Callable that extracts importance array from a model.
-        model_name: One of 'lgbm', 'catboost', 'xgboost' (for get_best_iteration).
+        model_name: LightGBM backend name used by ``get_best_iteration``.
     """
     if not models:
         return
@@ -1305,15 +917,10 @@ def main() -> None:
     model_name = args.model
     registry = MODEL_REGISTRY[model_name]
     label = model_name.upper()
-    is_baseline = registry.get("baseline", False)
 
     with profiled_section("load_config"):
-        # Baseline models don't need model class or library imports
-        model_class = None
-        lib_module = None
-        if not is_baseline:
-            model_class = _import_model_class(registry["class"])
-            lib_module = importlib.import_module(registry["class"].rsplit(".", 1)[0])
+        model_class = _import_model_class(registry["class"])
+        lib_module = importlib.import_module(registry["class"].rsplit(".", 1)[0])
 
         # Load config: prefer CLI --config path, else forecast_pipeline_config.yaml.
         # When a temp config is passed via --config (from tuning), it uses the
@@ -1441,49 +1048,35 @@ def main() -> None:
     # Registry captures model metadata across timeframes for use in _persistence_fn.
     _model_meta_registry: dict[str, dict] = {}
 
-    if is_baseline:
-        # Baseline models use simple statistical predict functions — no model fitting
-        _baseline_predict_fn = _BASELINE_PREDICT_FNS[registry["predict_fn"]]
-        default_model_id = model_name
-
-        def train_fn(train_df, predict_df, feature_cols, cat_cols, params):
-            result = _baseline_predict_fn(train_df, predict_df, params)
-            return result, {}
-
-        logger.info("Baseline model: %s (no gradient boosting)", label)
+    iter_param = registry["iter_param"]
+    _model_kwargs: dict[str, Any] = {
+        "model_name": model_name,
+        "registry": registry,
+        "model_class": model_class,
+        "lib_module": lib_module,
+    }
+    if cluster_strategy == "global":
+        _inner_train_fn = train_and_predict_global
+        default_model_id = f"{model_name}_global"
     else:
-        iter_param = registry["iter_param"]
+        _inner_train_fn = train_and_predict_per_cluster
+        default_model_id = f"{model_name}_cluster"
+        _model_kwargs["parallel"] = args.parallel
+        _model_kwargs["max_workers"] = args.workers
+        if args.parallel:
+            logger.info("Parallel cluster training enabled (max_workers=%d)", args.workers)
 
-        # Build partial train functions with model-specific kwargs bound
-        _model_kwargs: dict[str, Any] = {
-            "model_name": model_name,
-            "registry": registry,
-            "model_class": model_class,
-            "lib_module": lib_module,
-        }
-
-        if cluster_strategy == "global":
-            _inner_train_fn = train_and_predict_global
-            default_model_id = f"{model_name}_global"
-        else:
-            _inner_train_fn = train_and_predict_per_cluster
-            default_model_id = f"{model_name}_cluster"
-            _model_kwargs["parallel"] = args.parallel
-            _model_kwargs["max_workers"] = args.workers
-            if args.parallel:
-                logger.info("Parallel cluster training enabled (max_workers=%d)", args.workers)
-
-        def train_fn(train_df, predict_df, feature_cols, cat_cols, params):
-            result, models, meta = _inner_train_fn(
-                train_df,
-                predict_df,
-                feature_cols,
-                cat_cols,
-                params,
-                **_model_kwargs,
-            )
-            _model_meta_registry.update(meta)
-            return result, models
+    def train_fn(train_df, predict_df, feature_cols, cat_cols, params):
+        result, models, meta = _inner_train_fn(
+            train_df,
+            predict_df,
+            feature_cols,
+            cat_cols,
+            params,
+            **_model_kwargs,
+        )
+        _model_meta_registry.update(meta)
+        return result, models
 
     model_id = args.model_id or algo.get("model_id", default_model_id)
     n_timeframes = args.n_timeframes or backtest_cfg.get("n_timeframes", 10)
@@ -1493,32 +1086,6 @@ def main() -> None:
     # Build model-specific default params from config
     model_params = registry["default_params"](algo)
 
-    if is_baseline:
-        # Baseline models: no GPU, no SHAP, no tuning, no persistence, single seed
-        logger.info("%s config: model_id=%s, n_timeframes=%d", label, model_id, n_timeframes)
-
-        with profiled_section("run_backtest"):
-            run_tree_backtest(
-                model_id=model_id,
-                n_timeframes=n_timeframes,
-                output_dir=output_dir,
-                model_params=model_params,
-                model_params_key=registry["model_params_key"],
-                model_type_tag=registry["model_type_tag"],
-                train_fn_per_cluster=train_fn,
-                extra_metadata={"params_source": "baseline"},
-                cat_dtype=registry["cat_dtype"],
-                inline_tuner_fn=None,
-                feature_selector_fn=None,
-                recursive=False,
-                model_persistence_fn=None,
-                algo_config=algo,
-                embargo_months=embargo_months,
-                resume=args.resume,
-            )
-        return
-
-    # ── Tree model path (lgbm, catboost, xgboost) ────────────────────────────
     recursive = algo.get("recursive", False)
     shap_select = algo.get("shap_select", False)
     shap_threshold = algo.get("shap_threshold", 0.95)
@@ -1569,8 +1136,7 @@ def main() -> None:
 
     # Resolve n_seeds: CLI > config > default (1)
     n_seeds = args.n_seeds or backtest_cfg.get("n_seeds", 1)
-    # The random state/seed parameter name differs by model library
-    _seed_param_key = "random_seed" if model_name == "catboost" else "random_state"
+    _seed_param_key = "random_state"
 
     params_source = "config_defaults"
     if params_file:

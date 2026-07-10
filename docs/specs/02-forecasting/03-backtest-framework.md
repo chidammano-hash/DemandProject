@@ -142,7 +142,6 @@ Cluster "high_volume_stable"   → tuned for smooth, predictable demand
 ...
 ```
 
-Small clusters (too few rows) fall back to **seasonal naive** (same month last year). Intermittent clusters (>70% zero-demand rows) are routed to **rolling mean** baseline instead of tree models — tree models cannot meaningfully learn from data that is 87-98% zeros.
 
 ---
 
@@ -265,8 +264,6 @@ No new endpoints. Existing multi-model endpoints handle backtest data automatica
 | Target | Description |
 |--------|-------------|
 | `make backtest-lgbm` | Run LightGBM backtest (10 timeframes) |
-| `make backtest-catboost` | Run CatBoost backtest |
-| `make backtest-xgboost` | Run XGBoost backtest |
 | `make backtest-all` | Run all three sequentially |
 | `make backtest-all-parallel` | Run all three in parallel |
 | `make backtest-load MODEL=lgbm_cluster` | Load one model's predictions into Postgres |
@@ -288,7 +285,6 @@ The model registry provides a centralized abstraction layer for all tree-based m
 
 ### Canonical Parameter Mapping
 
-| Canonical | LGBM | CatBoost | XGBoost |
 |-----------|------|----------|---------|
 | `estimators` | `n_estimators` | `iterations` | `n_estimators` |
 | `max_depth` | `max_depth` | `depth` | `max_depth` |
@@ -300,7 +296,6 @@ The model registry provides a centralized abstraction layer for all tree-based m
 ### Unified Functions
 
 - **`fit_model()`** — single fit function replacing 3× duplicate if/elif/else blocks in `_train_single_cluster` and `train_and_predict_global`
-- **`get_best_iteration()`** — abstracts `best_iteration_` (LGBM/CatBoost) vs `best_iteration` (XGBoost)
 - **`compute_early_stop_patience()`** — standardized 3% of max iterations (floor 10) for all models
 - **`to_native_params()` / `from_native_params()`** — bidirectional canonical ↔ native translation
 
@@ -308,8 +303,6 @@ The model registry provides a centralized abstraction layer for all tree-based m
 
 All models use `compute_early_stop_patience(max_iterations, pct=0.03)`:
 - LGBM 1500 iterations → 45 rounds patience
-- CatBoost 3000 iterations → 90 rounds patience
-- XGBoost 500 iterations → 15 rounds patience
 
 ## Configuration
 
@@ -320,8 +313,6 @@ Key backtest-level settings:
 - `shap_retrain_threshold: 0.50` — retrain safety check threshold (effectively disabled; original model consistently outperforms)
 - `recursive_noise_pct: 0.03` — Gaussian noise for recursive training (reduced from 0.08)
 - `recursive_lag_smooth: 0.15` — exponential smoothing for recursive lags from step 3+
-- `baseline_intermittent: true` — route intermittent clusters to rolling mean baseline
-- `intermittent_threshold: 0.7` — zero-demand percentage cutoff for intermittent routing (>70% zero rows → rolling-mean baseline)
 - `embargo_months: 1` — gap between each timeframe's train end and its predict window
 
 ### Model persistence under embargo
@@ -336,11 +327,8 @@ The backtest framework supports the full algorithm portfolio defined in `config/
 
 | Category | Models | Make Target |
 |----------|--------|-------------|
-| Tree models | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` | `make backtest-lgbm`, `backtest-catboost`, `backtest-xgboost` |
-| Statistical baselines | `seasonal_naive`, `rolling_mean` | `make backtest-seasonal-naive`, `backtest-rolling-mean` |
 | Decomposition | `mstl` (Multiple Seasonal-Trend via LOESS) | `make backtest-mstl` |
 | Deep learning | `nhits` (N-HiTS), `nbeats` (N-BEATS) | `make backtest-nhits`, `backtest-nbeats` |
-| Foundation models | `chronos2_enriched` (Chronos 2 Enriched - the only Chronos variant remaining; T5, Bolt, and non-enriched Chronos 2 were removed in commit `5ab8d593`) | `make backtest-chronos2e` |
 
 All models write to the same `data/backtest/<model_id>/` directory structure and are loaded through the same dual-path loader into `backtest_lag_archive` (all lags) and `fact_external_forecast_monthly` (execution lag only).
 
@@ -351,7 +339,6 @@ All models write to the same `data/backtest/<model_id>/` directory structure and
 
 ## See Also
 
-- [Tree Models](./04-tree-models.md) -- LightGBM, CatBoost, XGBoost implementations
 - [Advanced Backtest](./05-advanced-backtest.md) -- tuning, SHAP, and recursive extensions
 - [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- config file that controls backtest behavior
 - [Chronos Foundation Models](./18-chronos-foundation-models.md) -- the remaining Chronos 2 Enriched foundation model

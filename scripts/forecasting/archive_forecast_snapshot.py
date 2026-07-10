@@ -12,7 +12,10 @@ from common.core.db import get_db_params
 from common.core.mv_refresh import refresh_for_tables
 from common.core.planning_date import get_planning_date
 from common.services.cache import get_cache
-from common.services.forecast_snapshot import missing_required_lags
+from common.services.forecast_snapshot import (
+    archive_snapshot_in_transaction,
+    missing_required_lags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +31,37 @@ def _parse_record_month(value: str | None) -> date | None:
 
 
 def _default_record_month(cur: psycopg.Cursor) -> date | None:
-    cur.execute("SELECT MAX(forecast_month_generated) FROM fact_production_forecast_staging")
-    value = cur.fetchone()[0]
-    return value.replace(day=1) if value else None
+    cur.execute(
+        """SELECT plan_version
+           FROM model_promotion_log
+           WHERE is_active = TRUE
+           ORDER BY promoted_at DESC, id DESC
+           LIMIT 1"""
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    try:
+        return date.fromisoformat(f"{row[0]}-01")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("active release does not have a calendar plan version") from exc
+
+
+def _active_promotion(cur: psycopg.Cursor, record_month: date) -> tuple[int, Any]:
+    cur.execute(
+        """SELECT id, production_run_id
+           FROM model_promotion_log
+           WHERE is_active = TRUE
+             AND plan_version = TO_CHAR(%s::date, 'YYYY-MM')
+           ORDER BY promoted_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE""",
+        (record_month,),
+    )
+    row = cur.fetchone()
+    if row is None or row[1] is None:
+        raise ValueError("active release has no verifiable production run lineage")
+    return int(row[0]), row[1]
 
 
 def _roster_models(cur: psycopg.Cursor, record_month: date) -> list[dict[str, Any]]:
@@ -58,67 +89,11 @@ def _roster_models(cur: psycopg.Cursor, record_month: date) -> list[dict[str, An
     return rows
 
 
-def _upsert_suffix(overwrite: bool) -> str:
-    if not overwrite:
-        return "ON CONFLICT (record_month, model_id, item_id, loc, forecast_month) DO NOTHING"
-    return """ON CONFLICT (record_month, model_id, item_id, loc, forecast_month) DO UPDATE SET
-                horizon_months = EXCLUDED.horizon_months,
-                forecast_qty = EXCLUDED.forecast_qty,
-                forecast_qty_lower = EXCLUDED.forecast_qty_lower,
-                forecast_qty_upper = EXCLUDED.forecast_qty_upper,
-                source_model_id = EXCLUDED.source_model_id,
-                cluster_id = EXCLUDED.cluster_id,
-                plan_version = EXCLUDED.plan_version,
-                run_id = EXCLUDED.run_id,
-                generated_at = EXCLUDED.generated_at,
-                archived_at = EXCLUDED.archived_at"""
-
-
-def _archive_contenders(cur: psycopg.Cursor, record_month: date, overwrite: bool) -> int:
-    sql = """INSERT INTO fact_forecast_snapshot
-                 (record_month, model_id, item_id, loc, forecast_month, horizon_months,
-                  forecast_qty, forecast_qty_lower, forecast_qty_upper, source_model_id,
-                  cluster_id, plan_version, run_id, generated_at)
-             SELECT r.record_month, s.model_id, s.item_id, s.loc, s.forecast_month,
-                    s.horizon_months, s.forecast_qty, s.forecast_qty_lower,
-                    s.forecast_qty_upper, NULL, s.cluster_id, NULL, s.run_id, s.generated_at
-             FROM fact_production_forecast_staging s
-             JOIN forecast_snapshot_roster r
-               ON r.record_month = %s
-              AND r.snapshot_role = 'contender'
-              AND r.model_id = s.model_id
-              AND r.generation_run_id = s.run_id
-             WHERE s.forecast_month_generated = %s
-               AND s.forecast_month >= %s
-               AND s.forecast_month < %s + INTERVAL '6 months'
-             """ + _upsert_suffix(overwrite)
-    cur.execute(sql, (record_month, record_month, record_month, record_month))
-    return cur.rowcount
-
-
-def _archive_champion(cur: psycopg.Cursor, record_month: date, overwrite: bool) -> int:
-    sql = """INSERT INTO fact_forecast_snapshot
-                 (record_month, model_id, item_id, loc, forecast_month, horizon_months,
-                  forecast_qty, forecast_qty_lower, forecast_qty_upper, source_model_id,
-                  cluster_id, plan_version, run_id, generated_at)
-             SELECT r.record_month, 'champion', p.item_id, p.loc, p.forecast_month,
-                    p.horizon_months, p.forecast_qty, p.forecast_qty_lower,
-                    p.forecast_qty_upper, p.source_model_id, p.cluster_id,
-                    p.plan_version, p.run_id, p.generated_at
-             FROM fact_production_forecast p
-             JOIN forecast_snapshot_roster r
-               ON r.record_month = %s
-              AND r.model_id = 'champion'
-             WHERE p.model_id = 'champion'
-               AND p.plan_version = TO_CHAR(%s::date, 'YYYY-MM')
-               AND p.forecast_month >= %s
-               AND p.forecast_month < %s + INTERVAL '6 months'
-             """ + _upsert_suffix(overwrite)
-    cur.execute(sql, (record_month, record_month, record_month, record_month))
-    return cur.rowcount
-
-
-def _dry_run_counts(cur: psycopg.Cursor, record_month: date) -> dict[str, dict[int, int]]:
+def _dry_run_counts(
+    cur: psycopg.Cursor,
+    record_month: date,
+    production_run_id: Any,
+) -> dict[str, dict[int, int]]:
     """Return source counts for only the frozen roster models."""
     counts: dict[str, dict[int, int]] = {}
     cur.execute(
@@ -133,6 +108,8 @@ def _dry_run_counts(cur: psycopg.Cursor, record_month: date) -> dict[str, dict[i
             AND r.model_id = s.model_id
             AND r.generation_run_id = s.run_id
            WHERE s.forecast_month_generated = %s
+             AND s.generation_purpose = 'snapshot_contender'
+             AND s.candidate_model_id = r.model_id
              AND s.forecast_month >= %s
              AND s.forecast_month < %s + INTERVAL '6 months'
            GROUP BY s.model_id, 2""",
@@ -148,10 +125,18 @@ def _dry_run_counts(cur: psycopg.Cursor, record_month: date) -> dict[str, dict[i
            FROM fact_production_forecast
            WHERE model_id = 'champion'
              AND plan_version = TO_CHAR(%s::date, 'YYYY-MM')
+             AND run_id = %s::uuid
              AND forecast_month >= %s
              AND forecast_month < %s + INTERVAL '6 months'
            GROUP BY 1""",
-        (record_month, record_month, record_month, record_month, record_month),
+        (
+            record_month,
+            record_month,
+            record_month,
+            str(production_run_id),
+            record_month,
+            record_month,
+        ),
     )
     counts["champion"] = {int(lag): int(row_count) for lag, row_count in cur.fetchall()}
     missing = missing_required_lags(counts)
@@ -190,31 +175,42 @@ def archive_snapshot(record_month: date | None = None, *, dry_run: bool = False,
         if record_month > get_planning_date().replace(day=1):
             raise ValueError("record month cannot be after the planning month")
         roster = _roster_models(cur, record_month)
+        promotion_id, production_run_id = _active_promotion(cur, record_month)
         if dry_run:
-            return _dry_run_counts(cur, record_month)
+            return _dry_run_counts(cur, record_month, production_run_id)
         if overwrite:
             logger.warning(
-                "Overwriting the immutable forecast snapshot for %s using its existing frozen roster",
+                "Overwriting forecast snapshot values for %s from the same frozen roster",
                 record_month,
             )
-        contender_rows = _archive_contenders(cur, record_month, overwrite)
-        champion_rows = _archive_champion(cur, record_month, overwrite)
+        checksum = archive_snapshot_in_transaction(
+            cur,
+            record_month=record_month,
+            production_run_id=production_run_id,
+            source_promotion_id=promotion_id,
+            overwrite=overwrite,
+        )
+        cur.execute(
+            """UPDATE model_promotion_log
+               SET archive_checksum = %s, archived_at = NOW()
+               WHERE id = %s""",
+            (checksum, promotion_id),
+        )
         counts = _validate_archive(cur, record_month, roster)
         conn.commit()
     refresh_for_tables(["fact_forecast_snapshot"])
     get_cache().invalidate("ds:fva_snapshot*")
     logger.info(
-        "Archived forecast snapshot for %s (%d contender rows, %d champion rows)",
+        "Archived forecast snapshot for %s with checksum %s",
         record_month,
-        contender_rows,
-        champion_rows,
+        checksum,
     )
     return counts
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Archive champion plus three frozen live forecast contenders")
-    parser.add_argument("--record-month", default=None, help="Planning month (YYYY-MM); defaults to staging maximum")
+    parser.add_argument("--record-month", default=None, help="Planning month (YYYY-MM); defaults to active promoted release")
     parser.add_argument("--dry-run", action="store_true", help="Report source counts without writing")
     parser.add_argument("--overwrite", action="store_true", help="Re-snapshot forecast values using the same frozen roster")
     args = parser.parse_args()

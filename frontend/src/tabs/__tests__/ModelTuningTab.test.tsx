@@ -82,7 +82,15 @@ vi.mock("recharts");
 // Mock @/api/queries — ModelTuningTab imports STALE, TuningRun, ModelType
 // ---------------------------------------------------------------------------
 vi.mock("@/api/queries", () => ({
-  STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
+  STALE: {
+    FOREVER: Infinity,
+    TEN_MIN: 600000,
+    FIVE_MIN: 300000,
+    TWO_MIN: 120000,
+    ONE_MIN: 60000,
+    THIRTY_SEC: 30000,
+    NONE: 0,
+  },
   STALE_INSIGHTS: 300000,
   insightKeys: { all: () => ["insights"] },
   queryKeys: {},
@@ -113,9 +121,7 @@ vi.mock("@/hooks/useChartColors", () => ({
 // Mock @/components/shared-tuning-utils
 // ---------------------------------------------------------------------------
 vi.mock("@/components/shared-tuning-utils", () => ({
-  StatusBadge: ({ status }: { status: string }) => (
-    <span data-testid="status-badge">{status}</span>
-  ),
+  StatusBadge: ({ status }: { status: string }) => <span data-testid="status-badge">{status}</span>,
   formatDuration: (start: string | null, end: string | null) =>
     start && end ? "1h 0m" : start ? "running..." : "--",
   timeAgo: (ts: string | null) => (ts ? "2d ago" : "--"),
@@ -142,16 +148,14 @@ vi.mock("../model-tuning/EnhancedComparisonPanel", () => ({
   EnhancedComparisonPanel: () => <div>EnhancedComparisonPanel</div>,
 }));
 vi.mock("../model-tuning/ExperimentBuilder", () => ({
-  ExperimentBuilder: ({ open }: { open: boolean }) =>
-    open ? <div>ExperimentBuilder</div> : null,
+  ExperimentBuilder: ({ open }: { open: boolean }) => (open ? <div>ExperimentBuilder</div> : null),
 }));
 vi.mock("../model-tuning/EnhancedPromoteModal", () => ({
   EnhancedPromoteModal: ({ open }: { open: boolean }) =>
     open ? <div>EnhancedPromoteModal</div> : null,
 }));
 vi.mock("../model-tuning/LogViewer", () => ({
-  LogViewer: ({ open }: { open: boolean }) =>
-    open ? <div>LogViewer</div> : null,
+  LogViewer: ({ open }: { open: boolean }) => (open ? <div>LogViewer</div> : null),
 }));
 vi.mock("../model-tuning/BacktestDetailPanel", () => ({
   BacktestDetailPanel: ({ modelId }: { modelId: string }) => (
@@ -159,7 +163,9 @@ vi.mock("../model-tuning/BacktestDetailPanel", () => ({
   ),
 }));
 vi.mock("../clusters/ClusterExperimentsPanel", () => ({
-  ClusterExperimentsPanel: () => <div data-testid="cluster-experiments-panel">ClusterExperimentsPanel</div>,
+  ClusterExperimentsPanel: () => (
+    <div data-testid="cluster-experiments-panel">ClusterExperimentsPanel</div>
+  ),
 }));
 vi.mock("../champion/ChampionExperimentsPanel", () => ({
   ChampionExperimentsPanel: () => <div data-testid="champion-panel">ChampionExperimentsPanel</div>,
@@ -176,7 +182,11 @@ describe("ModelTuningTab", () => {
 
   it("renders pipeline stage tabs", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     await waitFor(() => {
       expect(screen.getByText("Model Experimentation Studio")).toBeInTheDocument();
     });
@@ -188,21 +198,28 @@ describe("ModelTuningTab", () => {
 
   it("renders all model cards on backtest stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     await waitFor(() => {
       // All models appear as cards on the backtest stage
       expect(screen.getAllByText("LightGBM").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText("CatBoost").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText("XGBoost").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText(/Chronos T5/)).toBeInTheDocument();
-      expect(screen.getByText(/Chronos Bolt/)).toBeInTheDocument();
+      expect(screen.getByText(/N-HiTS/)).toBeInTheDocument();
+      expect(screen.getByText(/N-BEATS/)).toBeInTheDocument();
+      expect(screen.getByText(/Chronos 2E/)).toBeInTheDocument();
       expect(screen.getByText(/MSTL/)).toBeInTheDocument();
     });
   });
 
   it("switches to Champion panel on stage click", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     await waitFor(() => {
       expect(screen.getByText("Champion")).toBeInTheDocument();
     });
@@ -214,7 +231,11 @@ describe("ModelTuningTab", () => {
 
   it("switches to Clustering panel on stage click", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     await waitFor(() => {
       expect(screen.getByText("Clustering")).toBeInTheDocument();
     });
@@ -226,27 +247,35 @@ describe("ModelTuningTab", () => {
 
   it("selects model from grid and shows experiments on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     await waitFor(() => {
       expect(screen.getByText("Tune")).toBeInTheDocument();
     });
     // Switch to Tune stage first
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
-      expect(screen.getByText("CatBoost")).toBeInTheDocument();
+      expect(screen.getAllByText("LightGBM").length).toBeGreaterThanOrEqual(1);
     });
-    fireEvent.click(screen.getByText("CatBoost"));
+    fireEvent.click(screen.getAllByText("LightGBM")[0]);
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/model-tuning/catboost/experiments"),
-        expect.anything(),
+        expect.stringContaining("/model-tuning/lgbm/experiments"),
+        expect.anything()
       );
     });
   });
 
   it("renders KPI summary cards on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("Best Accuracy")).toBeInTheDocument();
@@ -258,7 +287,11 @@ describe("ModelTuningTab", () => {
 
   it("renders run history table on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("Run History")).toBeInTheDocument();
@@ -272,7 +305,11 @@ describe("ModelTuningTab", () => {
 
   it("selects baseline on first row click in tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("production_baseline")).toBeInTheDocument();
@@ -285,7 +322,11 @@ describe("ModelTuningTab", () => {
 
   it("selects candidate on second row click in tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("production_baseline")).toBeInTheDocument();
@@ -302,7 +343,11 @@ describe("ModelTuningTab", () => {
 
   it("opens AI Tuning Advisor on FAB click", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     await waitFor(() => {
       expect(screen.getByText("Model Experimentation Studio")).toBeInTheDocument();
     });
@@ -315,7 +360,11 @@ describe("ModelTuningTab", () => {
 
   it("shows status badges for runs on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getAllByText("completed").length).toBeGreaterThanOrEqual(1);
@@ -325,7 +374,11 @@ describe("ModelTuningTab", () => {
 
   it("shows promoted run label in table on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       // The promoted run label should be visible in the run history table
@@ -336,7 +389,11 @@ describe("ModelTuningTab", () => {
   it("shows empty state for zero runs on tune stage", async () => {
     mockFetchWith([], 0);
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText(/No experiments yet/i)).toBeInTheDocument();
@@ -345,7 +402,11 @@ describe("ModelTuningTab", () => {
 
   it("shows model detail sub-tabs for tunable models on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
     fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("Experiments")).toBeInTheDocument();

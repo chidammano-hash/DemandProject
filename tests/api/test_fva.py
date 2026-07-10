@@ -21,7 +21,7 @@ async def test_fva_waterfall():
         ("ceiling", 85.1, 1000),
     ]
     pool, conn, cursor = _make_pool(fetchall_return=rows)
-    cursor.fetchone.return_value = (60.2, 1000)  # seasonal naive row
+    cursor.fetchone.return_value = None
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -33,30 +33,25 @@ async def test_fva_waterfall():
     wf = data["waterfall"]
     stages = wf["stages"]
     assert [stage["stage_id"] for stage in stages] == [
-        "seasonal_naive",
         "external",
         "champion",
         "ai_adjusted",
         "planner_adjusted",
     ]
-    assert stages[0]["label"] == "Naive Seasonal"
-    assert stages[0]["accuracy_pct"] == 60.2
+    assert stages[0]["label"] == "External"
+    assert stages[0]["accuracy_pct"] == 72.5
     assert stages[0]["delta_vs_prev"] is None
-    assert stages[1]["accuracy_pct"] == 72.5
-    assert stages[1]["delta_vs_prev"] == 12.3
-    assert stages[2]["accuracy_pct"] == 78.3
-    assert stages[2]["delta_vs_prev"] == 5.8
+    assert stages[1]["accuracy_pct"] == 78.3
+    assert stages[1]["delta_vs_prev"] == 5.8
+    assert stages[2]["state"] == "planned"
     assert stages[3]["state"] == "planned"
-    assert stages[3]["accuracy_pct"] is None
-    assert stages[4]["state"] == "planned"
-    assert stages[4]["accuracy_pct"] is None
     assert wf["benchmark"]["stage_id"] == "ceiling"
     assert wf["benchmark"]["accuracy_pct"] == 85.1
     assert wf["external"]["model_id"] == "external"
     assert wf["external"]["accuracy_pct"] == 72.5
     assert wf["champion"]["accuracy_pct"] == 78.3
     assert wf["ceiling"]["accuracy_pct"] == 85.1
-    assert len(wf["models"]) == 4  # external, champion, ceiling, seasonal_naive
+    assert len(wf["models"]) == 3
     executed_sql = cursor.execute.call_args_list[0].args[0]
     assert "%s::date - (%s * interval '1 month')" in executed_sql
     assert "current_date" not in executed_sql
@@ -104,9 +99,8 @@ async def test_fva_waterfall_empty():
     assert resp.status_code == 200
     data = resp.json()
     stages = data["waterfall"]["stages"]
-    # F2.2: champion (index 2) degrades to "planned" (reserved), not "missing".
-    assert [stage["state"] for stage in stages[:2]] == ["missing", "missing"]
-    assert [stage["state"] for stage in stages[2:]] == ["planned", "planned", "planned"]
+    assert stages[0]["state"] == "missing"
+    assert [stage["state"] for stage in stages[1:]] == ["planned", "planned", "planned"]
     assert data["waterfall"]["benchmark"]["state"] == "missing"
     assert data["waterfall"]["external"] is None
     assert data["waterfall"]["champion"] is None
@@ -221,11 +215,7 @@ async def test_fva_waterfall_champion_from_backtest_experiment():
     # external from the rollup; no champion/ceiling there (production reality).
     rows = [("external", 71.5, 111146)]
     pool, conn, cursor = _make_pool(fetchall_return=rows)
-    # fetchone order after the AI-backtest removal: naive, then champion experiment.
-    cursor.fetchone.side_effect = [
-        (64.7, 111146),         # naive
-        (71.62, 75.63, 20517),  # champion_experiment_month aggregate: champ, ceiling, n
-    ]
+    cursor.fetchone.return_value = (71.62, 75.63, 20517)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -241,8 +231,7 @@ async def test_fva_waterfall_champion_from_backtest_experiment():
     # Ceiling benchmark populated from the same row.
     assert wf["benchmark"]["state"] == "actual"
     assert wf["benchmark"]["accuracy_pct"] == 75.63
-    # Champion is the 3rd execute (rollup, naive, champion) — month-windowed source.
-    champ_sql = cursor.execute.call_args_list[2].args[0]
+    champ_sql = cursor.execute.call_args_list[1].args[0]
     assert "champion_experiment_month" in champ_sql
     assert "is_promoted = TRUE" in champ_sql
     assert "month_start" in champ_sql

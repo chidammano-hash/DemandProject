@@ -9,13 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ShapTimeframeEntry } from "@/types/shap";
 
 // ---------------------------------------------------------------------------
@@ -70,10 +64,7 @@ export function ShapPanel({
   const hasMultipleClusters = shapClusters.length > 1 && shapClusters.some((c) => c !== "all");
   return (
     <Card className="mt-4 animate-fade-in">
-      <CardHeader
-        className="cursor-pointer select-none"
-        onClick={onToggleOpen}
-      >
+      <CardHeader className="cursor-pointer select-none" onClick={onToggleOpen}>
         <div className="flex items-center gap-2">
           {shapOpen ? (
             <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -83,10 +74,10 @@ export function ShapPanel({
           <CardTitle className="text-base">Feature Importance (SHAP)</CardTitle>
         </div>
         <CardDescription>
-          Per-timeframe SHAP feature importance from backtests. Shows which features drive forecast accuracy
-          for each model. Requires <code className="text-xs">shap_select: true</code> in{" "}
-          <code className="text-xs">config/algorithm_config.yaml</code> for each model (LGBM, CatBoost, XGBoost),
-          then re-run the backtest.
+          Per-timeframe SHAP feature importance from backtests. Shows which features drive forecast
+          accuracy for each model. Requires <code className="text-xs">shap_select: true</code> in{" "}
+          <code className="text-xs">config/forecasting/forecast_pipeline_config.yaml</code> for
+          LightGBM, then re-run the backtest.
         </CardDescription>
       </CardHeader>
       {shapOpen && (
@@ -96,12 +87,26 @@ export function ShapPanel({
               <p className="font-medium">No SHAP outputs found for any model.</p>
               <p>To generate SHAP feature importance data:</p>
               <ol className="list-decimal list-inside space-y-1 ml-2">
-                <li>Set <code className="text-xs bg-muted px-1 rounded">shap_select: true</code> under each algorithm in <code className="text-xs bg-muted px-1 rounded">config/algorithm_config.yaml</code></li>
-                <li>Re-run backtests: <code className="text-xs bg-muted px-1 rounded">make backtest-lgbm</code>, <code className="text-xs bg-muted px-1 rounded">make backtest-catboost</code>, <code className="text-xs bg-muted px-1 rounded">make backtest-xgboost</code></li>
-                <li>SHAP outputs will appear at <code className="text-xs bg-muted px-1 rounded">data/backtest/&lt;model&gt;/shap/</code></li>
+                <li>
+                  Set <code className="text-xs bg-muted px-1 rounded">shap_select: true</code> under
+                  each algorithm in{" "}
+                  <code className="text-xs bg-muted px-1 rounded">
+                    config/algorithm_config.yaml
+                  </code>
+                </li>
+                <li>
+                  Re-run the LightGBM backtest with{" "}
+                  <code className="text-xs bg-muted px-1 rounded">make backtest-lgbm</code>
+                </li>
+                <li>
+                  SHAP outputs will appear at{" "}
+                  <code className="text-xs bg-muted px-1 rounded">
+                    data/backtest/&lt;model&gt;/shap/
+                  </code>
+                </li>
               </ol>
               <p className="text-xs">
-                Note: CatBoost uses native SHAP (no <code>shap</code> library needed). LGBM and XGBoost require <code>shap&gt;=0.43.0</code>.
+                LightGBM SHAP analysis requires <code>shap&gt;=0.43.0</code>.
               </p>
             </div>
           ) : (
@@ -116,7 +121,9 @@ export function ShapPanel({
                     onChange={onModelChange}
                   >
                     {shapModels.map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -162,21 +169,30 @@ export function ShapPanel({
                   Loading SHAP data…
                 </div>
               ) : shapFeatures.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">No feature data available.</p>
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  No feature data available.
+                </p>
               ) : (
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">
                     Top 15 features — <span className="text-sky-500 font-medium">■ selected</span>{" "}
                     <span className="text-gray-400 font-medium">■ dropped</span>
                   </p>
-                  <ResponsiveContainer width="100%" height={Math.max(200, shapFeatures.length * 28)}>
+                  <ResponsiveContainer
+                    width="100%"
+                    height={Math.max(200, shapFeatures.length * 28)}
+                  >
                     <BarChart
                       data={shapFeatures}
                       layout="vertical"
                       margin={{ top: 4, right: 40, left: 8, bottom: 4 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => v.toFixed(3)} />
+                      <XAxis
+                        type="number"
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => v.toFixed(3)}
+                      />
                       <YAxis
                         type="category"
                         dataKey="feature"
@@ -189,10 +205,7 @@ export function ShapPanel({
                       />
                       <Bar dataKey="value" name="Mean |SHAP|" radius={[0, 3, 3, 0]}>
                         {shapFeatures.map((f, i) => (
-                          <Cell
-                            key={i}
-                            fill={f.selected ? "#6366f1" : "#d1d5db"}
-                          />
+                          <Cell key={i} fill={f.selected ? "#6366f1" : "#d1d5db"} />
                         ))}
                       </Bar>
                     </BarChart>

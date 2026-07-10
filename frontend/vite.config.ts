@@ -45,8 +45,6 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/sourcing",
   "/purchase-orders",
   "/lgbm-tuning",
-  "/catboost-tuning",
-  "/xgboost-tuning",
   "/cluster-eda",
   "/cluster-experiments",
   "/champion-experiments",

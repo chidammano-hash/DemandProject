@@ -29,7 +29,6 @@ A `JobManager` singleton wraps APScheduler 3.11's `BackgroundScheduler` with a `
 | Group | Job Types | Color |
 |---|---|---|
 | clustering | `cluster_pipeline`, `cluster_scenario` | Blue |
-| backtest | `backtest_lgbm`, `backtest_catboost`, `backtest_xgboost` | Violet |
 | seasonality | `seasonality_pipeline` | Emerald |
 | champion | `champion_selection` | Amber |
 | forecast | `generate_production_forecast` | Teal |

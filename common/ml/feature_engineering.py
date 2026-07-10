@@ -1,4 +1,4 @@
-"""Shared feature engineering for tree-based backtest models (LGBM, CatBoost, XGBoost).
+"""Shared feature engineering for the LightGBM backtest model.
 
 Builds the full (sku_ck × month) feature matrix with lag, rolling, calendar,
 and attribute features. Used by all tree-based backtest scripts.
@@ -470,7 +470,7 @@ def build_feature_matrix(
 
     Args:
         cat_dtype: Dtype for categorical features.
-            "category" for LightGBM/XGBoost, "str" for CatBoost.
+            Pandas ``"category"`` for LightGBM.
         customer_features: Optional customer-derived features at item×loc×month
             grain from customer_features_monthly table. Left-joined and NaN-filled.
     """

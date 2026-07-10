@@ -1,4 +1,4 @@
-"""Unified Model Tuning router — handles LGBM, CatBoost, and XGBoost experiments.
+"""Unified model-tuning router for LightGBM experiments.
 
 The router is split into focused sub-modules; this package aggregates them
 into the single ``router`` that ``api/main.py`` mounts at ``/model-tuning``.

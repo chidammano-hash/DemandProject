@@ -40,8 +40,6 @@ flowchart TD
         end
 
         subgraph ALG2["Step 7 · Baselines + Tree Models"]
-            BL["Baselines:\n• seasonal_naive\n• rolling_mean\n• ridge (non-metadata categorical attrs)"]
-            TREE["Tree Models — per ml_cluster ①:\n• lgbm_cluster → one model / cluster\n• catboost_cluster → one model / cluster\n• xgboost_cluster → one model / cluster"]
             BL --- TREE
         end
 
@@ -83,7 +81,6 @@ flowchart TD
 
     subgraph S5["Step 12 · Load Comparison Baselines from DB"]
         EXT["External Forecast\nfact_external_forecast_monthly"]
-        EXP["Existing Tree Predictions\nbacktest_lag_archive\n(lgbm/catboost/xgboost champion)"]
         EXT --- EXP
     end
 
@@ -120,7 +117,6 @@ flowchart TD
 
     subgraph S7["Step 14 · Comparison & Reporting"]
         PP["compute_portfolio_predictions()\nroute each DFU via assignments\n+ demand-aware fallback cascade"]
-        CA["compare_all()\n• Portfolio vs Seasonal Naive\n• Portfolio vs External Forecast\n• Portfolio vs Tree Backtest Oracle\n• Portfolio vs Causal Champion\n• Portfolio vs Golden Oracle  ← all 25 algos"]
         HYBACC["Inject hybrid metrics\nhybrid_vs_portfolio_bps\nhybrid_vs_naive_bps"]
         MON["compute_monthly_accuracy()\nexec-lag matched\n3M / 6M rolling windows"]
         PP --> CA --> HYBACC --> MON
@@ -161,8 +157,6 @@ flowchart TD
 | Group | Algorithms | Scope |
 |---|---|---|
 | Base statistical | ARIMA, Exponential Smoothing, TBATS | Per-timeframe |
-| Baselines | seasonal_naive, rolling_mean, ridge | Per-timeframe |
-| Tree models | lgbm_cluster, catboost_cluster, xgboost_cluster | Per-timeframe, per-cluster |
 | Statistical upgrades | AutoCES, DynamicTheta, IMAPA, TSB, ADIDA, MSTL | Per-timeframe |
 | DL baselines | DLinear, NLinear | Per-timeframe |
 | Deep learning | N-BEATS, N-HiTS, TFT, DeepAR, TiDE, TCN, PatchTST, iTransformer | Global (last TF) |

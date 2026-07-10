@@ -1,6 +1,5 @@
 # Chronos Foundation Models
 
-> Chronos 2 Enriched - Amazon's Chronos 2 foundation model (~821M params) driven with 31 covariate
 > features - is the sole foundation-model variant in production. It combines a pretrained,
 > zero-shot-capable architecture with our own feature engineering pipeline.
 
@@ -12,9 +11,7 @@
 
 ---
 
-**Historical note:** Commit `5ab8d593` removed the Chronos T5, Chronos Bolt, and non-enriched Chronos 2
 zero-shot variants, along with their backtest scripts, config sections, and Make targets
-(`backtest-chronos`, `backtest-bolt`, `backtest-chronos2`, and the `bolt_hierarchical` variant). Only
 Chronos 2 Enriched (`chronos2_enriched`) remains in production; this doc covers that variant only.
 
 ## Installation (optional `foundation` extra)
@@ -34,7 +31,6 @@ predictions - a graceful no-op, not a crash.
 
 ## What It Is
 
-The same Chronos 2 model, but with **31 covariate features** passed via the `past_covariates` and
 `future_covariates` API. This is the only foundation-model variant that uses our feature engineering
 pipeline - combining a pretrained foundation model with domain-specific signals.
 
@@ -44,13 +40,11 @@ pipeline - combining a pretrained foundation model with domain-specific signals.
 2. Per timeframe, future sales are masked via `mask_future_sales()` to prevent leakage
 3. For each DFU, an input dict is constructed with `target` (sales history), `past_covariates`, and
    `future_covariates`
-4. Chronos 2 attends to both the target history and covariates jointly
 5. The median quantile is extracted as the point forecast
 
 ## Covariate Details
 
 **Past-only covariates (14 numeric):** known only for history, cannot be projected forward -
-`qty_lag_1`..`qty_lag_12` (5 used), `rolling_mean_3m/6m/12m`, `mom_growth`, `demand_accel`,
 `volatility_ratio`, Croston decomposition (`croston_demand_size`, `croston_demand_interval`,
 `croston_probability`). Cross-DFU cluster aggregates are intentionally excluded to avoid
 `ml_cluster` leakage in backtests.
@@ -60,7 +54,6 @@ pipeline - combining a pretrained foundation model with domain-specific signals.
 (`fourier_sin/cos_12/6/4/3`).
 
 **Categorical past covariates (3):** `brand`, `region`, `abc_vol` - passed as numpy string
-arrays (Chronos 2 supports these natively). `ml_cluster` remains metadata only and is not
 passed as a model covariate.
 
 ## Configuration

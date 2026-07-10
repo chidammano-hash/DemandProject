@@ -11,11 +11,17 @@
 Every month the platform publishes a champion-routed plan from `fact_production_forecast_staging` to `fact_production_forecast`. Staging can hold many generated models, but the archive is intentionally bounded: it retains the promoted champion and exactly three non-champion contenders for each record month.
 Neither live table preserves history:
 
-- The next promote executes `DELETE FROM fact_production_forecast` (backtest_management.py promote, step 4), destroying the previously published plan.
-- Staging is regenerated per model with DELETE-before-INSERT, so each generation overwrites the last.
+- A release replacement executes `DELETE FROM fact_production_forecast`, so the
+  outgoing published plan must be archived in the same transaction first.
+- Before migration 203, staging was regenerated per model with
+  DELETE-before-INSERT, so each generation could overwrite the last. Staging is
+  now immutable and run/purpose scoped; the archive retains only the deliberately
+  selected comparison runs rather than treating all retained staging as history.
 - Staging is transient work space for every generated model; retaining every model and its whole horizon would create an unnecessarily large, low-value history.
 
-Consequently the platform can never answer "what did the published champion and its three best alternatives predict for June 2026, as of June 2026, and how accurate were they once actuals landed?"
+Without this archive, the platform cannot answer "what did the published
+champion and its three best alternatives predict for June 2026, as of June
+2026, and how accurate were they once actuals landed?"
 The existing `backtest_lag_archive` does not cover this: it holds backtest *simulations* (retrospective predictions from simulated training cutoffs), is capped at lag 0-4, and is keyed on the `(item_id, customer_group, loc)` backtest grain.
 Production forecasts are real forward statements at the `(item_id, loc)` DFU grain and must not be mixed into backtest accuracy surfaces.
 
@@ -35,8 +41,10 @@ Without an archive, the moment the July cycle regenerates staging and re-promote
    On the live June generation, 22.6% of series (48,233 of 213,578) have a first forecast month *before* June because their history ends early, so a June-dated row can be true horizon 1 for one DFU and horizon 9 for another.
    The archive therefore carries `horizon_months` verbatim so the two are never conflated, and snapshot lag curves must not be presented as equivalent to the backtest natural-lag curves of `agg_accuracy_lag_archive` (see 6.4).
 4. **Archive and cleanup are separate workflows.**
-   Archiving is a non-destructive monthly snapshot.
-   Cleanup is an independently triggered purge, gated on verifying the archive exists and reconciles, so an operator can archive without committing to a purge and can never delete an un-archived generation.
+   Archiving is a non-destructive monthly snapshot and is also a mandatory step
+   inside release replacement. Cleanup remains an independently triggered purge,
+   gated on verifying the archive exists and reconciles, so promotion never
+   implies staging deletion.
 5. **Real accuracy, not simulated, and honestly labeled.**
    Snapshot accuracy joins archived forward forecasts to actuals as they land at DFU grain. Each contender-versus-champion comparison is recomputed on its common DFU set, because the selected models can have different coverage.
 6. **Reuse the platform rails.**
@@ -57,12 +65,18 @@ One immutable model-selection record per archived series and record month. It es
 | source_backtest_run_id | INTEGER | FK to `backtest_run.id` that supplied the contender's frozen score; NULL for `champion` |
 | rank_wape | NUMERIC | Frozen aggregate backtest WAPE used to rank a contender; NULL for `champion` |
 | generation_run_id | UUID | The contender-generation run; NULL for `champion` |
+| generation_purpose | TEXT generated | `snapshot_contender` whenever `generation_run_id` is present (migration 203) |
 | selected_at | TIMESTAMPTZ NOT NULL DEFAULT NOW() | When the roster was frozen |
 
 - Primary key: `(record_month, model_id)`.
 - `snapshot_role = 'champion'` requires `model_id = 'champion'` and a NULL `contender_rank`; a partial unique index permits one champion row per record month.
 - `snapshot_role = 'contender'` requires `model_id <> 'champion'`, `contender_rank BETWEEN 1 AND 3`, and a non-NULL `generation_run_id`; a partial unique index permits one contender at each rank per record month.
 - The roster-preparation workflow must write exactly one champion row and all three contender ranks in one transaction. Missing, duplicate, or changed ranks abort archive; there is no partial four-series snapshot.
+- Migration 203 adds a composite foreign key from
+  `(generation_run_id, generation_purpose, record_month)` to
+  `forecast_generation_run`; a roster contender can therefore reference only a
+  registered `snapshot_contender` run for that record month. A
+  `release_candidate` can never be relabeled as snapshot evidence.
 - A contender is chosen from forecastable non-champion models by its latest successfully completed, database-loaded `backtest_run` available when the roster is prepared. Models with NULL WAPE or no completed run are ineligible. Rank by `wape ASC`, `accuracy_pct DESC`, `completed_at DESC`, then `model_id ASC`; persist the chosen run id and WAPE. This makes "top 3" deterministic and prevents later backtest results from rewriting historical selection.
 
 ### 3.2 `fact_forecast_snapshot` (NEW, sql/202)
@@ -87,6 +101,9 @@ One row per algorithm's prediction for one DFU-month, as of one record month.
 | plan_version | VARCHAR(30) | For `champion` rows: the promotion's plan_version |
 | run_id | UUID | Generation run id carried from the source row |
 | generated_at | TIMESTAMPTZ | Generation timestamp carried from the source row |
+| is_recursive | BOOLEAN | Recursive-generation marker carried from the exact source payload |
+| lag_source | VARCHAR(20) | `actual`/`predicted` lineage carried from the exact source payload |
+| source_promotion_id | INTEGER FK | Promotion audit row that owned an archived champion payload |
 | archived_at | TIMESTAMPTZ DEFAULT NOW() | Snapshot write time |
 
 - **Generated lag column** - PG16 rejects `age()`-based expressions in generated columns (not immutable; verified).
@@ -105,7 +122,9 @@ One row per algorithm's prediction for one DFU-month, as of one record month.
 - Foreign key: `(record_month, model_id)` references `forecast_snapshot_roster`. This prevents any model outside the frozen champion-plus-three roster from being archived.
 - **Snapshot immutability:** the archive INSERT uses `ON CONFLICT DO NOTHING` - the first snapshot for a record month wins.
   Rationale: the planning date can be pinned (`config/planning_config.yaml`) while the wall clock advances, so a late re-generation can be produced *after* the record month's actuals have loaded; letting it overwrite the earlier snapshot would inject hindsight into "as-of" accuracy.
-  A deliberate re-snapshot requires `--overwrite`, which is logged loudly and records the replaced rows' count.
+  There is no overwrite path. Repair incomplete source lineage, remove only the
+  invalid partial archive under an audited database-repair procedure, and retry
+  the immutable archive operation.
 - Indexes: the unique key; `(record_month, lag)`; `(model_id, record_month)`; `(item_id, loc, forecast_month)`.
 - Grain note: production forecasts are `(item_id, loc)` DFU grain with **no customer_group**.
   Never join this table to `dim_sku` on only `(item_id, loc)` - dim_sku's grain is 3-key and a 2-key join fans out across customer groups (see 01-accuracy-kpis.md).
@@ -154,7 +173,11 @@ New script `scripts/forecasting/archive_forecast_snapshot.py` (modern template p
 New script/job `prepare_forecast_snapshot_contenders` runs after production training and before the next archive deadline. It:
 
 1. Resolves and inserts the immutable roster from the completed, loaded `backtest_run` scores described in 3.1.
-2. Allocates one UUID per contender and invokes `generate_production_forecasts.py --model-id <id> --horizon 6 --run-id <uuid>` once for each contender rank. The generator gains the `--run-id` option and writes that exact UUID to staging; the contender roster records it.
+2. Allocates one UUID per contender and invokes
+   `generate_production_forecasts.py --model-id <id> --horizon 6 --run-id <uuid>
+   --generation-purpose snapshot_contender` once for each contender rank. The
+   immutable manifest records the run as non-promotable and the roster records
+   that exact UUID.
 3. Fails the publish workflow if any selected contender cannot generate all six archive months. It does not promote, archive, or generate any fourth contender.
 
 The normal champion-generation job remains responsible for the operational plan. The contender job is solely the minimal comparison set needed for live-forward FVA.
@@ -163,28 +186,44 @@ The normal champion-generation job remains responsible for the operational plan.
 
 | Source | Predicate | Yields |
 |---|---|---|
-| `fact_production_forecast_staging` | Join `forecast_snapshot_roster` where `snapshot_role = 'contender'` **and** `staging.run_id = roster.generation_run_id`; `forecast_month_generated = record_month AND forecast_month >= record_month AND forecast_month < record_month + INTERVAL '6 months'` | Only contender ranks 1-3 from their frozen generation runs, lags 0..5, including `horizon_months` |
-| `fact_production_forecast` | Join the roster's `champion` row; `model_id = 'champion' AND plan_version = to_char(record_month, 'YYYY-MM')`, with the same fixed six-month window | The promoted plan with `source_model_id` routing |
+| `fact_production_forecast_staging` | Join `forecast_snapshot_roster` where `snapshot_role = 'contender'`, `staging.run_id = roster.generation_run_id`, `staging.generation_purpose = 'snapshot_contender'`, and `staging.candidate_model_id = roster.model_id`; fixed record-month through +5-month window | Only contender ranks 1-3 from their frozen, purpose-scoped generation runs, including exact source model and operational fields |
+| `fact_production_forecast` | Join the roster's `champion` row and the outgoing active promotion; require `model_id = 'champion'`, matching `plan_version`, and the exact audited `production_run_id`, with the same fixed six-month window | The exact outgoing promoted plan with `source_model_id` routing |
 
-- `record_month` defaults to `MAX(forecast_month_generated)` present in staging, validated `<= get_planning_date()` month; `--record-month YYYY-MM` overrides.
-  Deriving the record month from the data (not the wall clock) makes a July run correctly archive the June generation.
-  **Empty staging** (post-cleanup, pre-generation window): the script logs "nothing to archive" and exits 0 - a scheduled run in that window is a documented no-op, not an error.
+- `record_month` defaults to the active promotion's calendar `plan_version`,
+  validated `<= get_planning_date()` month; `--record-month YYYY-MM` overrides.
+  A database with no active release is a documented no-op.
 - Archive scope is fixed to `record_month` through `record_month + 5 months`. The archive has no `--horizon` or `--models` override.
-- **Prerequisite fix (same change):** `promote_model()` currently stamps `plan_version = datetime.now(UTC).strftime("%Y-%m")` (backtest_management.py:998) - wall clock - while generation stamps `forecast_month_generated` from `get_planning_date()`.
-  Whenever the planning date is pinned to a different calendar month than the wall clock, a re-promote can write the wall-clock month and silently break the champion predicate.
-  Change promote to derive plan_version from `get_planning_date()` so both stamps come from the same clock, per the platform rule.
+- Promotion derives `plan_version` from `get_planning_date()`, the same clock as
+  generation; a pinned planning date therefore cannot silently drift from the
+  snapshot record month.
 - A missing or incomplete roster, an absent champion, missing champion or contender rows for any lag 0..5, or a champion whose `plan_version` does not match the record month is a hard failure (exit 2). The script writes no partial snapshot; staging remains available for remediation.
-- Inserts are single `INSERT INTO ... SELECT` statements with `ON CONFLICT ... DO NOTHING` (first snapshot wins; `--overwrite` switches to `DO UPDATE`, see 3.2).
+- Inserts use `ON CONFLICT ... DO NOTHING`; transaction-safe snapshots are
+  immutable. `--overwrite` is retained only as a rejected compatibility-shaped
+  CLI flag and fails with instructions to repair source lineage and retry.
+- Archive completion requires all four roster members at every lag 0..5. The
+  champion rows are additionally hashed in stable business-key order and must
+  equal the outgoing production payload checksum. The checksum and archive time
+  are persisted on the outgoing `model_promotion_log` row.
 - After commit: `refresh_for_tables(["fact_forecast_snapshot"])`, then a per-model archived-row summary in the job log.
-- `--dry-run` prints counts for exactly the four roster models. `--overwrite` may replace forecast rows using the same frozen roster; it cannot select a new contender set.
+- `--dry-run` reports counts for exactly the four roster models. `--overwrite`
+  is rejected and never replaces archive values.
 
-### 4.3 Job, scheduling, and the archive-before-overwrite invariant
+### 4.3 Job, scheduling, and the archive-before-replacement invariant
 
 - Register JobTypeDef `prepare_forecast_snapshot_contenders` (group `forecast`, subprocess style) and `archive_forecast_snapshot` (params `{record_month: None, dry_run: False, overwrite: False}`).
-- **The hard deadline:** a generation's candidates die at the next generation's DELETE-before-INSERT, and the champion dies at the next promote's `DELETE FROM fact_production_forecast`.
-  A calendar cron alone can miss that window, losing exactly the history this feature exists to keep.
-  Therefore the `forecast-publish` named pipeline (config/forecasting/pipelines.yaml) gains a **leading** `archive_forecast_snapshot` step: the outgoing generation is snapshotted before train/generate replace it. After champion generation, it runs `prepare_forecast_snapshot_contenders` to freeze and generate the next cycle's three alternatives.
-  With `ON CONFLICT DO NOTHING` this step is an idempotent no-op when the month-close run already archived, and a no-op on empty staging.
+- **The hard boundary is promotion:** `promote_forecast_run()` archives and
+  reconciles the outgoing champion plus three frozen contenders in the same
+  `SERIALIZABLE` transaction, before demotion or production delete. An archive
+  failure rolls back the entire replacement. `forecast-publish` therefore no
+  longer carries a leading archive step; it generates the new release candidate
+  and its three snapshot contenders, while transactional promotion—not job or
+  calendar timing—enforces the archive invariant. The standalone archive job,
+  snapshot bundle, and disabled monthly schedule remain available for explicit
+  preflight.
+- Generation no longer destroys older staging runs. Normal champion generation
+  creates one coherent `release_candidate`; contender preparation creates three
+  separate `snapshot_contender` runs. Their purposes prevent either workflow
+  from selecting or deleting the other's rows.
 - Belt-and-suspenders cron: `default_schedules` entry `forecast_snapshot_monthly` (cron `0 4 3 * *`, the 3rd at 04:00, after month-open actuals loads; `enabled: false` initially).
 - Manual trigger: Jobs tab, or `make forecast-archive ARGS="--record-month 2026-06"`.
 - Named bundle: `forecast-snapshot-bundle` runs contender selection, archive, and
@@ -199,14 +238,20 @@ Coverage asymmetry is why contender-versus-champion FVA deltas use a common-DFU 
 
 ## 5. Workflow 2 - cleanup (`cleanup_forecast_staging`)
 
-Separate script `scripts/forecasting/cleanup_forecast_staging.py`, separate job type, never chained automatically after the archive.
+Separate script `scripts/forecasting/cleanup_forecast_staging.py` and separate
+job type. Promotion and the standalone archive never trigger cleanup. Only the
+explicitly selected `forecast-snapshot-bundle` includes cleanup after archive.
 
 ### 5.1 Scope
 
-Deletes from `fact_production_forecast_staging` only.
+Deletes from `fact_production_forecast_staging` only, and only rows belonging to
+the three frozen `snapshot_contender` run ids selected for the target record
+month. It does not delete `release_candidate`, `legacy_invalid`, unselected, or
+other-month staging rows.
 `fact_production_forecast` is not touched: the promoted plan must remain live for planning consumers (inventory, ai_champion, UI), and the next promote already replaces it.
 
-Default target: generations strictly older than the current planning month (`forecast_month_generated < date_trunc('month', get_planning_date())`).
+Default target: roster record months strictly older than the current planning
+month that still have selected `snapshot_contender` rows.
 `--generation YYYY-MM` targets one generation explicitly, including the current generation, but it always remains subject to the same non-bypassable archive-first gate.
 
 ### 5.2 Safety gate (the archive-first invariant)
@@ -221,12 +266,16 @@ AND archived(record_month = G, model_id = 'champion') > 0
 ```
 
 Any missing roster member or reconciliation shortfall aborts with exit 2 and a per-model reconciliation report. There is no force override for this archive-first safety gate.
-Unselected staged models and rows beyond lag 5 are deliberately excluded from this gate and may be deleted without archive compensation. They are regenerated every cycle and are outside the fixed champion-plus-three retention policy.
+Unselected staged models, release candidates, and rows beyond the selected
+snapshot runs are outside both this gate and this cleanup delete. They require a
+separate, explicitly designed retention policy; this command cannot sweep them.
 
 - `--dry-run` reports what would be deleted and the gate verdict without deleting.
 - No MV refresh is needed: no registered MV reads staging (verified against `MV_SOURCES`).
 - Register JobTypeDef `cleanup_forecast_staging` in the same `forecast` group: group FIFO guarantees archive and cleanup never run concurrently.
 - Make target `forecast-staging-clean ARGS=...`.
+- After a successful delete, the selected manifests transition from `ready` to
+  `archived` and remain as lineage records.
 
 ## 6. Accuracy & FVA
 
@@ -248,7 +297,6 @@ Extend `api/routers/forecasting/fva.py` with cached, replica-tolerant reads: bot
 - `accuracy_pct`, `wape`, `bias` per model are aggregated over that model's own covered DFUs (with `n_dfus` always returned).
 - `fva_vs_champion_pts` is computed **only on the DFU intersection** between each contender and `champion` at the same `(record_month, lag)`; both sides are re-aggregated over that common set (`n_dfus_common`). A positive value means the contender outperformed the promoted plan on the same DFUs. The champion's value is `0`; an empty intersection is `NULL`/n-a.
   A whole-universe delta would be coverage bias, not forecast skill.
-- This bounded live-forward panel does not require `seasonal_naive` to be retained. The existing `/fva/waterfall` remains the separately labeled backtest-based naive-baseline view.
 - `champion` surfaces first, followed by contender ranks 1, 2, and 3. No fifth AI-adjusted row can enter this archive.
 
 ### 6.3 Frontend
@@ -289,26 +337,41 @@ forecast_snapshot:
 |---|---|
 | `tests/unit/test_forecast_snapshot_schema.py` | sql/202 structural contract: roster role/rank constraints, source-run and backtest-run foreign keys, and generated `lag` constrained to 0..5 |
 | `tests/unit/test_prepare_forecast_snapshot_contenders.py` | Deterministic top-three WAPE selection, tie-breaks, no eligible fourth model, frozen roster immutability, generated run ids, and six-month contender generation |
-| `tests/unit/test_archive_forecast_snapshot.py` | Record-month derivation including empty-staging no-op, roster-only source predicates, exact lag-0..5 window, DO NOTHING vs --overwrite, incomplete roster/champion/missing-lag hard failures (mocked psycopg) |
+| `tests/unit/test_archive_forecast_snapshot.py` | Active-release record-month derivation, roster-only purpose/run predicates, exact lag-0..5 window, immutable archive behavior, and incomplete roster/champion/missing-lag hard failures (mocked psycopg) |
 | `tests/unit/test_cleanup_forecast_staging.py` | Selected-generation reconciliation, required champion row, deliberate exclusion of unselected models and lags >5, default targeting, and dry-run |
 | `tests/api/test_fva.py` (extend) | `/fva/snapshot-accuracy` four-row matrix, roster metadata, common-DFU champion delta, null-KPI, required `record_month`, lag validation, and empty archive; `/fva/snapshot-months` via `make_pool` |
-| `tests/api/test_backtest_management.py` (extend) | promote_model plan_version now derived from `get_planning_date()` |
+| `tests/api/test_forecast_promotion.py` | Promotion requires an exact source run and derives the plan month from `get_planning_date()` |
 | `tests/unit/test_mv_refresh.py` (existing, automatic) | Fails unless `agg_accuracy_snapshot` is registered in `MV_SOURCES` with sources matching the DDL |
 | `frontend/src/tabs/__tests__/FVATab.test.tsx` (extend) + `fva/SnapshotAccuracyPanel.test.tsx` | Four-row matrix rendering, contender-rank labels, pending lags, bias sign, coverage badges, and suppressed delta on empty intersection |
-| `tests/unit/test_pipeline_presets.py` (existing, automatic) | forecast-publish's leading archive and trailing contender-preparation steps reference registered job types in the required order |
+| `tests/unit/test_pipeline_presets.py` (existing, automatic) | `forecast-publish` generates one release candidate then prepares contenders without a redundant leading archive; the snapshot bundle retains prepare → archive → cleanup order |
 
 ## 9. Migration & rollout
 
-1. `sql/202_create_forecast_snapshot.sql`: roster table, archive table, MV, constraints, and indexes (idempotent `IF NOT EXISTS` per repo convention); `MV_SOURCES` Tier-1 entry in the same commit. (`sql/201` is already the latest migration.)
-2. `promote_model()` plan_version source fix (4.2 prerequisite) and the generation `--run-id` support in the same change, with tests.
+1. `sql/202_create_forecast_snapshot.sql`: roster table, archive table, MV,
+   constraints, and indexes; `MV_SOURCES` Tier-1 entry in the same change.
+2. `sql/203_create_forecast_generation_run.sql`: immutable generation manifests,
+   purpose-scoped staging keys/FKs, snapshot operational lineage, exact promotion
+   evidence, production lineage, and a database-enforced single active promotion.
+   Pre-manifest staging becomes `legacy_invalid`; a fresh generation is required
+   for any subsequent promotion.
 3. Add `forecast_snapshot_roster` and `fact_forecast_snapshot` to the `db-truncate-data` Makefile transaction and to the verbatim SQL block in `docs/operations-manual/11-maintenance-troubleshooting.md`; document `forecast-snapshot-contenders`, `forecast-archive`, and `forecast-staging-clean` in that doc's Data Cleanup section.
-4. Register the contender-preparation and archive job types; add Make targets; prepend archive and append contender preparation to `forecast-publish`; optional disabled `default_schedules` entry.
+4. Register the contender-preparation and archive job types; add Make targets;
+   append contender preparation to `forecast-publish`; keep archive in the
+   explicit snapshot bundle/optional disabled schedule because promotion now
+   owns the mandatory archive boundary.
 5. Docs: `docs/ARCHITECTURE.md` fact-table catalog; this spec is indexed in `docs/specs/README.md` (row flagged **Proposed** until shipped); add the Implemented Features row only when shipped.
 
 ### 9.1 Initial run (June 2026)
 
-1. Apply sql/202 after the already-applied migrations through sql/201.
-2. Bootstrap the June roster from the pre-existing June staging rows without regenerating forecasts: choose and freeze ranks 1-3 using the same WAPE rule and the latest runs available no later than the original staging generation. This preserves the true June as-of values and must never train or infer against July data.
+1. Apply sql/202 and then sql/203. Re-promote the selected champion experiment's
+   results to stamp its exact historical lineage/checksums. Do not promote a
+   pre-migration staging run; generate a fresh `release_candidate` afterward.
+2. If the June roster was already frozen before migration 203, the migration
+   registers those roster-backed runs as `snapshot_contender` and they may be
+   archived normally. If no original roster exists, pre-manifest staging is
+   `legacy_invalid`; do **not** relabel or regenerate it with later actuals and
+   claim a June as-of snapshot. Start the bounded archive with a freshly
+   generated current-month roster instead.
 3. `make forecast-archive ARGS="--record-month 2026-06"` - expect one champion plus three contender model ids and no rows outside lags 0..5; verify the four per-model counts in the job log against the reconciliation in 4.2.
 4. `refresh_for_tables` runs in-script; confirm `agg_accuracy_snapshot` holds lag-0 rows only (June actuals are loaded; July is not).
 5. Review lag-0 accuracy in the new FVA panel: it shows exactly four rows, including coverage, bias, and each contender's common-DFU delta versus champion.
@@ -320,12 +383,8 @@ forecast_snapshot:
 - Archiving a fourth contender, every staged model, `fact_ai_champion_forecast`, or any forecast month outside lags 0..5.
 - Re-ranking a record month's contenders after its roster is frozen; correcting a bad roster requires an explicitly audited new record month, not an overwrite of historical selection.
 - Dimension-sliced snapshot accuracy (needs a fan-out-safe dim strategy at the item+loc grain; `dim_item` joins are safe when it comes).
-- Pre-delete archiving of the outgoing plan inside the promote transaction itself.
-  The leading pipeline step in 4.3 provides the archive-before-overwrite guarantee at the orchestration layer; moving it into the promote transaction is a possible hardening later.
 - Horizon-conditioned accuracy surfaces (`horizon_months = lag + 1` restriction) - the data is preserved for it (6.4), the UI is not built.
 
 ## 11. Adjacent defects noted during design (not addressed here)
 
 - `fact_candidate_forecast` has no writer anywhere in the repo, yet `POST /backtest-management/{model_id}/load` reports it as the target table (the submitted job actually loads `fact_external_forecast_monthly` + `backtest_lag_archive`).
-- `generate_production_forecasts.py` `write_forecast()` (direct production-table upsert) is dead code - never called.
-- A champion-mode generate stages rows under each true producing model_id but deletes only `WHERE model_id = 'champion'` beforehand, which can strand rows when the champion roster shrinks between runs.

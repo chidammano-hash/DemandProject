@@ -88,8 +88,8 @@ just don't add them:
   (never for read-after-write). Dashboard and Accuracy GETs are mechanically enforced.
 
 ### ML / Forecasting → see skill `forecasting-patterns` for the full pattern catalog
-- **All tree `.fit()`/instantiation goes through `common/ml/model_registry.py`.** Direct
-  `LGBMRegressor()`/`CatBoostRegressor()`/`XGBRegressor()` elsewhere is a defect.
+- **All LightGBM `.fit()`/instantiation goes through `common/ml/model_registry.py`.** Direct
+  `LGBMRegressor()` elsewhere is a defect.
 - **All ML hyperparameters live in `forecast_pipeline_config.yaml`** — no `kwargs.get()` defaults.
 - **`ml_cluster` is metadata, NOT a feature** (in `METADATA_COLS`, merged for partitioning only).
   Promoted labels are sourced from `current_sku_cluster_assignment`, not `dim_sku`.

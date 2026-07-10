@@ -112,14 +112,10 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
             # ── Active Models ────────────────────────────────────────────────
             # These use a special "model_toggle" type rendered as a compact table
             "algorithms.lgbm_cluster.enabled": {"label": "LightGBM", "description": "Tree-based gradient boosting", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
-            "algorithms.catboost_cluster.enabled": {"label": "CatBoost", "description": "Tree-based gradient boosting", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
-            "algorithms.xgboost_cluster.enabled": {"label": "XGBoost", "description": "Tree-based gradient boosting", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
             "algorithms.chronos2_enriched.enabled": {"label": "Chronos 2E", "description": "Chronos 2 with covariates", "type": "model_toggle", "group": "Active Models", "model_type": "foundation"},
             "algorithms.mstl.enabled": {"label": "MSTL", "description": "Statistical decomposition", "type": "model_toggle", "group": "Active Models", "model_type": "statistical"},
             "algorithms.nbeats.enabled": {"label": "N-BEATS", "description": "Deep learning", "type": "model_toggle", "group": "Active Models", "model_type": "deep_learning"},
             "algorithms.nhits.enabled": {"label": "N-HiTS", "description": "Deep learning", "type": "model_toggle", "group": "Active Models", "model_type": "deep_learning"},
-            "algorithms.seasonal_naive.enabled": {"label": "Seasonal Naive", "description": "Statistical baseline", "type": "model_toggle", "group": "Active Models", "model_type": "statistical"},
-            "algorithms.rolling_mean.enabled": {"label": "Rolling Mean", "description": "Statistical baseline", "type": "model_toggle", "group": "Active Models", "model_type": "statistical"},
             # ── Clustering ────────────────────────────────────────────────────
             "clustering.enabled": {"label": "DFU Clustering", "description": "Segment items by demand pattern before training.", "type": "boolean", "group": "Clustering & Backtest"},
             "backtest.n_timeframes": {"label": "Backtest Windows", "description": "Number of historical evaluation windows.", "type": "integer", "min": 1, "max": 30, "group": "Clustering & Backtest"},

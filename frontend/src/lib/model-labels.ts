@@ -2,15 +2,10 @@
 
 export const MODEL_LABELS: Record<string, string> = {
   lgbm_cluster: "LightGBM",
-  catboost_cluster: "CatBoost",
-  xgboost_cluster: "XGBoost",
   chronos2_enriched: "Chronos 2E",
   mstl: "MSTL",
   nbeats: "N-BEATS",
   nhits: "N-HiTS",
-  seasonal_naive: "Seasonal Naive",
-  rolling_mean: "Rolling Mean",
-  rolling_median: "Rolling Median",
 };
 
 export const MODEL_TYPE_COLORS: Record<string, string> = {
@@ -21,7 +16,7 @@ export const MODEL_TYPE_COLORS: Record<string, string> = {
 };
 
 export function modelLabel(id: string): string {
-  return MODEL_LABELS[id] || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return MODEL_LABELS[id] || id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Format the champion line/tooltip label from its blend mix or single source.
@@ -32,7 +27,7 @@ export function modelLabel(id: string): string {
  */
 export function formatChampionLabel(
   mix?: { model: string; weight: number }[] | null,
-  source?: string | null,
+  source?: string | null
 ): string {
   if (Array.isArray(mix) && mix.length > 0) {
     const parts = mix

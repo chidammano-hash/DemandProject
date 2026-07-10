@@ -55,7 +55,6 @@ Additionally, clustering and algorithm tuning were historically disconnected wor
 
 1. **No experiment lifecycle** -- Cluster scenarios run and produce artifacts but are not tracked in the database. There is no list view, no labeling, no history.
 2. **No comparison** -- Two cluster configurations cannot be compared side by side. There is no migration matrix showing how SKUs move between cluster labels, no quality metric deltas.
-3. **No accuracy feedback loop** -- When a user promotes a new clustering, there is no way to preview the accuracy impact on LGBM/CatBoost/XGBoost backtests before committing.
 4. **No templates** -- Every scenario requires manually specifying all parameters. There are no preset starting points for common strategies (high-K granular, low-K broad, seasonal focus).
 
 ---
@@ -400,7 +399,6 @@ A warning modal (`ClusterPromoteModal.tsx`) displays:
 
 | System | How it uses clusters |
 |---|---|
-| **Per-cluster backtests** | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` train separate models per cluster |
 | **Accuracy analysis** | `agg_accuracy_by_dim` slices accuracy by promoted `ml_cluster` |
 | **Champion selection** | Champion model selected per cluster |
 | **Production forecast** | Routes SKUs to cluster-specific models |

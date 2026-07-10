@@ -1,11 +1,15 @@
 """Unit tests for the bounded live-forecast snapshot archive."""
+
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 
 from common.services.forecast_snapshot import (
+    archive_snapshot_in_transaction,
     cleanup_reconciliation_issues,
     missing_required_lags,
     select_top_contenders,
@@ -89,3 +93,46 @@ def test_cleanup_reconciliation_ignores_unselected_models_but_requires_champion(
     assert cleanup_reconciliation_issues(expected, archived, champion_archive_count=0) == [
         "champion archive is missing"
     ]
+
+
+def test_transaction_archive_is_run_scoped_and_checksum_reconciled():
+    cur = MagicMock()
+    roster = [
+        ("champion", "champion", None, None),
+        ("a", "contender", 1, UUID(int=1)),
+        ("b", "contender", 2, UUID(int=2)),
+        ("c", "contender", 3, UUID(int=3)),
+    ]
+    lag_counts = [
+        (model_id, lag, 10) for model_id in ("champion", "a", "b", "c") for lag in range(6)
+    ]
+    cur.fetchall.side_effect = [roster, lag_counts]
+    matching = MagicMock(checksum="d" * 64, row_count=60, dfu_count=10)
+
+    with (
+        patch(
+            "common.services.forecast_snapshot.compute_production_payload_stats",
+            return_value=matching,
+        ),
+        patch(
+            "common.services.forecast_snapshot.compute_snapshot_champion_payload_stats",
+            return_value=matching,
+        ),
+    ):
+        checksum = archive_snapshot_in_transaction(
+            cur,
+            record_month=date(2026, 6, 1),
+            production_run_id=UUID(int=10),
+            source_promotion_id=77,
+        )
+
+    assert checksum == "d" * 64
+    statements = [" ".join(call.args[0].split()) for call in cur.execute.call_args_list]
+    contender_insert = next(sql for sql in statements if "snapshot_contender" in sql)
+    assert "s.run_id = r.generation_run_id" in contender_insert
+    assert "s.candidate_model_id = r.model_id" in contender_insert
+    champion_call = next(
+        call for call in cur.execute.call_args_list if "source_promotion_id" in call.args[0]
+    )
+    assert champion_call.args[1][0] == 77
+    assert champion_call.args[1][1] == str(UUID(int=10))

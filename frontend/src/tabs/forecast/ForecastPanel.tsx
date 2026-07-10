@@ -9,14 +9,11 @@
  * Shows production forecast configuration, algorithm picker,
  * generation controls, and recent forecast job history.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Zap, Calendar, Clock, Settings2 } from "lucide-react";
 
-import {
-  fetchPipelineConfig,
-  pipelineConfigKeys,
-} from "@/api/queries/unified-model-tuning";
+import { fetchPipelineConfig, pipelineConfigKeys } from "@/api/queries/unified-model-tuning";
 import {
   fetchBacktestSummary,
   fetchTrainingStatus,
@@ -38,7 +35,7 @@ import {
   championExperimentKeys,
   CHAMPION_EXP_STALE,
 } from "@/api/queries/champion-experiments";
-import { fetchJobs, submitJob } from "@/api/queries/jobs";
+import { fetchJobs } from "@/api/queries/jobs";
 import type { Job } from "@/types/jobs";
 import { modelLabel } from "@/lib/model-labels";
 import { toast } from "@/components/Toaster";
@@ -75,6 +72,7 @@ export function ForecastPanel() {
   const [isTraining, setIsTraining] = useState(false);
   const [trainingModelId, setTrainingModelId] = useState<string | null>(null);
   const [generatingModelId, setGeneratingModelId] = useState<string | null>(null);
+  const [pendingRunIds, setPendingRunIds] = useState<Record<string, string>>({});
   const [promotingModelId, setPromotingModelId] = useState<string | null>(null);
 
   const isGenerating = generatingModelId !== null;
@@ -150,16 +148,14 @@ export function ForecastPanel() {
 
   const forecastAlgos = useMemo(
     () => deriveForecastAlgos(pipelineConfig?.algorithms, backtestSummary),
-    [pipelineConfig?.algorithms, backtestSummary],
+    [pipelineConfig?.algorithms, backtestSummary]
   );
 
   const versions: ProductionForecastVersion[] = versionsData?.versions ?? [];
   const latestVersion = versions.length > 0 ? versions[0] : null;
 
   const recentJobs: Job[] = jobsData?.jobs ?? [];
-  const isForecastRunning = recentJobs.some(
-    (j) => j.status === "running" || j.status === "queued",
-  );
+  const isForecastRunning = recentJobs.some((j) => j.status === "running" || j.status === "queued");
 
   // Tree models that are forecastable
   const treeAlgos = forecastAlgos.filter((a) => requiresTraining(a.type));
@@ -173,7 +169,7 @@ export function ForecastPanel() {
         const st = trainingStatus?.[a.id];
         return Boolean(st?.trained && st?.training_mode === "production");
       }),
-    [forecastAlgos, trainingStatus],
+    [forecastAlgos, trainingStatus]
   );
 
   // Count of tree models that are production-trained
@@ -187,12 +183,12 @@ export function ForecastPanel() {
 
   // Promoted champion experiment — use its model list for the champion display
   const promotedExperiment = promotedData?.promoted ?? null;
-  const promotedModelIds = new Set(promotedExperiment?.models ?? []);
 
   // Champion models: from the promoted experiment (may include models not in forecastAlgos)
   // If no promoted experiment, fall back to all algos with compete: true
   const championCompetingAlgos = useMemo(() => {
     const allAlgos = pipelineConfig?.algorithms ?? {};
+    const promotedModelIds = new Set(promotedExperiment?.models ?? []);
     if (promotedModelIds.size > 0) {
       return Array.from(promotedModelIds).map((id) => {
         const a = allAlgos[id];
@@ -209,20 +205,26 @@ export function ForecastPanel() {
       });
     }
     return forecastAlgos.filter((a) => a.compete);
-  }, [pipelineConfig?.algorithms, backtestSummary, promotedModelIds, forecastAlgos]);
+  }, [pipelineConfig?.algorithms, backtestSummary, promotedExperiment?.models, forecastAlgos]);
 
-  // Count models with staged forecasts (for Promote Champion button)
-  // Champion row prerequisites: all constituent models need staged forecasts.
+  // Champion generation needs current production artifacts; promotion needs one
+  // completed immutable champion candidate run returned by the generation API.
   const championConstituents: string[] = promotedExperiment?.models ?? [];
-  const championMissingModels = championConstituents.filter(
-    (id) => (staging[id]?.row_count ?? 0) === 0,
-  );
+  const championMissingModels = championConstituents.filter((id) => {
+    const algorithm = pipelineConfig?.algorithms?.[id];
+    if (!algorithm || !requiresTraining(algorithm.type)) return false;
+    const status = trainingStatus?.[id];
+    return !(status?.trained && status.training_mode === "production");
+  });
+  const championCanGenerate = promotedExperiment != null && championMissingModels.length === 0;
+  const championCandidate = staging.champion;
   const championReady =
-    championConstituents.length > 0 && championMissingModels.length === 0;
-  const championDfuCount = championReady
-    ? Math.max(0, ...championConstituents.map((id) => staging[id]?.dfu_count ?? 0))
-    : 0;
-  const isChampionPromoted = promotedModel?.model_id === "champion";
+    championCandidate?.run_status === "ready" && championCandidate.promotion_eligible;
+  const championDfuCount = championCandidate?.dfu_count ?? 0;
+  const isChampionPromoted = Boolean(
+    championCandidate?.source_run_id &&
+    promotedModel?.source_run_id === championCandidate.source_run_id
+  );
 
   // -- Handlers ------------------------------------------------------------
 
@@ -259,10 +261,14 @@ export function ForecastPanel() {
   async function handleGenerate(modelId: string) {
     setGeneratingModelId(modelId);
     try {
-      await submitGenerateForecast(modelId, {
+      const submitted = await submitGenerateForecast(modelId, {
         horizon: effectiveHorizon,
         confidenceIntervals: includeCI,
       });
+      setPendingRunIds((current) => ({
+        ...current,
+        [modelId]: submitted.source_run_id,
+      }));
       toast.success(`Generating forecast for ${modelLabel(modelId)}…`);
     } catch (err) {
       toast.error(formatApiError(err));
@@ -280,20 +286,23 @@ export function ForecastPanel() {
     }
     setGeneratingModelId("__all__");
     toast.info(
-      `Generating forecasts for ${generatableAlgos.length} model${generatableAlgos.length === 1 ? "" : "s"}…`,
+      `Generating forecasts for ${generatableAlgos.length} model${generatableAlgos.length === 1 ? "" : "s"}…`
     );
     let failures = 0;
+    const submittedRuns: Record<string, string> = {};
     for (const algo of generatableAlgos) {
       try {
-        await submitGenerateForecast(algo.id, {
+        const submitted = await submitGenerateForecast(algo.id, {
           horizon: effectiveHorizon,
           confidenceIntervals: includeCI,
         });
+        submittedRuns[algo.id] = submitted.source_run_id;
       } catch (err) {
         failures += 1;
         toast.error(`${modelLabel(algo.id)}: ${formatApiError(err)}`);
       }
     }
+    setPendingRunIds((current) => ({ ...current, ...submittedRuns }));
     queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
     if (failures === generatableAlgos.length) {
       // Nothing was queued — clear the spinner now (poll effect won't fire).
@@ -302,13 +311,22 @@ export function ForecastPanel() {
   }
 
   async function handlePromote(modelId: string) {
+    const candidate = staging[modelId];
+    if (
+      !candidate?.source_run_id ||
+      candidate.run_status !== "ready" ||
+      !candidate.promotion_eligible
+    ) {
+      toast.error("Generate a new release candidate before promoting.");
+      return;
+    }
     setPromotingModelId(modelId);
     try {
-      await submitPromote(modelId);
+      await submitPromote(modelId, candidate.source_run_id);
       toast.success(
         modelId === "champion"
           ? "Champion promoted to production."
-          : `${modelLabel(modelId)} promoted to production.`,
+          : `${modelLabel(modelId)} promoted to production.`
       );
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.promotionStatus });
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
@@ -325,7 +343,7 @@ export function ForecastPanel() {
   // Generate champion forecasts via the legacy production forecast job — routes
   // per-DFU using champion assignments.
   async function handleGenerateChampion() {
-    setIsSubmitting(true);
+    setGeneratingModelId("champion");
     try {
       await submitChampionJob();
       toast.success("Champion forecast generation queued.");
@@ -333,14 +351,13 @@ export function ForecastPanel() {
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
     } catch (err) {
       toast.error(formatApiError(err));
-    } finally {
-      setIsSubmitting(false);
+      setGeneratingModelId(null);
     }
   }
 
   // Effect: stop polling once training completes
   // Check if training is done when trainingStatus updates
-  useMemo(() => {
+  useEffect(() => {
     if (!isTraining || !trainingStatus) return;
 
     if (trainingModelId === "__all__") {
@@ -363,54 +380,70 @@ export function ForecastPanel() {
   }, [trainingStatus, isTraining, trainingModelId, treeAlgos]);
 
   // Effect: stop polling once generate completes (staging row appears)
-  useMemo(() => {
+  useEffect(() => {
     if (!generatingModelId || !stagingData) return;
     if (generatingModelId === "__all__") {
-      // Clear once every ready model has staged rows.
+      // Clear only when each newly submitted run—not an older staged run—is ready.
       const allGenerated =
         generatableAlgos.length > 0 &&
-        generatableAlgos.every((a) => (stagingData[a.id]?.row_count ?? 0) > 0);
+        generatableAlgos.every((a) => {
+          const expectedRun = pendingRunIds[a.id];
+          const current = stagingData[a.id];
+          return Boolean(
+            expectedRun && current?.source_run_id === expectedRun && current.run_status === "ready"
+          );
+        });
       if (allGenerated) setGeneratingModelId(null);
       return;
     }
     const s = stagingData[generatingModelId];
-    if (s && s.row_count > 0) {
+    if (s?.source_run_id === pendingRunIds[generatingModelId] && s.run_status === "ready") {
       setGeneratingModelId(null);
     }
-  }, [stagingData, generatingModelId, generatableAlgos]);
+  }, [stagingData, generatingModelId, generatableAlgos, pendingRunIds]);
 
-  /** Submit the legacy champion job (per-DFU routing via assignments). */
-  async function submitChampionJob() {
-    await submitJob(
-      "generate_production_forecast",
-      { horizon: effectiveHorizon, confidence_intervals: includeCI },
-      "Production Forecast",
-    );
+  /** Submit a run-scoped champion job using the promoted DFU routing artifact. */
+  async function submitChampionJob(): Promise<string> {
+    const submitted = await submitGenerateForecast("champion", {
+      horizon: effectiveHorizon,
+      confidenceIntervals: includeCI,
+    });
+    setPendingRunIds((current) => ({
+      ...current,
+      champion: submitted.source_run_id,
+    }));
+    return submitted.source_run_id;
   }
 
   async function handleGenerateForecast() {
     setIsSubmitting(true);
+    setGeneratingModelId(selectedModel);
     try {
       if (selectedModel === "champion") {
         await submitChampionJob();
       } else {
         // For a specific model: use the new generate endpoint, threading the
         // panel's horizon + CI toggle (previously dropped here).
-        await submitGenerateForecast(selectedModel, {
+        const submitted = await submitGenerateForecast(selectedModel, {
           horizon: effectiveHorizon,
           confidenceIntervals: includeCI,
         });
+        setPendingRunIds((current) => ({
+          ...current,
+          [selectedModel]: submitted.source_run_id,
+        }));
       }
       toast.success(
         selectedModel === "champion"
           ? "Champion forecast generation queued."
-          : `Forecast generation queued for ${modelLabel(selectedModel)}.`,
+          : `Forecast generation queued for ${modelLabel(selectedModel)}.`
       );
       queryClient.invalidateQueries({ queryKey: forecastPanelKeys.jobs(0) });
       queryClient.invalidateQueries({ queryKey: forecastPanelKeys.versions });
       queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
     } catch (err) {
       toast.error(formatApiError(err));
+      setGeneratingModelId(null);
     } finally {
       setIsSubmitting(false);
     }
@@ -433,16 +466,14 @@ export function ForecastPanel() {
           value={latestVersion?.plan_version ?? "--"}
           icon={Calendar}
         />
-        <KpiCard
-          label="Forecast Horizon"
-          value={`${effectiveHorizon} months`}
-          icon={Zap}
-        />
+        <KpiCard label="Forecast Horizon" value={`${effectiveHorizon} months`} icon={Zap} />
         <KpiCard
           label="Default Model"
-          value={prodConfig?.cold_start_model_id
-            ? modelLabel(pipelineConfig?.champion?.fallback_model_id ?? "lgbm_cluster")
-            : "--"}
+          value={
+            prodConfig?.cold_start_model_id
+              ? modelLabel(pipelineConfig?.champion?.fallback_model_id ?? "lgbm_cluster")
+              : "--"
+          }
           sublabel="(champion)"
           icon={Settings2}
         />
@@ -471,6 +502,7 @@ export function ForecastPanel() {
         promotedExperiment={promotedExperiment}
         championConstituents={championConstituents}
         championMissingModels={championMissingModels}
+        championCanGenerate={championCanGenerate}
         championReady={championReady}
         championDfuCount={championDfuCount}
         isChampionPromoted={isChampionPromoted}

@@ -1,7 +1,7 @@
 """Tests for the unified model tuning API — /model-tuning/{model}/* endpoints.
 
 Tests the unified router that replaces the split lgbm_tuning.py / model_tuning.py
-with a single parametrized router supporting LGBM, CatBoost, and XGBoost.
+with a single parametrized LightGBM router.
 """
 
 import json
@@ -27,26 +27,6 @@ _ALGO_CONFIG = {
                 "num_leaves": 127,
                 "max_depth": -1,
                 "min_child_samples": 40,
-            },
-        },
-        "catboost_cluster": {
-            "type": "tree",
-            "enabled": True,
-            "params": {
-                "iterations": 3000,
-                "learning_rate": 0.008,
-                "depth": 10,
-                "l2_leaf_reg": 7.5,
-            },
-        },
-        "xgboost_cluster": {
-            "type": "tree",
-            "enabled": True,
-            "params": {
-                "n_estimators": 500,
-                "learning_rate": 0.05,
-                "max_depth": 6,
-                "min_child_weight": 5,
             },
         },
     },
@@ -206,51 +186,6 @@ async def test_list_experiments_lgbm():
     assert data["experiments"][0]["run_id"] == 1
     assert data["experiments"][0]["model_id"] == "lgbm_cluster"
     assert data["experiments"][1]["accuracy_pct"] == 73.1
-
-
-@pytest.mark.asyncio
-async def test_list_experiments_catboost():
-    """GET /model-tuning/catboost/experiments returns CatBoost runs."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (1,)
-    cursor.fetchall.return_value = [
-        _list_row(run_id=18, run_label="cb_baseline", model_id="catboost_cluster",
-                  accuracy_pct=66.82),
-    ]
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/model-tuning/catboost/experiments")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["experiments"]) == 1
-    assert data["experiments"][0]["model_id"] == "catboost_cluster"
-    assert data["experiments"][0]["accuracy_pct"] == 66.82
-
-
-@pytest.mark.asyncio
-async def test_list_experiments_xgboost():
-    """GET /model-tuning/xgboost/experiments returns XGBoost runs."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (1,)
-    cursor.fetchall.return_value = [
-        _list_row(run_id=23, run_label="xgb_baseline", model_id="xgboost_cluster",
-                  accuracy_pct=65.47),
-    ]
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/model-tuning/xgboost/experiments")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["experiments"]) == 1
-    assert data["experiments"][0]["model_id"] == "xgboost_cluster"
 
 
 @pytest.mark.asyncio
@@ -424,44 +359,6 @@ async def test_create_experiment_lgbm():
     data = resp.json()
     assert data["run_id"] == 15
     assert "job_id" in data or "message" in data
-
-
-@pytest.mark.asyncio
-async def test_create_experiment_catboost():
-    """POST /model-tuning/catboost/experiments returns 201 for CatBoost."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (18,)
-
-    mock_jm = MagicMock()
-    mock_jm.submit_job.return_value = "job-cb-456"
-
-    with (
-        patch("api.core._get_pool", return_value=pool),
-        patch(
-            "common.services.job_registry.JobManager",
-            return_value=mock_jm,
-        ),
-        patch("api.routers.forecasting.tuning._helpers._build_temp_config",
-              return_value="/tmp/fake_config.yaml"),
-    ):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/model-tuning/catboost/experiments",
-                json={
-                    "run_label": "CB Ordered Symmetric",
-                    "params": {
-                        "iterations": 4000,
-                        "learning_rate": 0.006,
-                        "depth": 8,
-                    },
-                },
-            )
-
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["run_id"] == 18
 
 
 @pytest.mark.asyncio
@@ -929,73 +826,6 @@ async def test_promote_not_found():
 
 
 @pytest.mark.asyncio
-async def test_promote_catboost_run():
-    """POST /model-tuning/catboost/experiments/22/promote promotes CatBoost run."""
-    pool, conn, cursor = _make_pool()
-    params = json.dumps({
-        "iterations": 1500, "learning_rate": 0.018, "depth": 7,
-        "l2_leaf_reg": 5.0,
-    })
-    cursor.fetchone.side_effect = [
-        (22, "cb_best_combo", "completed", params, 70.12, 29.88, 0.03),
-        None,  # no previous champion
-    ]
-
-    with (
-        patch("api.core._get_pool", return_value=pool),
-        patch("builtins.open", mock_open(read_data="")),
-        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
-              return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
-        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
-    ):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/model-tuning/catboost/experiments/22/promote")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["promoted"] is True
-    assert data["run_id"] == 22
-
-
-@pytest.mark.asyncio
-async def test_promote_xgboost_run():
-    """POST /model-tuning/xgboost/experiments/27/promote promotes XGBoost run."""
-    pool, conn, cursor = _make_pool()
-    params = json.dumps({
-        "n_estimators": 1500, "learning_rate": 0.018, "max_depth": 6,
-    })
-    cursor.fetchone.side_effect = [
-        (27, "xgb_best_combo", "completed", params, 69.28, 30.72, 0.04),
-        None,  # no previous champion
-    ]
-
-    with (
-        patch("api.core._get_pool", return_value=pool),
-        patch("builtins.open", mock_open(read_data="")),
-        patch("api.routers.forecasting.tuning.promote.yaml.safe_load",
-              return_value=dict(_ALGO_CONFIG)),
-        patch("api.routers.forecasting.tuning.promote.yaml.dump"),
-        patch("api.routers.forecasting.tuning.promote.shutil.copy2"),
-    ):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/model-tuning/xgboost/experiments/27/promote")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["promoted"] is True
-    assert data["run_id"] == 27
-
-
-# ---------------------------------------------------------------------------
-# Cancel / Delete
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
 async def test_cancel_running_experiment():
     """POST /model-tuning/lgbm/experiments/5/cancel cancels a running experiment."""
     pool, conn, cursor = _make_pool()
@@ -1102,52 +932,6 @@ async def test_get_templates_lgbm():
 
 
 @pytest.mark.asyncio
-async def test_get_templates_catboost():
-    """GET /model-tuning/catboost/templates returns CatBoost-specific templates."""
-    pool, conn, cursor = _make_pool()
-
-    templates_config = {
-        "templates": {
-            "catboost": [
-                {
-                    "id": "production_baseline",
-                    "label": "Production Baseline",
-                    "source": "algorithm_config",
-                },
-                {
-                    "id": "expert_ordered_symmetric",
-                    "label": "Expert: Ordered Boosting + Symmetric Trees",
-                    "params": {"grow_policy": "SymmetricTree", "depth": 8},
-                },
-            ],
-        },
-    }
-
-    with (
-        patch("api.core._get_pool", return_value=pool),
-        patch(
-            "common.core.utils.load_config",
-            return_value=templates_config,
-        ),
-        patch("api.routers.forecasting.tuning.templates._load_live_params",
-              return_value={"iterations": 3000, "learning_rate": 0.008}),
-    ):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/model-tuning/catboost/templates")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["model"] == "catboost"
-    assert len(data["templates"]) >= 1
-
-
-# ---------------------------------------------------------------------------
-# Promoted
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
 async def test_get_promoted_run():
     """GET /model-tuning/lgbm/promoted returns the currently promoted run."""
     pool, conn, cursor = _make_pool()
@@ -1187,68 +971,6 @@ async def test_get_promoted_run_none():
 
 # ---------------------------------------------------------------------------
 # XGBoost compare
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_compare_xgboost_runs():
-    """GET /model-tuning/xgboost/compare returns delta metrics for XGBoost."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.side_effect = [
-        _compare_row(run_id=23, run_label="xgb_baseline", model_id="xgboost_cluster",
-                     accuracy_pct=65.47, wape=34.53, bias=0.052),
-        _compare_row(run_id=24, run_label="xgb_more_trees", model_id="xgboost_cluster",
-                     accuracy_pct=66.89, wape=33.11, bias=0.042),
-        None,  # no existing comparison
-    ]
-    cursor.fetchall.side_effect = [[], [], [], [], [], []]
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/model-tuning/xgboost/compare?baseline_id=23&candidate_id=24"
-            )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["delta_accuracy"] == pytest.approx(1.42, abs=0.01)
-    assert data["verdict"] == "improved"
-
-
-# ---------------------------------------------------------------------------
-# CatBoost compare
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_compare_catboost_runs():
-    """GET /model-tuning/catboost/compare returns delta metrics for CatBoost."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.side_effect = [
-        _compare_row(run_id=18, run_label="cb_baseline", model_id="catboost_cluster",
-                     accuracy_pct=66.82, wape=33.18, bias=0.041),
-        _compare_row(run_id=19, run_label="cb_deeper_trees", model_id="catboost_cluster",
-                     accuracy_pct=67.95, wape=32.05, bias=0.032),
-        None,  # no existing comparison
-    ]
-    cursor.fetchall.side_effect = [[], [], [], [], [], []]
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/model-tuning/catboost/compare?baseline_id=18&candidate_id=19"
-            )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["delta_accuracy"] == pytest.approx(1.13, abs=0.01)
-    assert data["verdict"] == "improved"
-
-
-# ---------------------------------------------------------------------------
-# Promotions audit trail
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

@@ -18,8 +18,6 @@ Output:
 
 Usage:
     uv run python scripts/ml/train_production_models.py --model lgbm_cluster
-    uv run python scripts/ml/train_production_models.py --model catboost_cluster
-    uv run python scripts/ml/train_production_models.py --model xgboost_cluster
     uv run python scripts/ml/train_production_models.py --all
 """
 
@@ -64,10 +62,6 @@ from common.ml.model_registry import (  # noqa: E402
     get_best_iteration,
     get_tree_default_params,
 )
-from common.ml.seasonal_naive import (  # noqa: E402
-    build_seasonal_naive_model,
-    make_dfu_key,
-)
 from common.ml.tuning import load_best_params  # noqa: E402
 from common.scripts_base import load_project_env, setup_logging  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
@@ -78,7 +72,7 @@ logger = logging.getLogger(__name__)
 VAL_SPLIT_PCT = 0.20
 
 # ── Model class/library registry ─────────────────────────────────────────────
-# Maps model_name (lgbm, catboost, xgboost) to import paths and metadata.
+# Maps the supported LGBM model to its import path and metadata.
 # Mirrors scripts/run_backtest.py MODEL_REGISTRY but only the fields needed
 # for production training (no backtest-specific options).
 
@@ -91,28 +85,6 @@ _MODEL_LIBRARY: dict[str, dict[str, Any]] = {
         "constant_target_guard": True,
         "feature_importance_fn": lambda model: model.feature_importances_,
         "default_params_fn": lambda algo, seed=42: get_tree_default_params("lgbm", algo, seed=seed),
-    },
-    "catboost": {
-        "class": "catboost.CatBoostRegressor",
-        "iter_param": "iterations",
-        "cat_dtype": "str",
-        "needs_cat_dtype_cast": False,
-        "constant_target_guard": True,
-        "feature_importance_fn": lambda model: model.get_feature_importance(),
-        "default_params_fn": lambda algo, seed=42: get_tree_default_params(
-            "catboost", algo, seed=seed
-        ),
-    },
-    "xgboost": {
-        "class": "xgboost.XGBRegressor",
-        "iter_param": "n_estimators",
-        "cat_dtype": "category",
-        "needs_cat_dtype_cast": True,
-        "constant_target_guard": True,
-        "feature_importance_fn": lambda model: model.feature_importances_,
-        "default_params_fn": lambda algo, seed=42: get_tree_default_params(
-            "xgboost", algo, seed=seed
-        ),
     },
 }
 
@@ -153,19 +125,6 @@ def _apply_tweedie_objective(
     if model_name == "lgbm":
         merged = {**params, "objective": "regression_l1"}
         merged.pop("tweedie_variance_power", None)
-    elif model_name == "catboost":
-        merged = {**params, "loss_function": "MAE"}
-        merged.pop("boost_from_average", None)
-        # CatBoost forbids the Newton leaf-estimation method under MAE (no
-        # Hessian). Drop the RMSE/Newton-oriented leaf-estimation settings so
-        # CatBoost falls back to its valid MAE default (Exact). Without this,
-        # intermittent clusters crash with "Newton leaves estimation method is
-        # not supported for MAE loss function".
-        merged.pop("leaf_estimation_method", None)
-        merged.pop("leaf_estimation_iterations", None)
-    elif model_name == "xgboost":
-        merged = {**params, "objective": "reg:absoluteerror"}
-        merged.pop("tweedie_variance_power", None)
     else:
         merged = dict(params)
 
@@ -180,16 +139,12 @@ def _import_model_class(dotted_path: str) -> type:
 
 
 def _resolve_model_name(model_id: str) -> str:
-    """Extract model library name (lgbm, catboost, xgboost) from model_id.
-
-    model_id examples: lgbm_cluster, catboost_cluster, xgboost_cust_enriched
-    """
-    for prefix in ("lgbm", "catboost", "xgboost"):
-        if model_id.startswith(prefix):
-            return prefix
+    """Resolve the sole supported tree-model library from a model id."""
+    if model_id == "lgbm_cluster":
+        return "lgbm"
     raise ValueError(
         f"Cannot resolve model library from model_id={model_id!r}. "
-        f"Expected prefix: lgbm, catboost, or xgboost."
+        "Expected lgbm_cluster."
     )
 
 
@@ -334,46 +289,6 @@ def _train_cluster(
     )
     fit_params = _apply_tweedie_objective(fit_params, model_name, demand_pattern)
 
-    baseline_intermittent = backtest_cfg.get("baseline_intermittent", True)
-    if baseline_intermittent and demand_pattern == "intermittent":
-        window = int(backtest_cfg.get("baseline_intermittent_window", 12))
-        eval_model = build_seasonal_naive_model(train_c.loc[~val_mask], window=window)
-        val_rows = train_c.loc[val_mask]
-        val_keys = [
-            make_dfu_key(row.item_id, row.customer_group, row.loc)
-            for row in val_rows.itertuples(index=False)
-        ]
-        eval_model._sku_cks = val_keys
-        eval_model._months = pd.to_datetime(val_rows["startdate"]).dt.month.tolist()
-        val_preds = eval_model.predict(val_rows)
-        val_abs_sum = float(abs(y_val.sum()))
-        val_floor = max(len(y_val) * 0.01, 1.0)
-        val_denom = max(val_abs_sum, val_floor)
-        val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2)
-        model = build_seasonal_naive_model(train_c, window=window)
-        meta = {
-            "val_wape": val_wape,
-            "train_rows": len(X_all),
-            "early_stop_train_rows": len(X_tr),
-            "total_rows": len(X_all),
-            "val_rows": len(X_val),
-            "n_estimators_used": 0,
-            "cluster_profile": "seasonal_naive_baseline",
-            "demand_pattern": demand_pattern,
-            "cluster_stats": cluster_stats,
-            "n_val_months": n_val_months,
-            "n_train_months": len(unique_months) - n_val_months,
-        }
-        logger.info(
-            "Cluster %d/%d '%s': routed to seasonal_naive production artifact "
-            "(zero_pct=%.2f, val_wape=%.1f%%)",
-            ci,
-            n_clusters,
-            cluster_label,
-            cluster_stats["zero_demand_pct"],
-            val_wape,
-        )
-        return cluster_label, model, meta
 
     max_iters = fit_params[iter_param]
     model = build_tree_model(model_name, fit_params)
@@ -775,7 +690,7 @@ def main() -> None:
         "--model",
         type=str,
         default=None,
-        help="Model ID to train (e.g. lgbm_cluster, catboost_cluster, xgboost_cust_enriched)",
+        help="Model ID to train (lgbm_cluster)",
     )
     group.add_argument(
         "--all",
@@ -820,7 +735,7 @@ def main() -> None:
             _resolve_model_name(model_id)
         except ValueError:
             logger.error(
-                "Unknown model_id '%s'. Must start with lgbm, catboost, or xgboost.",
+                "Unknown model_id '%s'. Expected lgbm_cluster.",
                 model_id,
             )
             sys.exit(1)

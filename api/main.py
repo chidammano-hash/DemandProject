@@ -270,7 +270,6 @@ from api.routers.inventory import sourcing as sourcing_router   # noqa: E402
 from api.routers.inventory import purchase_orders as po_router  # noqa: E402
 from api.routers.forecasting import accuracy_budget  # noqa: E402  # Accuracy budget
 from api.routers.forecasting import lgbm_tuning  # noqa: E402  # LGBM tuning
-from api.routers.forecasting import model_tuning  # noqa: E402  # CatBoost/XGBoost tuning
 from api.routers.forecasting import tuning_chat  # noqa: E402  # LGBM tuning chat
 from api.routers.forecasting import cluster_eda  # noqa: E402  # Cluster EDA
 from api.routers.forecasting import sampled_backtest  # noqa: E402  # Sampled backtest
@@ -278,6 +277,7 @@ from api.routers.forecasting import feature_lab  # noqa: E402  # Feature Lab
 from api.routers.forecasting import tuning as unified_model_tuning  # noqa: E402  # Unified model tuning
 from api.routers.forecasting import cluster_experiments  # noqa: E402  # Cluster experiments
 from api.routers.forecasting import backtest_management  # noqa: E402  # Backtest management
+from api.routers.forecasting import forecast_promotion  # noqa: E402  # Forecast release promotion
 from api.routers.forecasting import forecast_release  # noqa: E402  # Planner release readiness
 from api.routers.forecasting import champion_experiments  # noqa: E402  # Champion experiments
 from api.routers.forecasting import champion_sweeps  # noqa: E402  # Champion strategy sweep (tournament)
@@ -358,7 +358,6 @@ app.include_router(po_router.router)
 
 app.include_router(accuracy_budget.router)
 app.include_router(lgbm_tuning.router)
-app.include_router(model_tuning.router)
 app.include_router(tuning_chat.router)
 app.include_router(cluster_eda.router)
 app.include_router(sampled_backtest.router)
@@ -366,6 +365,7 @@ app.include_router(feature_lab.router)
 app.include_router(unified_model_tuning.router, prefix="/model-tuning", tags=["model-tuning"])
 app.include_router(cluster_experiments.router)
 app.include_router(backtest_management.router)
+app.include_router(forecast_promotion.router)
 app.include_router(forecast_release.router)
 app.include_router(champion_experiments.router)
 app.include_router(champion_sweeps.router)

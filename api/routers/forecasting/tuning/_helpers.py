@@ -25,25 +25,11 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_MODELS = {"lgbm", "catboost", "xgboost"}
+VALID_MODELS = {"lgbm"}
 
 MODEL_ID_MAP: dict[str, str] = {
     "lgbm": "lgbm_cluster",
-    "catboost": "catboost_cluster",
-    "xgboost": "xgboost_cluster",
 }
-
-# CatBoost synonym pairs — only one of each pair can be set at a time.
-# When both appear, keep the first (CatBoost-native) name and drop the alias.
-_CATBOOST_SYNONYM_PAIRS: list[tuple[str, str]] = [
-    ("l2_leaf_reg", "reg_lambda"),
-    ("iterations", "num_boost_round"),
-    ("iterations", "n_estimators"),
-    ("iterations", "num_trees"),
-    ("learning_rate", "eta"),
-    ("depth", "max_depth"),
-    ("random_seed", "random_state"),
-]
 
 # Model-specific hyperparameter keys recognized during promotion
 _MODEL_PARAM_KEYS: dict[str, set[str]] = {
@@ -52,22 +38,6 @@ _MODEL_PARAM_KEYS: dict[str, set[str]] = {
         "max_depth", "min_gain_to_split", "subsample", "bagging_freq",
         "colsample_bytree", "feature_fraction_bynode", "reg_lambda", "reg_alpha",
         "path_smooth", "max_bin",
-    },
-    "catboost": {
-        "iterations", "learning_rate", "depth", "l2_leaf_reg",
-        "border_count", "bagging_temperature", "random_strength",
-        "min_data_in_leaf", "grow_policy", "max_bin", "max_leaves",
-        "max_ctr_complexity", "subsample", "colsample_bylevel",
-        "bootstrap_type", "model_size_reg", "leaf_estimation_method",
-        "boost_from_average", "leaf_estimation_iterations", "score_function",
-        "posterior_sampling", "langevin", "diffusion_temperature",
-    },
-    "xgboost": {
-        "n_estimators", "learning_rate", "max_depth", "min_child_weight",
-        "subsample", "colsample_bytree", "colsample_bylevel",
-        "reg_lambda", "reg_alpha", "gamma", "max_bin",
-        "grow_policy", "tree_method", "max_leaves",
-        "booster", "rate_drop", "skip_drop", "colsample_bynode",
     },
 }
 
@@ -236,18 +206,6 @@ def _verify_run_ownership(run_id: int, model: str) -> None:
         raise HTTPException(status_code=500, detail="Failed to verify experiment")
 
 
-def _sanitize_catboost_synonyms(section: dict[str, Any]) -> dict[str, Any]:
-    """Remove CatBoost synonym conflicts — keep the native name, drop the alias."""
-    for native, alias in _CATBOOST_SYNONYM_PAIRS:
-        if native in section and alias in section:
-            logger.info(
-                "CatBoost synonym conflict: both '%s' and '%s' present — keeping '%s'",
-                native, alias, native,
-            )
-            del section[alias]
-    return section
-
-
 def _build_temp_config(
     model: str,
     params: dict[str, Any] | None,
@@ -279,10 +237,6 @@ def _build_temp_config(
             entry[key] = value
 
     cfg.setdefault("algorithms", {})[pipeline_key] = entry
-
-    # Strip CatBoost synonym conflicts before writing
-    if model == "catboost":
-        cfg["algorithms"][pipeline_key]["params"] = _sanitize_catboost_synonyms(params_section)
 
     # Write to a temp directory
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"tuning_{model}_"))

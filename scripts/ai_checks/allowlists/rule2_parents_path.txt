@@ -47,11 +47,9 @@ scripts/ml/generate_customer_features.py
 scripts/ml/generate_customer_features_sql.py
 scripts/ml/label_clusters.py
 scripts/ml/run_backtest.py
-scripts/ml/run_backtest_catboost.py
 scripts/ml/run_backtest_chronos2_enriched.py
 scripts/ml/run_backtest_dl.py
 scripts/ml/run_backtest_mstl.py
-scripts/ml/run_backtest_xgboost.py
 scripts/ml/run_champion_experiment.py
 scripts/ml/run_champion_selection.py
 scripts/ml/run_cluster_pipeline.py

@@ -22,7 +22,6 @@ Pipeline configuration was fragmented across 4 separate YAML files, each governi
 | `config/lgbm_tuning_config.yaml` | Tuning run tracking, backup dir, comparison thresholds | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `tracking` section. |
 | `config/production_forecast_config.yaml` | Production forecast horizon, CI bands, model registry, scheduler | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `production_forecast` section. |
 | `config/backtest_sampling_config.yaml` | DFU sampling for backtests | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `backtest_sampling` section. |
-| `config/algorithm_config.yaml` | Model hyperparameters (LGBM, CatBoost, XGBoost, Chronos, etc.) | **REMOVED** -- hyperparameters now inline under `algorithms.<model_id>.params` in `forecast_pipeline_config.yaml`. |
 | `config/model_tuning_config.yaml` | Unused -- was never loaded by any script | Deleted. |
 | `config/baseline_seeding.yaml` | Unused -- was never loaded by any script | Deleted. |
 | `config/fva_config.yaml` | Unused -- was never loaded by any script | Deleted. |
@@ -94,32 +93,23 @@ algorithms:
 When `clustering.enabled` is `false` (see below), backtest scripts auto-fall back to `global` regardless of the per-algorithm `cluster_strategy` setting.
 
 Algorithms with `cluster_strategy`:
-- `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` (tree)
-- `seasonal_naive`, `rolling_mean`, `rolling_median` (statistical)
 
-Foundation and deep learning models (`chronos2_enriched`, `nbeats`, `nhits`) omit this key and always run globally. (The T5, Bolt, and non-enriched Chronos 2 foundation-model variants were removed in commit `5ab8d593` — only `chronos2_enriched` remains; see [18-chronos-foundation-models.md](18-chronos-foundation-models.md).)
 
 ### All 10 Algorithms
 
 | Algorithm | Type | tune | backtest | compete | forecast | expert | cluster_strategy |
 |---|---|---|---|---|---|---|---|
 | `lgbm_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
-| `catboost_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
-| `xgboost_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
 | `chronos2_enriched` | foundation | no | yes | yes | yes | no | — |
 | `mstl` | statistical | no | yes | yes | yes | yes | — |
 | `nbeats` | deep_learning | no | yes | yes | yes | yes | — |
 | `nhits` | deep_learning | no | yes | yes | yes | no | — |
-| `seasonal_naive` | statistical | no | yes | yes | yes | no | per_cluster |
-| `rolling_mean` | statistical | no | yes | yes | yes | yes | per_cluster |
-| `rolling_median` | statistical | no | yes | yes | yes | no | per_cluster |
 
 ### Per-Algorithm Backtest Config Keys
 
 Beyond the lifecycle flags above, each tree/statistical algorithm entry accepts backtest-level
 behavioral keys, read from `algorithms.<model_id>.params`. Edit
 `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>.params`, then run
-`make backtest-lgbm` (or catboost/xgboost) -- the script reads its section from the YAML file and
 applies cluster strategy, SHAP, tuning, recursive mode, and hyperparameters automatically. No CLI flags
 are needed; the config file is the single source of truth.
 
@@ -174,7 +164,6 @@ algorithms:
 ```
 
 **What was removed:** 30+ granular Makefile targets (e.g., `backtest-lgbm-cluster-shap`,
-`backtest-catboost-cluster-tuned`, `backtest-xgboost-transfer-recursive`) were deleted -- the config
 file replaces all of them. Five algorithm families (Prophet, StatsForecast, NeuralProphet, PatchTST,
 DeepAR) were also removed along with their Makefile targets; the algorithm roster above provides the
 best accuracy-to-maintenance ratio.
@@ -227,7 +216,6 @@ champion:
     primary_strategy: adaptive_ensemble
     primary_top_k: 3
     primary_weight_method: inverse_wape
-  fallback_model_id: seasonal_naive
   metric: accuracy_pct
   lag: execution
   min_sku_rows: 3
@@ -250,7 +238,6 @@ production_forecast:
   horizon_months: 24           # T+1 through T+24 (was 18)
   lookback_months: 36          # 3 years of sales history (was 24)
   min_history_months: 12       # Below this -> cold-start routing
-  cold_start_model_id: rolling_mean
   cold_start_min_months: 3     # Absolute floor -- skip DFUs below this
   fallback_model_id: lgbm_cluster
   recursive: true
@@ -258,7 +245,6 @@ production_forecast:
   keep_last_n_versions: 3
   confidence_interval:
     enabled: true
-    source_model_ids: [lgbm_cluster, catboost_cluster, xgboost_cluster]
     residual_lag: 0
     min_residual_months: 6
     z_lower: 1.282             # P10
@@ -391,11 +377,9 @@ horizon = cfg["production_forecast"]["horizon_months"]  # 24
 
 # All algorithms that participate in champion selection
 competing = get_competing_model_ids()
-# ['lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos2_enriched', 'mstl', ...]
 
 # All algorithms eligible for production forecasting
 forecastable = get_forecastable_model_ids()
-# ['lgbm_cluster', 'catboost_cluster', 'xgboost_cluster']
 
 # Filtered roster for a specific stage
 backtest_algos = get_algorithm_roster(stage="backtest")
@@ -439,7 +423,6 @@ models = get_competing_model_ids()
 | `horizon_months` | 18 | 24 | `production_forecast.horizon_months` |
 | `lookback_months` | 24 | 36 | `production_forecast.lookback_months` |
 | `embargo_months` | 0 | 1 | `backtest.embargo_months` |
-| Cold-start routing | None | rolling_mean for < 12 mo, skip < 3 mo | `production_forecast.min_history_months`, `cold_start_model_id`, `cold_start_min_months` |
 
 ---
 

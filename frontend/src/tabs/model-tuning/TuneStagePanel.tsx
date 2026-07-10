@@ -6,12 +6,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Crown, FlaskConical, Plus, Target } from "lucide-react";
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectTrigger,
@@ -26,15 +21,8 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { cn } from "@/lib/utils";
 import { formatPct, formatInt } from "@/lib/formatters";
 
-import {
-  STALE,
-  type ModelType,
-  type TuningRun,
-} from "@/api/queries";
-import {
-  fetchModelExperiments,
-  fetchModelSummary,
-} from "@/api/queries/model-tuning";
+import { STALE, type ModelType, type TuningRun } from "@/api/queries";
+import { fetchModelExperiments, fetchModelSummary } from "@/api/queries/model-tuning";
 
 import { ClusterEDAPanel } from "../lgbm-tuning/ClusterEDAPanel";
 import { FeatureLabPanel } from "../lgbm-tuning/FeatureLabPanel";
@@ -43,12 +31,7 @@ import { EnhancedComparisonPanel } from "./EnhancedComparisonPanel";
 import { RunHistoryTable } from "./RunHistoryTable";
 
 import { MODEL_DETAIL_TABS, PAGE_SIZE, TYPE_COLORS } from "./_helpers";
-import type {
-  ModelDetailTab,
-  ModelInfo,
-  ModelSummaryCardData,
-  StatusFilter,
-} from "./_types";
+import type { ModelDetailTab, ModelInfo, ModelSummaryCardData, StatusFilter } from "./_types";
 
 interface Props {
   models: ModelInfo[];
@@ -109,22 +92,10 @@ export function TuneStagePanel({
     queryFn: () => fetchModelSummary("lgbm"),
     staleTime: STALE.TWO_MIN,
   });
-  const { data: catboostSummary } = useQuery({
-    queryKey: ["model-summary", "catboost"],
-    queryFn: () => fetchModelSummary("catboost"),
-    staleTime: STALE.TWO_MIN,
-  });
-  const { data: xgboostSummary } = useQuery({
-    queryKey: ["model-summary", "xgboost"],
-    queryFn: () => fetchModelSummary("xgboost"),
-    staleTime: STALE.TWO_MIN,
-  });
 
   const emptySummary: ModelSummaryCardData = { best: null, runs: 0, active: 0, promoted: null };
   const modelSummaries: Record<string, ModelSummaryCardData> = {
     lgbm_cluster: lgbmSummary ?? emptySummary,
-    catboost_cluster: catboostSummary ?? emptySummary,
-    xgboost_cluster: xgboostSummary ?? emptySummary,
   };
 
   // Experiments for the currently selected tunable model
@@ -179,9 +150,8 @@ export function TuneStagePanel({
     const completed = allRuns.filter((r) => r.status === "completed" && r.accuracy_pct != null);
     const running = allRuns.filter((r) => r.status === "running");
     const best = completed.reduce<TuningRun | null>(
-      (acc, r) =>
-        !acc || (r.accuracy_pct ?? 0) > (acc.accuracy_pct ?? 0) ? r : acc,
-      null,
+      (acc, r) => (!acc || (r.accuracy_pct ?? 0) > (acc.accuracy_pct ?? 0) ? r : acc),
+      null
     );
     const promoted = allRuns.find((r) => r.is_promoted);
     return {
@@ -212,7 +182,7 @@ export function TuneStagePanel({
                       "rounded-lg border p-3 text-left transition-all",
                       isSelected
                         ? "border-primary bg-primary/5 ring-1 ring-primary shadow-sm"
-                        : "hover:bg-muted/50 hover:border-foreground/20",
+                        : "hover:bg-muted/50 hover:border-foreground/20"
                     )}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -240,9 +210,7 @@ export function TuneStagePanel({
                         <div className="text-[10px] text-muted-foreground">
                           {summary.runs} run{summary.runs !== 1 ? "s" : ""}
                           {summary.active > 0 && (
-                            <span className="text-amber-500 ml-1">
-                              ({summary.active} active)
-                            </span>
+                            <span className="text-amber-500 ml-1">({summary.active} active)</span>
                           )}
                         </div>
                       </div>
@@ -279,7 +247,7 @@ export function TuneStagePanel({
                       "flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                       modelDetailTab === key
                         ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     <Icon className="h-3 w-3" />

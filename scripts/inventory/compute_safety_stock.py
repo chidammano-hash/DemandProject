@@ -247,41 +247,69 @@ def _load_forecast_demand_stats(
         Returns empty dict if the target table does not exist or the query fails.
     """
     if source == "production":
-        table = "fact_production_forecast"
-        where_clause = ""
-        params: tuple = ()
+        sql = """
+            WITH active_promotion AS (
+                SELECT id
+                FROM model_promotion_log
+                WHERE is_active = TRUE
+            )
+            SELECT forecast.item_id,
+                   forecast.loc,
+                   AVG(forecast.forecast_qty) AS demand_mean,
+                   AVG(
+                       CASE
+                           WHEN forecast.forecast_qty_upper IS NOT NULL
+                            AND forecast.forecast_qty_lower IS NOT NULL
+                            AND %s > 0
+                           THEN (forecast.forecast_qty_upper - forecast.forecast_qty_lower)
+                                / (2.0 * %s)
+                           ELSE NULL
+                       END
+                   ) AS demand_std
+            FROM fact_production_forecast forecast
+            JOIN active_promotion
+              ON active_promotion.id = forecast.promotion_log_id
+            GROUP BY forecast.item_id, forecast.loc
+            HAVING AVG(forecast.forecast_qty) IS NOT NULL
+        """
+        query_params = (ci_z, ci_z)
     elif source == "staging":
         if not model_id:
             log.warning("--forecast-source=staging requires --model-id; falling back to historical")
             return {}
-        table = "fact_production_forecast_staging"
-        where_clause = "WHERE model_id = %s"
-        params = (model_id,)
+        sql = """
+            WITH selected_run AS (
+                SELECT run_id
+                FROM forecast_generation_run
+                WHERE generation_purpose = 'release_candidate'
+                  AND run_status IN ('ready', 'promoted')
+                  AND requested_model_id = %s
+                ORDER BY completed_at DESC NULLS LAST, created_at DESC, run_id
+                LIMIT 1
+            )
+            SELECT staging.item_id,
+                   staging.loc,
+                   AVG(staging.forecast_qty) AS demand_mean,
+                   AVG(
+                       CASE
+                           WHEN staging.forecast_qty_upper IS NOT NULL
+                            AND staging.forecast_qty_lower IS NOT NULL
+                            AND %s > 0
+                           THEN (staging.forecast_qty_upper - staging.forecast_qty_lower)
+                                / (2.0 * %s)
+                           ELSE NULL
+                       END
+                   ) AS demand_std
+            FROM fact_production_forecast_staging staging
+            JOIN selected_run ON selected_run.run_id = staging.run_id
+            WHERE staging.generation_purpose = 'release_candidate'
+              AND staging.candidate_model_id = %s
+            GROUP BY staging.item_id, staging.loc
+            HAVING AVG(staging.forecast_qty) IS NOT NULL
+        """
+        query_params = (model_id, ci_z, ci_z, model_id)
     else:
         return {}
-
-    sql = f"""
-        SELECT
-            item_id,
-            loc,
-            AVG(forecast_qty)  AS demand_mean,
-            AVG(
-                CASE
-                    WHEN forecast_qty_upper IS NOT NULL
-                     AND forecast_qty_lower IS NOT NULL
-                     AND %s > 0
-                    THEN (forecast_qty_upper - forecast_qty_lower) / (2.0 * %s)
-                    ELSE NULL
-                END
-            ) AS demand_std
-        FROM {table}
-        {where_clause}
-        GROUP BY item_id, loc
-        HAVING AVG(forecast_qty) IS NOT NULL
-    """
-    # ci_z is passed twice (for the CASE condition and the divisor) plus any
-    # model_id filter param.
-    query_params = (ci_z, ci_z, *params)
 
     try:
         cur.execute("SAVEPOINT fcst_load")
@@ -305,7 +333,7 @@ def _load_forecast_demand_stats(
         cur.execute("ROLLBACK TO SAVEPOINT fcst_load")
         log.warning(
             "%s not found or query failed — falling back to historical demand stats",
-            table,
+            source,
         )
         return {}
 

@@ -5,15 +5,7 @@
  * (plus the champion ensemble row). Pure presentation; all state and
  * handlers are lifted in from ForecastPanel.
  */
-import {
-  Loader2,
-  CheckCircle2,
-  AlertTriangle,
-  Dumbbell,
-  BarChart3,
-  Crown,
-  RotateCcw,
-} from "lucide-react";
+import { Loader2, CheckCircle2, Dumbbell, BarChart3, Crown, RotateCcw } from "lucide-react";
 
 import type { ChampionExperiment } from "@/api/queries/champion-experiments";
 import type {
@@ -57,6 +49,7 @@ interface ModelReadinessCardProps {
   promotedExperiment: ChampionExperiment | null;
   championConstituents: string[];
   championMissingModels: string[];
+  championCanGenerate: boolean;
   championReady: boolean;
   championDfuCount: number;
   isChampionPromoted: boolean;
@@ -86,6 +79,7 @@ export function ModelReadinessCard({
   promotedExperiment,
   championConstituents,
   championMissingModels,
+  championCanGenerate,
   championReady,
   championDfuCount,
   isChampionPromoted,
@@ -201,7 +195,10 @@ export function ModelReadinessCard({
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="text-[10px] gap-0.5 text-blue-600 border-blue-200">
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] gap-0.5 text-blue-600 border-blue-200"
+                  >
                     <CheckCircle2 className="h-3 w-3" /> No training needed
                   </Badge>
                 </TableCell>
@@ -211,50 +208,65 @@ export function ModelReadinessCard({
                       {championDfuCount.toLocaleString()} DFUs ready
                     </span>
                   ) : (
-                    <span className="text-amber-600" title={`Generate forecasts for: ${championMissingModels.join(", ")}`}>
-                      Waiting: {championMissingModels.join(", ")}
-                    </span>
+                    <span className="text-amber-600">Generate a release candidate</span>
                   )}
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <Badge variant="outline" className="text-[10px] gap-0.5 text-blue-600 border-blue-200">
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] gap-0.5 text-blue-600 border-blue-200"
+                    >
                       <CheckCircle2 className="h-3 w-3" /> N/A
                     </Badge>
-                    {/* Generate uses the legacy production forecast job — routes per-DFU using champion assignments. */}
+                    {/* Generate creates one immutable run from the promoted champion routing artifact. */}
                     <Button
-                      size="sm" variant="outline"
+                      size="sm"
+                      variant="outline"
                       className="h-7 px-2 text-[11px] gap-1"
                       onClick={onGenerateChampion}
-                      disabled={isSubmitting || !championReady}
-                      title={championReady ? "Run champion inference" : `Generate first: ${championMissingModels.join(", ")}`}
+                      disabled={isSubmitting || !championCanGenerate}
+                      title={
+                        championCanGenerate
+                          ? "Generate one immutable champion release candidate"
+                          : `Train first: ${championMissingModels.join(", ")}`
+                      }
                     >
                       <BarChart3 className="h-3 w-3" />
                       Generate
                     </Button>
                     {promotingModelId === "champion" ? (
-                      <Button size="sm" variant="outline" className="h-7 px-2 text-[11px] gap-1" disabled>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px] gap-1"
+                        disabled
+                      >
                         <Loader2 className="h-3 w-3 animate-spin" />
                         Promoting...
                       </Button>
                     ) : isChampionPromoted ? (
                       <Button
-                        size="sm" variant="outline"
+                        size="sm"
+                        variant="outline"
                         className="h-7 px-2 text-[11px] gap-1 text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100"
-                        onClick={() => onPromote("champion")}
-                        disabled={promotingModelId !== null}
-                        title="Click to re-promote"
+                        disabled
+                        title="This release is currently published"
                       >
                         <Crown className="h-3 w-3" /> Promoted
-                        <RotateCcw className="h-3 w-3 opacity-50" />
                       </Button>
                     ) : (
                       <Button
-                        size="sm" variant="outline"
+                        size="sm"
+                        variant="outline"
                         className="h-7 px-2 text-[11px] gap-1"
                         onClick={() => onPromote("champion")}
                         disabled={!championReady || promotingModelId !== null}
-                        title={championReady ? "Promote champion forecasts to production" : `Generate first: ${championMissingModels.join(", ")}`}
+                        title={
+                          championReady
+                            ? "Promote champion forecasts to production"
+                            : `Generate first: ${championMissingModels.join(", ")}`
+                        }
                       >
                         <Crown className="h-3 w-3" />
                         Promote
@@ -268,26 +280,25 @@ export function ModelReadinessCard({
               const status = trainingStatus?.[algo.id];
               const needsTraining = requiresTraining(algo.type);
               const isTrained = status?.trained ?? false;
-              const isProductionTrained =
-                isTrained && status?.training_mode === "production";
+              const isProductionTrained = isTrained && status?.training_mode === "production";
               const isCurrentlyTraining =
-                isTraining &&
-                (trainingModelId === algo.id || trainingModelId === "__all__");
+                isTraining && (trainingModelId === algo.id || trainingModelId === "__all__");
 
               const staged = staging[algo.id];
               const hasStagedForecast = staged != null && staged.row_count > 0;
-              const isCurrentPromoted = promotedModel?.model_id === algo.id;
+              const isPromotable = staged?.run_status === "ready" && staged.promotion_eligible;
+              const isCurrentPromoted = Boolean(
+                staged?.source_run_id && promotedModel?.source_run_id === staged.source_run_id
+              );
 
               return (
                 <TableRow key={algo.id}>
-                  <TableCell className="text-sm font-medium">
-                    {modelLabel(algo.id)}
-                  </TableCell>
+                  <TableCell className="text-sm font-medium">{modelLabel(algo.id)}</TableCell>
                   <TableCell>
                     <Badge
                       className={cn(
                         "text-[10px] px-1.5 py-0",
-                        MODEL_TYPE_COLORS[algo.type] ?? "bg-gray-100 text-gray-700",
+                        MODEL_TYPE_COLORS[algo.type] ?? "bg-gray-100 text-gray-700"
                       )}
                     >
                       {algo.type}
@@ -326,7 +337,8 @@ export function ModelReadinessCard({
                       {needsTraining ? (
                         isCurrentlyTraining ? (
                           <Button
-                            size="sm" variant="outline"
+                            size="sm"
+                            variant="outline"
                             className="h-7 px-2 text-[11px] gap-1"
                             disabled
                           >
@@ -335,7 +347,8 @@ export function ModelReadinessCard({
                           </Button>
                         ) : isProductionTrained ? (
                           <Button
-                            size="sm" variant="outline"
+                            size="sm"
+                            variant="outline"
                             className="h-7 px-2 text-[11px] gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
                             onClick={() => onTrain(algo.id)}
                             disabled={isTraining}
@@ -346,7 +359,8 @@ export function ModelReadinessCard({
                           </Button>
                         ) : (
                           <Button
-                            size="sm" variant="outline"
+                            size="sm"
+                            variant="outline"
                             className="h-7 px-2 text-[11px] gap-1"
                             onClick={() => onTrain(algo.id)}
                             disabled={isTraining}
@@ -356,7 +370,10 @@ export function ModelReadinessCard({
                           </Button>
                         )
                       ) : (
-                        <Badge variant="outline" className="text-[10px] gap-0.5 text-blue-600 border-blue-200">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] gap-0.5 text-blue-600 border-blue-200"
+                        >
                           <CheckCircle2 className="h-3 w-3" /> N/A
                         </Badge>
                       )}
@@ -364,7 +381,8 @@ export function ModelReadinessCard({
                       {/* Generate */}
                       {generatingModelId === algo.id ? (
                         <Button
-                          size="sm" variant="outline"
+                          size="sm"
+                          variant="outline"
                           className="h-7 px-2 text-[11px] gap-1"
                           disabled
                         >
@@ -373,7 +391,8 @@ export function ModelReadinessCard({
                         </Button>
                       ) : hasStagedForecast ? (
                         <Button
-                          size="sm" variant="outline"
+                          size="sm"
+                          variant="outline"
                           className="h-7 px-2 text-[11px] gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
                           onClick={() => onGenerate(algo.id)}
                           disabled={isGenerating}
@@ -384,7 +403,8 @@ export function ModelReadinessCard({
                         </Button>
                       ) : (
                         <Button
-                          size="sm" variant="outline"
+                          size="sm"
+                          variant="outline"
                           className="h-7 px-2 text-[11px] gap-1"
                           onClick={() => onGenerate(algo.id)}
                           disabled={isGenerating || (algo.type === "tree" && !isProductionTrained)}
@@ -397,7 +417,8 @@ export function ModelReadinessCard({
                       {/* Promote */}
                       {promotingModelId === algo.id ? (
                         <Button
-                          size="sm" variant="outline"
+                          size="sm"
+                          variant="outline"
                           className="h-7 px-2 text-[11px] gap-1"
                           disabled
                         >
@@ -406,21 +427,26 @@ export function ModelReadinessCard({
                         </Button>
                       ) : isCurrentPromoted ? (
                         <Button
-                          size="sm" variant="outline"
+                          size="sm"
+                          variant="outline"
                           className="h-7 px-2 text-[11px] gap-1 text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100"
-                          onClick={() => onPromote(algo.id)}
-                          disabled={promotingModelId !== null}
-                          title="Click to re-promote"
+                          disabled
+                          title="This release is currently published"
                         >
                           <Crown className="h-3 w-3" /> Promoted
-                          <RotateCcw className="h-3 w-3 opacity-50" />
                         </Button>
                       ) : (
                         <Button
-                          size="sm" variant="outline"
+                          size="sm"
+                          variant="outline"
                           className="h-7 px-2 text-[11px] gap-1"
                           onClick={() => onPromote(algo.id)}
-                          disabled={!hasStagedForecast || promotingModelId !== null}
+                          disabled={!isPromotable || promotingModelId !== null}
+                          title={
+                            isPromotable
+                              ? "Promote this exact generation run"
+                              : "Generate a new release candidate first"
+                          }
                         >
                           {promotingModelId === algo.id ? (
                             <Loader2 className="h-3 w-3 animate-spin" />
@@ -437,10 +463,7 @@ export function ModelReadinessCard({
             })}
             {forecastAlgos.length === 0 && (
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center text-sm text-muted-foreground py-6"
-                >
+                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">
                   No forecastable algorithms configured.
                 </TableCell>
               </TableRow>

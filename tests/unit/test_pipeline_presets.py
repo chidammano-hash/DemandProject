@@ -3,6 +3,7 @@
 The registry check is the mechanical guard: a preset step referencing a job
 type that does not exist in JOB_TYPE_REGISTRY fails the suite, not production.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -37,12 +38,16 @@ class TestPresetConfig:
             "cleanup_forecast_staging",
         ]
 
+    def test_generation_pipelines_do_not_archive_outside_promotion(self):
+        for name in ("forecast-publish", "full-refresh"):
+            steps = preset_steps(get_pipeline_preset(name))
+            assert steps[0]["job_type"] != "archive_forecast_snapshot"
+
     def test_every_step_job_type_is_registered(self):
         for name, preset in load_pipeline_presets().items():
             for step in preset_steps(preset):
                 assert step["job_type"] in JOB_TYPE_REGISTRY, (
-                    f"pipeline {name!r} references unregistered job type "
-                    f"{step['job_type']!r}"
+                    f"pipeline {name!r} references unregistered job type {step['job_type']!r}"
                 )
 
     def test_every_preset_has_description_and_steps(self):

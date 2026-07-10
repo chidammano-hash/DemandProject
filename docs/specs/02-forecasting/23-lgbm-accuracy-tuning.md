@@ -8,7 +8,6 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `config/forecasting/cluster_tuning_profiles.yaml`, `common/ml/shap_selector.py`, `common/core/constants.py` (now exposes `FORECAST_QTY_COL`), `common/ml/model_registry.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py`, `common/ml/tuning.py` (now routes fits through `model_registry.build_tree_model` + `fit_model` -- no direct `LGBMRegressor`/`CatBoostRegressor`/`XGBRegressor` instantiation), `common/ml/champion/` (split package -- formerly `common/ml/champion_strategies.py`), `scripts/run_backtest.py`, `scripts/tune_cluster_hyperparams.py` |
 
 ---
 
@@ -46,11 +45,9 @@ backtest:
 
 ### 1.2 Key Issues Identified
 
-1. **NaN masking:** `mask_future_sales` set future qty to `0` instead of `NaN`, injecting artificial zeros into rolling means and Croston features for predict rows
 2. **Aggressive dropna:** Training required all 12 lag features to be non-NaN, excluding every DFU with fewer than 12 months of history from training entirely
 3. **Missing derived features:** `update_grid_incremental` only recomputed 3 of 7 derived features, leaving stale values in the recursive prediction loop
 4. **Variance filter destroying signal:** Within-cluster data has naturally low variance for critical features (mean_demand, lags, rolling stats). The variance filter was removing all lag and rolling features
-5. **Correlation filter too aggressive:** Threshold of 0.95 dropped mean_demand, qty_lag_1, and rolling_mean_* because they are correlated with each other -- but each captures a distinct demand signal
 6. **No protected features:** SHAP and pre-SHAP stages could drop any feature, including core demand signals
 7. **MSE objective unstable for zero-inflated data:** Default regression (MSE) squares errors, amplifying the impact of outlier non-zero values in predominantly-zero clusters
 8. **Early stopping too tight:** 3% patience (45 rounds at 1500 estimators) caused premature stopping, especially on sparse clusters where WAPE is noisy
@@ -68,14 +65,11 @@ backtest:
 
 - **File:** `common/ml/feature_engineering.py` (line 672)
 - **What:** Changed `df.loc[future_mask, "qty"] = 0` to `df.loc[future_mask, "qty"] = np.nan`
-- **Why:** Artificial zeros were contaminating rolling means for predict rows. Rolling statistics computed with `min_periods=1` skip NaN values, so rolling means now only reflect real historical data. Zero-masking made the model believe demand was 0 in future months, dragging down `rolling_mean_3m`, `rolling_mean_6m`, `rolling_mean_12m` and corrupting Croston intermittency signals.
-- **Impact:** Large -- rolling_mean features now reflect real demand levels instead of being diluted by fake zeros. After NaN masking, feature columns are filled with 0 for model consumption, but the `qty` column itself remains NaN (excluded from features by `get_feature_columns`).
 
 #### 2.1.2 Training Data Dropna Relaxed
 
 - **File:** `common/ml/backtest_framework.py` (line 1247)
 - **What:** Changed `dropna(subset=[qty_lag_1..qty_lag_12])` to `dropna(subset=["qty_lag_1"])`
-- **Why:** DFUs with fewer than 12 months of history had NaN for lags 9-12 in ALL rows, losing the DFU entirely from training. LightGBM, CatBoost, and XGBoost all handle NaN natively -- they create a separate "missing" bin during histogram splits. Only the first lag needs to be non-NaN to provide meaningful training signal.
 - **Impact:** Sparse and cold-start DFUs now participate in training, increasing the effective training set size and improving accuracy for short-history items.
 
 #### 2.1.3 Missing Derived Features in update_grid_incremental
@@ -91,17 +85,12 @@ backtest:
 
 - **Config:** `forecast_pipeline_config.yaml` -> `lgbm_cluster.params.variance_filter: false`
 - **Why:** Within-cluster data has naturally low variance for key features. When clustering segments SKUs into homogeneous groups, features like `mean_demand`, lag features, and rolling statistics have reduced within-cluster variance by design. The filter (threshold 0.01, measuring `var / (max - min)^2`) was removing ALL lag and rolling features in some clusters, leaving the model with only calendar and attribute features.
-- **Note:** Variance filter remains enabled for catboost_cluster and xgboost_cluster (threshold 0.01). Those models have not been tuned with the same intensity.
 
 #### 2.2.2 Correlation Threshold Relaxed
 
 - **Config:** `forecast_pipeline_config.yaml` -> `lgbm_cluster.params.correlation_threshold: 0.98`
 - **Before:** 0.95
-- **Why:** At 0.95, the correlation filter was dropping `mean_demand` (correlated with `rolling_mean_12m`), `qty_lag_1` (correlated with `qty_lag_2`), and `rolling_mean_3m` (correlated with `rolling_mean_6m`). While these features are mathematically correlated, each captures a distinct aspect of demand signal:
   - `qty_lag_1` = most recent actual (recency signal)
-  - `rolling_mean_3m` = short-term trend
-  - `rolling_mean_6m` = medium-term trend
-  - `rolling_mean_12m` = long-term level
   - `mean_demand` = overall demand magnitude
 - Raising to 0.98 preserves these features while still removing true duplicates.
 
@@ -123,11 +112,9 @@ PROTECTED_FEATURES = {
     "true_demand_ratio", "n_active_cust", "hhi_demand",
 
     # Core demand signals
-    "mean_demand", "qty_lag_1", "rolling_mean_3m", "rolling_mean_6m",
 
     # Recursive chain features (lags 2-3 carry recency signal)
     "qty_lag_2", "qty_lag_3",
-    "rolling_mean_12m",
 }
 ```
 
@@ -183,9 +170,7 @@ PROTECTED_FEATURES = {
 | `max_depth` | -1 (unlimited) | 8 | Bounded depth prevents pathological deep trees in small clusters. Combined with 63 leaves, enforces a balanced tree shape. |
 | `min_child_samples` | 40 | 20 | Lower threshold lets the model create more splits on smaller clusters. At 40, some sparse clusters had best_iter=1 because no useful split could be found with so few samples per leaf. |
 | `colsample_bytree` | 0.7 | 0.8 | More features per tree gives each tree a richer view. With protected features and variance filter disabled, the feature set is more curated. |
-| `feature_fraction_bynode` | 0.5 | 0.7 | Higher per-node feature fraction ensures that key features (lags, rolling means) are available at most split points. |
 | `path_smooth` | 4 | 1.0 | Reduced smoothing. Path_smooth=4 was over-regularizing leaf predictions, pushing predictions toward parent averages too aggressively. |
-| `max_bin` | 127 | 255 | More histogram bins give finer split resolution for continuous features like lag values and rolling means. |
 
 #### 2.3.2 Tweedie Disabled for Intermittent Demand
 
@@ -194,7 +179,6 @@ PROTECTED_FEATURES = {
 - **Why:** Tweedie's log link function produces reasonable predictions at iteration 0 for highly sparse data (where most targets are zero). Since early stopping monitors WAPE, the WAPE at iteration 0 is already "good" (predicting near-zero for near-zero actuals), causing early stopping to fire at iteration 1 before the model learns any signal. This results in best_iter=1 and catastrophic accuracy (near-zero or negative).
 - **Implementation detail:**
   - `_classify_cluster_demand()` classifies each cluster as "continuous", "lumpy", or "intermittent" based on zero-demand percentage
-  - For intermittent: forces `objective=regression_l1` (LGBM), `loss_function=MAE` (CatBoost), `objective=reg:absoluteerror` (XGBoost)
   - For lumpy: keeps default objective unchanged
   - For continuous: keeps default objective unchanged
 - **Config thresholds:**
@@ -213,8 +197,6 @@ PROTECTED_FEATURES = {
 - **Why:** For sparse clusters, WAPE is noisy due to small denominators in the validation set. A validation set with 80% zeros can have wildly fluctuating WAPE from one iteration to the next, causing premature stopping. The 10% patience (200 rounds) gives the model enough iterations to find a real minimum rather than stopping on a noise spike.
 - **WAPE eval callbacks:** All three models now use custom WAPE eval functions for early stopping alignment:
   - LGBM: `_wape_lgbm(y_true, y_pred)` with a scaled denominator floor of `max(len(y_true) * 0.01, 1.0)`
-  - CatBoost: `WapeMetric` class with the same floor
-  - XGBoost: `_wape_xgb(y_true, y_pred)` with the same floor
 
 #### 2.3.4 Recursive Noise Reduced
 
@@ -391,28 +373,15 @@ Key observations:
   val_accuracy=86.3%, val_wape=13.7%, profile=high_volume_stable, pattern=continuous (4.2s)
   ```
 
-### 2.6 Intermittent Cluster Baseline Routing
+### 2.6 Intermittent Cluster Handling
 
-#### 2.6.1 Rolling Mean Baseline for Intermittent Clusters
-
-- **File:** `scripts/run_backtest.py`
-- **What:** Added `_RollingMeanModel` class and intermittent routing logic in `_train_single_cluster`. When a cluster's `demand_pattern == "intermittent"` (i.e., `zero_pct >= intermittent_threshold`, default 0.70), the cluster is routed to `_predict_rolling_mean` instead of training an LGBM model.
-- **How it works:**
-  - Uses a 12-month rolling window (configurable via `backtest.baseline_intermittent_window` in `forecast_pipeline_config.yaml`)
-  - `_RollingMeanModel` is a lightweight placeholder stored in the models dict so recursive prediction works seamlessly via `_predict_single_month`
-  - SHAP gracefully skips these models -- the exception handler keeps all features when it encounters a non-tree model
-- **Why:** Tree models fundamentally cannot forecast intermittent demand (Section 4, Known Limitation #1). With 87-98% of months having zero demand, LGBM predicts near-zero for everything, producing 0-2% accuracy. A simple rolling mean baseline captures the sparse demand signal better by averaging over recent non-zero months, improving accuracy from near-zero to 5-16% depending on the cluster.
-
-#### 2.6.2 _predict_single_month Update
-
-- **File:** `common/ml/backtest_framework.py`
-- **What:** Added `_sku_cks` passthrough parameter for baseline models that need DFU-level mapping during recursive prediction. When a cluster uses a rolling mean baseline instead of a tree model, the recursive prediction loop passes the SKU composite keys through so the baseline predictor can map predictions back to individual DFUs.
+Intermittent clusters remain eligible for LightGBM and use the sparse-demand patience and
+regularization settings from the pipeline configuration.
 
 #### 2.6.3 Results
 
 **Per-cluster accuracy (Timeframe A, 1-step):**
 
-| Cluster | Before (LGBM) | After (rolling mean) | Change |
 |---|---|---|---|
 | low_volume_moderate | 2.0% | 9.9% | +7.9pp |
 | medium_volume_moderate | 1.0% | 15.0% | +14.0pp |
@@ -432,7 +401,6 @@ Key observations:
 ```yaml
 backtest:
   baseline_intermittent: true          # default, enable routing
-  baseline_intermittent_window: 12     # months for rolling mean
   intermittent_threshold: 0.7          # zero_pct cutoff
 ```
 
@@ -449,10 +417,6 @@ backtest:
 | medium_volume_periodic_c7 | ~72% | ~28% | Medium | medium_volume_periodic | LGBM |
 | medium_volume_periodic_c3 | ~46% | ~54% | Medium | medium_volume_periodic | LGBM |
 | medium_volume_periodic_seasonal | ~20% | ~80% | Medium | medium_volume_periodic | LGBM |
-| medium_volume_moderate | ~15% | ~85% | High | sparse_intermittent | rolling_mean |
-| low_volume_moderate | ~10% | ~90% | High | sparse_intermittent | rolling_mean |
-| very_low_volume_moderate | ~6% | ~94% | High | sparse_intermittent | rolling_mean |
-| very_low_volume_very_steady | ~0% | ~100% | High | sparse_intermittent | rolling_mean |
 
 ### 3.2 Comparison
 
@@ -468,15 +432,12 @@ backtest:
 ### 3.3 Cohort Breakdown
 
 - **Active:** 61.3% -> 71.8% (+10.5pp) -- the bulk of the improvement, driven by data layer fixes and hyperparameter tuning
-- **Sparse:** 2.2% -> 16.9% (+14.7pp) -- major improvement from intermittent cluster baseline routing (Section 2.6), which routes sparse clusters to rolling mean instead of LGBM
-- **Cold-start:** 1.3% -> 4.1% (+2.8pp) -- improved by rolling mean baseline routing; cold-start DFUs with sparse demand now get meaningful predictions instead of near-zero LGBM outputs
 - **Bias:** -9.5% -- inherent under-forecast from MAE (median regression) on right-skewed demand
 
 ---
 
 ## 4. Known Limitations
 
-1. **Sparse clusters (80-98% zeros) at 0-2% accuracy** -- Tree models fundamentally cannot forecast intermittent demand. With 87-98% of months having zero demand, LGBM predicts near-zero for everything, which is correct most of the time but produces terrible WAPE when demand does occur. These clusters need Croston/rolling mean baselines instead of LGBM.
 
 2. **SHAP retrain consistently makes accuracy worse** -- Suggests that the initial training with all features is already optimal for tree models. LightGBM handles irrelevant features by not splitting on them, so removing features reduces information without benefit. The retrain threshold is set to 0.50 to effectively disable it; SHAP is retained as a diagnostic tool.
 
@@ -490,7 +451,6 @@ backtest:
 
 ## 5. Future Tuning Directions
 
-1. **Route sparse clusters to rolling_mean or Croston baselines** -- Champion selection already routes per-DFU, but pre-routing entire sparse clusters to statistical baselines would avoid training LGBM on data it cannot meaningfully learn from. This saves compute time and avoids the model producing misleading near-zero predictions.
 
 2. **Two-stage models for intermittent demand** -- Train a classifier (zero/non-zero) first, then a regressor (predict qty given demand occurs). This decomposes the problem into two tasks that tree models handle well individually.
 
@@ -527,7 +487,6 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 
 ### 5b.4 Tuning Fit Path Matches Production
 
-`common/ml/tuning.py` no longer instantiates `LGBMRegressor` / `CatBoostRegressor` / `XGBRegressor` directly. Every Optuna trial now constructs its estimator through `model_registry.build_tree_model(algorithm_id, params)` and trains it via `model_registry.fit_model(...)` -- the exact same path used by `scripts/run_backtest.py` and production training. This guarantees that tuned hyperparameters reproduce the same fit semantics (early-stop patience, custom WAPE eval callbacks, sparse-aware patience floors, demand-pattern routing) when promoted to production. Adding a new tree model to the registry is the only step needed to make it tunable -- no `if/elif` branches in `tuning.py`.
 
 ### 5b.3 Recursive Lag Smoothing
 
@@ -563,7 +522,6 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 
 - **File:** `scripts/ml/auto_tune.py`
 - **Multi-seed ranking:** strategies are ranked and promotion is gated on `multi_seed_summary.mean_accuracy_pct` when present (falling back to the single-seed value). It previously used `accuracy_at_execution_lag.accuracy_pct`, which `run_backtest` overwrites once **per seed** — so with `n_seeds > 1` the leaderboard reflected only the **last** seed, letting a strategy win on last-seed luck and defeating the point of multi-seed variance estimation.
-- **Per-model baseline:** `get_baseline_accuracy()` now filters `lgbm_tuning_run` by `AND model_id = %s`. That table is shared across lgbm/catboost/xgboost, so tuning CatBoost/XGBoost had been comparing the candidate against an **lgbm** baseline (different absolute accuracy levels) — which could promote a worse model or block a better one.
 
 ### 5c.7 Champion COPY Integrity (2026-06-20)
 
@@ -583,12 +541,10 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 |------|-------------|
 | `config/forecasting/forecast_pipeline_config.yaml` | LGBM params: objective=regression_l1, n_estimators=2000, learning_rate=0.015, num_leaves=63, max_depth=8, min_child_samples=20, colsample_bytree=0.8, feature_fraction_bynode=0.7, path_smooth=1.0, max_bin=255, variance_filter=false, correlation_threshold=0.98, shap_threshold=0.90. Backtest: early_stop_pct=0.05, shap_retrain_threshold=0.50, recursive_noise_pct=0.03, baseline_intermittent=true, baseline_intermittent_window=12, intermittent_threshold=0.7. |
 | `config/forecasting/cluster_tuning_profiles.yaml` | All 7 profiles (sparse_intermittent, low_volume_volatile, volatile_large_cluster, medium_volume_periodic, high_volume_stable, seasonal_dominant, default) with tightened match criteria and tuned overrides. |
-| `common/core/constants.py` | `PROTECTED_FEATURES` set expanded with mean_demand, qty_lag_1-3, rolling_mean_3m/6m/12m, croston features, customer enrichment features. |
 | `common/ml/feature_engineering.py` | `mask_future_sales`: qty=NaN instead of qty=0. `update_grid_incremental`: calls `_recompute_derived_features()` to recompute all 7 derived features. `_recompute_derived_features`: added lag_ratio_yoy, lag_ratio_mom, lag_ratio_3v12, n_zero_last_6m. |
 | `common/ml/backtest_framework.py` | dropna relaxed to subset=["qty_lag_1"]. `_PROFILE_PRIORITY` ordering. `_log_timeframe_accuracy()` for per-cluster accuracy reporting. `_compute_cluster_wape()` for SHAP retrain safety. Per-cluster feature selection plumbing (`per_cluster_feature_cols` dict). `_predict_single_month` accepts per_cluster_feature_cols and `_sku_cks` passthrough for baseline models needing DFU-level mapping during recursive prediction. |
 | `common/ml/shap_selector.py` | `compute_timeframe_shap_per_cluster()` for independent per-cluster SHAP. `_stratified_sample_for_shap()` for sparse cluster sampling. Constants: `SPARSE_ZERO_PCT_THRESHOLD=0.5`, `SPARSE_MIN_NONZERO_ROWS=100`. |
 | `common/ml/model_registry.py` | `EARLY_STOP_PCT=0.05`, `SPARSE_EARLY_STOP_PCT=0.10`, `SPARSE_EARLY_STOP_FLOOR=50`. `_wape_lgbm()`, `WapeMetric`, `_wape_xgb()` custom eval functions with scaled denominator floor. `fit_model()` accepts `demand_pattern` param for sparse-aware early stopping. |
-| `scripts/run_backtest.py` | `_classify_cluster_demand()` for demand pattern classification. `_apply_tweedie_objective()` to override objective for intermittent clusters. `persist_cluster_models()` handles per-cluster feature_cols dict. Training log includes val_accuracy. `_RollingMeanModel` class and intermittent routing in `_train_single_cluster` to route sparse clusters to `_predict_rolling_mean`. `feature_selector_fn` routes to per-cluster SHAP. `train_and_predict_per_cluster` accepts `per_cluster_feature_cols`. |
 | `scripts/tune_cluster_hyperparams.py` | **NEW** — Per-cluster Bayesian hyperparameter tuning pipeline. Runs Optuna independently per `ml_cluster`, writes cluster-specific overrides to `cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. |
 | `common/ml/champion/` (split from the legacy `common/ml/champion_strategies.py` into 9 sub-modules: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py` -- see [Champion Selection](./07-champion-selection.md#module-layout)) | Decimal -> float cast for DB values (in `helpers.py`). `is_ensemble` detection fix (checks synthetic model_id). Per-cluster strategy (in `segment.py`) loads `dfu_features`. |
 

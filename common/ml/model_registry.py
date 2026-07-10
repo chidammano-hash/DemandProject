@@ -5,7 +5,7 @@ Provides:
 - Unified ``fit_model()`` that replaces duplicate if/elif/else fit blocks
 - ``get_best_iteration()`` abstracting attribute name differences
 - ``compute_early_stop_patience()`` for standardized 5% patience
-- WAPE eval callbacks for early stopping alignment (LGBM, CatBoost, XGBoost)
+- WAPE evaluation callback for LGBM early stopping alignment
 """
 
 from __future__ import annotations
@@ -31,22 +31,6 @@ CANONICAL_TO_NATIVE: dict[str, dict[str, str | None]] = {
         "min_leaf_samples": "min_child_samples",
         "col_sample": "colsample_bytree",
     },
-    "catboost": {
-        "estimators": "iterations",
-        "max_depth": "depth",
-        "l2_reg": "l2_leaf_reg",
-        "l1_reg": None,
-        "min_leaf_samples": "min_data_in_leaf",
-        "col_sample": "colsample_bylevel",
-    },
-    "xgboost": {
-        "estimators": "n_estimators",
-        "max_depth": "max_depth",
-        "l2_reg": "reg_lambda",
-        "l1_reg": "reg_alpha",
-        "min_leaf_samples": "min_child_weight",
-        "col_sample": "colsample_bytree",
-    },
 }
 
 # Reverse mapping: native → canonical (built dynamically)
@@ -60,7 +44,7 @@ def to_native_params(model_name: str, canonical_params: dict) -> dict:
 
     Keys not found in the canonical map are passed through unchanged
     (supports model-specific params like ``num_leaves``, ``path_smooth``).
-    Keys whose native mapping is ``None`` (e.g. CatBoost ``l1_reg``) are skipped.
+    Keys whose native mapping is ``None`` are skipped.
     """
     mapping = CANONICAL_TO_NATIVE.get(model_name, {})
     result = {}
@@ -94,15 +78,11 @@ def from_native_params(model_name: str, native_params: dict) -> dict:
 def get_best_iteration(model: Any, model_name: str) -> int | None:
     """Get the best iteration from a trained model, abstracting attribute differences.
 
-    LGBM/CatBoost use ``best_iteration_`` (trailing underscore, sklearn convention).
-    XGBoost uses ``best_iteration`` (no trailing underscore).
+    LGBM uses ``best_iteration_`` (trailing underscore, sklearn convention).
 
     Returns None if the attribute is missing or falsy.
     """
-    if model_name == "xgboost":
-        val = getattr(model, "best_iteration", None)
-    else:
-        val = getattr(model, "best_iteration_", None)
+    val = getattr(model, "best_iteration_", None)
     return int(val) if val else None
 
 
@@ -168,45 +148,6 @@ def _wape_lgbm(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[str, float, bool
     return "wape", wape, False
 
 
-class WapeMetric:
-    """CatBoost custom metric that computes WAPE for early stopping alignment."""
-
-    def get_final_error(self, error: float, weight: float) -> float:
-        return error
-
-    def is_max_optimal(self) -> bool:
-        return False
-
-    def evaluate(
-        self,
-        approxes: list[list[float]],
-        target: list[float],
-        weight: list[float] | None,
-    ) -> tuple[float, float]:
-        y_pred = np.asarray(approxes[0])
-        y_true = np.asarray(target)
-        abs_sum = abs(y_true.sum())
-        floor = max(len(y_true) * 0.01, 1.0)
-        denom = max(abs_sum, floor)
-        wape = float(np.sum(np.abs(y_pred - y_true)) / denom)
-        return wape, 1.0
-
-
-def _wape_xgb(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """XGBoost custom eval function that computes WAPE.
-
-    Signature follows the xgboost 3.x **sklearn** eval_metric contract:
-    ``(y_true, y_pred) -> float``  (function ``__name__`` is used as metric name).
-
-    Uses the same scaled denominator floor as ``_wape_lgbm`` for stability
-    on sparse validation sets.
-    """
-    abs_sum = abs(y_true.sum())
-    floor = max(len(y_true) * 0.01, 1.0)
-    denom = max(abs_sum, floor)
-    return float(np.sum(np.abs(y_pred - y_true)) / denom)
-
-
 # ---------------------------------------------------------------------------
 # Unified fit function
 # ---------------------------------------------------------------------------
@@ -229,17 +170,14 @@ def _base_model_name(model_id: str, algo_type: str) -> str:
 
     Examples:
         ``lgbm_cluster``        -> ``lgbm``
-        ``catboost_cluster``    -> ``catboost``
-        ``xgboost_cluster``     -> ``xgboost``
         ``chronos2_enriched``   -> ``chronos2_enriched`` (foundation; returned as-is)
 
     For foundation / deep_learning / statistical models we just return the
     model_id — they do not use the tree param mapping.
     """
     if algo_type == "tree":
-        for prefix in ("lgbm", "catboost", "xgboost"):
-            if model_id.startswith(prefix):
-                return prefix
+        if model_id.startswith("lgbm"):
+            return "lgbm"
     return model_id
 
 
@@ -260,25 +198,6 @@ REQUIRED_TREE_PARAM_KEYS: dict[str, tuple[str, ...]] = {
         "reg_alpha",
         "path_smooth",
         "max_bin",
-    ),
-    "catboost": (
-        "loss_function",
-        "iterations",
-        "learning_rate",
-        "depth",
-        "l2_leaf_reg",
-        "border_count",
-        "max_ctr_complexity",
-    ),
-    "xgboost": (
-        "objective",
-        "n_estimators",
-        "learning_rate",
-        "max_depth",
-        "min_child_weight",
-        "subsample",
-        "colsample_bytree",
-        "tree_method",
     ),
 }
 
@@ -328,83 +247,7 @@ def get_tree_default_params(model_name: str, algo: dict, seed: int = 42) -> dict
             if v is not None
         }
 
-    if model_name == "catboost":
-        _require_tree_params(model_name, algo, REQUIRED_TREE_PARAM_KEYS[model_name])
-        return {
-            k: v
-            for k, v in {
-                "iterations": algo["iterations"],
-                "learning_rate": algo["learning_rate"],
-                "depth": algo["depth"],
-                "l2_leaf_reg": algo["l2_leaf_reg"],
-                "border_count": algo["border_count"],
-                "max_ctr_complexity": algo["max_ctr_complexity"],
-                "grow_policy": algo.get("grow_policy"),
-                "max_leaves": algo.get("max_leaves"),
-                "subsample": algo.get("subsample"),
-                "reg_lambda": algo.get("reg_lambda"),
-                "random_strength": algo.get("random_strength"),
-                "min_data_in_leaf": algo.get("min_data_in_leaf"),
-                "colsample_bylevel": algo.get("colsample_bylevel"),
-                "bagging_temperature": algo.get("bagging_temperature"),
-                "bootstrap_type": algo.get("bootstrap_type"),
-                "model_size_reg": algo.get("model_size_reg"),
-                "score_function": algo.get("score_function"),
-                "boost_from_average": algo.get("boost_from_average"),
-                "leaf_estimation_method": algo.get("leaf_estimation_method"),
-                "leaf_estimation_iterations": algo.get("leaf_estimation_iterations"),
-                "langevin": algo.get("langevin"),
-                "diffusion_temperature": algo.get("diffusion_temperature"),
-                "random_seed": seed,
-                "loss_function": algo["loss_function"],
-                "verbose": 0,
-                "thread_count": -1,
-            }.items()
-            if v is not None
-        }
-
-    if model_name == "xgboost":
-        _require_tree_params(model_name, algo, REQUIRED_TREE_PARAM_KEYS[model_name])
-        return {
-            k: v
-            for k, v in {
-                "objective": algo["objective"],
-                "n_estimators": algo["n_estimators"],
-                "learning_rate": algo["learning_rate"],
-                "max_depth": algo["max_depth"],
-                "min_child_weight": algo["min_child_weight"],
-                "subsample": algo["subsample"],
-                "colsample_bytree": algo["colsample_bytree"],
-                "grow_policy": algo.get("grow_policy"),
-                "max_leaves": algo.get("max_leaves"),
-                "max_bin": algo.get("max_bin"),
-                "reg_lambda": algo.get("reg_lambda"),
-                "reg_alpha": algo.get("reg_alpha"),
-                "gamma": algo.get("gamma"),
-                "colsample_bylevel": algo.get("colsample_bylevel"),
-                "booster": algo.get("booster"),
-                **(
-                    {"rate_drop": algo["rate_drop"]}
-                    if algo.get("booster") == "dart" and "rate_drop" in algo
-                    else {}
-                ),
-                **(
-                    {"skip_drop": algo["skip_drop"]}
-                    if algo.get("booster") == "dart" and "skip_drop" in algo
-                    else {}
-                ),
-                "verbosity": 0,
-                "random_state": seed,
-                "n_jobs": -1,
-                "enable_categorical": True,
-                "tree_method": algo["tree_method"],
-            }.items()
-            if v is not None
-        }
-
-    raise UnknownAlgorithm(
-        f"Unknown tree backend {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-    )
+    raise UnknownAlgorithm(f"Unknown tree backend {model_name!r}. Expected 'lgbm'.")
 
 
 def build_model(algorithm_id: str, params: dict | None = None) -> Any:
@@ -413,8 +256,7 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
     Looks the algorithm up in ``forecast_pipeline_config.yaml`` ``algorithms:``
     section and returns an instantiated estimator:
 
-    - Tree models (``type: tree``) return real ``LGBMRegressor`` /
-      ``CatBoostRegressor`` / ``XGBRegressor`` instances with hyperparameters
+    - Tree models (``type: tree``) return real ``LGBMRegressor`` instances with hyperparameters
       taken from the config (overridable via ``params``).  Canonical keys are
       translated to each library's native names via :func:`to_native_params`.
     - Foundation / deep_learning / statistical models return a small stub
@@ -473,7 +315,7 @@ def build_tree_model(base_name: str, params: dict | None = None) -> Any:
     Native keys are passed through unchanged.
 
     Args:
-        base_name: One of ``"lgbm"``, ``"catboost"``, ``"xgboost"``.
+        base_name: The only supported tree backend, ``"lgbm"``.
         params:    Resolved hyperparameters (canonical or native names).
 
     Raises:
@@ -485,17 +327,7 @@ def build_tree_model(base_name: str, params: dict | None = None) -> Any:
         from lightgbm import LGBMRegressor
 
         return LGBMRegressor(**native)
-    if base_name == "catboost":
-        from catboost import CatBoostRegressor
-
-        return CatBoostRegressor(**native)
-    if base_name == "xgboost":
-        from xgboost import XGBRegressor
-
-        return XGBRegressor(**native)
-    raise UnknownAlgorithm(
-        f"Unknown tree backend {base_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-    )
+    raise UnknownAlgorithm(f"Unknown tree backend {base_name!r}. Expected 'lgbm'.")
 
 
 def build_tree_classifier(base_name: str, params: dict | None = None) -> Any:
@@ -511,17 +343,7 @@ def build_tree_classifier(base_name: str, params: dict | None = None) -> Any:
         from lightgbm import LGBMClassifier
 
         return LGBMClassifier(**native)
-    if base_name == "catboost":
-        from catboost import CatBoostClassifier
-
-        return CatBoostClassifier(**native)
-    if base_name == "xgboost":
-        from xgboost import XGBClassifier
-
-        return XGBClassifier(**native)
-    raise UnknownAlgorithm(
-        f"Unknown tree classifier backend {base_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-    )
+    raise UnknownAlgorithm(f"Unknown tree classifier backend {base_name!r}. Expected 'lgbm'.")
 
 
 def fit_tree_classifier(
@@ -540,16 +362,7 @@ def fit_tree_classifier(
             categorical_feature=categorical_feature if categorical_feature else "auto",
         )
         return
-    if model_name == "catboost":
-        cat_features = categorical_feature if isinstance(categorical_feature, list) else None
-        model.fit(X, y, cat_features=cat_features, verbose=False)
-        return
-    if model_name == "xgboost":
-        model.fit(X, y)
-        return
-    raise ValueError(
-        f"Unknown classifier model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-    )
+    raise ValueError(f"Unknown classifier model: {model_name!r}. Expected 'lgbm'.")
 
 
 class _FoundationStub:
@@ -594,15 +407,15 @@ def fit_model(
     ``_train_single_cluster`` and ``train_and_predict_global``.
 
     Args:
-        model: Instantiated model (LGBMRegressor, CatBoostRegressor, XGBRegressor).
-        model_name: One of "lgbm", "catboost", "xgboost".
+        model: Instantiated LGBMRegressor.
+        model_name: ``"lgbm"``.
         X_tr: Training features.
         y_tr: Training target.
         X_val: Validation features.
         y_val: Validation target.
         cat_cols: Categorical column names.
         feature_cols: Full feature column list (for computing cat_indices).
-        lib_module: The model's parent library module (lightgbm, catboost, xgboost).
+        lib_module: The LightGBM library module.
         max_iterations: Max boosting iterations (for computing early stop patience).
         demand_pattern: Cluster demand pattern ("continuous", "lumpy", or "intermittent").
             Sparse patterns get increased early stopping patience to compensate for
@@ -635,37 +448,8 @@ def fit_model(
                 lib_module.log_evaluation(period=-1),
             ],
         )
-    elif model_name == "catboost":
-        cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-        eval_pool = lib_module.Pool(X_val, y_val, cat_features=cat_indices)
-        # Do NOT override eval_metric — CatBoost must monitor its own loss function.
-        # Setting eval_metric="MAE" conflicts with Tweedie loss on intermittent clusters
-        # and causes early stopping at suboptimal points for RMSE clusters.
-        # Note: custom_metric only tracks additional metrics during training — it does
-        # NOT change which metric drives early stopping, so it provides no benefit here.
-        model.fit(
-            X_tr,
-            y_tr,
-            cat_features=cat_indices,
-            eval_set=eval_pool,
-            early_stopping_rounds=patience,
-            verbose=False,
-        )
-    elif model_name == "xgboost":
-        # Use WAPE (not MAE) so early stopping optimises the same metric we report,
-        # consistent with the LGBM branch above.
-        _wape_xgb.__name__ = "wape"  # XGBoost uses __name__ as metric label
-        model.set_params(eval_metric=_wape_xgb, early_stopping_rounds=patience)
-        model.fit(
-            X_tr,
-            y_tr,
-            eval_set=[(X_val, y_val)],
-            verbose=False,
-        )
     else:
-        raise ValueError(
-            f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-        )
+        raise ValueError(f"Unknown model: {model_name!r}. Expected 'lgbm'.")
 
 
 def fit_final_model(
@@ -687,15 +471,8 @@ def fit_final_model(
     """
     if model_name == "lgbm":
         model.fit(X, y, categorical_feature=cat_cols)
-    elif model_name == "catboost":
-        cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-        model.fit(X, y, cat_features=cat_indices, verbose=False)
-    elif model_name == "xgboost":
-        model.fit(X, y, verbose=False)
     else:
-        raise ValueError(
-            f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-        )
+        raise ValueError(f"Unknown model: {model_name!r}. Expected 'lgbm'.")
 
 
 def probe_tree_gpu_available(model_name: str, gpu_params: dict[str, Any]) -> bool:
@@ -707,14 +484,8 @@ def probe_tree_gpu_available(model_name: str, gpu_params: dict[str, Any]) -> boo
     probe_params: dict[str, Any] = dict(gpu_params)
     if model_name == "lgbm":
         probe_params.update({"n_estimators": 1, "verbosity": -1})
-    elif model_name == "catboost":
-        probe_params.update({"iterations": 1, "verbose": 0})
-    elif model_name == "xgboost":
-        probe_params.update({"n_estimators": 1, "verbosity": 0})
     else:
-        raise ValueError(
-            f"Unknown model: {model_name!r}. Expected 'lgbm', 'catboost', or 'xgboost'."
-        )
+        raise ValueError(f"Unknown model: {model_name!r}. Expected 'lgbm'.")
 
     X = pd.DataFrame({"probe_feature": [0.0, 1.0, 2.0, 3.0]})
     y = pd.Series([0.0, 1.0, 0.0, 1.0])

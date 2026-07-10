@@ -18,8 +18,8 @@ def log_backtest_run(
     """Log a backtest run to MLflow.
 
     Args:
-        model_type: e.g. "lgbm_backtest", "catboost_backtest"
-        model_id: e.g. "lgbm_global", "catboost_cluster"
+        model_type: e.g. ``"lgbm_backtest"``
+        model_id: e.g. ``"lgbm_cluster"``
         cluster_strategy: "global", "per_cluster", "transfer", "pooled"
         hyperparams: Model hyperparameters to log as params
         metrics: Dict of metric_name → value (n_predictions, n_dfus, etc.)

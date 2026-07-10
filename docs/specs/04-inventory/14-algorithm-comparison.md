@@ -8,7 +8,6 @@
 
 ## Problem
 
-Planners need to know how much a forecast *model* choice (LGBM, CatBoost, NBEATS, etc.) actually moves inventory targets - safety stock, EOQ, and reorder point - not just forecast accuracy. Two models with similar accuracy can still imply very different safety stock and ordering behavior once run through the same inventory formulas, and that gap is invisible from accuracy metrics alone.
 
 This is a forecast-model comparison, not a rebalancing-solver comparison - it does not compare rebalancing algorithm variants (e.g., greedy vs. LP transfer solvers).
 

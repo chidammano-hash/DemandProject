@@ -6,7 +6,17 @@
  *   2. Custom builder — pick any job types, reorder, name, and submit
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Play, Plus, Trash2, ArrowRight, ChevronDown, ChevronUp, Loader2, CheckCircle2, Save } from "lucide-react";
+import {
+  Play,
+  Plus,
+  Trash2,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  CheckCircle2,
+  Save,
+} from "lucide-react";
 import type { Job, JobType } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
 import { GROUP_ICONS } from "./jobsShared";
@@ -34,11 +44,7 @@ const CUSTOM_BUNDLES_STORAGE_KEY = "demandProject.pipelineBuilder.customBundles.
 function getBundleStorage(): Storage | null {
   if (typeof window === "undefined") return null;
   const storage = window.localStorage;
-  if (
-    !storage ||
-    typeof storage.getItem !== "function" ||
-    typeof storage.setItem !== "function"
-  ) {
+  if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") {
     return null;
   }
   return storage;
@@ -48,7 +54,8 @@ const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
   {
     id: "forecast_snapshot_bundle",
     label: "Forecast Snapshot Archive",
-    description: "Select the top three contenders, archive six lags for champion plus contenders, then clean reconciled staging.",
+    description:
+      "Select the top three contenders, archive six lags for champion plus contenders, then clean reconciled staging.",
     steps: [
       { type: "prepare_forecast_snapshot_contenders", params: {} },
       { type: "archive_forecast_snapshot", params: {} },
@@ -61,9 +68,7 @@ const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
     id: "delta_data_load",
     label: "Delta Data Load",
     description: "Incremental ETL refresh using source-change detection.",
-    steps: [
-      { type: "etl_pipeline", params: { mode: "refresh", domains: null, parallel: false } },
-    ],
+    steps: [{ type: "etl_pipeline", params: { mode: "refresh", domains: null, parallel: false } }],
     estimatedMinutes: 20,
     source: "default",
   },
@@ -71,9 +76,7 @@ const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
     id: "full_data_load",
     label: "Full Data Load",
     description: "Full ETL reload with parallel normalization, loading, and MV refresh.",
-    steps: [
-      { type: "etl_pipeline", params: { mode: "full", domains: null, parallel: true } },
-    ],
+    steps: [{ type: "etl_pipeline", params: { mode: "full", domains: null, parallel: true } }],
     estimatedMinutes: 45,
     source: "default",
   },
@@ -90,28 +93,26 @@ const DEFAULT_PIPELINE_BUNDLES: PipelineBundle[] = [
     source: "default",
   },
   {
-    id: "core_tree_backtests",
-    label: "Core Tree Backtests",
-    description: "Run LGBM, CatBoost, and XGBoost backtests, then load their results.",
+    id: "forecast_roster_backtests",
+    label: "Forecast Roster Backtests",
+    description: "Run and load the five retained forecasting models.",
     steps: [
       { type: "backtest_lgbm", params: {} },
       { type: "backtest_load_model", params: { model_id: "lgbm_cluster" } },
-      { type: "backtest_catboost", params: {} },
-      { type: "backtest_load_model", params: { model_id: "catboost_cluster" } },
-      { type: "backtest_xgboost", params: {} },
-      { type: "backtest_load_model", params: { model_id: "xgboost_cluster" } },
+      { type: "backtest_nhits", params: {} },
+      { type: "backtest_nbeats", params: {} },
+      { type: "backtest_mstl", params: {} },
+      { type: "backtest_chronos2_enriched", params: {} },
       { type: "refresh_forecast_views", params: {} },
     ],
-    estimatedMinutes: 180,
+    estimatedMinutes: 150,
     source: "default",
   },
   {
     id: "champion_selection",
     label: "Champion Selection",
     description: "Select the current champion model from loaded backtest results.",
-    steps: [
-      { type: "champion_select", params: {} },
-    ],
+    steps: [{ type: "champion_select", params: {} }],
     estimatedMinutes: 15,
     source: "default",
   },
@@ -166,19 +167,24 @@ function loadCustomBundles(): PipelineBundle[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((bundle) =>
-        typeof bundle?.id === "string" &&
-        typeof bundle?.label === "string" &&
-        Array.isArray(bundle?.steps)
+      .filter(
+        (bundle) =>
+          typeof bundle?.id === "string" &&
+          typeof bundle?.label === "string" &&
+          Array.isArray(bundle?.steps)
       )
       .map((bundle) => ({
         id: bundle.id,
         label: bundle.label,
-        description: typeof bundle.description === "string" ? bundle.description : "User-created pipeline bundle.",
+        description:
+          typeof bundle.description === "string"
+            ? bundle.description
+            : "User-created pipeline bundle.",
         steps: bundle.steps,
-        estimatedMinutes: typeof bundle.estimatedMinutes === "number"
-          ? bundle.estimatedMinutes
-          : Math.max(5, bundle.steps.length * 10),
+        estimatedMinutes:
+          typeof bundle.estimatedMinutes === "number"
+            ? bundle.estimatedMinutes
+            : Math.max(5, bundle.steps.length * 10),
         source: "custom",
       }));
   } catch {
@@ -241,7 +247,7 @@ export function PipelineBuilderPanel({ jobTypes, activeJobs, onSubmit, isSubmitt
       if (!current || current === "idle" || current === "done") continue;
 
       const isActive = (activeJobs ?? []).some(
-        (j) => j.job_label?.startsWith(`[${t.label}`) || j.job_label === t.label,
+        (j) => j.job_label?.startsWith(`[${t.label}`) || j.job_label === t.label
       );
 
       if (isActive) {
@@ -266,15 +272,18 @@ export function PipelineBuilderPanel({ jobTypes, activeJobs, onSubmit, isSubmitt
   }, [activeJobs, customBundles]);
 
   // Cleanup timers on unmount
-  useEffect(() => () => {
-    for (const id of Object.values(pendingDoneRef.current)) clearTimeout(id);
-  }, []);
+  useEffect(
+    () => () => {
+      for (const id of Object.values(pendingDoneRef.current)) clearTimeout(id);
+    },
+    []
+  );
 
   // O(1) lookup map for job types
   const jobTypeMap = useMemo(() => new Map(jobTypes.map((jt) => [jt.type_id, jt])), [jobTypes]);
   const allBundles = useMemo(
     () => [...DEFAULT_PIPELINE_BUNDLES, ...customBundles],
-    [customBundles],
+    [customBundles]
   );
 
   // Group job types for <optgroup> rendering.
@@ -340,7 +349,10 @@ export function PipelineBuilderPanel({ jobTypes, activeJobs, onSubmit, isSubmitt
 
   function renderBundleCard(bundle: PipelineBundle) {
     return (
-      <div key={bundle.id} className="rounded-md border border-border bg-muted/20 p-3 flex flex-col gap-2">
+      <div
+        key={bundle.id}
+        className="rounded-md border border-border bg-muted/20 p-3 flex flex-col gap-2"
+      >
         <div className="flex items-start justify-between gap-1">
           <span className="text-sm font-medium leading-tight">{bundle.label}</span>
           <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -388,21 +400,33 @@ export function PipelineBuilderPanel({ jobTypes, activeJobs, onSubmit, isSubmitt
                     status === "done"
                       ? "bg-muted text-muted-foreground border border-border"
                       : busy
-                      ? "bg-blue-600/20 text-blue-700 dark:text-blue-400 border border-blue-600/30"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        ? "bg-blue-600/20 text-blue-700 dark:text-blue-400 border border-blue-600/30"
+                        : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                   }`}
                 >
                   {status === "queued" && (
-                    <><Loader2 className="h-3 w-3 animate-spin" />Queued</>
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Queued
+                    </>
                   )}
                   {status === "running" && (
-                    <><Loader2 className="h-3 w-3 animate-spin" />Running</>
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Running
+                    </>
                   )}
                   {status === "done" && (
-                    <><CheckCircle2 className="h-3 w-3" />Done</>
+                    <>
+                      <CheckCircle2 className="h-3 w-3" />
+                      Done
+                    </>
                   )}
                   {(status === "idle" || status === "submitting") && (
-                    <><Play className="h-3 w-3" />Run</>
+                    <>
+                      <Play className="h-3 w-3" />
+                      Run
+                    </>
                   )}
                 </button>
               );

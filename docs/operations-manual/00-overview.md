@@ -109,7 +109,6 @@ End-to-end runtime on a fresh dataset: **~4–6 hours** (dominated by foundation
 - **Vite proxy must mirror API prefixes** — run `make audit-routers` after route changes
 - **All config in YAML** (no magic numbers in scripts) — `forecast_pipeline_config.yaml` is the ML pipeline source of truth
 - **`ml_cluster` is METADATA, not a model feature** (excluded from `feature_cols` to prevent leakage)
-- **Cold-start routing**: <3 mo history → skipped; <12 mo → `cold_start_model_id` (rolling_mean)
 - **Forecast promotion**: candidate → production via `POST /backtest-management/{model_id}/promote`
 - **Tree-only training endpoint**: `POST /{model_id}/train` rejects foundation/DL models with 400
 - **Clustering master switch**: `clustering.enabled=false` → all backtests fall back to global

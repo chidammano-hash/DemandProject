@@ -12,7 +12,6 @@ import pandas as pd
 import pytest
 
 from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
-from common.ml.seasonal_naive import SeasonalNaiveModel, make_dfu_key
 
 # ---------------------------------------------------------------------------
 # Helpers to import functions under test
@@ -32,6 +31,7 @@ from scripts.forecasting.generate_production_forecasts import (
     generate_forecasts_batch,
     generate_forecasts_statistical,
     get_champion_assignments,
+    write_forecast_staging,
 )
 
 # ---------------------------------------------------------------------------
@@ -477,45 +477,6 @@ def test_generate_forecasts_batch_nonneg_qty():
         assert row["forecast_qty"] >= 0.0
 
 
-def test_generate_forecasts_batch_sets_seasonal_naive_context():
-    """Seasonal-naive artifacts need DFU/month context outside the feature matrix."""
-    sales = _make_sales(n_months=24)
-    attrs = _make_dfu_attrs()
-    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
-    model = SeasonalNaiveModel(
-        {
-            (make_dfu_key("ITEM001", "GROUP1", "LOC1"), grid.iloc[0]["_forecast_month"].month): 17.0,
-            (make_dfu_key("ITEM001", "GROUP1", "LOC1"), grid.iloc[1]["_forecast_month"].month): 23.0,
-        },
-        {make_dfu_key("ITEM001", "GROUP1", "LOC1"): 11.0},
-    )
-    artifact = {"model": model, "feature_cols": [c for c in grid.columns if not c.startswith("_")]}
-    enc = build_cat_encoders(attrs)
-
-    rows = generate_forecasts_batch(
-        artifact=artifact,
-        dfu_list=[
-            ({
-                "item_id": "ITEM001",
-                "customer_group": "GROUP1",
-                "loc": "LOC1",
-                "cluster_id": 2,
-            }, grid),
-        ],
-        horizon=2,
-        forecast_month_generated="2026-03",
-        run_id="test-run-id",
-        model_id="lgbm_cluster",
-        cat_encoders=enc,
-    )
-
-    assert [row["forecast_qty"] for row in rows] == [17.0, 23.0]
-
-
-# ---------------------------------------------------------------------------
-# 18-month planning horizon
-# ---------------------------------------------------------------------------
-
 def test_build_grid_18_month_horizon():
     """Grid supports 18-month planning horizon."""
     sales = _make_sales(n_months=24)
@@ -586,7 +547,7 @@ def test_load_config_reads_pipeline_config():
     assert config["plan_version"]["keep_last_n_versions"] == 3
     assert config["_pipeline"]["lookback_months"] == 36
     assert config["_pipeline"]["min_history_months"] == 12
-    assert config["_pipeline"]["cold_start_model_id"] == "rolling_mean"
+    assert config["_pipeline"]["cold_start_model_id"] == "lgbm_cluster"
     assert config["_pipeline"]["cold_start_min_months"] == 3
 
 
@@ -596,14 +557,7 @@ def test_load_config_ci_section():
     config = load_config()
     ci = config["confidence_interval"]
     assert ci["enabled"] is True
-    for model_id in (
-        "lgbm_cluster",
-        "catboost_cluster",
-        "xgboost_cluster",
-        "lgbm_cust_enriched",
-        "catboost_cust_enriched",
-        "xgboost_cust_enriched",
-    ):
+    for model_id in ("lgbm_cluster",):
         assert model_id in ci["source_model_ids"]
     assert ci["z_lower"] == 1.282
 
@@ -646,46 +600,8 @@ def _make_champion_df(item_id="ITEM001", loc="LOC1", cluster_id=2):
         "item_id": item_id,
         "loc": loc,
         "cluster_id": cluster_id,
-        "source_model_id": "rolling_mean",
+        "source_model_id": "nbeats",
     }])
-
-
-def test_statistical_rolling_mean_returns_rows():
-    """rolling_mean generates horizon rows per DFU."""
-    sales_idx = _make_sales_index(n_months=24)
-    champion_df = _make_champion_df()
-    rows = generate_forecasts_statistical(
-        model_id="rolling_mean",
-        sales_index=sales_idx,
-        attrs_index={},
-        champion_df=champion_df,
-        horizon=6,
-        forecast_month_generated="2026-03-01",
-        run_id="test-run-id",
-    )
-    assert len(rows) == 6
-    for row in rows:
-        assert row["model_id"] == "rolling_mean"
-        assert row["forecast_qty"] >= 0.0
-
-
-def test_statistical_seasonal_naive_returns_rows():
-    """seasonal_naive generates horizon rows per DFU."""
-    sales_idx = _make_sales_index(n_months=24)
-    champion_df = _make_champion_df()
-    rows = generate_forecasts_statistical(
-        model_id="seasonal_naive",
-        sales_index=sales_idx,
-        attrs_index={},
-        champion_df=champion_df,
-        horizon=3,
-        forecast_month_generated="2026-03-01",
-        run_id="test-run-id",
-    )
-    assert len(rows) == 3
-    for row in rows:
-        assert row["model_id"] == "seasonal_naive"
-        assert row["forecast_qty"] >= 0.0
 
 
 def test_statistical_mstl_returns_rows():
@@ -707,40 +623,12 @@ def test_statistical_mstl_returns_rows():
         assert row["forecast_qty"] >= 0.0
 
 
-def test_statistical_rolling_median_flat_trailing_median():
-    """rolling_median ships a FLAT forecast = median of the last 6 months, so a
-    single spike month does NOT drag the forecast (the F-11 fix routes a
-    rolling_median champion here instead of shipping the lgbm fallback)."""
-    dates = pd.date_range(start="2024-01-01", periods=12, freq="MS")
-    # A spike (200) in the trailing window must not move the median.
-    qty = [10.0, 12.0, 11.0, 13.0, 9.0, 200.0, 14.0, 8.0, 15.0, 7.0, 16.0, 6.0]
-    sales_idx = {("ITEM001", "LOC1"): (list(dates.values), qty)}
-    champion_df = pd.DataFrame([{
-        "item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2,
-        "source_model_id": "rolling_median",
-    }])
-    rows = generate_forecasts_statistical(
-        model_id="rolling_median",
-        sales_index=sales_idx,
-        attrs_index={},
-        champion_df=champion_df,
-        horizon=4,
-        forecast_month_generated="2026-03-01",
-        run_id="test-run-id",
-    )
-    assert len(rows) == 4
-    expected = round(float(np.median(qty[-6:])), 2)  # median of last 6 months, flat
-    for row in rows:
-        assert row["model_id"] == "rolling_median"
-        assert row["forecast_qty"] == pytest.approx(expected)
-
-
 def test_statistical_foundation_fallback():
     """Foundation model (chronos etc.) uses rolling mean fallback."""
     sales_idx = _make_sales_index(n_months=24)
     champion_df = _make_champion_df()
     rows = generate_forecasts_statistical(
-        model_id="chronos_bolt",
+        model_id="chronos2_enriched",
         sales_index=sales_idx,
         attrs_index={},
         champion_df=champion_df,
@@ -750,7 +638,7 @@ def test_statistical_foundation_fallback():
     )
     assert len(rows) == 3
     for row in rows:
-        assert row["model_id"] == "chronos_bolt"
+        assert row["model_id"] == "chronos2_enriched"
         assert row["forecast_qty"] >= 0.0
 
 
@@ -760,7 +648,7 @@ def test_statistical_skips_short_history():
     sales_idx = {("ITEM001", "LOC1"): (list(dates.values), [100.0, 110.0])}
     champion_df = _make_champion_df()
     rows = generate_forecasts_statistical(
-        model_id="rolling_mean",
+        model_id="nbeats",
         sales_index=sales_idx,
         attrs_index={},
         champion_df=champion_df,
@@ -776,7 +664,7 @@ def test_statistical_skips_missing_dfu():
     sales_idx = {}  # empty — no sales data
     champion_df = _make_champion_df()
     rows = generate_forecasts_statistical(
-        model_id="rolling_mean",
+        model_id="nbeats",
         sales_index=sales_idx,
         attrs_index={},
         champion_df=champion_df,
@@ -792,7 +680,7 @@ def test_statistical_output_keys():
     sales_idx = _make_sales_index(n_months=24)
     champion_df = _make_champion_df()
     rows = generate_forecasts_statistical(
-        model_id="rolling_mean",
+        model_id="nbeats",
         sales_index=sales_idx,
         attrs_index={},
         champion_df=champion_df,
@@ -816,6 +704,123 @@ def test_statistical_output_keys():
     assert rows[1]["is_recursive"] is True
 
 
+# ---------------------------------------------------------------------------
+# Immutable generation manifests / staging writes
+# ---------------------------------------------------------------------------
+
+def _staging_row(
+    *, model_id: str = "lgbm_cluster",
+    run_id: str = "00000000-0000-0000-0000-000000000123",
+):
+    return {
+        "forecast_month_generated": pd.Timestamp("2026-07-01").date(),
+        "item_id": "ITEM001",
+        "loc": "1401-BULK",
+        "forecast_month": pd.Timestamp("2026-07-01").date(),
+        "forecast_qty": 42.0,
+        "forecast_qty_lower": 35.0,
+        "forecast_qty_upper": 50.0,
+        "model_id": model_id,
+        "cluster_id": "stable",
+        "horizon_months": 1,
+        "is_recursive": False,
+        "lag_source": "actual",
+        "run_id": run_id,
+        "generated_at": pd.Timestamp("2026-07-10T12:00:00Z").to_pydatetime(),
+    }
+
+
+def _generation_evidence() -> dict:
+    return {
+        "champion_experiment_id": 33,
+        "cluster_experiment_id": 7,
+        "source_sales_batch_id": 101,
+        "routing_artifact_checksum": "a" * 64,
+        "champion_results_checksum": "e" * 64,
+    }
+
+
+def test_staging_write_rejects_empty_run_without_preserving_stale_candidate():
+    conn = MagicMock()
+
+    with pytest.raises(ValueError, match="no forecast rows"):
+        write_forecast_staging(
+            [],
+            conn,
+            "champion",
+            generation_purpose="release_candidate",
+            generation_evidence=_generation_evidence(),
+        )
+
+    conn.cursor.assert_not_called()
+
+
+def test_staging_write_is_run_scoped_and_records_ready_manifest():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 1
+    cur.fetchone.side_effect = [
+        ("b" * 64, 2, 1, 2),
+    ]
+    rows = [
+        _staging_row(model_id="lgbm_cluster"),
+        {
+            **_staging_row(model_id="nbeats"),
+            "forecast_month": pd.Timestamp("2026-08-01").date(),
+            "horizon_months": 2,
+            "is_recursive": True,
+            "lag_source": "predicted",
+        },
+    ]
+
+    written = write_forecast_staging(
+        rows,
+        conn,
+        "champion",
+        generation_purpose="release_candidate",
+        generation_evidence=_generation_evidence(),
+    )
+
+    assert written == 2
+    statements = [call.args[0] for call in cur.execute.call_args_list]
+    assert any("INSERT INTO forecast_generation_run" in sql for sql in statements)
+    assert any(
+        "UPDATE forecast_generation_run" in sql and "run_status = 'ready'" in sql
+        for sql in statements
+    )
+    assert not any("DELETE FROM fact_production_forecast_staging" in sql for sql in statements)
+    insert_sql = cur.executemany.call_args.args[0]
+    assert "generation_purpose" in insert_sql
+    assert "candidate_model_id" in insert_sql
+    assert "ON CONFLICT (run_id, generation_purpose, candidate_model_id" in " ".join(
+        insert_sql.split()
+    )
+    inserted_rows = cur.executemany.call_args.args[1]
+    assert {row["model_id"] for row in inserted_rows} == {"lgbm_cluster", "nbeats"}
+    assert {row["candidate_model_id"] for row in inserted_rows} == {"champion"}
+    assert {row["generation_purpose"] for row in inserted_rows} == {"release_candidate"}
+    conn.commit.assert_called_once()
+
+
+def test_snapshot_contender_write_is_explicitly_non_release_purpose():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 1
+    cur.fetchone.return_value = ("c" * 64, 1, 1, 1)
+
+    write_forecast_staging(
+        [_staging_row(model_id="mstl")],
+        conn,
+        "mstl",
+        generation_purpose="snapshot_contender",
+        generation_evidence={},
+    )
+
+    manifest_params = cur.execute.call_args_list[0].args[1]
+    assert manifest_params[1] == "snapshot_contender"
+    assert manifest_params[2] == "mstl"
+
+
 def test_statistical_multi_dfu():
     """Statistical inference handles multiple DFUs correctly."""
     dates = pd.date_range(start="2024-01-01", periods=24, freq="MS")
@@ -825,11 +830,11 @@ def test_statistical_multi_dfu():
         ("ITEM002", "LOC2"): (list(dates.values), list(rng.uniform(50, 80, 24))),
     }
     champion_df = pd.DataFrame([
-        {"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 0, "source_model_id": "rolling_mean"},
-        {"item_id": "ITEM002", "loc": "LOC2", "cluster_id": 1, "source_model_id": "rolling_mean"},
+        {"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 0, "source_model_id": "nbeats"},
+        {"item_id": "ITEM002", "loc": "LOC2", "cluster_id": 1, "source_model_id": "nbeats"},
     ])
     rows = generate_forecasts_statistical(
-        model_id="rolling_mean",
+        model_id="nbeats",
         sales_index=sales_idx,
         attrs_index={},
         champion_df=champion_df,
@@ -856,7 +861,7 @@ def test_substitution_detected_when_source_model_absent():
     → substitution detected (Gap-10 divergence)."""
     loaded_models = {"lgbm_cluster": {0: {"model": MagicMock()}}}
     assert _is_model_fallback_substitution(
-        model_id="seasonal_naive",
+        model_id="mstl",
         fallback_model_id="lgbm_cluster",
         loaded_models=loaded_models,
     ) is True
@@ -865,11 +870,11 @@ def test_substitution_detected_when_source_model_absent():
 def test_no_substitution_when_requested_model_loaded():
     """Requested producer IS loaded → no substitution (genuine champion artifact)."""
     loaded_models = {
-        "seasonal_naive": {0: {"model": MagicMock()}},
+        "mstl": {0: {"model": MagicMock()}},
         "lgbm_cluster": {0: {"model": MagicMock()}},
     }
     assert _is_model_fallback_substitution(
-        model_id="seasonal_naive",
+        model_id="mstl",
         fallback_model_id="lgbm_cluster",
         loaded_models=loaded_models,
     ) is False
@@ -888,7 +893,7 @@ def test_no_substitution_when_fallback_also_absent():
     """Neither requested nor fallback loaded → DFU is skipped, not substituted."""
     loaded_models = {"catboost_cluster": {0: {"model": MagicMock()}}}
     assert _is_model_fallback_substitution(
-        model_id="seasonal_naive",
+        model_id="mstl",
         fallback_model_id="lgbm_cluster",
         loaded_models=loaded_models,
     ) is False
@@ -898,7 +903,7 @@ def test_required_tree_models_from_champion_routing_exclude_non_tree_models():
     """Only tree champion sources require .pkl artifacts; statistical models route separately."""
     champion_df = pd.DataFrame([
         {"source_model_id": "catboost_cluster"},
-        {"source_model_id": "rolling_mean"},
+        {"source_model_id": "nbeats"},
         {"source_model_id": "xgboost_cust_enriched"},
     ])
 
@@ -906,7 +911,7 @@ def test_required_tree_models_from_champion_routing_exclude_non_tree_models():
         requested_model_id=None,
         champion_month_df=champion_df,
         fallback_model_id="lgbm_cluster",
-        non_tree_models={"rolling_mean", "seasonal_naive"},
+        non_tree_models={"nbeats", "mstl"},
     )
 
     assert required == {"catboost_cluster", "xgboost_cust_enriched"}
@@ -916,27 +921,27 @@ def test_required_tree_models_include_fallback_for_null_source_model():
     """NULL champion source falls back by config, so the fallback tree artifact is required."""
     champion_df = pd.DataFrame([
         {"source_model_id": None},
-        {"source_model_id": "rolling_mean"},
+        {"source_model_id": "nbeats"},
     ])
 
     required = _required_tree_model_ids(
         requested_model_id=None,
         champion_month_df=champion_df,
         fallback_model_id="lgbm_cluster",
-        non_tree_models={"rolling_mean", "seasonal_naive"},
+        non_tree_models={"nbeats", "mstl"},
     )
 
     assert required == {"lgbm_cluster"}
 
 
 def test_required_tree_models_for_explicit_tree_model_override():
-    champion_df = pd.DataFrame([{"source_model_id": "rolling_mean"}])
+    champion_df = pd.DataFrame([{"source_model_id": "nbeats"}])
 
     required = _required_tree_model_ids(
         requested_model_id="catboost_cluster",
         champion_month_df=champion_df,
         fallback_model_id="lgbm_cluster",
-        non_tree_models={"rolling_mean", "seasonal_naive"},
+        non_tree_models={"nbeats", "mstl"},
     )
 
     assert required == {"catboost_cluster"}
@@ -946,10 +951,10 @@ def test_required_tree_models_for_explicit_non_tree_model_override():
     champion_df = pd.DataFrame([{"source_model_id": "catboost_cluster"}])
 
     required = _required_tree_model_ids(
-        requested_model_id="rolling_mean",
+        requested_model_id="nbeats",
         champion_month_df=champion_df,
         fallback_model_id="lgbm_cluster",
-        non_tree_models={"rolling_mean", "seasonal_naive"},
+        non_tree_models={"nbeats", "mstl"},
     )
 
     assert required == set()
@@ -976,7 +981,7 @@ def test_load_non_tree_model_ids_routes_statistical_baselines():
     """Statistical baselines (no .pkl) are classed non-tree → statistical generator."""
     from scripts.forecasting.generate_production_forecasts import load_non_tree_model_ids
     non_tree = load_non_tree_model_ids()
-    for mid in ("seasonal_naive", "rolling_mean", "rolling_median", "mstl"):
+    for mid in ("mstl", "nbeats", "nhits", "chronos2_enriched"):
         assert mid in non_tree, f"{mid} must route to the statistical generator (F-11)"
 
 
@@ -984,19 +989,19 @@ def test_load_non_tree_model_ids_excludes_tree_models():
     """Tree models keep the .pkl batch path — they must NOT be classed non-tree."""
     from scripts.forecasting.generate_production_forecasts import load_non_tree_model_ids
     non_tree = load_non_tree_model_ids()
-    for mid in ("lgbm_cluster", "catboost_cluster", "xgboost_cluster"):
+    for mid in ("lgbm_cluster",):
         assert mid not in non_tree
 
 
-def test_cold_start_model_is_statistically_routed():
-    """The cold-start model must be a non-tree source so cold-start DFUs are
-    generated by their baseline, never the lgbm fallback."""
+def test_cold_start_model_uses_lgbm_fallback():
+    """Cold-start routing uses the retained LightGBM fallback."""
     from scripts.forecasting.generate_production_forecasts import (
         load_config,
         load_non_tree_model_ids,
     )
     cold = load_config()["_pipeline"]["cold_start_model_id"]
-    assert cold in load_non_tree_model_ids()
+    assert cold == "lgbm_cluster"
+    assert cold not in load_non_tree_model_ids()
 
 
 # ---------------------------------------------------------------------------
@@ -1019,7 +1024,7 @@ def test_cluster_wipe_detected_all_null_with_multicluster_tree():
     """All cluster_id NULL + a multi-cluster tree loaded → wipe detected (abort)."""
     from scripts.forecasting.generate_production_forecasts import _cluster_assignments_wiped
     loaded = {"lgbm_cluster": {"high_volume_periodic": {}, "low_volume_periodic": {}}}
-    assert _cluster_assignments_wiped(_champ_df([None, None]), loaded, {"seasonal_naive"}) is True
+    assert _cluster_assignments_wiped(_champ_df([None, None]), loaded, {"mstl"}) is True
 
 
 def test_cluster_wipe_not_flagged_when_clusters_present():
@@ -1046,9 +1051,9 @@ def _per_month_champ_df():
     """Champion frame for one DFU whose model varies by month."""
     return pd.DataFrame([
         {"item_id": "10031", "loc": "1401-BULK", "startdate": pd.Timestamp("2026-01-01"),
-         "source_model_id": "seasonal_naive", "cluster_id": 2, "customer_group": "ALL"},
+         "source_model_id": "mstl", "cluster_id": 2, "customer_group": "ALL"},
         {"item_id": "10031", "loc": "1401-BULK", "startdate": pd.Timestamp("2026-02-01"),
-         "source_model_id": "rolling_mean", "cluster_id": 2, "customer_group": "ALL"},
+         "source_model_id": "nbeats", "cluster_id": 2, "customer_group": "ALL"},
     ])
 
 
@@ -1056,8 +1061,8 @@ def test_build_month_routing_keeps_per_month_model():
     """build_month_routing carries (item_id, loc) → {month: model_id} per month."""
     routing = build_month_routing(_per_month_champ_df())
     dfu = ("10031", "1401-BULK")
-    assert routing[dfu][pd.Timestamp("2026-01-01")] == "seasonal_naive"
-    assert routing[dfu][pd.Timestamp("2026-02-01")] == "rolling_mean"
+    assert routing[dfu][pd.Timestamp("2026-01-01")] == "mstl"
+    assert routing[dfu][pd.Timestamp("2026-02-01")] == "nbeats"
 
 
 def test_build_month_routing_skips_null_source():
@@ -1075,7 +1080,7 @@ def test_collapse_to_dfu_one_row_per_dfu():
     collapsed = collapse_to_dfu(_per_month_champ_df())
     assert len(collapsed) == 1
     # Earliest month's champion is retained deterministically (rows arrive ASC).
-    assert collapsed.iloc[0]["source_model_id"] == "seasonal_naive"
+    assert collapsed.iloc[0]["source_model_id"] == "mstl"
 
 
 def test_filter_rows_to_champion_months_keeps_winning_months_only():
@@ -1084,22 +1089,22 @@ def test_filter_rows_to_champion_months_keeps_winning_months_only():
     rows = [
         # seasonal_naive generated full horizon for this DFU
         {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-01-01"),
-         "model_id": "seasonal_naive"},
+         "model_id": "mstl"},
         {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
-         "model_id": "seasonal_naive"},
+         "model_id": "mstl"},
         # rolling_mean generated full horizon for this DFU
         {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-01-01"),
-         "model_id": "rolling_mean"},
+         "model_id": "nbeats"},
         {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
-         "model_id": "rolling_mean"},
+         "model_id": "nbeats"},
     ]
     kept = filter_rows_to_champion_months(rows, routing)
     by_month = {(r["forecast_month"], r["model_id"]) for r in kept}
-    assert (pd.Timestamp("2026-01-01"), "seasonal_naive") in by_month
-    assert (pd.Timestamp("2026-02-01"), "rolling_mean") in by_month
+    assert (pd.Timestamp("2026-01-01"), "mstl") in by_month
+    assert (pd.Timestamp("2026-02-01"), "nbeats") in by_month
     # The losing rows are dropped — one model per (DFU, month).
-    assert (pd.Timestamp("2026-01-01"), "rolling_mean") not in by_month
-    assert (pd.Timestamp("2026-02-01"), "seasonal_naive") not in by_month
+    assert (pd.Timestamp("2026-01-01"), "nbeats") not in by_month
+    assert (pd.Timestamp("2026-02-01"), "mstl") not in by_month
     assert len(kept) == 2
 
 
@@ -1110,24 +1115,24 @@ def test_filter_rows_no_winner_month_kept_from_lowest_model_only():
     several models but a given month has no winner recorded.
     """
     # Only January routes (rolling_mean); February has NO recorded winner.
-    routing = {("10031", "1401-BULK"): {pd.Timestamp("2026-01-01"): "rolling_mean"}}
+    routing = {("10031", "1401-BULK"): {pd.Timestamp("2026-01-01"): "nbeats"}}
     rows = [
         {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
-         "model_id": "rolling_mean"},
+         "model_id": "nbeats"},
         {"item_id": "10031", "loc": "1401-BULK", "forecast_month": pd.Timestamp("2026-02-01"),
-         "model_id": "seasonal_naive"},
+         "model_id": "mstl"},
     ]
     kept = filter_rows_to_champion_months(rows, routing)
     # Lowest enqueued model for this DFU is rolling_mean (< seasonal_naive).
     assert len(kept) == 1
-    assert kept[0]["model_id"] == "rolling_mean"
+    assert kept[0]["model_id"] == "nbeats"
 
 
 def test_filter_rows_passthrough_when_no_routing():
     """A DFU with no per-month routing (cold-start / override) is untouched."""
     rows = [
         {"item_id": "A", "loc": "L", "forecast_month": pd.Timestamp("2026-01-01"),
-         "model_id": "rolling_mean"},
+         "model_id": "nbeats"},
     ]
     assert filter_rows_to_champion_months(rows, {}) == rows
 
@@ -1158,7 +1163,7 @@ def test_get_champion_assignments_returns_per_month_rows():
     assert "startdate" in df.columns
     # Two months for the one DFU survive.
     assert len(df) == 2
-    assert set(df["source_model_id"]) == {"seasonal_naive", "rolling_mean"}
+    assert set(df["source_model_id"]) == {"mstl", "nbeats"}
 
 
 def test_get_champion_assignments_prefers_promoted_winners_csv(tmp_path):
@@ -1172,10 +1177,10 @@ def test_get_champion_assignments_prefers_promoted_winners_csv(tmp_path):
     champion_dir.mkdir()
     (champion_dir / "experiment_53_winners.csv").write_text(
         "item_id,customer_group,loc,model_id,startdate\n"
-        "10031,ALL,1401-BULK,seasonal_naive,2026-01-01\n"
-        "10031,ALL,1401-BULK,rolling_mean,2026-02-01\n"
+        "10031,ALL,1401-BULK,mstl,2026-01-01\n"
+        "10031,ALL,1401-BULK,nbeats,2026-02-01\n"
         # Duplicate same DFU-month resolves lexically by model_id, matching promote.
-        "10031,ALL,1401-BULK,xgboost_cluster,2026-02-01\n"
+        "10031,ALL,1401-BULK,nhits,2026-02-01\n"
     )
     attrs = pd.DataFrame([
         {
@@ -1207,6 +1212,6 @@ def test_get_champion_assignments_prefers_promoted_winners_csv(tmp_path):
 
     legacy_read.assert_not_called()
     assert len(df) == 2
-    assert list(df["source_model_id"]) == ["seasonal_naive", "rolling_mean"]
+    assert list(df["source_model_id"]) == ["mstl", "nbeats"]
     assert set(df["cluster_id"]) == {7}
     assert set(df["customer_group"]) == {"ALL"}

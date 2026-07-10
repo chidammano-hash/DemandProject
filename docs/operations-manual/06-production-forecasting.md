@@ -8,7 +8,10 @@ Repo root for all paths and commands: `/Users/manoharchidambaram/projects/Demand
 
 ## 1. Architecture Overview
 
-The production forecast pipeline follows a **stage → promote** pattern. All model predictions land in staging tables; only the actively promoted model's rows reach the consumer-facing production table.
+The production forecast pipeline follows an **immutable run → transactional
+promote** pattern. Forward predictions are grouped by an explicit generation
+manifest; only one ready, eligible run can reach the consumer-facing production
+table.
 
 ```
                 ┌──────────────────────────────────┐
@@ -18,11 +21,11 @@ The production forecast pipeline follows a **stage → promote** pattern. All mo
                               │ make forecast-generate
                               ▼
         ┌─────────────────────────────────────────────────┐
+        │  forecast_generation_run +                     │
         │  fact_production_forecast_staging               │
-        │  (sql/122_create_production_forecast_staging)   │
-        │  All model variants coexist, keyed by model_id  │
+        │  Immutable run/purpose-scoped payload           │
         └─────────────┬───────────────────────────────────┘
-                      │ POST /backtest-management/{model_id}/promote
+                      │ POST /backtest-management/{model_id}/promote?source_run_id=...
                       │ (single mode OR champion mode)
                       ▼
         ┌─────────────────────────────────────────────────┐
@@ -34,41 +37,84 @@ The production forecast pipeline follows a **stage → promote** pattern. All mo
                       ▼
         ┌─────────────────────────────────────────────────┐
         │  model_promotion_log                            │
-        │  (sql/121_candidate_forecast_and_promotion.sql) │
-        │  is_active flag; promotion_type=single|champion │
+        │  Exact source/release/archive lineage           │
+        │  gate report + SHA-256 payload checksums        │
         └─────────────────────────────────────────────────┘
 ```
 
-There is also a parallel staging table — **`fact_candidate_forecast`** — fed by the backtest-load step (`backtest-load-all-bulk`). It stores **historical** model predictions (with actuals + accuracy) used for champion selection. Production forecast inference writes the **forward** horizon into `fact_production_forecast_staging`.
+Historical backtest load writes to `fact_external_forecast_monthly` and
+`backtest_lag_archive`; it does not feed forward promotion. The legacy
+`fact_candidate_forecast` table has no active writer and must not be treated as
+a release source.
 
 | Table | Grain | Lifecycle | DDL |
 |---|---|---|---|
-| `fact_candidate_forecast` | item + loc + model + month (historical) | Append on backtest-load; `is_promoted` flipped on promote | `sql/121_candidate_forecast_and_promotion.sql` |
-| `fact_production_forecast_staging` | model + item + loc + forecast_month | Replace per `model_id` on each `forecast-generate` | `sql/122_create_production_forecast_staging.sql` |
-| `fact_production_forecast` | plan_version + item + loc + forecast_month | DELETE-then-INSERT on each promote | `sql/039_create_production_forecast.sql` |
-| `model_promotion_log` | one row per promote/demote event | Insert-only audit; `is_active` toggled | `sql/121_candidate_forecast_and_promotion.sql` |
+| `forecast_generation_run` | one row per generation UUID | Manifest status, purpose, input lineage, counts, checksums | `sql/203_create_forecast_generation_run.sql` |
+| `fact_production_forecast_staging` | run + purpose + candidate + item + loc + month | Immutable rows; `release_candidate`, `snapshot_contender`, and retained `legacy_invalid` never mix | `sql/122`, extended by `sql/203` |
+| `fact_production_forecast` | plan_version + item + loc + forecast_month | Replaced only inside verified promotion; every new row carries source run, production run, and audit id | `sql/039`, extended by `sql/203` |
+| `model_promotion_log` | one row per promote/demote event | Exact source/release/archive lineage; one active row enforced by unique index | `sql/121`, extended by `sql/203` |
 
-`model_promotion_log.promotion_type` is constrained to `('single', 'champion')`; `is_active=TRUE` for at most one row at a time.
+`model_promotion_log.promotion_type` is constrained to `('single', 'champion')`;
+the database enforces at most one `is_active=TRUE` row and at most one promotion
+per non-null `source_run_id`.
 
 ---
 
 ## 2. Generate Forecasts (`make forecast-generate`)
 
+### One-time migration 203 cutover
+
+Apply migrations through `sql/203_create_forecast_generation_run.sql` before
+using the Generate or Promote UI:
+
+```bash
+docker compose exec -T postgres psql -U demand -d demand_mvp \
+  -v ON_ERROR_STOP=1 < sql/203_create_forecast_generation_run.sql
+```
+
+Migration 203 intentionally classifies all pre-manifest staging as
+`legacy_invalid`. It does not infer that an old or mixed population was a safe
+release candidate. It also leaves pre-migration champion result rows without an
+experiment id/checksum. After applying it, use the Champion tab (or
+`POST /champion-experiments/{id}/promote-results`) to reload and explicitly
+promote the selected experiment's cached winners, then run a fresh full Generate
+action and promote only the returned `source_run_id`. Existing production
+remains readable, but replacement can proceed only when the outgoing release has
+verifiable run lineage and its champion-plus-three archive can reconcile.
+
 ### What it does
 
-`make forecast-generate` runs `scripts/generate_production_forecasts.py` (`Makefile:1081-1082`), which loads the configured champion (or per-DFU champion assignments), pulls the matching trained `.pkl` artifacts under `data/models/<model_id>/`, and runs **recursive inference** over the next `horizon_months` months.
+`make forecast-generate` runs
+`scripts/forecasting/generate_production_forecasts.py`, which loads the promoted
+champion experiment's per-month winners artifact, pulls matching trained `.pkl`
+artifacts under `data/models/<model_id>/`, and runs **recursive inference** over
+the next `horizon_months` months.
 
 Inputs:
 
 - **Trained model artifacts** — `data/models/<model_id>/cluster_*.pkl`, produced by `make train-production-all` (one fitted model per `ml_cluster`).
-- **Champion DFU assignments** — `data/champion/dfu_assignments.csv` (or, when missing, the top-accuracy candidate per DFU read from `fact_candidate_forecast`; see `_load_dfu_assignments` in `api/routers/forecasting/backtest_management.py:533`).
+- **Champion routing** —
+  `data/champion/experiment_<promoted_id>_winners.csv`, whose exact bytes are
+  SHA-256 stamped on the generation manifest. `dfu_assignments.csv` is not a
+  production routing source.
 - **Sales history** — last `lookback_months` (default 36) of `fact_sales_monthly`, used to seed lag features for T+1.
 - **Pipeline config** — `config/forecasting/forecast_pipeline_config.yaml` `production_forecast:` block (lines 435-468).
 
 Output:
 
-- Rows inserted into **`fact_production_forecast_staging`** (DELETE-before-INSERT per `model_id`), one row per `(item_id, loc, forecast_month)` for `h = 1 .. horizon_months`.
-- Confidence-interval bounds (`forecast_qty_lower`, `forecast_qty_upper`) when `production_forecast.confidence_interval.enabled=true`, computed from backtest residuals for the configured `source_model_ids` (default: lgbm/catboost/xgboost cluster).
+- One `forecast_generation_run` manifest plus immutable rows in
+  **`fact_production_forecast_staging`**, one row per
+  `(run_id, candidate_model_id, item_id, loc, forecast_month)`. A normal
+  champion generation is one coherent `release_candidate` run; each row's
+  `model_id` preserves the true routed source model.
+- A completed manifest stamped with the current planning month, latest completed
+  sales batch, champion/cluster experiment lineage, row/DFU/source-model counts,
+  routing artifact checksum, exact historical champion-results checksum, and
+  canonical staging payload checksum.
+
+The Forecast UI's Generate endpoint allocates the UUID before the job starts and
+returns it as `source_run_id`. The UI then polls for that exact run; it never
+mistakes an older completed generation for the newly submitted job.
 
 ### Command variants
 
@@ -94,10 +140,9 @@ The DFU population is heterogeneous — some items have years of history, some a
 | Path | Rule | `model_id` used |
 |---|---|---|
 | **Skip** (absolute floor) | `n_months < cold_start_min_months` (default **3**) | — DFU produces **no rows** in `fact_production_forecast_staging` |
-| **Cold-start** | `cold_start_min_months <= n_months < min_history_months` (default 3 ≤ n < **12**) | `cold_start_model_id` (default `rolling_mean`) |
 | **Champion** | `n_months >= min_history_months` (default **12**) | DFU's assigned champion `model_id` (or `fallback_model_id` if the champion artifact is missing) |
 
-Implementation: `scripts/generate_production_forecasts.py:1442-1454`.
+Implementation: `scripts/forecasting/generate_production_forecasts.py`.
 
 ```yaml
 # config/forecasting/forecast_pipeline_config.yaml (lines 435-441)
@@ -105,54 +150,72 @@ production_forecast:
   horizon_months: 24
   lookback_months: 36
   min_history_months: 12          # threshold for full champion model
-  cold_start_model_id: rolling_mean
   cold_start_min_months: 3        # absolute floor — below this, DFU is skipped
   fallback_model_id: lgbm_cluster # used when champion artifact is missing
 ```
 
 > **Operator note:** if you change `cold_start_min_months`, expect the DFU count in `fact_production_forecast_staging` to shift. Run `make forecast-generate-dry` first to preview the impact.
 
-After generation, the run summary log line reports the cold-start count, e.g. `cold-start routed: 1,247 rows -> rolling_mean`.
 
 ---
 
 ## 4. Promotion Workflow
 
-Generation writes **all** participating models into staging; promotion is the deliberate operator action that moves one model's (or a per-DFU champion blend's) rows into `fact_production_forecast`. The endpoint is auth-guarded and audited.
+Promotion is the deliberate operator action that publishes one exact immutable
+run. The endpoint is auth-guarded, fail-closed, and audited.
 
 ### Endpoint
 
 ```
 POST /backtest-management/{model_id}/promote
 Headers: X-API-Key: <key>             # require_api_key dependency
-Query  : ?notes=<text>                # optional, recorded on the audit row
+Query  : ?source_run_id=<uuid>        # required; returned by Generate/staging-summary
+         &notes=<text>                # optional, recorded on the audit row
          &promoted_by=<user|system>   # optional, default 'api'
-         &bypass_token=<token>        # optional, only when promote_gate is enabled
 ```
 
-Defined in `api/routers/forecasting/backtest_management.py:833`.
+Defined in `api/routers/forecasting/forecast_promotion.py`.
 
 ### Single mode vs Champion mode
 
 | Mode | When to use | What gets copied |
 |---|---|---|
-| **Single** — `model_id != "champion"` | One model has uniformly best accuracy across the population | All staging rows where `model_id = <id>` |
-| **Champion** — `model_id == "champion"` | Per-DFU best model from a champion experiment | For each DFU, the staging row from that DFU's winning model. Routing read from `data/champion/experiment_<id>_winners.csv` |
+| **Single** — `model_id != "champion"` | A reviewed single algorithm is the release candidate | Only rows whose manifest and `candidate_model_id` match the requested model and `source_run_id` |
+| **Champion** — `model_id == "champion"` | The promoted champion experiment routes different source models by DFU-month | Only rows in the one coherent champion run; `source_model_id` in production preserves each staged row's producing `model_id` |
 
-Champion mode requires a **promoted champion experiment** (`champion_experiment.is_promoted = TRUE`) plus its winners CSV; otherwise the endpoint returns 400.
+Champion mode requires the sole results-promoted champion experiment, its
+matching sole promoted cluster experiment, current assignments, fresh tuning,
+and a winners CSV whose bytes still match the SHA-256 stamped at generation.
 
 ### Step-by-step flow (executed atomically inside one transaction)
 
-1. **Promotion gate** (single mode only) — `_evaluate_promotion_gate` checks `champion.promote_gate` config: minimum WAPE improvement vs current champion + minimum DFU coverage. A `bypass_token` matching `gate_cfg.bypass_token` skips the check. Pass/reject is recorded in the AI decision ledger via `append_decision` either way.
-2. **Validate staging** — reject with HTTP 400 if no rows exist for the requested `model_id` in `fact_production_forecast_staging`.
-3. **Demote current** — `UPDATE model_promotion_log SET is_active=FALSE, demoted_at=NOW() WHERE is_active=TRUE`.
-4. **Clear production** — `DELETE FROM fact_production_forecast` (single source of truth, replaced wholesale).
-5. **Copy staging → production** — INSERT...SELECT, stamping a fresh `plan_version` (`YYYY-MM`) and `run_id` (UUID).
-   - Single mode: `WHERE model_id = %s`.
-   - Champion mode: JOIN to a temp `_dfu_champion(item_id, loc, winning_model_id)` table populated via `COPY` from the winners CSV.
-6. **Insert audit row** into `model_promotion_log` with `promotion_type`, `champion_experiment_id`, `dfu_count`, `total_rows`, `promoted_by`, `notes`.
-7. **Emit lineage event** (best-effort) — `emit_lineage_event` writes an OpenLineage `COMPLETE` event linking `fact_production_forecast_staging` → `fact_production_forecast`. Failures are logged but do not block the promotion.
-8. **Commit** — single transaction, so any failure rolls back demote + delete + insert together.
+1. Begin a `SERIALIZABLE` primary-database transaction and obtain the
+   transaction-scoped `forecast_release_promotion` advisory lock.
+2. Lock and validate the exact generation manifest: purpose
+   `release_candidate`, status `ready`, eligible, requested model/current month,
+   at least six months, non-empty, and checksummed. Pre-migration
+   `legacy_invalid` and `snapshot_contender` runs cannot pass.
+3. Recompute the payload hash/cardinalities and require current sales lineage.
+   For champion, also require current champion, cluster, assignment, tuning, and
+   routing-artifact lineage; recompute the exact experiment-stamped historical
+   champion checksum/row count and evaluate its common-cohort WAPE, baseline
+   lift, incumbent delta, bias, sufficiency, and actual-alignment policy. A
+   single-model candidate must contain exactly one source model.
+4. Evaluate the fixed six-month forward structural gate: eligible-DFU coverage,
+   no partial route gaps, nonnegative and ordered quantities, and configured CI
+   coverage. The transaction stores the historical quality checks in the gate
+   report; it does not stamp a "candidate WAPE" on future rows that have no
+   actuals.
+5. If an outgoing release exists, archive its exact champion plus the frozen
+   top three `snapshot_contender` runs for lags 0-5. All four series must cover
+   all six lags, and the archived champion checksum must equal the outgoing
+   production checksum. Any failure stops replacement.
+6. Demote the outgoing audit row; insert the incoming audit row with source and
+   production run ids, gate report, candidate/production checksums, replacement
+   lineage, and outgoing archive checksum; then replace production.
+7. Hash production and require exact equality with the selected candidate,
+   mark the source manifest `promoted`, and commit. Any error rolls back the
+   archive, demotion, delete, insert, audit, and manifest transition together.
 
 Response payload:
 
@@ -160,7 +223,11 @@ Response payload:
 {
   "model_id": "lgbm_cluster",
   "promotion_type": "single",
-  "plan_version": "2026-04",
+  "plan_version": "2026-07",
+  "source_run_id": "6bc73b5a-b51c-4d53-a780-dfe421774270",
+  "production_run_id": "4d7805de-2186-447d-9529-dc19bd124da0",
+  "candidate_checksum": "<64 lowercase hex characters>",
+  "outgoing_archive_checksum": null,
   "rows_promoted": 1234567,
   "dfu_count": 51234
 }
@@ -170,9 +237,12 @@ Response payload:
 
 | Endpoint | Returns |
 |---|---|
-| `GET /backtest-management/promotion-status` | The single active promotion (or `{"promoted": null}`) |
+| `GET /backtest-management/promotion-status` | The single active promotion plus source/production/checksum/archive lineage (or `{"promoted": null}`) |
 | `GET /backtest-management/candidate-summary` | Per-model row/DFU/avg-accuracy in `fact_candidate_forecast` |
-| `GET /backtest-management/staging-summary` | Per-model row/DFU/horizon coverage in `fact_production_forecast_staging` |
+| `GET /backtest-management/staging-summary` | Latest immutable release-candidate manifest per requested model, including exact `source_run_id`, status, eligibility, row/DFU/source-model counts, and horizon dates |
+
+There is no bypass token. Fix the failed evidence, generate a new candidate when
+inputs changed, and retry with its new run id.
 
 ---
 
@@ -182,7 +252,7 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 
 | Script | Make target | Purpose | Output table |
 |---|---|---|---|
-| `scripts/generate_production_forecasts.py` | `forecast-generate` | Champion point forecast — the canonical demand signal | `fact_production_forecast_staging` -> `fact_production_forecast` |
+| `scripts/forecasting/generate_production_forecasts.py` | `forecast-generate` | Build an immutable champion release candidate; promotion is a separate API action | `forecast_generation_run` + `fact_production_forecast_staging` |
 | `scripts/generate_quantile_forecasts.py` | `quantile-train VERSION=<v>` | LightGBM quantile regression for P10/P50/P90; weekly disaggregation | `fact_demand_plan` (⚠ MVP stub — see note) |
 | `scripts/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Merges P50 baseline with approved planner overrides (`fact_forecast_overrides`) honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
@@ -194,6 +264,11 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 - **Consensus** — after planners post overrides for the cycle. Always run after `forecast-generate` + planner sign-off.
 
 All four scripts share the same date semantics via `common.planning_date.get_planning_date()` so the cycle "as-of" date is consistent.
+
+`scripts/ml/run_expert_system_backtest.py` is evaluation-only. It writes
+backtest evidence but has no code path that writes
+`fact_production_forecast`; every production release must pass the explicit
+generation and promotion contract above.
 
 ---
 
@@ -247,10 +322,7 @@ if algo_info.get("type") not in _TRAINABLE_TYPES:
 
 | Model family (`type` in algorithm roster) | Accepted? | Reason |
 |---|---|---|
-| `tree` (lgbm_cluster, catboost_cluster, xgboost_cluster + `_cust_enriched` variants) | YES | Need fitted `.pkl` per cluster |
-| `foundation` (chronos, chronos_bolt, chronos2, chronos2_enriched, bolt_hierarchical) | NO -> 400 | Zero/few-shot — no training required |
 | `deep_learning` (nbeats, nhits) | NO -> 400 | Trained inside their own backtest scripts |
-| `statistical` (mstl, seasonal_naive, rolling_mean) | NO -> 400 | No fit step |
 
 `model_id="all"` is a special form that submits a single job training every forecastable tree model on full history. Use `GET /backtest-management/training-status` to poll completion (returns `trained`, `trained_at`, `n_dfus`, `planning_date` per model).
 
@@ -287,6 +359,9 @@ ORDER BY plan_version DESC;
 
 ```sql
 SELECT id, model_id, promotion_type, plan_version, dfu_count, total_rows,
+       source_run_id, production_run_id,
+       candidate_checksum, production_checksum,
+       archive_checksum, archived_at,
        promoted_by, promoted_at, notes
 FROM model_promotion_log
 WHERE is_active = TRUE;
@@ -298,7 +373,11 @@ Or via API:
 curl -s http://localhost:8000/backtest-management/promotion-status | jq
 ```
 
-Exactly one row should be active. If zero rows: nothing has been promoted yet. If more than one: trigger investigation — the demote step in the promote transaction should make this impossible.
+Exactly one row should be active. New releases must have non-null source and
+production run ids and equal candidate/production checksums. If zero rows,
+nothing has been promoted yet. More than one active row is blocked by
+`uq_model_promotion_log_one_active`; treat an index/schema error as a failed
+migration, not something to repair with an ad-hoc audit update.
 
 ### 7.3 Verify served data
 
@@ -357,7 +436,6 @@ GROUP BY item_id, loc;
 Then check thresholds in `config/forecasting/forecast_pipeline_config.yaml`:
 
 - `history_months < cold_start_min_months` (default 3) -> DFU is **intentionally skipped**. Lower the floor only if you accept very low-confidence forecasts.
-- `cold_start_min_months <= history_months < min_history_months` (default 12) -> DFU should be served by `cold_start_model_id` (`rolling_mean`). Check that staging contains rolling_mean rows for the DFU. If missing, regenerate: `make forecast-generate-dfu ITEM=<id> LOC=<loc>`.
 
 ### 9.2 Promotion failed
 
@@ -367,36 +445,52 @@ Then check thresholds in `config/forecasting/forecast_pipeline_config.yaml`:
 
 | HTTP | Body fragment | Cause / fix |
 |---|---|---|
-| 400 | `No staged forecasts found` | Run `make forecast-generate` first; verify with `GET /backtest-management/staging-summary` |
-| 400 | `No promoted champion experiment found` | Promote a champion experiment on the Champion tab, or pass a non-`champion` `model_id` |
-| 400 | `Winners file missing for experiment <id>` | Re-run that champion experiment (writes `data/champion/experiment_<id>_winners.csv`) |
-| 409 | `Promotion blocked by policy gate: wape_improvement_too_small` | Candidate did not beat the active champion by `champion.promote_gate.min_wape_improvement_pct`. Improve the model, or pass `?bypass_token=<token>` (audited) |
-| 409 | `Promotion blocked by policy gate: coverage_below_min` | Candidate scored fewer DFUs than `min_coverage_frac` of the active champion. Re-run generation; verify staging row count |
+| 422 | missing `source_run_id` | Read the exact UUID from `GET /backtest-management/staging-summary` or the Generate response and resend it |
+| 404 | `candidate_run_not_found` | The UUID is unknown; do not substitute a different/older run—generate a fresh candidate |
+| 409 | `candidate_run_not_promotable` | The run is a snapshot contender, pre-migration `legacy_invalid`, already promoted, partial/debug generation, or otherwise ineligible; generate a full release candidate |
+| 409 | `stale_candidate_evidence` | Planning month or latest completed sales batch changed after generation; generate again from current inputs |
+| 409 | `candidate_lineage_mismatch` | Manifest hash/cardinality, champion/cluster lineage, assignments, tuning, source-model count, or winners-file hash changed; repair lineage and generate again |
+| 409 | `candidate_quality_failed` | The exact experiment-stamped historical champion common cohort fails WAPE lift, incumbent, bias, sufficiency, or actual-alignment policy; review/promote better champion results before regenerating |
+| 409 | `candidate_gate_failed` | Six-month coverage, route continuity, quantities, horizon, or confidence intervals do not meet policy; inspect the generation log and manifest before retrying |
+| 409 | `outgoing_archive_incomplete` | The current release cannot be replaced until its champion + top-three lags 0-5 archive is complete and the champion checksum reconciles; prepare the frozen contenders/roster and retry |
+| 409 | `concurrent_release_conflict` | Another release changed state, the same source run was reused, or a second same-planning-month release was attempted; refresh status and generate for the next supported record month |
+| 409 | `production_checksum_mismatch` | Published values did not reproduce the selected run; the transaction rolled back—investigate database triggers/schema and do not retry blindly |
 | 401 | `Missing API key` | Pass `X-API-Key` header |
-| 500 | (server log) | Inspect `model_promotion_log` — the demote/insert transaction is atomic, so on rollback `is_active` should still point at the previous winner. If two rows are active, fire a manual `UPDATE` to fix and open a bug |
+| 500 | opaque server detail | Inspect API/Postgres logs. The transaction is atomic, so the outgoing active row and production payload should remain unchanged |
 
-The `_log_promotion_to_ledger` call records both rejected and applied gate decisions to the AI decision ledger; query it for the audit trail.
+There is no force/bypass path. A successful promotion persists its gate report
+and checksums in `model_promotion_log`; a rejection leaves the current release
+unchanged and is represented by the stable error code returned to the caller.
 
 ### 9.3 Candidate vs Production discrepancy
 
-**Symptom:** A model shows good accuracy on the Backtest Management tab (data from `fact_candidate_forecast`) but consumers report different numbers from `/forecast/production`.
+**Symptom:** A model shows good historical accuracy on the Backtest Management
+tab (`fact_external_forecast_monthly`/`backtest_lag_archive`) but consumers
+report different forward numbers from `/forecast/production`.
 
 **Likely causes:**
 
 1. **Different model is promoted.** Check `GET /backtest-management/promotion-status` — `model_id` may not match what you're inspecting.
 2. **Stale `plan_version`.** Production keeps the most recently promoted `plan_version` only (DELETE-then-INSERT). If a downstream consumer cached an older `plan_version`, refresh.
-3. **Generate not run since last train.** `fact_candidate_forecast` reflects backtest evaluation (historical); `fact_production_forecast` reflects forward inference. If you retrained without re-generating, production is stale. Fix: `make forecast-generate` -> promote.
+3. **Generate not run since last train/input change.** Backtest evidence and
+   forward inference are separate. If you retrained or loaded newer sales without
+   generating a new run, the old run is stale and promotion rejects it.
 4. **Champion mode mismatch.** In champion mode, `fact_production_forecast.model_id = 'champion'` but `source_model_id` carries the per-DFU winner. Filter by `source_model_id` when comparing.
 
 Useful diagnostic:
 
 ```sql
 -- Compare staging vs production for a single DFU
-SELECT 'staging' AS src, model_id, forecast_month, forecast_qty
+SELECT 'staging' AS src, candidate_model_id AS release_model,
+       model_id AS source_model_id, run_id,
+       forecast_month, forecast_qty
 FROM fact_production_forecast_staging
 WHERE item_id = '<id>' AND loc = '<loc>'
+  AND run_id = '<source_run_id>'::uuid
 UNION ALL
-SELECT 'prod' AS src, model_id, forecast_month, forecast_qty
+SELECT 'prod' AS src, model_id AS release_model,
+       source_model_id, source_run_id AS run_id,
+       forecast_month, forecast_qty
 FROM fact_production_forecast
 WHERE item_id = '<id>' AND loc = '<loc>'
 ORDER BY src, forecast_month;
@@ -414,8 +508,9 @@ ORDER BY src, forecast_month;
 | Generate single DFU | `make forecast-generate-dfu ITEM=<id> LOC=<loc>` |
 | Dry-run | `make forecast-generate-dry` |
 | Train + generate (full pipeline) | `make forecast-full` |
-| Promote single model | `curl -X POST -H "X-API-Key: $KEY" "$BASE/backtest-management/lgbm_cluster/promote"` |
-| Promote champion blend | `curl -X POST -H "X-API-Key: $KEY" "$BASE/backtest-management/champion/promote"` |
+| Select exact ready run | `RUN_ID=$(curl -s "$BASE/backtest-management/staging-summary" | jq -r '.champion.source_run_id')` |
+| Promote champion blend | `curl -X POST -H "X-API-Key: $KEY" "$BASE/backtest-management/champion/promote?source_run_id=$RUN_ID"` |
+| Promote single model | Set `RUN_ID` from that model's staging-summary entry, then call the same path with its model id |
 | Active promotion | `curl -s "$BASE/backtest-management/promotion-status"` |
 | Staging summary | `curl -s "$BASE/backtest-management/staging-summary"` |
 | Candidate summary | `curl -s "$BASE/backtest-management/candidate-summary"` |
@@ -429,9 +524,13 @@ Source-of-truth files referenced in this section:
 
 - `Makefile` (lines 1071-1096 production-forecast targets)
 - `config/forecasting/forecast_pipeline_config.yaml` (`production_forecast:` block, lines 435-468)
-- `scripts/generate_production_forecasts.py`
+- `scripts/forecasting/generate_production_forecasts.py`
 - `api/routers/forecasting/backtest_management.py`
+- `api/routers/forecasting/forecast_promotion.py`
 - `api/routers/forecasting/production_forecast.py`
+- `common/services/forecast_promotion.py`
+- `common/services/forecast_lineage.py`
 - `sql/039_create_production_forecast.sql`
 - `sql/121_candidate_forecast_and_promotion.sql`
 - `sql/122_create_production_forecast_staging.sql`
+- `sql/203_create_forecast_generation_run.sql`

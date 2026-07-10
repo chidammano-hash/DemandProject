@@ -27,13 +27,7 @@ Default assignment (configurable via `config/forecasting/expert_system_backtest.
 
 | Archetype | Primary | Fallback chain |
 |---|---|---|
-| erratic_high | nbeats | chronos → mstl → rolling_mean |
-| erratic_low | nbeats | chronos → mstl → rolling_mean |
-| insufficient | chronos | mstl → rolling_mean |
-| smooth_low | chronos | mstl → rolling_mean |
-| smooth_high | mstl | chronos → rolling_mean |
 
-Fallbacks activate per-DFU when the primary algorithm has insufficient history (e.g., nbeats requires 24 months, MSTL requires 25 months). `rolling_mean` always succeeds as the final fallback (requires ≥ 3 months).
 
 ---
 
@@ -145,10 +139,6 @@ assignment:
   smooth_low:   chronos
   smooth_high:  mstl
   fallbacks:
-    nbeats:   [chronos, mstl, rolling_mean]
-    chronos:  [mstl, rolling_mean]
-    mstl:     [chronos, rolling_mean]
-    default:  [rolling_mean]
 
 nbeats:
   variant: generic
@@ -170,7 +160,6 @@ mstl:
   season_length: 12
   min_history: 25
 
-rolling_mean:
   window: 6
   min_history: 3
 ```

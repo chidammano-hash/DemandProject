@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS
 ---------------
-The per-cluster tree models (lgbm/catboost/xgboost) are partitioned by the
+The per-cluster LightGBM model is partitioned by the
 promoted ``ml_cluster`` label. The durable source of truth is now
 ``sku_cluster_assignment`` / ``current_sku_cluster_assignment``.
 

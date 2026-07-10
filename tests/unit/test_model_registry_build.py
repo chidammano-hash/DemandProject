@@ -14,13 +14,11 @@ from common.ml.model_registry import (
 def test_base_model_name_tree_variants():
     """_base_model_name maps tree variants to their canonical backend."""
     assert _base_model_name("lgbm_cluster", "tree") == "lgbm"
-    assert _base_model_name("catboost_cust_enriched", "tree") == "catboost"
-    assert _base_model_name("xgboost_cluster", "tree") == "xgboost"
 
 
 def test_base_model_name_non_tree_passthrough():
     """Non-tree families return their model_id as-is."""
-    assert _base_model_name("chronos2", "foundation") == "chronos2"
+    assert _base_model_name("chronos2_enriched", "foundation") == "chronos2_enriched"
     assert _base_model_name("mstl", "statistical") == "mstl"
 
 
@@ -57,8 +55,7 @@ def test_build_model_override_params():
 
 def test_build_model_foundation_returns_stub():
     """Foundation models return a _FoundationStub with algorithm metadata."""
-    # chronos is declared as ``type: foundation`` in the config.
-    model = build_model("chronos")
+    model = build_model("chronos2_enriched")
     assert isinstance(model, _FoundationStub)
-    assert model.algorithm_id == "chronos"
+    assert model.algorithm_id == "chronos2_enriched"
     assert model.algo_type == "foundation"

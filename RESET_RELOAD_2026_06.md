@@ -142,8 +142,7 @@ make demand-signals-all     # demand signals
 ## PHASE 5 — Backtests, FULL roster  ⏳ LONG POLE — run overnight / in background
 
 ```bash
-make backtest-all           # lgbm, catboost, xgboost, chronos, bolt, chronos2, chronos2e
-make backtest-baselines     # seasonal_naive, rolling_mean (champion fallback)
+make backtest-all           # lgbm, nhits, nbeats, mstl, chronos2_enriched
 make backtest-mstl          # statistical
 make backtest-nbeats        # DL
 make backtest-nhits         # DL
@@ -212,8 +211,7 @@ make ui                     # Vite on :5173 — open http://localhost:5173
 - **Biggest time risk:** Phase 5 with foundation+DL is >> 12h. Run it detached/overnight.
 - **`clean-artifacts` defect (fixed 2026-06-17):** the recipe used a hardcoded list of
   backtest model dirs (`lgbm_cluster`, `chronos`, …) that had drifted to zero overlap with
-  the current roster (`bolt_hierarchical`, `lgbm_global`, `mstl`, `nbeats`, `nhits`,
-  `seasonal_naive`), so it cleaned nothing under `data/backtest/`. Left stale, Phase 6's
+  the current roster, so it cleaned nothing under `data/backtest/`. Left stale, Phase 6's
   `backtest-load-all-bulk` (loads every `data/backtest/*/`) would re-ingest last run's
   predictions and corrupt champion selection. Now globs `rm -rf data/backtest/*`.
 - **`db-truncate-data` derived-table gaps (fixed 2026-06-17/18):** the truncate block cleared

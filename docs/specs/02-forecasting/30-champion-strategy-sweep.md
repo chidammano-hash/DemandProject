@@ -162,7 +162,6 @@ strategies) and optionally cross them with a model-subset axis:
                 "learned_blend", "per_segment", "adaptive_ensemble"],
   "models_variants": [                       // optional second axis
     ["lgbm_cluster", "chronos"],
-    ["lgbm_cluster", "catboost_cluster", "chronos"]
   ],
   "metric": ["wape"]                         // optional; default = champion config metric
 }

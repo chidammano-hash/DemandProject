@@ -511,6 +511,7 @@ def insert_champion_forecasts(
     cur: psycopg.Cursor,
     winners: list[tuple[str, str, str, str, str, float, float, float]],
     champion_model_id: str,
+    champion_experiment_id: int | None = None,
 ) -> int:
     """Bulk-insert champion forecast rows using rolling window winners.
 
@@ -556,11 +557,12 @@ def insert_champion_forecasts(
         """
         INSERT INTO fact_external_forecast_monthly
             (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-             lag, execution_lag, basefcst_pref, tothist_dmd, model_id, source_model_id)
+             lag, execution_lag, basefcst_pref, tothist_dmd, model_id,
+             source_model_id, champion_experiment_id)
         SELECT
             f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
-            %s, w.winning_model_id
+            %s, w.winning_model_id, %s
         FROM fact_external_forecast_monthly f
         INNER JOIN _champion_winners w
             ON f.item_id = w.item_id
@@ -569,7 +571,7 @@ def insert_champion_forecasts(
            AND f.startdate = w.startdate
            AND f.model_id = w.winning_model_id
         """,
-        (champion_model_id,),
+        (champion_model_id, champion_experiment_id),
     )
     inserted = cur.rowcount
     return inserted
@@ -579,6 +581,7 @@ def insert_ensemble_forecasts(
     cur: psycopg.Cursor,
     winners_df: pd.DataFrame,
     champion_model_id: str,
+    champion_experiment_id: int | None = None,
 ) -> int:
     """Bulk-insert ensemble (blended) forecast rows.
 
@@ -634,11 +637,11 @@ def insert_ensemble_forecasts(
         INSERT INTO fact_external_forecast_monthly
             (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
              lag, execution_lag, basefcst_pref, tothist_dmd, model_id,
-             source_model_id, source_mix)
+             source_model_id, source_mix, champion_experiment_id)
         SELECT DISTINCT ON (f.item_id, f.customer_group, f.loc, f.startdate)
             f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, w.blended_fcst, f.tothist_dmd,
-            %s, w.source_model_id, w.source_mix
+            %s, w.source_model_id, w.source_mix, %s
         FROM fact_external_forecast_monthly f
         INNER JOIN _ensemble_winners w
             ON f.item_id = w.item_id
@@ -648,7 +651,7 @@ def insert_ensemble_forecasts(
         WHERE f.model_id != %s AND f.model_id != 'ceiling'
         ORDER BY f.item_id, f.customer_group, f.loc, f.startdate, f.model_id
         """,
-        (champion_model_id, champion_model_id),
+        (champion_model_id, champion_experiment_id, champion_model_id),
     )
     inserted = cur.rowcount
     return inserted
@@ -659,6 +662,7 @@ def insert_fallback_champions(
     lag_mode: str,
     champion_model_id: str,
     fallback_model_id: str,
+    champion_experiment_id: int | None = None,
 ) -> int:
     """Insert champion rows using the fallback model for DFU-months without a champion.
 
@@ -685,23 +689,32 @@ def insert_fallback_champions(
     if lag_mode == "execution":
         lag_cond = "lag::text = execution_lag::text"
         params: list[Any] = [
-            champion_model_id, fallback_model_id, fallback_model_id, champion_model_id,
+            champion_model_id,
+            fallback_model_id,
+            champion_experiment_id,
+            fallback_model_id,
+            champion_model_id,
         ]
     else:
         lag_cond = "lag = %s"
         params = [
-            champion_model_id, fallback_model_id, fallback_model_id,
-            int(lag_mode), champion_model_id,
+            champion_model_id,
+            fallback_model_id,
+            champion_experiment_id,
+            fallback_model_id,
+            int(lag_mode),
+            champion_model_id,
         ]
 
     sql = f"""
     INSERT INTO fact_external_forecast_monthly
         (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-         lag, execution_lag, basefcst_pref, tothist_dmd, model_id, source_model_id)
+         lag, execution_lag, basefcst_pref, tothist_dmd, model_id,
+         source_model_id, champion_experiment_id)
     SELECT
         f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
         f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
-        %s, %s
+        %s, %s, %s
     FROM fact_external_forecast_monthly f
     WHERE f.model_id = %s
       AND {lag_cond}
@@ -909,6 +922,12 @@ def main() -> None:
         default=None,
         help="Path to a cached winners CSV (skips computation, loads directly)",
     )
+    parser.add_argument(
+        "--champion-experiment-id",
+        type=int,
+        default=None,
+        help="Stamp canonical champion rows with the explicit results-promotion experiment",
+    )
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
@@ -1027,9 +1046,19 @@ def main() -> None:
     with profiled_section("insert_champion_rows"):
         with psycopg.connect(**db) as conn, conn.cursor() as cur:
             if is_ensemble and not winners_df.empty:
-                inserted = insert_ensemble_forecasts(cur, winners_df, champion_id)
+                inserted = insert_ensemble_forecasts(
+                    cur,
+                    winners_df,
+                    champion_id,
+                    args.champion_experiment_id,
+                )
             else:
-                inserted = insert_champion_forecasts(cur, winners, champion_id)
+                inserted = insert_champion_forecasts(
+                    cur,
+                    winners,
+                    champion_id,
+                    args.champion_experiment_id,
+                )
             conn.commit()
     print(f"  Inserted {inserted:,} champion rows ({time.time() - t1:.1f}s)")
 
@@ -1041,7 +1070,11 @@ def main() -> None:
         with profiled_section("insert_fallback_rows"):
             with psycopg.connect(**db) as conn, conn.cursor() as cur:
                 fallback_inserted = insert_fallback_champions(
-                    cur, lag_mode, champion_id, fallback_id,
+                    cur,
+                    lag_mode,
+                    champion_id,
+                    fallback_id,
+                    args.champion_experiment_id,
                 )
                 conn.commit()
         print(f"  Inserted {fallback_inserted:,} fallback rows ({time.time() - t1b:.1f}s)")

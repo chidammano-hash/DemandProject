@@ -47,7 +47,7 @@ export const TrendChartPanel = memo(function TrendChartPanel({
 
   const lagMetricOpt = useMemo(
     () => ACCURACY_KPI_OPTIONS.find((k) => k.key === activeLagMetric),
-    [activeLagMetric],
+    [activeLagMetric]
   );
 
   const chartData = useMemo(() => {
@@ -117,32 +117,29 @@ export const TrendChartPanel = memo(function TrendChartPanel({
       </div>
       <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
         <strong>What this chart shows:</strong> Forecast accuracy at each prediction horizon.{" "}
-        <strong>Lag 0</strong> = forecast issued the same month as actuals (most recent information).{" "}
-        <strong>Lag 1</strong> = forecast issued 1 month before actuals.{" "}
-        <strong>Lag 4</strong> = forecast issued 4 months ahead (longest horizon).{" "}
-        Accuracy typically degrades as lag increases because the model has less recent data.{" "}
-        This chart uses the <strong>backtest lag archive</strong> which stores all 5 lag horizons
-        for each backtest model, enabling true forecast-value-added (FVA) analysis.
+        <strong>Lag 0</strong> = forecast issued the same month as actuals (most recent
+        information). <strong>Lag 1</strong> = forecast issued 1 month before actuals.{" "}
+        <strong>Lag 4</strong> = forecast issued 4 months ahead (longest horizon). Accuracy
+        typically degrades as lag increases because the model has less recent data. This chart uses
+        the <strong>backtest lag archive</strong> which stores all 5 lag horizons for each backtest
+        model, enabling true forecast-value-added (FVA) analysis.
       </p>
       {isFlatLine && (
         <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2">
           <p className="text-xs text-amber-800 dark:text-amber-300">
-            <strong>Why are the lines flat?</strong> When the same forecast value is stored
-            at all lag horizons (common for the <em>external</em> model which doesn&apos;t re-forecast
-            each month), accuracy will be identical across lags. To see meaningful lag degradation,
-            filter to backtest models (e.g. lgbm_cluster, catboost_cluster, xgboost_cluster) which
-            generate distinct predictions at each horizon. Use the <strong>Models</strong> filter above
-            to select specific models.
+            <strong>Why are the lines flat?</strong> When the same forecast value is stored at all
+            lag horizons (common for the <em>external</em> model which doesn&apos;t re-forecast each
+            month), accuracy will be identical across lags. To see meaningful lag degradation,
+            filter to retained backtest models (for example, lgbm_cluster or mstl) which generate
+            distinct predictions at each horizon. Use the <strong>Models</strong> filter above to
+            select specific models.
           </p>
         </div>
       )}
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={chartData} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
-          <XAxis
-            dataKey="lag"
-            tick={{ fontSize: 11, fill: chartColors.axis }}
-          />
+          <XAxis dataKey="lag" tick={{ fontSize: 11, fill: chartColors.axis }} />
           <YAxis
             domain={["auto", "auto"]}
             tick={{ fontSize: 11, fill: chartColors.axis }}

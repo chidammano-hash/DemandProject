@@ -62,13 +62,11 @@ Predict future demand using ML models, then select the best forecast per item.
 | 01 | [Accuracy KPIs](02-forecasting/01-accuracy-kpis.md) | WAPE, bias, accuracy% — how we measure forecast quality |
 | 02 | [Multi-Model](02-forecasting/02-multi-model.md) | model_id column lets multiple algorithms coexist |
 | 03 | [Backtest Framework](02-forecasting/03-backtest-framework.md) | Expanding-window evaluation across 10 timeframes |
-| 04 | [Tree Models](02-forecasting/04-tree-models.md) | LGBM + CatBoost + XGBoost implementations |
 | 05 | [Advanced Backtest](02-forecasting/05-advanced-backtest.md) | Hyperparameter tuning, SHAP selection, recursive forecasting |
 | 07 | [Champion Selection](02-forecasting/07-champion-selection.md) | Pick the best model per item per month (8 strategies) |
 | 08 | [Production Forecast](02-forecasting/08-production-forecast.md) | Generate real forward-looking predictions from champion models |
 | 09 | [Bias Correction](02-forecasting/09-bias-correction.md) | Detect and correct systematic over/under-forecasting |
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
-| 11 | [Unified Model Tuning Studio](02-forecasting/11-unified-model-tuning-v2.md) | UI-driven experiment launch, comparison, and promotion for LGBM/CatBoost/XGBoost; also covers the systematic A/B testing and run registry for tree model hyperparameter experiments |
 | 12 | [Dual Promotion](02-forecasting/12-dual-promotion.md) | Two-stage promotion: config → results for tuning experiments |
 | 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
@@ -79,15 +77,15 @@ Predict future demand using ML models, then select the best forecast per item.
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
 | 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
-| 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Production forecast promotion workflow (`fact_production_forecast_staging` → `fact_production_forecast`); champion promotions route per-DFU via the promoted champion experiment's winners CSV |
+| 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Immutable run/purpose-scoped generation and required-`source_run_id` transactional promotion with exact candidate/production lineage |
 | 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: 7-stage quick workflow + per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
 | 27 | [AI Champion Forecast](02-forecasting/27-ai-champion-forecast.md) | Interactive, single-DFU AI adjuster: from the Item Analysis tab an LLM (Ollama/Google/Anthropic/OpenAI) nudges the promoted champion forecast forward and writes a new `model_id='ai_champion'` (preview→save, no batch, no grading) |
 | 28 | [Feature Selection Pipeline](02-forecasting/28-feature-selection-pipeline.md) | Multi-stage per-timeframe feature selection (duplicate / near-zero-variance / correlation / cumulative SHAP) |
 | 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
 | 30 | [Champion Strategy Sweep](02-forecasting/30-champion-strategy-sweep.md) | Tournament grid over champion-selection strategies (`champion_sweep`, sql/192); winners feed champion experiments |
 | 32 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/32-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
-| 33 | [Forecast Snapshot Archive & Live FVA](02-forecasting/33-forecast-snapshot-archive-fva.md) | Monthly as-of archive of the champion plus three frozen, WAPE-ranked contenders (`record_month`, lags 0-5), separately gated staging cleanup, live snapshot FVA |
-| 34 | [Forecast Release Readiness](02-forecasting/34-forecast-release-readiness.md) | Common-cohort quality, lineage, freshness, coverage, and archive readiness contract for planner use |
+| 33 | [Forecast Snapshot Archive & Live FVA](02-forecasting/33-forecast-snapshot-archive-fva.md) | Monthly as-of archive of the exact outgoing champion plus three frozen `snapshot_contender` runs (lags 0-5), atomic release replacement, selected-run-only cleanup, and live FVA |
+| 34 | [Forecast Release Readiness](02-forecasting/34-forecast-release-readiness.md) | Post-release common-cohort readiness plus pre-release exact experiment-stamped quality, structural/lineage/freshness/coverage/CI controls, and payload checksums |
 
 **Reading order:** 01-03 (foundations) → 04-05 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation model) → 19 (pipeline config) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 26 (operational reference)
 

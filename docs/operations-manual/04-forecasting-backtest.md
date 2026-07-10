@@ -42,14 +42,9 @@ selection and `get_forecastable_model_ids()` for production inference.
 
 | Family          | Model IDs                                                                                                | Notes                                                                  |
 |-----------------|----------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-| Tree (core)     | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`                                                    | Per-cluster training, full SHAP feature selection, GPU when available  |
 | Foundation      | `chronos2_enriched`                                                                                       | Covariate-aware; always runs globally (no clusters)                    |
-| Statistical     | `seasonal_naive`, `rolling_mean`, `rolling_median`, `mstl`                                               | Lightweight baselines; `rolling_mean` is also the cold-start fallback  |
 | Deep learning   | `nbeats`, `nhits`                                                                                        | NeuralForecast NHITS / NBEATS; always global                           |
 
-> The Chronos (T5 small), Chronos Bolt, Chronos 2 zero-shot, and Bolt-Hierarchical
-> foundation-model variants, and the `lgbm_cust_enriched` / `catboost_cust_enriched` /
-> `xgboost_cust_enriched` tree variants, were removed in the deprecated-model cleanup
 > (`5ab8d593`). `chronos2_enriched` is the only remaining foundation model.
 
 The `chronos2_enriched` model is also designated as the platform's FM spine
@@ -79,7 +74,6 @@ algorithms:
       # ... (see full file for all keys)
 ```
 
-Same structure for `catboost_cluster:` and `xgboost_cluster:` entries. Use
 `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve
 hyperparameters.
 
@@ -93,7 +87,6 @@ hyperparameters.
 
 ## 4.2 Customer Features Pre-Compute
 
-`lgbm_cust_enriched`, `catboost_cust_enriched`, and `xgboost_cust_enriched` - the tree
 variants that consumed customer-derived features - were removed from
 `config/forecasting/forecast_pipeline_config.yaml` in the deprecated-model cleanup
 (`5ab8d593`). No algorithm entry currently sets `customer_features: true`, so no
@@ -152,14 +145,9 @@ in progress, never rejected with an error:
 ```bash
 # Tree models (core)
 make backtest-lgbm
-make backtest-catboost
-make backtest-xgboost
 
 # Statistical baselines
-make backtest-seasonal-naive
-make backtest-rolling-mean
 make backtest-mstl
-make backtest-baselines               # seasonal_naive + rolling_mean
 
 # Deep learning
 make backtest-nbeats
@@ -177,13 +165,11 @@ the backtest and immediately loads the predictions:
 ### 4.3.2 Run-everything targets
 
 ```bash
-make backtest-all              # 4 backtests sequentially: lgbm, catboost, xgboost,
                                # chronos2_enriched
 
 make backtest-all-parallel     # Same 4 models in parallel (logs in data/backtest/logs/)
 ```
 
-`backtest-all-parallel` launches the 4 core jobs (3 cluster trees + Chronos2
 Enriched) concurrently and pipes each into a per-model log file under
 `data/backtest/logs/`. Use it only on machines with sufficient RAM and CPU;
 on a constrained host run `backtest-all` instead. Tree models use `n_jobs=-1`
@@ -198,10 +184,6 @@ on DFU count, history length, GPU availability and CPU core count.
 | Model                | Target                       | Typical runtime |
 |----------------------|------------------------------|-----------------|
 | LGBM cluster         | `make backtest-lgbm`         | 20–40 min       |
-| CatBoost cluster     | `make backtest-catboost`     | 30–60 min       |
-| XGBoost cluster      | `make backtest-xgboost`      | 25–50 min       |
-| Seasonal naive       | `make backtest-seasonal-naive` | 1–3 min       |
-| Rolling mean         | `make backtest-rolling-mean` | 1–3 min         |
 | MSTL                 | `make backtest-mstl`         | 5–15 min        |
 | NBEATS               | `make backtest-nbeats`       | 30–90 min       |
 | NHITS                | `make backtest-nhits`        | 30–90 min       |
@@ -219,7 +201,6 @@ to every backtest:
 | `forecast_horizon`           | Months predicted per fold (default 6 → produces lags 0–4 + 5) |
 | `early_stop_pct`             | Patience as fraction of `n_estimators` (5%, 10% for sparse)   |
 | `shap_retrain_threshold`     | Re-train trigger when SHAP set churns > 50%                   |
-| `baseline_intermittent`      | Route intermittent clusters to rolling mean                   |
 | `intermittent_threshold`     | Zero-share that triggers intermittent routing (default 0.7)   |
 | `recursive_noise_enabled`    | Add Gaussian noise to recursive lag features                  |
 
@@ -257,8 +238,6 @@ mutating the staging table — see
 ```bash
 make backtest-load-all            # loads every model_id present under data/backtest/
 make backtest-load-all-bulk       # same set, but drops & rebuilds indexes once → ~4× faster
-make backtest-load-bulk           # 4 core models: lgbm_cluster, catboost_cluster,
-                                  # xgboost_cluster, chronos2_enriched
 ```
 
 `--bulk` mode disables the per-model index cycle and instead drops the
@@ -285,8 +264,6 @@ make backtest-load-archive-only MODELS="lgbm_cluster chronos2_enriched"
 ```bash
 make backtest-load MODEL=lgbm_cluster      # generic single-model loader
 make backtest-load-chronos2e               # convenience wrapper
-make backtest-load-seasonal-naive
-make backtest-load-rolling-mean
 make backtest-load-mstl
 make backtest-load-nbeats
 make backtest-load-nhits
@@ -309,7 +286,6 @@ ad-hoc multi-model loads you can call the script directly:
 ```bash
 # Load 4 models with single index cycle (fastest):
 uv run python scripts/etl/load_backtest_forecasts.py \
-  --models lgbm_cluster catboost_cluster xgboost_cluster chronos2_enriched \
   --replace --bulk
 
 # Load main table only (skip archive):
@@ -399,7 +375,6 @@ When `cluster_strategy=global`:
 Clusters whose zero-demand share exceeds `backtest.intermittent_threshold`
 (default `0.7` → 70% zeros) are **not** trained with the tree model.
 Instead, when `backtest.baseline_intermittent: true`, those clusters are
-routed to a rolling-mean baseline using
 `backtest.baseline_intermittent_window` (default 12 months).
 
 This avoids tree models over-fitting noise in extremely sparse partitions
@@ -472,7 +447,6 @@ Optional dependencies that the platform falls back gracefully without:
 * `cupy` — GPU arrays for Monte Carlo simulation steps
 * `numba` — JIT-compiled seasonality kernels
 
-Tree backtests (LGBM / CatBoost / XGBoost) use each library's native GPU
 backend (`device_type='gpu'`, `task_type='GPU'`, `tree_method='hist',
 device='cuda'`) when the flag is on.
 
@@ -570,8 +544,6 @@ production stage skips.
   partitioning, SHAP integration
 * `common/ml/model_registry.py` — `build_model()`, `fit_model()`,
   `to_native_params()`, `compute_early_stop_patience()`
-* `scripts/ml/run_backtest.py`, `scripts/ml/run_backtest_catboost.py`,
-  `scripts/ml/run_backtest_xgboost.py` - tree backtests
 * `scripts/ml/run_backtest_chronos2_enriched.py` - foundation model backtest
 * `scripts/ml/run_backtest_dl.py`, `scripts/ml/run_backtest_mstl.py` - DL and
   statistical backtests

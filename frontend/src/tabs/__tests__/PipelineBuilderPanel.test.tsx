@@ -74,7 +74,7 @@ describe("PipelineBuilderPanel", () => {
     expandPanel();
     expect(screen.getByText("Delta Data Load")).toBeDefined();
     expect(screen.getByText("Forecast Feature Prep")).toBeDefined();
-    expect(screen.getByText("Core Tree Backtests")).toBeDefined();
+    expect(screen.getByText("Forecast Roster Backtests")).toBeDefined();
     expect(screen.getByText("Inventory Refresh")).toBeDefined();
     expect(screen.getByText("Forecast Snapshot Archive")).toBeDefined();
   });

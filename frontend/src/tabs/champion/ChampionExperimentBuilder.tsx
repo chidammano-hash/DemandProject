@@ -16,9 +16,7 @@ import {
   fetchChampionTemplates,
   type ChampionExperimentTemplate,
 } from "@/api/queries";
-import {
-  fetchPipelineConfig, pipelineConfigKeys,
-} from "@/api/queries/unified-model-tuning";
+import { fetchPipelineConfig, pipelineConfigKeys } from "@/api/queries/unified-model-tuning";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingElement } from "@/components/LoadingElement";
@@ -42,10 +40,32 @@ const STRATEGY_DEFAULTS: Record<string, Record<string, unknown>> = {
   decay: { decay_factor: 0.9, min_prior_months: 3 },
   ensemble: { top_k: 3, weight_method: "inverse_wape", min_prior_months: 3 },
   meta_learner: { min_prior_months: 3 },
-  hybrid_warmup: { min_prior_months: 3, warmup_strategy: "rolling", warmup_window: 2, warmup_min_prior: 1, primary_strategy: "adaptive_ensemble", primary_top_k: 3 },
-  adaptive_ensemble: { min_k: 2, max_k: 5, spread_threshold: 0.15, min_prior_months: 3, weight_method: "inverse_wape" },
-  ensemble_rolling: { top_k: 3, window_months: 6, weight_method: "inverse_wape", min_prior_months: 3 },
-  optimized_decay: { decay_candidates: [0.75, 0.80, 0.85, 0.90, 0.95], min_prior_months: 3, validation_months: 3 },
+  hybrid_warmup: {
+    min_prior_months: 3,
+    warmup_strategy: "rolling",
+    warmup_window: 2,
+    warmup_min_prior: 1,
+    primary_strategy: "adaptive_ensemble",
+    primary_top_k: 3,
+  },
+  adaptive_ensemble: {
+    min_k: 2,
+    max_k: 5,
+    spread_threshold: 0.15,
+    min_prior_months: 3,
+    weight_method: "inverse_wape",
+  },
+  ensemble_rolling: {
+    top_k: 3,
+    window_months: 6,
+    weight_method: "inverse_wape",
+    min_prior_months: 3,
+  },
+  optimized_decay: {
+    decay_candidates: [0.75, 0.8, 0.85, 0.9, 0.95],
+    min_prior_months: 3,
+    validation_months: 3,
+  },
   learned_blend: { min_prior_months: 6, alpha: 100.0 },
   ridge_blend: { min_prior_months: 3, ridge_alpha: 100.0, min_train_months: 6 },
   shrinkage_blend: { min_prior_months: 3, shrinkage_intensity: 0.5 },
@@ -56,7 +76,13 @@ const STRATEGY_DEFAULTS: Record<string, Record<string, unknown>> = {
   hybrid_meta_router: { min_prior_months: 3, confidence_threshold: 0.6, blend_top_k: 3 },
   diverse_ensemble: { min_prior_months: 3, top_k: 3, correlation_penalty: 0.5 },
   uncertainty_aware: { min_prior_months: 3, uncertainty_weight: 0.3 },
-  cascade_ensemble: { min_prior_months: 3, solo_threshold: 0.10, mid_threshold: 0.25, mid_k: 2, wide_k: 5 },
+  cascade_ensemble: {
+    min_prior_months: 3,
+    solo_threshold: 0.1,
+    mid_threshold: 0.25,
+    mid_k: 2,
+    wide_k: 5,
+  },
   adversarial_filter: { min_prior_months: 3, outlier_z_threshold: 1.5, top_k: 3 },
   dynamic_window: { min_prior_months: 3, window_candidates: [2, 3, 4, 6, 9, 12], cv_months: 3 },
   regime_adaptive: { min_prior_months: 3, variance_window: 4, variance_threshold: 2.0 },
@@ -64,7 +90,7 @@ const STRATEGY_DEFAULTS: Record<string, Record<string, unknown>> = {
   thompson_sampling: { min_prior_months: 2, discount: 0.95 },
   thompson_ensemble: { min_prior_months: 2, discount: 0.95, top_k: 3 },
   linucb: { min_prior_months: 3, alpha_ucb: 1.0 },
-  exp3: { min_prior_months: 2, gamma: 0.10 },
+  exp3: { min_prior_months: 2, gamma: 0.1 },
   dfu_strategy_router: { min_prior_months: 3, eval_months: 3 },
   stacked_strategies: { min_prior_months: 3, eval_months: 3 },
   cluster_regime_hybrid: { min_prior_months: 3, variance_window: 4, variance_threshold: 2.0 },
@@ -79,11 +105,7 @@ const META_DEFAULTS = {
 };
 
 /** Fallback model IDs used before pipeline config loads */
-const DEFAULT_MODELS = [
-  "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
-  "chronos2_enriched",
-  "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean", "rolling_median",
-];
+const DEFAULT_MODELS = ["lgbm_cluster", "chronos2_enriched", "mstl", "nbeats", "nhits"];
 
 const STRATEGY_LABELS: Record<string, string> = {
   // Core
@@ -130,14 +152,27 @@ const STRATEGY_LABELS: Record<string, string> = {
 // Strategy tiers & descriptions
 // ---------------------------------------------------------------------------
 
-const RECOMMENDED_STRATEGIES = ["expanding", "rolling", "adaptive_ensemble", "per_cluster", "hybrid_warmup"];
+const RECOMMENDED_STRATEGIES = [
+  "expanding",
+  "rolling",
+  "adaptive_ensemble",
+  "per_cluster",
+  "hybrid_warmup",
+];
 const ADVANCED_STRATEGIES = [
-  "decay", "ensemble", "meta_learner", "optimized_decay", "ridge_blend",
-  "per_segment", "diverse_ensemble", "seasonal", "ensemble_rolling",
+  "decay",
+  "ensemble",
+  "meta_learner",
+  "optimized_decay",
+  "ridge_blend",
+  "per_segment",
+  "diverse_ensemble",
+  "seasonal",
+  "ensemble_rolling",
 ];
 // Everything else is "Expert"
 const EXPERT_STRATEGIES = Object.keys(STRATEGY_LABELS).filter(
-  (k) => !RECOMMENDED_STRATEGIES.includes(k) && !ADVANCED_STRATEGIES.includes(k),
+  (k) => !RECOMMENDED_STRATEGIES.includes(k) && !ADVANCED_STRATEGIES.includes(k)
 );
 
 const STRATEGY_DESCRIPTIONS: Record<string, string> = {
@@ -169,9 +204,7 @@ function StrategyButton({
       onClick={() => onSelect(strategyKey)}
       className={cn(
         "w-full rounded border px-3 py-2 text-left text-sm transition-colors",
-        selected
-          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-          : "hover:bg-muted",
+        selected ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "hover:bg-muted"
       )}
     >
       <div className="font-medium">{STRATEGY_LABELS[strategyKey]}</div>
@@ -216,12 +249,7 @@ function StrategyTier({
       {expanded && (
         <div className="space-y-1 mt-1">
           {strategies.map((k) => (
-            <StrategyButton
-              key={k}
-              strategyKey={k}
-              selected={selected === k}
-              onSelect={onSelect}
-            />
+            <StrategyButton key={k} strategyKey={k} selected={selected === k} onSelect={onSelect} />
           ))}
         </div>
       )}
@@ -270,7 +298,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
   const [selectedTemplate, setSelectedTemplate] = useState<string>("custom");
   const [strategy, setStrategy] = useState("expanding");
   const [strategyParams, setStrategyParams] = useState<Record<string, unknown>>(
-    STRATEGY_DEFAULTS.expanding,
+    STRATEGY_DEFAULTS.expanding
   );
   const [metaLearnerParams, setMetaLearnerParams] = useState(META_DEFAULTS);
   const [models, setModels] = useState<string[]>([...DEFAULT_MODELS]);
@@ -333,11 +361,13 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
     try {
       const stored = localStorage.getItem("champion_template_favorites");
       return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch { return new Set(); }
+    } catch {
+      return new Set();
+    }
   });
 
   function toggleFavorite(templateId: string) {
-    setFavorites(prev => {
+    setFavorites((prev) => {
       const next = new Set(prev);
       if (next.has(templateId)) next.delete(templateId);
       else next.add(templateId);
@@ -395,7 +425,10 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
       });
     }
     if (tmpl.meta_learner_params) {
-      setMetaLearnerParams({ ...META_DEFAULTS, ...(tmpl.meta_learner_params as typeof META_DEFAULTS) });
+      setMetaLearnerParams({
+        ...META_DEFAULTS,
+        ...(tmpl.meta_learner_params as typeof META_DEFAULTS),
+      });
     }
     if (tmpl.models) setModels([...tmpl.models]);
     if (tmpl.metric) setMetric(tmpl.metric);
@@ -411,9 +444,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
   }, [strategy, selectedTemplate]);
 
   function toggleModel(m: string) {
-    setModels((prev) =>
-      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m],
-    );
+    setModels((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
   }
 
   const canSubmit = label.trim().length > 0 && models.length >= 2 && !submitMutation.isPending;
@@ -483,42 +514,53 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                   const perf = t.strategy ? strategyPerf.get(t.strategy) : undefined;
                   const isFav = favorites.has(t.id);
                   return (
-                  <button
-                    key={t.id}
-                    onClick={() => handleTemplateSelect(t)}
-                    className={cn(
-                      "relative rounded border p-2 text-left text-xs transition-colors",
-                      selectedTemplate === t.id
-                        ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                        : "hover:bg-muted",
-                      isFav && selectedTemplate !== t.id && "border-amber-300 dark:border-amber-700",
-                    )}
-                  >
-                    {/* Favorite toggle */}
                     <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); toggleFavorite(t.id); }}
-                      className="absolute top-1 right-1 p-0.5 rounded hover:bg-muted"
-                      title={isFav ? "Remove favorite" : "Mark as favorite"}
+                      key={t.id}
+                      onClick={() => handleTemplateSelect(t)}
+                      className={cn(
+                        "relative rounded border p-2 text-left text-xs transition-colors",
+                        selectedTemplate === t.id
+                          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                          : "hover:bg-muted",
+                        isFav &&
+                          selectedTemplate !== t.id &&
+                          "border-amber-300 dark:border-amber-700"
+                      )}
                     >
-                      <Star className={cn("h-3 w-3", isFav ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40")} />
-                    </button>
-                    <div className="font-medium pr-5">{t.label}</div>
-                    <div className="text-muted-foreground mt-0.5 line-clamp-1">
-                      {t.description}
-                    </div>
-                    {/* Auto-star performance row */}
-                    {perf && (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <span className="text-[10px] text-amber-500 tracking-tight">
-                          {"★".repeat(perf.stars)}{"☆".repeat(5 - perf.stars)}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                          {perf.accuracy.toFixed(1)}% best
-                        </span>
+                      {/* Favorite toggle */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(t.id);
+                        }}
+                        className="absolute top-1 right-1 p-0.5 rounded hover:bg-muted"
+                        title={isFav ? "Remove favorite" : "Mark as favorite"}
+                      >
+                        <Star
+                          className={cn(
+                            "h-3 w-3",
+                            isFav ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40"
+                          )}
+                        />
+                      </button>
+                      <div className="font-medium pr-5">{t.label}</div>
+                      <div className="text-muted-foreground mt-0.5 line-clamp-1">
+                        {t.description}
                       </div>
-                    )}
-                  </button>
+                      {/* Auto-star performance row */}
+                      {perf && (
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] text-amber-500 tracking-tight">
+                            {"★".repeat(perf.stars)}
+                            {"☆".repeat(5 - perf.stars)}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {perf.accuracy.toFixed(1)}% best
+                          </span>
+                        </div>
+                      )}
+                    </button>
                   );
                 })}
                 <button
@@ -530,7 +572,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                     "rounded border p-2 text-left text-xs transition-colors",
                     selectedTemplate === "custom"
                       ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                      : "hover:bg-muted",
+                      : "hover:bg-muted"
                   )}
                 >
                   <div className="font-medium">Custom</div>
@@ -549,7 +591,9 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
               <div className="space-y-2">
                 {/* Recommended tier — always visible */}
                 <div className="space-y-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Recommended</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Recommended
+                  </span>
                   {RECOMMENDED_STRATEGIES.map((k) => (
                     <StrategyButton
                       key={k}
@@ -584,7 +628,10 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                 {/* Show current selection if it's in a collapsed tier */}
                 {!RECOMMENDED_STRATEGIES.includes(strategy) && (
                   <div className="text-xs text-muted-foreground mt-1">
-                    Selected: <span className="font-medium text-foreground">{STRATEGY_LABELS[strategy] ?? strategy}</span>
+                    Selected:{" "}
+                    <span className="font-medium text-foreground">
+                      {STRATEGY_LABELS[strategy] ?? strategy}
+                    </span>
                   </div>
                 )}
               </div>
@@ -595,10 +642,8 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                   <ParamInput
                     label="Window Months"
                     type="number"
-                    value={strategyParams.window_months as number ?? 6}
-                    onChange={(v) =>
-                      setStrategyParams((p) => ({ ...p, window_months: Number(v) }))
-                    }
+                    value={(strategyParams.window_months as number) ?? 6}
+                    onChange={(v) => setStrategyParams((p) => ({ ...p, window_months: Number(v) }))}
                     min={2}
                     max={24}
                   />
@@ -607,10 +652,8 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                   <ParamInput
                     label="Decay Factor"
                     type="number"
-                    value={strategyParams.decay_factor as number ?? 0.9}
-                    onChange={(v) =>
-                      setStrategyParams((p) => ({ ...p, decay_factor: Number(v) }))
-                    }
+                    value={(strategyParams.decay_factor as number) ?? 0.9}
+                    onChange={(v) => setStrategyParams((p) => ({ ...p, decay_factor: Number(v) }))}
                     min={0.5}
                     max={0.99}
                     step={0.01}
@@ -621,10 +664,8 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                     <ParamInput
                       label="Top K"
                       type="number"
-                      value={strategyParams.top_k as number ?? 3}
-                      onChange={(v) =>
-                        setStrategyParams((p) => ({ ...p, top_k: Number(v) }))
-                      }
+                      value={(strategyParams.top_k as number) ?? 3}
+                      onChange={(v) => setStrategyParams((p) => ({ ...p, top_k: Number(v) }))}
                       min={2}
                       max={5}
                     />
@@ -649,7 +690,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                 <ParamInput
                   label="Min Prior Months"
                   type="number"
-                  value={strategyParams.min_prior_months as number ?? 3}
+                  value={(strategyParams.min_prior_months as number) ?? 3}
                   onChange={(v) =>
                     setStrategyParams((p) => ({ ...p, min_prior_months: Number(v) }))
                   }
@@ -673,7 +714,6 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                         }
                       >
                         <option value="random_forest">Random Forest</option>
-                        <option value="xgboost">XGBoost</option>
                       </select>
                     </div>
                     <ParamInput
@@ -747,10 +787,30 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                 {modelsExpanded && (
                   <div className="mt-2 space-y-2">
                     <div className="flex gap-2 text-[10px]">
-                      <button type="button" onClick={() => setModels([...ALL_MODELS])} className="text-primary hover:underline">Select All</button>
-                      <button type="button" onClick={() => setModels([...COMPETING_MODELS])} className="text-primary hover:underline">Competing Only</button>
-                      <button type="button" onClick={() => setModels([])} className="text-muted-foreground hover:underline">Clear</button>
-                      <span className="ml-auto text-muted-foreground">{models.length}/{ALL_MODELS.length} selected</span>
+                      <button
+                        type="button"
+                        onClick={() => setModels([...ALL_MODELS])}
+                        className="text-primary hover:underline"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setModels([...COMPETING_MODELS])}
+                        className="text-primary hover:underline"
+                      >
+                        Competing Only
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setModels([])}
+                        className="text-muted-foreground hover:underline"
+                      >
+                        Clear
+                      </button>
+                      <span className="ml-auto text-muted-foreground">
+                        {models.length}/{ALL_MODELS.length} selected
+                      </span>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                       {ALL_MODELS.map((m) => {
@@ -767,17 +827,24 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                               "rounded-lg border p-2.5 text-left transition-all",
                               selected
                                 ? "border-primary bg-primary/5 ring-1 ring-primary"
-                                : "opacity-50 hover:opacity-80 hover:bg-muted/50",
+                                : "opacity-50 hover:opacity-80 hover:bg-muted/50"
                             )}
                           >
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-semibold truncate">{modelLabel(m)}</span>
+                              <span className="text-xs font-semibold truncate">
+                                {modelLabel(m)}
+                              </span>
                               {isCompeting && (
-                                <span className="h-2 w-2 rounded-full bg-primary shrink-0" title="Competing" />
+                                <span
+                                  className="h-2 w-2 rounded-full bg-primary shrink-0"
+                                  title="Competing"
+                                />
                               )}
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_BADGE_COLORS[algoType] ?? "bg-gray-100 text-gray-600"}`}>
+                              <span
+                                className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_BADGE_COLORS[algoType] ?? "bg-gray-100 text-gray-600"}`}
+                              >
                                 {algoType.replace("_", " ")}
                               </span>
                               {!algo?.enabled && (
@@ -812,7 +879,9 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                   >
                     <option value="execution">Execution</option>
                     {[0, 1, 2, 3, 4].map((l) => (
-                      <option key={l} value={String(l)}>Lag {l}</option>
+                      <option key={l} value={String(l)}>
+                        Lag {l}
+                      </option>
                     ))}
                   </select>
                 </div>

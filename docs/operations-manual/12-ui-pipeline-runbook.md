@@ -44,9 +44,7 @@ families run concurrently — same family stays serial).
 
 | Model (model_id) | Job type | Notes |
 |---|---|---|
-| `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` | `backtest_lgbm` / `_catboost` / `_xgboost` | tree models |
 | `chronos2_enriched` | `backtest_chronos2_enriched` | foundation - slow (multi-hour) |
-| `seasonal_naive`, `rolling_mean` | `backtest_seasonal_naive` / `_rolling_mean` | statistical baselines (champion fallback) |
 | `mstl` | `backtest_mstl` | statistical decomposition — **needs the `statistical` extra** (`uv sync --extra statistical` / `uv pip install statsforecast`); without `statsforecast` the run produces **zero predictions** and the model stays "No backtest" |
 | `nhits`, `nbeats` | `backtest_nhits` / `_nbeats` | deep learning (needs the `dl` extra) |
 
@@ -59,7 +57,6 @@ families run concurrently — same family stays serial).
 
 **Running the whole roster from the UI** (no single "Run all" button): use the
 **Workflows → Workflow Library → Pipeline Builder** and add one step per backtest job type (`backtest_lgbm`,
-`backtest_catboost`, … `backtest_nbeats`) → submit as one pipeline (`POST /jobs/pipeline`).
 Or click **Run** on each model card. The foundation/DL backtests are the multi-hour
 wall — fire them and monitor in Active Jobs.
 

@@ -79,7 +79,7 @@ class CreateChampionExperimentBody(BaseModel):
     strategy_params: StrategyParams | None = None
     meta_learner_params: MetaLearnerParams | None = None
     models: list[str] = Field(
-        default=["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"],
+        default=["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"],
     )
     metric: str = "accuracy_pct"
     lag_mode: str = "execution"

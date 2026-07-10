@@ -52,7 +52,6 @@ For each algorithm, run a mini-backtest across 10 time periods — each algorith
 |---|---|---|
 | Statistical | 5 | Holt-Winters, Simple ES, Croston SBA, Auto-ARIMA, Theta |
 | Statistical Upgrades | 6 | AutoCES, DynamicTheta, IMAPA, TSB, ADIDA, MSTL |
-| Tree Models | 3 | LightGBM, CatBoost, XGBoost |
 | Deep Learning | 8 | N-BEATS, N-HiTS, TFT, DeepAR, TiDE, TCN, PatchTST, iTransformer |
 | Foundation Models | 5 | Chronos (Amazon), TimesFM (Google), TimeGPT, Moirai, Lag-Llama |
 
@@ -134,7 +133,6 @@ Now for **every DFU in production**: classify its demand type → look up routin
 
 ## Problem
 
-The current system runs three tree-based algorithms (LightGBM, CatBoost, XGBoost) trained on K-Means demand clusters. Champion selection picks the best tree per DFU-month. This leaves significant accuracy on the table:
 
 1. **Algorithm monoculture** — All three models are gradient-boosted trees. They share the same weaknesses: poor on low-volume stable series (overfit), poor on purely seasonal items (miss simple patterns), poor on intermittent demand.
 
@@ -182,7 +180,6 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 #### Expert 1: Exponential Smoothing Specialist
 - **Algorithms:** Simple ES, Holt's Linear, Holt-Winters (additive & multiplicative), Damped Trend, **AutoCES** (upgrade)
 - **Strength signal:** Low CV demand, clear level/trend, moderate seasonality
-- **SHAP alignment:** When `qty_lag_1`, `rolling_mean_3m`, `month` dominate → series is smooth and level-driven
 - **Routing rule:** `cv_demand < 0.5 AND seasonal_amplitude < 0.3 AND zero_demand_pct < 0.1`
 - **Auto-selection:** Uses AICc to pick the best ES variant per segment
 
@@ -220,12 +217,9 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 - **SHAP alignment:** When lag, rolling, derived-demand, and categorical features (`brand`, `region`) show high SHAP
 - **Specialization:** Fastest tree; best for high-cardinality categoricals via histogram binning
 
-#### Expert 7: CatBoost Specialist
 - **Strength signal:** When categorical features (brand, region, abc_vol) are key demand drivers
-- **SHAP alignment:** When `brand`, `region`, `abc_vol` show high SHAP → CatBoost native ordered target encoding excels
 - **Specialization:** Lowest overfitting risk; best when train set is small relative to features
 
-#### Expert 8: XGBoost Specialist
 - **Strength signal:** When regularization is key (many correlated features, overfitting risk)
 - **Specialization:** Elastic net regularization (L1 + L2) for automatic feature sparsity
 
@@ -276,7 +270,6 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 
 | ADI \ CV² | Low (<0.49) | Medium (0.49-1.0) | High (>1.0) |
 |-----------|-------------|-------------------|-------------|
-| **Low (<1.32)** — Smooth | ETS / ARIMA | LGBM / CatBoost | XGBoost + Ridge |
 | **Medium (1.32-2.0)** — Intermittent | Croston SBA | LGBM (Tweedie) | Ensemble |
 | **High (>2.0)** — Lumpy | Croston TSB | ADIDA | Moving Average |
 
@@ -299,7 +292,6 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 - **SHAP cluster types:**
   - **Lag-dominated** (lag features > 40% SHAP mass) → autoregressive models
   - **Seasonal-dominated** (fourier + month > 30%) → seasonal models
-  - **Attribute-dominated** (categorical features > 15%) → CatBoost, Random Forest
   - **Trend-dominated** (derived features > 25%) → Theta, damped trend
   - **Sparse-signal** (top 5 features < 50% mass) → ensemble
 
@@ -475,7 +467,6 @@ Unlike brute-force model competition, the Expert Panel uses **attribute-based in
 ```
 Tier 1: CPU-Only
 ├─ Statistical models (ETS, ARIMA, Theta, Croston, AutoCES, MSTL)
-├─ Tree models (LGBM, CatBoost, XGBoost, RF)
 ├─ Linear models (Ridge, DLinear, NLinear)
 └─ Reconciliation (MinTrace, WLS)
 
@@ -821,7 +812,6 @@ Lower = simpler = bonus in the scoring formula.
 ```yaml
 complexity_scores:
   # Baselines
-  seasonal_naive: 1
   dlinear: 2
   nlinear: 2
   # Statistical
@@ -853,8 +843,6 @@ complexity_scores:
   tide: 6
   deepar: 7
   lgbm: 7
-  catboost: 7
-  xgboost: 7
   tft: 8
   weighted_blend: 8
   patchtst: 8
@@ -883,8 +871,6 @@ algorithms:
   nlinear:        {tier: cpu,  expert: 29, best_for: [sanity_check, distribution_shift]}
   # --- Trees (cpu/gpu) ---
   lgbm_cluster:   {tier: cpu,  expert: 6,  best_for: [complex_interactions, large_data]}
-  catboost_cluster:{tier: cpu, expert: 7,  best_for: [categorical_heavy, small_clusters]}
-  xgboost_cluster:{tier: cpu,  expert: 8,  best_for: [regularization, mixed_signal]}
   # --- Deep learning (gpu_optional) ---
   nhits:          {tier: gpu_optional, expert: 26, best_for: [long_horizon, multi_seasonal]}
   nbeats:         {tier: gpu_optional, expert: 26, best_for: [stable, seasonal, aggregate]}
@@ -1005,7 +991,6 @@ adv_algorithm_testing/results/
 ├── affinity_detail.csv           ← detailed breakdown with confidence intervals
 ├── assignments.csv               ← final routing: segment → best algorithm
 ├── portfolio_stats.json          ← overall accuracy, n_algorithms, improvement
-├── comparison.json               ← portfolio vs. seasonal naive vs. external vs. existing
 ├── metadata.json                 ← runtime, n_dfus, n_predictions, algorithm_counts
 └── experiment_report.txt         ← human-readable summary
 ```
@@ -1065,7 +1050,6 @@ adv_algorithm_testing/results/
 
 Empirical results from the expert panel show the segment-level affinity matrix leaves ~3–8% WAPE improvement on the table relative to the oracle ceiling (`compute_ceiling_accuracy`). The gap exists because:
 
-1. All DFUs in a segment (e.g., `erratic_low`) share one algorithm, even though within that segment some are better served by CatBoost, others by Croston SBA, others by Ridge.
 2. Segment-level WAPE averages heterogeneous DFUs — one catastrophically bad DFU can drag the whole segment to the wrong algorithm assignment.
 3. No blending: a single wrong assignment vs. a weighted ensemble of top-3 is often 5–10pp different for individual DFUs.
 
@@ -1135,8 +1119,6 @@ Routing decision per DFU:
 | confidence >= threshold | Use single predicted-best algorithm |
 | confidence < threshold | Inverse-WAPE blend of top-K algorithms |
 | DFU missing from meta-router | Blend (treated as low-confidence) |
-| No accuracy history | Fall back to `seasonal_naive` |
-| Predicted algorithm has no data for a DFU-month | Fall back to `seasonal_naive` |
 
 Output: `sku_ck | startdate | basefcst_pref | algorithm_id="hybrid"`
 
@@ -1187,9 +1169,7 @@ The oracle ceiling from `compute_ceiling_accuracy` is the theoretical upper boun
 
 **Observation:** `erratic_high` and `erratic_low` archetypes show negative accuracy (−55.7% and −14.2%) in the portfolio, far worse than naive (29.0% and 4.3%).
 
-**Root cause:** The affinity matrix assigned `tft` as the winner for erratic segments based on a biased sample (~109 of 2,739 DFUs had TFT coverage). At compare time, 3,584 DFU-months fell back to `seasonal_naive` because TFT predictions were not available for the full golden set. Seasonal naive performs catastrophically on erratic demand.
 
-**Fix:** The hybrid ensemble's fallback chain avoids this by routing erratic DFUs to the inverse-WAPE blend of algorithms that actually have full coverage. Additionally, the comparison module's fallback for missing predictions should prefer `croston_sba` or `tsb` over `seasonal_naive` for archetypes where `adi >= 1.32`.
 
 ### Portfolio Bias Inflation
 

@@ -15,9 +15,8 @@ Editing or reviewing backtest, champion selection, tuning, feature selection,
 production forecast generation, or accuracy/FVA endpoints.
 
 ## Model registry & config (hard rules)
-- **All tree `.fit()`/instantiation goes through `common/ml/model_registry.py`**
-  (`fit_model()`, `build_model()`). Direct `LGBMRegressor()`/`CatBoostRegressor()`/
-  `XGBRegressor()` anywhere else — tuning, training, backtest, meta-learner — is a defect.
+- **All LightGBM `.fit()`/instantiation goes through `common/ml/model_registry.py`**
+  (`fit_model()`, `build_model()`). Direct `LGBMRegressor()` anywhere else is a defect.
 - **All hyperparameters live in YAML** `algorithms.<id>.params`. No
   `kwargs.get("n_estimators", 200)` defaults in Python.
 - `build_model(algorithm_id, params=None)` reads `algorithms.<id>`, translates via
@@ -49,12 +48,11 @@ production forecast generation, or accuracy/FVA endpoints.
   (3) SHAP cumulative. Keys `correlation_filter`, `variance_filter`. Per-cluster:
   `compute_timeframe_shap_per_cluster()` → `dict[str, list[str]]`; sparse clusters skip
   SHAP; stratified 50/50 sampling for >50% zeros.
-- **Cold-start DFU has no forecast** → < `cold_start_min_months` (3) history → 3–11 months
-  route to `cold_start_model_id` (rolling_mean); < 3 months skipped (absolute floor).
+- **Cold-start DFU has no forecast** → < `cold_start_min_months` (3) history is skipped;
+  other eligible DFUs route through the configured LightGBM fallback.
   Config: `production_forecast`.
-- **Intermittent routing**: clusters > 70% zero-demand (`backtest.intermittent_threshold`)
-  → rolling-mean baseline (`backtest.baseline_intermittent`). Early stopping 5% patience
-  standard, 10% sparse/intermittent (`compute_early_stop_patience()`).
+- **Intermittent routing**: sparse clusters remain in the five-model competition. LightGBM
+  uses 10% early-stopping patience for sparse demand versus the standard 5%.
 - **Cluster strategy**: `algorithms.<name>.cluster_strategy` (default `per_cluster`);
   tree/statistical only — foundation/DL always global. Master switch `clustering.enabled`
   (when false, all backtests fall back to `global`); check `is_clustering_enabled()`.

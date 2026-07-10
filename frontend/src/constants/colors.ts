@@ -28,7 +28,10 @@ export const OKABE_ITO: string[] = [
   "#000000", // black
 ];
 
-export const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }> = {
+export const CHART_COLORS: Record<
+  Theme,
+  { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }
+> = {
   light: { grid: "#eaeef4", axis: "#7c8798", tooltip_bg: "#ffffff", tooltip_border: "#eaeef4" },
   dark: { grid: "#283449", axis: "#9aa6b8", tooltip_bg: "#1e2433", tooltip_border: "#283449" },
   soft: { grid: "#E5E0D8", axis: "#9A9088", tooltip_bg: "#FDFCFA", tooltip_border: "#E5E0D8" },
@@ -48,16 +51,19 @@ const DFU_MODEL_COLORS: Record<string, string> = {
   lgbm_global: "#84CC16",
   lgbm_cluster: "#0D9488",
   lgbm_transfer: "#f97316",
-  catboost_global: "#EC4899",
-  catboost_cluster: "#2563EB",
-  catboost_transfer: "#a3e635",
-  xgboost_global: "#EA580C",
-  xgboost_cluster: "#0EA5E9",
-  xgboost_transfer: "#fb923c",
 };
 
-const DFU_MODEL_FALLBACK_COLORS = ["#64748B", "#78716C", "#0F766E", "#B45309", "#0891B2", "#EA580C"];
+const DFU_MODEL_FALLBACK_COLORS = [
+  "#64748B",
+  "#78716C",
+  "#0F766E",
+  "#B45309",
+  "#0891B2",
+  "#EA580C",
+];
 
 export function skuModelColor(model: string, idx: number): string {
-  return DFU_MODEL_COLORS[model] ?? DFU_MODEL_FALLBACK_COLORS[idx % DFU_MODEL_FALLBACK_COLORS.length];
+  return (
+    DFU_MODEL_COLORS[model] ?? DFU_MODEL_FALLBACK_COLORS[idx % DFU_MODEL_FALLBACK_COLORS.length]
+  );
 }

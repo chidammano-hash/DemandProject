@@ -91,8 +91,8 @@ All parameters in `config/inventory/inventory_planning_config.yaml` (`demand_his
 | matrix_max_rows | 100 | Maximum matrix rows |
 | matrix_max_cols | 50 | Maximum matrix columns |
 | cache_ttl_seconds | 120 | Cache-Control max-age |
-| hierarchical_model_ids | [bolt_hierarchical] | Model IDs for bottom-up predictions |
-| top_down_model_ids | [chronos_bolt] | Model IDs for top-down predictions |
+| hierarchical_model_ids | [] | Optional retained-model IDs for bottom-up views |
+| top_down_model_ids | [] | Optional retained-model IDs for top-down views |
 
 ---
 

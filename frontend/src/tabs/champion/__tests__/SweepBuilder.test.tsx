@@ -25,7 +25,6 @@ vi.mock("@/api/queries/unified-model-tuning", () => ({
   fetchPipelineConfig: vi.fn().mockResolvedValue({
     algorithms: {
       lgbm_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
-      catboost_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
       nbeats: { type: "deep_learning", enabled: true, compete: false, forecast: true },
       chronos2_enriched: { type: "foundation", enabled: true, compete: true, forecast: true },
     },
@@ -58,8 +57,7 @@ describe("SweepBuilder", () => {
 
   it("offers model-subset presets", async () => {
     renderBuilder();
-    // Presets show with counts; "All tree (2)" from two tree models.
-    expect(await screen.findByText(/All tree \(2\)/)).toBeDefined();
+    expect(await screen.findByText(/All tree \(1\)/)).toBeDefined();
     expect(screen.getByText(/All foundation \(1\)/)).toBeDefined();
   });
 

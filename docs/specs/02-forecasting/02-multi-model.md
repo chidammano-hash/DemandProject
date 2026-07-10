@@ -22,7 +22,6 @@ A `model_id` column on the forecast table lets any number of algorithms write pr
 
 1. Every forecast row carries a `model_id` that identifies the algorithm (e.g., `external`, `lgbm_cluster`, `champion`)
 2. The source ERP forecast is loaded as `model_id = 'external'` (the baseline)
-3. Each backtest run writes predictions with its own model_id (e.g., `lgbm_cluster`, `catboost_cluster`)
 4. Champion selection writes the best-of-models composite as `model_id = 'champion'`
 5. The ceiling (oracle) writes as `model_id = 'ceiling'`
 6. Users select models via dropdown in the Accuracy tab to compare performance
@@ -43,8 +42,6 @@ A `model_id` column on the forecast table lets any number of algorithms write pr
 |----------|--------|
 | `external` | ERP/source system statistical forecast |
 | `lgbm_cluster` | LightGBM per-cluster backtest |
-| `catboost_cluster` | CatBoost per-cluster backtest |
-| `xgboost_cluster` | XGBoost per-cluster backtest |
 | `champion` | Best model per DFU per month (before-the-fact selection) |
 | `ceiling` | Best model per DFU per month (after-the-fact oracle) |
 

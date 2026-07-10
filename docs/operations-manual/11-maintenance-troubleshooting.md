@@ -314,7 +314,6 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`, `agg_dfu_naive_scale`
 4. **Tier 4**: `mv_inventory_health_score`, `mv_control_tower_kpis`
 
-`agg_dfu_naive_scale` (`sql/194`) is the per-DFU **in-sample seasonal-naive MAE** — the MASE denominator. It is refreshed on the same backtest-load cadence as the other accuracy MVs (`make refresh-accuracy-mvs` / `accuracy-slice-refresh` / `refresh-mvs-tiered`), CONCURRENTLY via `uq_agg_dfu_naive_scale`. The in-sample series is leakage-safe (strictly before each DFU's earliest backtested target month) and densified (zero-demand months counted via `COALESCE(qty,0)` over a `generate_series` span). It feeds the future per-DFU MASE surfacing in the accuracy-decomposition endpoint (F-03b).
 
 ### Data Retention Policies
 
@@ -376,7 +375,6 @@ SS/EOQ/policy/health targets see [07-inventory-planning.md](07-inventory-plannin
 | `make features-compute` | SKU feature pipeline (volume, trend, seasonality, variability, lifecycle) → `dim_sku` | ~5 min |
 | `make cluster-all` | KMeans clustering → `sku_cluster_assignment` / `current_sku_cluster_assignment` | ~10 min |
 | `make lt-profile-all` | Lead time profiles → `dim_item_lead_time_profile` | ~2 min |
-| `make backtest-all` | All 4 competing backtests (lgbm, catboost, xgboost, chronos2_enriched) | several hours, dominated by the foundation-model backtest |
 | `make backtest-load-all` | Load all backtest predictions into DB | ~5 min |
 | `make refresh-accuracy-mvs` | Refresh 4 accuracy MVs (after backtest load) | ~10 sec |
 | `make champion-all` | Train meta-learner + simulate strategies + select champion | ~15 min |
@@ -401,7 +399,6 @@ fresh-all
             ├── features-compute      (SKU features, incl. seasonality/variability)
             ├── cluster-all           (clustering pipeline)
             └── lt-profile-all        (lead time profiles)
-        ├── backtest-all              (LGBM + CatBoost + XGBoost + Chronos2 Enriched)
         ├── backtest-load-all         (load predictions → DB)
         └── refresh-accuracy-mvs      (accuracy MVs)
     └── champion-all                  (meta-learner + simulate + select)
@@ -508,7 +505,6 @@ setup-all
 │       ├── lt-profile-all
 │       ├── abc-xyz-all
 │       └── demand-signals-all
-│   ├── backtest-all           (LGBM + CatBoost + XGBoost + Chronos2 Enriched)
 │   ├── backtest-load-all      (predictions → DB)
 │   ├── accuracy-slice-refresh (accuracy MVs)
 │   ├── champion-all           (meta-learner + simulate + select)
@@ -611,9 +607,10 @@ TRUNCATE TABLE fact_external_forecast_monthly CASCADE;
 TRUNCATE TABLE fact_candidate_forecast CASCADE;
 TRUNCATE TABLE fact_forecast_snapshot CASCADE;
 TRUNCATE TABLE forecast_snapshot_roster CASCADE;
-TRUNCATE TABLE backtest_run CASCADE;
-TRUNCATE TABLE model_promotion_log CASCADE;
+TRUNCATE TABLE fact_production_forecast_staging CASCADE;
 TRUNCATE TABLE fact_production_forecast CASCADE;
+TRUNCATE TABLE model_promotion_log CASCADE;
+TRUNCATE TABLE forecast_generation_run CASCADE;
 TRUNCATE TABLE fact_ai_champion_forecast CASCADE;
 TRUNCATE TABLE ai_champion_run CASCADE;
 TRUNCATE TABLE fact_blended_demand_plan CASCADE;
@@ -697,6 +694,7 @@ TRUNCATE TABLE lgbm_tuning_month CASCADE;
 TRUNCATE TABLE lgbm_tuning_cluster CASCADE;
 TRUNCATE TABLE lgbm_tuning_timeframe CASCADE;
 TRUNCATE TABLE lgbm_tuning_run CASCADE;
+TRUNCATE TABLE backtest_run CASCADE;
 
 -- Group 19: Cluster / Champion Experiment History
 TRUNCATE TABLE cluster_experiment_comparison CASCADE;
@@ -731,9 +729,7 @@ Remove stale artifacts so the pipeline regenerates everything from scratch:
 
 ```bash
 rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
-rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
 rm -rf data/backtest/chronos2_enriched/
-rm -rf data/backtest/seasonal_naive/ data/backtest/rolling_mean/ data/backtest/mstl/
 rm -rf data/backtest/nhits/ data/backtest/nbeats/
 rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 rm -rf data/clustering/ data/champion/ data/models/
@@ -830,15 +826,11 @@ Sequential execution (safe for laptops). For parallel, append `&` to each and `w
 ```bash
 # Tree models
 ~/.local/bin/uv run python scripts/ml/run_backtest.py
-~/.local/bin/uv run python scripts/ml/run_backtest_catboost.py
-~/.local/bin/uv run python scripts/ml/run_backtest_xgboost.py
 
 # Foundation models
 ~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos2_enriched
 
 # Statistical baselines
-~/.local/bin/uv run python scripts/ml/run_backtest.py --model seasonal_naive
-~/.local/bin/uv run python scripts/ml/run_backtest.py --model rolling_mean
 ~/.local/bin/uv run python scripts/ml/run_backtest_mstl.py
 
 # Deep learning models
@@ -857,7 +849,6 @@ Sequential execution (safe for laptops). For parallel, append `&` to each and `w
 
 # Load specific models only:
 ~/.local/bin/uv run python scripts/etl/load_backtest_forecasts.py \
-  --models lgbm_cluster catboost_cluster xgboost_cluster chronos2_enriched --replace --bulk
 ```
 
 ### Step 11: Refresh Accuracy MVs
@@ -922,9 +913,7 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ```bash
 make backtest-list                                 # Row counts per model_id
 make backtest-clean MODELS="--dry-run lgbm_cluster" # Preview before deleting
-make backtest-clean MODELS="lgbm_cluster catboost_cluster"  # Delete specific tree models
 make backtest-clean MODELS="chronos2_enriched"     # Delete the foundation model
-make backtest-clean MODELS="seasonal_naive rolling_mean mstl"  # Delete statistical baselines
 make backtest-clean MODELS="nhits nbeats"          # Delete deep learning models
 make backtest-clean MODELS="--all-backtest"        # Delete all non-external backtest models
 ```
@@ -949,24 +938,74 @@ Accepted date formats: `YYYY-MM-DD`, `YYYY-MM`, `MM/DD/YYYY` (all normalized to 
 
 After any cleanup that affects champion/ceiling rows, re-run `make champion-select`.
 
+### Forecast Release Migration 203
+
+Migration `sql/203_create_forecast_generation_run.sql` is the cutover from
+model-scoped mutable staging to immutable run/purpose manifests and
+transactional promotion lineage. Apply it once, in numeric migration order:
+
+```bash
+docker compose exec -T postgres psql -U demand -d demand_mvp \
+  -v ON_ERROR_STOP=1 < sql/203_create_forecast_generation_run.sql
+```
+
+The migration:
+
+- creates `forecast_generation_run`;
+- adds explicit `champion_experiment_id` lineage to historical champion rows and
+  checksum/row-count evidence to champion results promotion;
+- classifies roster-backed historical runs as non-promotable
+  `snapshot_contender` and every other pre-manifest staging run as
+  `legacy_invalid`;
+- changes staging uniqueness to include run, purpose, and requested candidate;
+- adds exact source/production/archive evidence to `model_promotion_log` and
+  verified lineage columns to production;
+- repairs duplicate historical active promotions deterministically, then adds a
+  unique partial active-promotion index; and
+- preserves existing production as `legacy_unverified` unless it can be safely
+  tied to one audited production run.
+
+**A new results promotion and fresh full generation are mandatory after this
+migration.** First reload/promote the chosen champion experiment's cached
+winners (`POST /champion-experiments/{id}/promote-results`) so its rows carry
+the experiment id and its artifact/DB checksums are persisted. Never relabel a
+`legacy_invalid` run or manually set `promotion_eligible`. Generate from the UI
+or forecast job, capture its returned `source_run_id`, and promote that exact
+run. If replacement reports `outgoing_archive_incomplete`, first prepare the
+outgoing record month's frozen contenders/roster; do not delete production or
+edit the audit row to bypass the archive.
+
 ### Live Forecast Snapshot Archive
 
-The live FVA archive retains exactly the promoted `champion` plus three frozen, WAPE-ranked contender models for lags 0 through 5. All other staging rows remain disposable.
+The live FVA archive retains exactly the promoted `champion` plus three frozen,
+WAPE-ranked `snapshot_contender` runs for lags 0 through 5. Normal
+`release_candidate` runs are a separate purpose and cannot be used as contender
+evidence.
 
 ```bash
 make forecast-snapshot-contenders                         # freeze and generate the three contender runs
 make forecast-archive ARGS="--record-month 2026-06"      # archive champion + contenders (lags 0..5)
 make forecast-staging-clean ARGS="--dry-run"              # verify archive reconciliation before cleanup
-make forecast-staging-clean                                # clean only safely archived old staging generations
+make forecast-staging-clean                                # delete only selected, reconciled snapshot-contender runs
 ```
 
-For a historical bootstrap, use `make forecast-snapshot-contenders ARGS="--record-month 2026-06 --from-existing-staging"` before archiving. It freezes the roster from the original staged runs and never regenerates forecasts using newer actuals.
+`--from-existing-staging` is valid only when an original frozen roster already
+ties those runs to the record month (migration 203 registers them as
+`snapshot_contender`). If no such roster exists, the old staging is
+`legacy_invalid`: do not relabel it and do not regenerate with newer actuals
+while claiming a historical as-of snapshot. Begin archiving with a fresh
+current-month contender roster.
 
-The same three steps are available as the named JobManager pipeline
-`forecast-snapshot-bundle` (Jobs API/UI): it selects the contenders, archives the
-four-series snapshot, then cleans only generations older than the planning month
-that pass the reconciliation gate. Use the standalone cleanup job when an
-explicit generation override is required.
+Release replacement also calls the archive helper inside its `SERIALIZABLE`
+transaction before demotion or production delete. It requires all four models
+at lags 0-5 and exact checksum reconciliation between the outgoing production
+champion and its archived champion rows; any failure rolls back the replacement.
+The named `forecast-snapshot-bundle` remains available for explicit preflight:
+it selects contenders, archives the four-series snapshot, then cleans only the
+three selected `snapshot_contender` run ids for old record months that pass
+reconciliation. It never deletes release candidates, legacy-invalid runs,
+unselected staging, or production. Use the standalone cleanup job for an
+explicit record-month override.
 
 ---
 

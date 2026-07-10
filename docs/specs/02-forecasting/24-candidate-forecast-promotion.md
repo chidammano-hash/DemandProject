@@ -1,23 +1,26 @@
 # 24 — Candidate Forecast & Model Promotion Workflow
 
-**Status:** Implemented  
-**Date:** 2026-04-08  
+**Status:** Implemented
+**Last updated:** 2026-07-10
 **Related:** 08-production-forecast.md, 07-champion-selection.md, 12-dual-promotion.md
 
 ---
 
 ## 1. Overview
 
-This feature introduces a **staged promotion workflow** for forecast models:
+This feature implements a **run-scoped staged promotion workflow** for forward
+forecasts:
 
 ```
-Train → Generate → Load → Promote
+Train → Generate immutable release candidate → Promote exact source run
 ```
 
-All model predictions land in a **candidate forecast table** first. Only the
-promoted model's predictions are copied to the **production forecast table**.
-This ensures only vetted, explicitly promoted forecasts serve the downstream
-planning pipeline.
+Forward predictions land in an immutable, purpose-scoped
+`fact_production_forecast_staging` run. Only one explicitly selected
+`release_candidate` `source_run_id` can be copied to
+`fact_production_forecast`. Historical backtest predictions use the separate
+`fact_external_forecast_monthly`/`backtest_lag_archive` flow; the legacy
+`fact_candidate_forecast` table remains inert and is not a release source.
 
 ## 2. Motivation
 
@@ -25,10 +28,14 @@ Previously, the production forecast was generated directly via a job that wrote
 to `fact_production_forecast`. There was no staging area to compare models
 side-by-side before committing one to production. This workflow adds:
 
-- **Candidate staging** — all models load to `fact_candidate_forecast`
-- **Side-by-side comparison** — candidates table holds multiple models at once
-- **Explicit promotion** — only one model (or champion selection) is promoted
-- **Audit trail** — `model_promotion_log` tracks every promotion/demotion event
+- **Immutable candidate staging** — generations coexist by run and purpose
+- **Coherent champion generation** — one candidate run preserves every routed
+  source model without combining separately generated rows
+- **Explicit promotion** — the request must name the exact source run
+- **Transactional release control** — validate, archive the outgoing release,
+  publish, and audit as one all-or-nothing operation
+- **Exact audit trail** — source/production run ids, gate report, and canonical
+  payload checksums make the released values reproducible
 
 ## 3. Database Schema
 
@@ -85,6 +92,36 @@ Added columns:
 - `is_loaded_to_candidate` BOOLEAN — tracks candidate table loading
 - `candidate_loaded_at` TIMESTAMPTZ — when loading completed
 
+### 3.4 Forward release lineage (`sql/203`)
+
+`forecast_generation_run` is the manifest for one immutable forward-generation
+payload. Its `generation_purpose` is one of:
+
+- `release_candidate` — eligible for promotion only when status is `ready` and
+  `promotion_eligible=TRUE`;
+- `snapshot_contender` — one of the three bounded live-FVA alternatives, never
+  promotable; or
+- `legacy_invalid` — pre-migration staging retained for inspection/cleanup but
+  never promotable.
+
+The staging uniqueness key is
+`(run_id, generation_purpose, candidate_model_id, item_id, loc,
+forecast_month)`. For champion generation, `candidate_model_id='champion'`
+while `model_id` remains the exact routed producing model. This allows one
+coherent champion run to carry multiple source models without colliding with
+single-model or snapshot-contender runs.
+
+A ready champion manifest freezes the sales batch, champion and cluster
+experiment ids, winners-artifact checksum, exact experiment-stamped historical
+champion-results checksum, row/DFU/source-model counts, horizon, and canonical
+forward payload checksum.
+
+Migration 203 also extends `model_promotion_log` with `source_run_id`,
+`production_run_id`, `gate_report`, `candidate_checksum`,
+`production_checksum`, `archive_checksum`, `archived_at`, and replacement
+lineage. A partial unique index enforces exactly zero or one active promotion;
+another unique index prevents a source run from being promoted twice.
+
 ## 4. API Endpoints
 
 All under `/backtest-management/` prefix.
@@ -119,70 +156,69 @@ forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/{model_id}/promote` | Promote model to production |
+| POST | `/{model_id}/generate` | Submit a new `release_candidate`; returns its allocated `source_run_id` immediately |
+| POST | `/{model_id}/promote?source_run_id=<uuid>` | Promote exactly one ready, eligible release-candidate run |
 
-### 4.3 Promotion Types
+### 4.3 Transactional promotion contract
 
-> **Verified against code.** `promote_model()` in
-> `api/routers/forecasting/backtest_management.py` does **not** read from
-> `fact_candidate_forecast` (that table is inert - see §4.1/§5.1). It copies **staged** forecasts
-> from `fact_production_forecast_staging` into `fact_production_forecast`. The `data/champion/
-> dfu_assignments.csv` file and its loader, `_load_dfu_assignments()`, are dead code with zero
-> callers in the file - champion routing does not use them.
+`promote_model()` does not read `fact_candidate_forecast` and has no bypass
+token. It passes the explicit `source_run_id` to
+`common/services/forecast_promotion.py`, which performs the following on the
+primary database in one `SERIALIZABLE` transaction under a transaction-scoped
+advisory lock:
 
-**Single Model** (`model_id = 'lgbm_cluster'`, etc.):
-1. Gate check: enforces a minimum WAPE improvement and DFU coverage against the currently active
-   champion (bypassable via `bypass_token`); every allow/reject is logged to the AI decision ledger
-2. Validates staged rows exist in `fact_production_forecast_staging` for the model
-3. Demotes the current active promotion (`model_promotion_log.is_active = FALSE`)
-4. Deletes all rows from `fact_production_forecast` (full replace, not append)
-5. Copies every staged row for that `model_id` from `fact_production_forecast_staging` →
-   `fact_production_forecast`
-6. Logs the promotion (row count, `run_id`, etc.)
+1. Lock the `forecast_generation_run` manifest and require purpose
+   `release_candidate`, status `ready`, promotion eligibility, requested model
+   equality, current planning month, sufficient horizon, and a non-empty
+   checksummed payload.
+2. Recompute the staging checksum and cardinalities and require an exact match
+   to the immutable manifest. Reject a newer completed sales batch than the one
+   stamped at generation.
+3. For champion, require the sole results-promoted champion experiment, the
+   matching sole promoted cluster experiment, current assignments, no stale
+   tuning profiles, an exact SHA-256 match for
+   `data/champion/experiment_<id>_winners.csv`, and equality with the checksum
+   and row count of the exact experiment-stamped historical champion results.
+   Re-evaluate WAPE, baseline lift, incumbent delta, bias, common-cohort
+   sufficiency, and actual alignment from those stamped historical rows. For a
+   single model, require one source model in the payload.
+4. Evaluate the fixed six-month eligible-DFU forward window. Route gaps are hard
+   failures; coverage must meet policy; quantities and interval ordering must be
+   valid; confidence-interval coverage must meet policy. The gate report stores
+   the historical quality checks, but does not stamp a "candidate WAPE" on the
+   future release rows because they do not yet have actuals.
+5. If a release is active, archive its champion and frozen top-three contender
+   runs for lags 0-5 inside this same transaction. Reconcile the archived
+   champion values to the exact outgoing production checksum. Missing roster,
+   lag, run, or value evidence aborts replacement.
+6. Demote the outgoing audit row, insert the incoming audit record, replace
+   `fact_production_forecast`, and stamp every row with the source run, new
+   production run, promotion id, and `lineage_status='verified'`.
+7. Recompute the published payload checksum and require it to equal the
+   candidate checksum. Mark the generation manifest `promoted` and commit.
 
-**Champion** (`model_id = 'champion'`):
-1. Validates staged rows exist (any model) in `fact_production_forecast_staging`; demotes the
-   current active promotion; deletes all rows from `fact_production_forecast` (champion promotions
-   bypass the WAPE gate - gating happens at champion-experiment level instead)
-2. Looks up the currently **promoted** `champion_experiment` row (`is_promoted = TRUE`, most
-   recently promoted)
-3. Reads that experiment's per-run winners file at
-   `data/champion/experiment_{champion_experiment_id}_winners.csv` - the source of truth for
-   DFU→model routing, written by `run_champion_experiment.py`
-4. Builds a **per-month** winners map keyed by `(item_id, loc, startdate)` - a DFU can win a
-   *different* model for each forecast month. Ties on `(item_id, loc, startdate)` resolve
-   deterministically to the lowest `model_id`, never file order
-5. Builds a **per-DFU fallback** map (one model per `(item_id, loc)`) from the same winners file,
-   used for any staged month that falls outside the backtest window the winners file covers (the
-   winners CSV is backtest-grain; staging spans the full future horizon)
-6. Two temp tables - `_dfu_champion` (per-DFU fallback) and `_dfu_champion_month` (per-month
-   overrides) - drive a single INSERT: for each staged row, resolve
-   `COALESCE(per-month override, per-DFU fallback)` and copy it to `fact_production_forecast` only
-   if a staged row exists for that resolved model
-7. Coverage check: any staged champion DFU-month whose resolved model has **no** staged row (that
-   model's Generate wasn't run, or a `model_id` spelling mismatch) is logged as a warning and
-   dropped from production rather than failing the promotion
-8. Logs the promotion with `promotion_type = 'champion'` and the resolved `champion_experiment_id`
-
-**Non-champion, non-single-model calls are not supported** - every `model_id` other than
-`'champion'` is treated as a single-model promotion.
+Any failure rolls back archive, demotion, delete, insert, and manifest changes.
+The database unique indexes also prevent concurrent active releases and reuse of
+one candidate run. `model_id='champion'` and single algorithm ids share this
+contract; the difference is only their lineage validation and
+`promotion_type` audit value.
 
 ## 5. Frontend UI
 
 ### 5.1 Backtest stage table (Model Tuning → Backtest)
 
 Models are grouped by family (Tree / Foundation / Statistical / Deep Learning) in compact
-tables, each with a **Run all** action. The flow is:
+tables, each with a **Run all** action. The forward release flow is:
 
 ```
-[Run backtest] → (auto-load) → [Promote]
+[Train when required] → [Generate immutable run] → [Promote that exact run]
 ```
 
 | Step | Action | API Call | Condition |
 |------|--------|----------|-----------|
 | Run | Run backtest (per model or per group) | `POST /{id}/run` | Trained (tree) or always (foundation/statistical/DL) |
 | Auto-load | **Automatic** on run completion — server-side, same job | (none — chained inside the backtest job) | Backtest produced predictions |
-| Promote | Copy staged forecast → production | `POST /{id}/promote` | A staged forecast exists (see §08 / Forecast stage) |
+| Promote | Publish one exact ready run | `POST /{id}/promote?source_run_id=<uuid>` | The selected run is ready and promotion-eligible |
 
 > **Auto-load.** When a backtest run completes, `_run_backtest`
 > (`common/services/job_state.py`) chains the load (`_auto_load_backtest` →
@@ -205,10 +241,15 @@ tables, each with a **Run all** action. The flow is:
 - Green check badge: Completed
 - Crown badge: Currently promoted to production
 
-### 5.2 Promote Champion Button
+### 5.2 Generate and Promote Champion
 
-Appears in the header when 2+ models have loaded candidates. Routes each DFU (per forecast month) to
-its winning model from the promoted champion experiment's winners CSV - see §4.3.
+The Forecast panel's champion Generate action calls
+`POST /backtest-management/champion/generate` once. The server allocates and
+returns a `source_run_id`; the job generates all per-month routed winners into
+that one coherent run while preserving each row's producing `model_id`. The UI
+polls for that exact run, not merely any older staged rows. Promote is enabled
+only when the same run appears `ready` and `promotion_eligible`, and sends that
+exact id to the promotion endpoint.
 
 ### 5.3 Candidates Column
 
@@ -243,8 +284,8 @@ exposed counts, with no per-DFU time-series to chart.
                                       │ Generate (production forecast)
                                       ▼
                              ┌───────────────────────┐
-                             │ fact_production_        │ ◄── Every model's staged
-                             │ forecast_staging         │     forecast lands here
+                             │ forecast_generation_run │ ◄── Immutable run manifest
+                             │ + production staging    │     and exact payload hash
                              └────────┬──────────────┘
                                       │ Promote
                                       ▼
@@ -260,8 +301,20 @@ Analysis backtest overlay (§5.4) - it does not feed this staging→promotion pi
 
 ## 7. Migration
 
-**DDL file:** `sql/121_candidate_forecast_and_promotion.sql`
+**DDL files:**
 
-Apply: `docker exec -i <container> psql -U demand -d demand_mvp < sql/121_candidate_forecast_and_promotion.sql`
+- `sql/121_candidate_forecast_and_promotion.sql` — original candidate/audit
+  tables;
+- `sql/122_create_production_forecast_staging.sql` — forward staging; and
+- `sql/203_create_forecast_generation_run.sql` — run/purpose manifests,
+  immutable staging key, release/archive checksums, and production lineage.
 
-The migration is idempotent (`IF NOT EXISTS` on all objects).
+Apply migrations in numeric order with `ON_ERROR_STOP=1`. After migration 203,
+all pre-manifest staging is `legacy_invalid`, and pre-migration champion rows
+lack experiment/checksum evidence. Explicitly promote the selected champion
+experiment's results again, then generate a fresh release candidate before
+calling promote. There is no supported path that blesses an old mixed staging
+population as promotable.
+
+Migration 203 is transactional and repairs duplicate historical active audit
+rows deterministically before installing the unique active-promotion index.

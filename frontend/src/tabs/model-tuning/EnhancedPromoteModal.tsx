@@ -7,15 +7,7 @@
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Crown,
-  Database,
-  Loader2,
-  X,
-  Check,
-  AlertTriangle,
-  CheckCircle2,
-} from "lucide-react";
+import { Crown, Database, Loader2, X, Check, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,8 +39,6 @@ export interface EnhancedPromoteModalProps {
 // ---------------------------------------------------------------------------
 const MODEL_LABELS: Record<ModelType, string> = {
   lgbm: "LightGBM",
-  catboost: "CatBoost",
-  xgboost: "XGBoost",
 };
 
 const PARAM_STEPS = [
@@ -145,7 +135,8 @@ export function EnhancedPromoteModal({
               Promote Run #{run.run_id} — {run.run_label}
             </p>
             <p className="text-xs text-muted-foreground">
-              {MODEL_LABELS[model]} · Accuracy: {formatPct(run.accuracy_pct)} · WAPE: {formatFixed(run.wape, 2)}
+              {MODEL_LABELS[model]} · Accuracy: {formatPct(run.accuracy_pct)} · WAPE:{" "}
+              {formatFixed(run.wape, 2)}
             </p>
           </div>
           <button
@@ -167,7 +158,9 @@ export function EnhancedPromoteModal({
                   className="rounded-md border border-border/60 px-3 py-1.5 text-center"
                 >
                   <p className="text-[10px] text-muted-foreground">Lag {lag.exec_lag}</p>
-                  <p className="text-sm font-semibold tabular-nums">{formatPct(lag.accuracy_pct)}</p>
+                  <p className="text-sm font-semibold tabular-nums">
+                    {formatPct(lag.accuracy_pct)}
+                  </p>
                 </div>
               ))}
             </div>
@@ -176,8 +169,8 @@ export function EnhancedPromoteModal({
           {/* Config target note */}
           <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
             <span className="font-medium">Target:</span> Hyperparameters will be written to{" "}
-            <code className="font-mono">algorithm_config.yaml</code>. Champion strategy
-            changes go to <code className="font-mono">forecast_pipeline_config.yaml</code>.
+            <code className="font-mono">algorithm_config.yaml</code>. Champion strategy changes go
+            to <code className="font-mono">forecast_pipeline_config.yaml</code>.
           </div>
 
           {/* Two promotion cards */}
@@ -249,9 +242,7 @@ export function EnhancedPromoteModal({
                     disabled={!paramsConfirmed || paramsMut.isPending}
                     className={cn(
                       "w-full gap-1.5",
-                      paramsConfirmed
-                        ? "bg-amber-600 hover:bg-amber-700 text-white"
-                        : "opacity-60",
+                      paramsConfirmed ? "bg-amber-600 hover:bg-amber-700 text-white" : "opacity-60"
                     )}
                   >
                     {paramsMut.isPending ? (
@@ -343,7 +334,9 @@ export function EnhancedPromoteModal({
                     disabled={!resultsConfirmed || resultsMut.isPending}
                     className={cn(
                       "w-full gap-1.5",
-                      resultsConfirmed ? "border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30" : "opacity-60",
+                      resultsConfirmed
+                        ? "border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                        : "opacity-60"
                     )}
                   >
                     {resultsMut.isPending ? (

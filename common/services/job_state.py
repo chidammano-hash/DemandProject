@@ -19,6 +19,7 @@ import os
 import signal
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
@@ -76,8 +77,6 @@ _LOG_FLUSH_LINES = 20  # flush after this many buffered lines
 # non-tree models here, it would widen those gates).
 MODEL_OUTPUT_DIRS: dict[str, str] = {
     "lgbm": "lgbm_cluster",
-    "catboost": "catboost_cluster",
-    "xgboost": "xgboost_cluster",
 }
 
 # Backtest model key → output directory under data/backtest/, for the FULL
@@ -86,21 +85,11 @@ MODEL_OUTPUT_DIRS: dict[str, str] = {
 # directory. Tree aliases map to the _cluster dir; everything else is identity.
 _BACKTEST_OUTPUT_DIRS: dict[str, str] = {
     "lgbm": "lgbm_cluster",
-    "catboost": "catboost_cluster",
-    "xgboost": "xgboost_cluster",
     "lgbm_cluster": "lgbm_cluster",
-    "catboost_cluster": "catboost_cluster",
-    "xgboost_cluster": "xgboost_cluster",
-    "lgbm_cust_enriched": "lgbm_cust_enriched",
-    "catboost_cust_enriched": "catboost_cust_enriched",
-    "xgboost_cust_enriched": "xgboost_cust_enriched",
     "chronos2_enriched": "chronos2_enriched",
     "mstl": "mstl",
     "nbeats": "nbeats",
     "nhits": "nhits",
-    "seasonal_naive": "seasonal_naive",
-    "rolling_mean": "rolling_mean",
-    "rolling_median": "rolling_median",
 }
 
 
@@ -465,8 +454,6 @@ def _run_backtest(
     # Tree models: direct script invocation (all backtest scripts live in scripts/ml/)
     tree_scripts = {
         "lgbm": "scripts/ml/run_backtest.py",
-        "catboost": "scripts/ml/run_backtest_catboost.py",
-        "xgboost": "scripts/ml/run_backtest_xgboost.py",
     }
     # Foundation models: python -m invocation
     foundation_modules = {
@@ -484,9 +471,6 @@ def _run_backtest(
     # Special scripts: direct file path
     special_scripts = {
         "mstl": "scripts/ml/run_backtest_mstl.py",
-        "seasonal_naive": ("scripts/ml/run_backtest.py", ["--model", "seasonal_naive"]),
-        "rolling_mean": ("scripts/ml/run_backtest.py", ["--model", "rolling_mean"]),
-        "rolling_median": ("scripts/ml/run_backtest.py", ["--model", "rolling_median"]),
         "nhits": ("scripts/ml/run_backtest_dl.py", ["--model", "nhits"]),
         "nbeats": ("scripts/ml/run_backtest_dl.py", ["--model", "nbeats"]),
     }
@@ -585,13 +569,8 @@ def _make_backtest_runner(model: str):
 
 
 _run_backtest_lgbm = _make_backtest_runner("lgbm")
-_run_backtest_catboost = _make_backtest_runner("catboost")
-_run_backtest_xgboost = _make_backtest_runner("xgboost")
 _run_backtest_chronos2_enriched = _make_backtest_runner("chronos2_enriched")
 _run_backtest_mstl = _make_backtest_runner("mstl")
-_run_backtest_seasonal_naive = _make_backtest_runner("seasonal_naive")
-_run_backtest_rolling_mean = _make_backtest_runner("rolling_mean")
-_run_backtest_rolling_median = _make_backtest_runner("rolling_median")
 _run_backtest_nhits = _make_backtest_runner("nhits")
 _run_backtest_nbeats = _make_backtest_runner("nbeats")
 
@@ -646,52 +625,76 @@ def _run_champion_results_load(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Load champion results into DB, using cached experiment winners when available.
-
-    If a cached winners CSV exists from the experiment run
-    (data/champion/experiment_{id}_winners.csv), the script loads those
-    pre-computed winners directly instead of recomputing from scratch.
-    Falls back to full computation if no cached file is found.
-    """
+    """Load the exact cached champion experiment winners and persist lineage."""
     experiment_id = params["experiment_id"]
     if progress_cb:
         progress_cb(pct=5, msg="Loading champion results into forecast tables")
 
-    # Check for cached winners CSV from experiment run
+    # Recomputing here could load different results under the chosen experiment.
     winners_csv = _SCRIPTS_DIR.parent / "data" / "champion" / f"experiment_{experiment_id}_winners.csv"
-    cmd = [_UV, "run", "python", "scripts/ml/run_champion_selection.py"]
-    if winners_csv.exists():
-        cmd.extend(["--load-winners-from", str(winners_csv)])
-        logger.info("Using cached winners from experiment %d: %s", experiment_id, winners_csv)
-        if progress_cb:
-            progress_cb(pct=10, msg="Found cached winners — loading directly (skipping recomputation)")
-    else:
-        logger.info("No cached winners for experiment %d, running full computation", experiment_id)
+    if not winners_csv.exists():
+        raise FileNotFoundError(
+            f"Champion experiment {experiment_id} has no winners artifact"
+        )
+    cmd = [
+        _UV,
+        "run",
+        "python",
+        "scripts/ml/run_champion_selection.py",
+        "--load-winners-from",
+        str(winners_csv),
+        "--champion-experiment-id",
+        str(experiment_id),
+    ]
+    logger.info("Using cached winners from experiment %d: %s", experiment_id, winners_csv)
+    if progress_cb:
+        progress_cb(pct=10, msg="Loading the exact cached experiment winners")
 
     output = _run_subprocess(cmd, progress_cb, "Loading champion results",
                              cancel_event=cancel_event, job_id=job_id)
 
-    # Mark results promoted — clear flag on ALL other experiments first
-    # (only one experiment's results can be active in the forecast table at a time)
-    try:
-        with _get_conn() as conn:
-            conn.execute(
-                "UPDATE champion_experiment SET is_results_promoted = FALSE "
-                "WHERE experiment_id != %s AND is_results_promoted = TRUE",
-                (experiment_id,),
-            )
-            conn.execute(
-                "UPDATE champion_experiment SET is_results_promoted = TRUE, "
-                "results_promoted_at = NOW(), results_promote_job_id = %s "
-                "WHERE experiment_id = %s",
-                (job_id, experiment_id),
-            )
-    except Exception:
-        logger.warning("Failed to mark champion experiment %d results as promoted", experiment_id)
+    from common.services.forecast_lineage import (
+        compute_champion_results_stats,
+        sha256_file,
+    )
+
+    routing_checksum = sha256_file(winners_csv)
+    # The audit update is mandatory: a lineage failure must fail the job.
+    with _get_conn() as conn, conn.transaction(), conn.cursor() as cur:
+        results_stats = compute_champion_results_stats(cur, experiment_id)
+        if results_stats.row_count <= 0:
+            raise ValueError("Champion results load produced no stamped rows")
+        cur.execute(
+            "UPDATE champion_experiment SET is_results_promoted = FALSE "
+            "WHERE experiment_id != %s AND is_results_promoted = TRUE",
+            (experiment_id,),
+        )
+        cur.execute(
+            "UPDATE champion_experiment SET is_results_promoted = TRUE, "
+            "results_promoted_at = NOW(), results_promote_job_id = %s, "
+            "results_artifact_checksum = %s, results_forecast_checksum = %s, "
+            "results_forecast_row_count = %s "
+            "WHERE experiment_id = %s",
+            (
+                job_id,
+                routing_checksum,
+                results_stats.checksum,
+                results_stats.row_count,
+                experiment_id,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("Champion results audit row was not updated")
 
     if progress_cb:
         progress_cb(pct=100, msg="Champion results loaded successfully")
-    return {"experiment_id": experiment_id, "output_log": output or "Champion results loaded"}
+    return {
+        "experiment_id": experiment_id,
+        "routing_artifact_checksum": routing_checksum,
+        "results_forecast_checksum": results_stats.checksum,
+        "results_forecast_row_count": results_stats.row_count,
+        "output_log": output or "Champion results loaded",
+    }
 
 
 def _run_champion_sweep(
@@ -785,7 +788,10 @@ def _run_generate_production_forecast(
     """Run the production forecast generation pipeline (F1.1)."""
     horizon = params.get("horizon")
     model_id = params.get("model_id")
-    run_id = params.get("run_id")
+    run_id = str(params.get("run_id") or uuid.uuid4())
+    generation_purpose = str(
+        params.get("generation_purpose") or "release_candidate"
+    )
     # Tri-state: None → use the script/config default; True/False → force on/off.
     confidence_intervals = params.get("confidence_intervals")
     if progress_cb:
@@ -796,8 +802,8 @@ def _run_generate_production_forecast(
         cmd.extend(["--horizon", str(horizon)])
     if model_id:
         cmd.extend(["--model-id", str(model_id)])
-    if run_id:
-        cmd.extend(["--run-id", str(run_id)])
+    cmd.extend(["--run-id", run_id])
+    cmd.extend(["--generation-purpose", generation_purpose])
     if confidence_intervals is True:
         cmd.append("--confidence-intervals")
     elif confidence_intervals is False:
@@ -809,6 +815,7 @@ def _run_generate_production_forecast(
     return {
         "horizon": horizon,
         "run_id": run_id,
+        "generation_purpose": generation_purpose,
         "confidence_intervals": confidence_intervals,
         "output_log": output if output else "Production forecast generation completed",
     }

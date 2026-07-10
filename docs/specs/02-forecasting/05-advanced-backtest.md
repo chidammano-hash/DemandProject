@@ -87,8 +87,6 @@ The SHAP panel in the Accuracy tab shows a horizontal bar chart with indigo bars
 
 ### Algorithm-Specific SHAP
 
-- LightGBM/XGBoost: `shap.TreeExplainer` (requires `shap>=0.43.0`)
-- CatBoost: native `get_feature_importance(type="ShapValues")` -- no `shap` library needed
 
 ---
 
@@ -123,8 +121,6 @@ No API, frontend, or database changes. The `"recursive": true` flag in `backtest
 | Target | Description |
 |--------|-------------|
 | `make tune-lgbm` | Tune LightGBM (50 trials, ~20-40 min) |
-| `make tune-catboost` | Tune CatBoost (~30-60 min) |
-| `make tune-xgboost` | Tune XGBoost (~25-50 min) |
 | `make tune-all` | Tune all three sequentially |
 
 All three capabilities are activated via `config/forecasting/forecast_pipeline_config.yaml`:

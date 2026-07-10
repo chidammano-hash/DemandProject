@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented (post-release planner readiness) |
+| **Status** | Implemented (post-release readiness plus transactional pre-release control) |
 | **Date** | 2026-07-10 |
 | **API** | `GET /forecast-release/readiness` |
 | **UI** | Command Center `ForecastReleaseGateCard` |
@@ -62,10 +62,14 @@ item_id + customer_group + loc + startdate + configured execution_lag
 
 Rows are joined to `dim_sku` on its full three-column key and retained only when:
 
-1. `model_id` is `champion`, `external`, or `seasonal_naive`;
-2. `lag = COALESCE(dim_sku.execution_lag, 0)`;
-3. all three model rows exist for the same key; and
-4. actual demand is identical across the three rows.
+2. a `champion` row's `champion_experiment_id` equals the active promotion's
+   explicit champion experiment;
+3. `lag = COALESCE(dim_sku.execution_lag, 0)`;
+4. all three model rows exist for the same key; and
+5. actual demand is identical across the three rows.
+
+Pre-migration champion rows with NULL experiment lineage are therefore excluded
+rather than silently attributed to the active release.
 
 Portfolio metrics are calculated from summed components:
 
@@ -95,7 +99,6 @@ that every segment is individually representative.
 | Closed months | All six configured months | Prevent a favorable one-month slice from approving a release |
 | Cohort DFUs | At least 1,000 | Prevent a tiny favorable population from approving a portfolio release |
 | Actual volume | Greater than zero | Avoid unstable/null WAPE and bias evidence |
-| Lift vs seasonal naive | At least 10% relative WAPE improvement | Champion must outperform the simplest baseline |
 | Delta vs external | At least 0 accuracy points | Do not replace a better incumbent forecast |
 | Champion bias | Absolute bias at most 5% | Avoid service/inventory distortion hidden by aggregate accuracy |
 | Actual alignment | Zero mismatched actuals | All model comparisons must use the same truth |
@@ -183,42 +186,65 @@ frozen-roster run IDs must match. A first-ever release has no outgoing plan to
 archive; a newly active release is not blocked merely because its own future-FVA
 snapshot is not due until the next replacement cycle.
 
-## Important boundary
+## Transactional promotion boundary
 
-This feature verifies the **already active** release for planner use. It does not
-yet transactionally guard `POST /backtest-management/champion/promote` and does
-not claim to do so. The current staging table cannot safely express that gate:
-its uniqueness key lets contender generation overwrite champion source rows, and
-promotion does not select one coherent source run.
+The follow-on transactional phase is implemented by migration
+`sql/203_create_forecast_generation_run.sql` and
+`common/services/forecast_promotion.py`. The Command Center card remains the
+read-only, **post-release** planner scorecard described above; promotion now has
+a separate fail-closed, **pre-release** contract:
 
-Historical `model_id='champion'` rows do not yet carry an experiment ID. The
-scorecard therefore requires the active promotion's
-`champion_experiment_id` to be the sole `is_results_promoted` experiment, but
-also requires the newest champion `modified_ts` to be no later than that
-experiment's `results_promoted_at`. This freshness fence detects the canonical
-champion-selection rewrite even though it is not a persisted experiment ID or
-row checksum. After `model-refresh` ends in champion selection, the operator
-must explicitly promote those experiment results before release readiness can
-recover. Exact candidate quality evidence and forecast-value checksums belong
-in the next transactional phase. Because `model_promotion_log` does not yet
-persist the promoted production `run_id`, the post-release archive check is
-deliberately described as bounded structural evidence, not an exact value-level
-checksum.
+1. Every generation has one immutable `forecast_generation_run` manifest and a
+   purpose: `release_candidate`, `snapshot_contender`, or `legacy_invalid`.
+   Normal champion generation produces one coherent `release_candidate` run.
+   Its staged rows keep the requested candidate id (`champion`) separately from
+   each routed `model_id`, so the exact source model is preserved without mixing
+   another generation into the candidate.
+2. `POST /backtest-management/{model_id}/promote` requires `source_run_id` and
+   promotes only that run. Pre-migration staging is classified
+   `legacy_invalid` and is deliberately not promotable; a fresh generation is
+   required after applying migration 203. The chosen champion experiment's
+   results must also be explicitly promoted again so historical rows receive
+   the experiment id and exact artifact/result checksums before generation.
+3. Promotion uses the primary connection in one `SERIALIZABLE` transaction and
+   obtains the transaction-scoped advisory lock
+   `forecast_release_promotion`. It locks the source manifest, re-computes the
+   canonical staging checksum, verifies the exact experiment-stamped historical
+   champion-result payload, re-evaluates the common-cohort quality policy, and
+   re-runs the structural, lineage, freshness, coverage, route-gap, quantity,
+   and confidence-interval checks. It performs no production delete until those
+   checks pass.
+4. If an active outgoing release exists, the transaction archives its exact
+   champion plus the frozen top-three `snapshot_contender` runs for lags 0
+   through 5 before demotion or delete. It reconciles the champion archive to
+   the outgoing production payload checksum. Any incomplete roster, lag, run
+   lineage, or checksum aborts the entire promotion.
+5. The new production payload is hashed in stable business-key order and must
+   equal the selected candidate checksum. `model_promotion_log` persists
+   `source_run_id`, a distinct `production_run_id`, the gate report, candidate
+   and production checksums, replacement lineage, and the outgoing champion
+   archive checksum. Database indexes enforce one active promotion and prevent
+   the same source run from being promoted twice.
 
-The next implementation phase must:
+The transaction re-evaluates WAPE/lift/incumbent/bias thresholds against the
+exact historical champion rows stamped with the promoted experiment id and
+stores the resulting checks in `gate_report`. It intentionally does **not**
+stamp a "candidate WAPE" on the forward generation: future candidate rows have
+no actuals, so such a number would be false precision. Migration 203 stores the
+promoted winners-artifact checksum plus the checksum/row count of the exact
+experiment-stamped historical champion payload; generation captures those
+hashes and promotion re-computes them before evaluating quality.
 
-1. make staging run- and purpose-scoped so release candidates and snapshot
-   contenders coexist;
-2. evaluate a specified candidate `source_run_id` on the primary connection;
-3. re-run structural checks inside the promotion transaction before any delete;
-4. fail on route gaps instead of warning; and
-5. persist the candidate gate report and artifact checksum in the promotion
-   audit trail.
-
-Until that phase ships, the card is the fail-closed post-release decision-support
-scorecard for whether planning may proceed, but it is not a database constraint
-on promotion and does not prove model-training data cutoff or value-level archive
-identity.
+Pre-migration champion rows still lack a row-level experiment id and are not
+silently attributed to an experiment. A new results-promotion job loads the
+cached winners with `champion_experiment_id`, hashes the resulting historical
+rows, and only then marks the experiment results promoted. The post-release
+scorecard also retains its `modified_ts <= results_promoted_at` freshness fence.
+After `model-refresh` rewrites canonical champion results, the operator must
+explicitly promote those experiment results and generate a new release
+candidate before promotion can succeed. The transaction proves that the exact
+current candidate is what was published; it does not prove model-training data
+cutoff beyond persisted latest-sales batch lineage.
 
 ## Tests
 
@@ -233,3 +259,8 @@ identity.
 - `frontend/src/components/__tests__/ForecastReleaseGateCard.test.tsx` pins the
   blocked and planner-ready UI states, CTA destination, and full blocker
   disclosure.
+- `tests/unit/test_forecast_promotion.py`,
+  `tests/api/test_forecast_promotion.py`, and
+  `tests/unit/test_forecast_promotion_schema.py` pin explicit-run selection,
+  manifest/checksum reconciliation, fail-closed gate errors, serializable
+  locking, atomic outgoing archive, rollback, and migration constraints.

@@ -118,7 +118,7 @@ A new table `fact_decision_class` maps `(decision_type, scope)` → autonomy lev
 - **Causal AI for promo/event lift.** Replace `apply_event_adjustments.py` with causal forest / DML estimating lift conditional on baseline + price + competitor state, feed *uplift* as covariate.
 - **LLM-driven feature discovery loop.** LLM reads SHAP report after each backtest, proposes new transformations, auto-generates pandas code, A/B tests in `champion-experiments`.
 - **Cost-aware champion.** Augment `champion_strategies.py` with `cost_aware` strategy weighting each error by holding cost vs stockout cost. The "best" model minimizes inventory $$, not abstract accuracy.
-- **Hierarchical reconciliation by default.** `run_backtest_bolt_hierarchical.py` exists in isolation — make MinT post-step on every forecast.
+- **Hierarchical reconciliation by default.** Apply reconciliation as a post-processing step to the retained five-model roster.
 - **Shadow mode mandatory.** Every new champion runs N weeks against live; auto-promote only when CRPS + business-cost both improve.
 
 ### 2.4 — Inventory Planning, Reimagined
@@ -164,7 +164,6 @@ Replace the 16-item sidebar landing on `InvPlanningTab.tsx` with a single conver
 >
 > **1.** ExceptionResolver wants to expedite 3 SKUs ($42k). Approve / Modify / Deny / Always-allow-like-this. *(simulated stockout drops 38% → 4%)*
 >
-> **2.** ChampionGuardian flagged Chronos2 beating LGBM by 2.3pp WAPE on the seasonal_high cluster. Promote? *(shadow mode 14 days, $11k EV)*
 >
 > **3.** Hurricane forming near Savannah port — 47 inbound POs at risk. Reroute draft ready.
 
@@ -273,7 +272,6 @@ The cheapest, highest-impact moves. Pure surfacing.
 4. **Add `inapp` channel to `notification_engine.py`** + bell icon. Stop losing conversations to Slack.
 5. **Replace one `KpiCard` row with vital-signs cards.** Prove the pattern.
 6. **Wire OpenLineage emitter** into `profiled_section()`. Populate `fact_lineage_event`. Add `/lineage/*` endpoint.
-7. **Replace `_FoundationStub`** in `model_registry.py` with real Chronos2 loader.
 
 ### Phase 2 (Weeks 6-16) — Build Agent Runtime
 

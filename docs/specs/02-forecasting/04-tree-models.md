@@ -1,12 +1,10 @@
 # Tree Model Implementations
 
-> Three gradient-boosted tree algorithms (LightGBM, CatBoost, XGBoost) compete to forecast demand for every product, each with strengths for different demand patterns.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `scripts/ml/run_backtest.py`, `scripts/ml/run_backtest_catboost.py`, `scripts/ml/run_backtest_xgboost.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py` |
 
 ---
 
@@ -16,7 +14,6 @@ A single algorithm cannot optimally forecast all demand patterns. Seasonal produ
 
 ## Solution
 
-Three gradient-boosted tree algorithms -- LightGBM, CatBoost, and XGBoost -- are trained using a shared backtest framework. All three use identical feature engineering and the same expanding-window evaluation protocol, making their accuracy scores directly comparable. Each algorithm can train one model per cluster (per_cluster strategy) or one model across all data (global strategy). Champion selection then picks the winner for each item-location-month.
 
 ## How It Works
 
@@ -32,8 +29,6 @@ Three gradient-boosted tree algorithms -- LightGBM, CatBoost, and XGBoost -- are
 | Algorithm | Per-Cluster ID | Global ID |
 |-----------|---------------|-----------|
 | LightGBM | `lgbm_cluster` | `lgbm_global` |
-| CatBoost | `catboost_cluster` | `catboost_global` |
-| XGBoost | `xgboost_cluster` | `xgboost_global` |
 
 ## Feature Engineering
 
@@ -44,7 +39,6 @@ All features are strictly causal -- only data available before the target month 
 | Category | Features | Count |
 |----------|----------|-------|
 | Lag features | `qty_lag_1` through `qty_lag_12` (demand shifted by N months) | 12 |
-| Rolling means | `rolling_mean_3m`, `rolling_mean_6m`, `rolling_mean_12m` (shifted by 1) | 3 |
 | Rolling std | `rolling_std_3m`, `rolling_std_6m`, `rolling_std_12m` (shifted by 1) | 3 |
 | Calendar | `month` (1-12), `quarter` (1-4), `is_quarter_end`, `is_year_end`, `days_in_month` | 5 |
 | Fourier | `fourier_sin_12/6/4/3`, `fourier_cos_12/6/4/3` (sub-annual seasonality) | 8 |
@@ -59,8 +53,6 @@ All features are strictly causal -- only data available before the target month 
 | Algorithm | Approach | `cat_dtype` |
 |-----------|----------|-------------|
 | LightGBM | Native pandas `category` dtype | `"category"` |
-| CatBoost | String dtype + column index list via `cat_features` parameter | `"str"` |
-| XGBoost | Native `category` dtype + `enable_categorical=True` + `tree_method="hist"` | `"category"` |
 
 ### Grid Construction
 
@@ -79,7 +71,6 @@ A complete DFU x month grid is built before training to ensure lag features work
 
 Auto-detects Apple GPU (OpenCL) on macOS for accelerated training.
 
-### CatBoost
 
 | Parameter | Default |
 |-----------|---------|
@@ -90,7 +81,6 @@ Auto-detects Apple GPU (OpenCL) on macOS for accelerated training.
 
 Uses ordered target encoding internally for categoricals. No manual encoding needed.
 
-### XGBoost
 
 | Parameter | Default |
 |-----------|---------|
@@ -101,15 +91,12 @@ Uses ordered target encoding internally for categoricals. No manual encoding nee
 | `subsample` | 0.8 |
 | `colsample_bytree` | 0.8 |
 
-Requires XGBoost >= 2.0 for native categorical support.
 
 ## Pipeline
 
 | Target | Description |
 |--------|-------------|
 | `make backtest-lgbm` | Run LightGBM backtest |
-| `make backtest-catboost` | Run CatBoost backtest |
-| `make backtest-xgboost` | Run XGBoost backtest |
 | `make backtest-all` | Run all three sequentially |
 | `make backtest-all-parallel` | Run all three in parallel (logs to `data/backtest/logs/`) |
 | `make backtest-load MODEL=<id>` | Load predictions into Postgres |
@@ -124,7 +111,6 @@ All algorithm options are in `config/forecasting/forecast_pipeline_config.yaml`.
 - [Backtest Framework](./03-backtest-framework.md) -- shared orchestrator
 - [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- controls all algorithm behavior
 - Clustering (in `03-demand-intelligence/`) -- provides `ml_cluster` partition metadata
-- Python packages: `lightgbm>=4.0`, `catboost>=1.2`, `xgboost>=2.0`
 
 ## See Also
 

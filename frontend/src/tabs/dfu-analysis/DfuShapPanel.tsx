@@ -13,12 +13,7 @@ import {
 } from "recharts";
 import { BrainCircuit } from "lucide-react";
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/Skeleton";
 
 import { useChartColors } from "@/hooks/useChartColors";
@@ -31,9 +26,21 @@ import type { SkuAnalysisMode } from "@/types";
 // Color palette for features (15 distinct colors)
 // ---------------------------------------------------------------------------
 const SHAP_FEATURE_COLORS = [
-  "#2563EB", "#0D9488", "#D97706", "#0891B2", "#DC2626",
-  "#0284C7", "#7C3AED", "#059669", "#DB2777", "#EA580C",
-  "#CA8A04", "#0E7490", "#4F46E5", "#16A34A", "#B91C1C",
+  "#2563EB",
+  "#0D9488",
+  "#D97706",
+  "#0891B2",
+  "#DC2626",
+  "#0284C7",
+  "#7C3AED",
+  "#059669",
+  "#DB2777",
+  "#EA580C",
+  "#CA8A04",
+  "#0E7490",
+  "#4F46E5",
+  "#16A34A",
+  "#B91C1C",
 ];
 
 function featureColor(idx: number): string {
@@ -66,9 +73,15 @@ function FallbackShapChart({
   useEffect(() => {
     let cancelled = false;
     fetchShapSummary(modelId, 10)
-      .then((d) => { if (!cancelled) setSummary(d); })
-      .catch(() => { /* no summary available */ });
-    return () => { cancelled = true; };
+      .then((d) => {
+        if (!cancelled) setSummary(d);
+      })
+      .catch(() => {
+        /* no summary available */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [modelId]);
 
   if (!summary) return null;
@@ -87,12 +100,24 @@ function FallbackShapChart({
       <div className="h-[220px] overflow-x-auto">
         <div style={{ minWidth: `${Math.max(400, data.length * 60)}px`, height: "100%" }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 120, bottom: 4 }}>
+            <BarChart
+              data={data}
+              layout="vertical"
+              margin={{ top: 4, right: 16, left: 120, bottom: 4 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} horizontal={false} />
               <XAxis type="number" tick={{ fill: chartColors.axis, fontSize: 10 }} />
-              <YAxis type="category" dataKey="feature" tick={{ fill: chartColors.axis, fontSize: 10 }} width={115} />
+              <YAxis
+                type="category"
+                dataKey="feature"
+                tick={{ fill: chartColors.axis, fontSize: 10 }}
+                width={115}
+              />
               <Tooltip
-                contentStyle={{ backgroundColor: chartColors.tooltip_bg, borderColor: chartColors.tooltip_border }}
+                contentStyle={{
+                  backgroundColor: chartColors.tooltip_bg,
+                  borderColor: chartColors.tooltip_border,
+                }}
                 formatter={(v: number) => [v.toFixed(4), "mean |SHAP|"]}
               />
               <Bar dataKey="importance" radius={[0, 3, 3, 0]}>
@@ -163,7 +188,9 @@ export function SkuShapPanel({
           setLoading(false);
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [selectedModel, itemNo, loc, skuMode]);
 
   // -- No model selected --
@@ -213,13 +240,13 @@ export function SkuShapPanel({
         )}
         {error && !loading && (
           <div className="py-4 text-center space-y-1">
-            <p className="text-sm text-destructive">
-              SHAP computation failed: {error}
-            </p>
+            <p className="text-sm text-destructive">SHAP computation failed: {error}</p>
             <p className="text-xs text-muted-foreground">
-              Ensure model artifacts exist at <code className="bg-muted px-1 rounded">data/models/{selectedModel}/</code>.{" "}
-              Run <code className="bg-muted px-1 rounded">make forecast-generate</code> to persist model weights.{" "}
-              For CatBoost/XGBoost models, verify the <code className="bg-muted px-1 rounded">shap</code> library is installed.
+              Ensure model artifacts exist at{" "}
+              <code className="bg-muted px-1 rounded">data/models/{selectedModel}/</code>. Run{" "}
+              <code className="bg-muted px-1 rounded">make forecast-generate</code> to persist model
+              weights. Verify the <code className="bg-muted px-1 rounded">shap</code> library is
+              installed for LightGBM analysis.
             </p>
           </div>
         )}
@@ -228,14 +255,13 @@ export function SkuShapPanel({
         )}
         {shapData && !loading && !error && (
           <>
-            {shapData.future_lag_model_id &&
-              shapData.future_lag_model_id !== shapData.model_id && (
-                <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
-                  Future-month SHAP is approximate — future lags sourced from{" "}
-                  <strong>{shapData.future_lag_model_id}</strong> (the production champion
-                  for this DFU), not from {shapData.model_id}.
-                </p>
-              )}
+            {shapData.future_lag_model_id && shapData.future_lag_model_id !== shapData.model_id && (
+              <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
+                Future-month SHAP is approximate — future lags sourced from{" "}
+                <strong>{shapData.future_lag_model_id}</strong> (the production champion for this
+                DFU), not from {shapData.model_id}.
+              </p>
+            )}
             <ShapStackedChart
               shapData={shapData}
               visibleMonths={visibleMonths}
@@ -268,8 +294,7 @@ function ShapTooltip({ active, label, chartData, allFeatNames, chartColors }: Sh
   const base = row.__base__ as number | null;
   const isFuture = row.is_future as boolean;
 
-  const fmt = (v: number) =>
-    Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1);
+  const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1));
 
   // Collect all signed values, sort by abs descending, suppress near-zero
   const items = [
@@ -295,8 +320,16 @@ function ShapTooltip({ active, label, chartData, allFeatNames, chartColors }: Sh
         overflowY: "auto",
       }}
     >
-      <p style={{ fontWeight: 600, marginBottom: 6, borderBottom: `1px solid ${chartColors.tooltip_border}`, paddingBottom: 4 }}>
-        {label}{isFuture ? " (future)" : ""}
+      <p
+        style={{
+          fontWeight: 600,
+          marginBottom: 6,
+          borderBottom: `1px solid ${chartColors.tooltip_border}`,
+          paddingBottom: 4,
+        }}
+      >
+        {label}
+        {isFuture ? " (future)" : ""}
         {total != null && (
           <>
             <span style={{ fontWeight: 400, marginLeft: 8 }}>Forecast: </span>
@@ -311,10 +344,20 @@ function ShapTooltip({ active, label, chartData, allFeatNames, chartColors }: Sh
         )}
       </p>
       {items.map((it) => (
-        <div key={it.name} style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 2 }}>
+        <div
+          key={it.name}
+          style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 2 }}
+        >
           <span style={{ color: it.color }}>{it.name}</span>
-          <span style={{ fontFamily: "monospace", color: it.value >= 0 ? "#16a34a" : "#ef4444", fontWeight: 600 }}>
-            {it.value >= 0 ? "+" : ""}{it.value.toFixed(3)}
+          <span
+            style={{
+              fontFamily: "monospace",
+              color: it.value >= 0 ? "#16a34a" : "#ef4444",
+              fontWeight: 600,
+            }}
+          >
+            {it.value >= 0 ? "+" : ""}
+            {it.value.toFixed(3)}
           </span>
         </div>
       ))}
@@ -338,15 +381,14 @@ function ShapStackedChart({
 }) {
   const shapPointMap = useMemo(
     () => new Map(shapData.points.map((pt) => [pt.month, pt])),
-    [shapData.points],
+    [shapData.points]
   );
 
   // Collect all feature names in top-N order (from all points)
   const allFeatNames = useMemo(() => {
     const seen: string[] = [];
     for (const pt of shapData.points)
-      for (const f of pt.features)
-        if (!seen.includes(f.name)) seen.push(f.name);
+      for (const f of pt.features) if (!seen.includes(f.name)) seen.push(f.name);
     return seen;
   }, [shapData.points]);
 
@@ -354,7 +396,8 @@ function ShapStackedChart({
   // Without this filter, months outside the 48-month lookback window would render
   // as zero-height bars — misleadingly implying "no contribution" rather than "no data".
   const axisMonths = useMemo(() => {
-    const candidates = visibleMonths.length > 0 ? visibleMonths : shapData.points.map((p) => p.month);
+    const candidates =
+      visibleMonths.length > 0 ? visibleMonths : shapData.points.map((p) => p.month);
     return candidates.filter((m) => shapPointMap.has(m));
   }, [visibleMonths, shapData.points, shapPointMap]);
 
@@ -365,27 +408,33 @@ function ShapStackedChart({
   // Keys: "__month__" (X-axis), orig signed values for tooltip,
   //       "${feat}__p" / "${feat}__n" for the two bar stacks.
   // IMPORTANT: "__month__" avoids collision with the "month" SHAP feature (calendar int 1-12).
-  const chartData = useMemo(() => axisMonths.map((month) => {
-    const pt = shapPointMap.get(month);
-    const featMap = pt ? Object.fromEntries(pt.features.map((f) => [f.name, f.value])) : {};
-    const otherVal = pt?.other_shap ?? 0;
-    const row: Record<string, unknown> = {
-      __month__: month,
-      is_future: pt?.is_future ?? false,
-      __other__: otherVal,
-      __other__p: Math.max(0, otherVal),
-      __other__n: Math.min(0, otherVal),
-      __total__: pt ? pt.base_value + pt.other_shap + pt.features.reduce((s, f) => s + f.value, 0) : null,
-      __base__: pt?.base_value ?? null,
-    };
-    for (const feat of allFeatNames) {
-      const v = featMap[feat] ?? 0;
-      row[feat] = v;
-      row[`${feat}__p`] = Math.max(0, v);   // positive stack (above 0)
-      row[`${feat}__n`] = Math.min(0, v);   // negative stack (below 0)
-    }
-    return row;
-  }), [axisMonths, shapPointMap, allFeatNames]);
+  const chartData = useMemo(
+    () =>
+      axisMonths.map((month) => {
+        const pt = shapPointMap.get(month);
+        const featMap = pt ? Object.fromEntries(pt.features.map((f) => [f.name, f.value])) : {};
+        const otherVal = pt?.other_shap ?? 0;
+        const row: Record<string, unknown> = {
+          __month__: month,
+          is_future: pt?.is_future ?? false,
+          __other__: otherVal,
+          __other__p: Math.max(0, otherVal),
+          __other__n: Math.min(0, otherVal),
+          __total__: pt
+            ? pt.base_value + pt.other_shap + pt.features.reduce((s, f) => s + f.value, 0)
+            : null,
+          __base__: pt?.base_value ?? null,
+        };
+        for (const feat of allFeatNames) {
+          const v = featMap[feat] ?? 0;
+          row[feat] = v;
+          row[`${feat}__p`] = Math.max(0, v); // positive stack (above 0)
+          row[`${feat}__n`] = Math.min(0, v); // negative stack (below 0)
+        }
+        return row;
+      }),
+    [axisMonths, shapPointMap, allFeatNames]
+  );
 
   // Average base value for the header chip
   const avgBase = useMemo(() => {
@@ -401,8 +450,7 @@ function ShapStackedChart({
     );
   }
 
-  const fmt = (v: number) =>
-    Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1);
+  const fmt = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1));
 
   const minWidth = Math.max(1200, axisMonths.length * 100);
 
@@ -416,12 +464,13 @@ function ShapStackedChart({
           </span>
         )}
         <span className="text-[11px]">
-          Zero line = base prediction. Bars above 0 push forecast up; bars below push it down.
-          Bar total + base ≈ model forecast (small gaps due to rounding/reconstruction).
+          Zero line = base prediction. Bars above 0 push forecast up; bars below push it down. Bar
+          total + base ≈ model forecast (small gaps due to rounding/reconstruction).
         </span>
         {droppedMonths > 0 && (
           <span className="text-[11px] text-amber-600 dark:text-amber-400">
-            {droppedMonths} chart month{droppedMonths > 1 ? "s" : ""} outside SHAP lookback window (not shown).
+            {droppedMonths} chart month{droppedMonths > 1 ? "s" : ""} outside SHAP lookback window
+            (not shown).
           </span>
         )}
       </div>
@@ -476,28 +525,72 @@ function ShapStackedChart({
               />
               {/* Positive halves of each feature (above 0) */}
               {allFeatNames.map((feat, i) => (
-                <Bar key={`${feat}__p`} dataKey={`${feat}__p`} stackId="pos" fill={featureColor(i)} legendType="none" name={feat}>
+                <Bar
+                  key={`${feat}__p`}
+                  dataKey={`${feat}__p`}
+                  stackId="pos"
+                  fill={featureColor(i)}
+                  legendType="none"
+                  name={feat}
+                >
                   {chartData.map((entry, j) => (
-                    <Cell key={j} fill={featureColor(i)} fillOpacity={(entry.is_future as boolean) ? 0.4 : 0.88} />
+                    <Cell
+                      key={j}
+                      fill={featureColor(i)}
+                      fillOpacity={(entry.is_future as boolean) ? 0.4 : 0.88}
+                    />
                   ))}
                 </Bar>
               ))}
-              <Bar key="__other__p" dataKey="__other__p" stackId="pos" fill="#94a3b8" legendType="none" name="Other features">
+              <Bar
+                key="__other__p"
+                dataKey="__other__p"
+                stackId="pos"
+                fill="#94a3b8"
+                legendType="none"
+                name="Other features"
+              >
                 {chartData.map((entry, j) => (
-                  <Cell key={j} fill="#94a3b8" fillOpacity={(entry.is_future as boolean) ? 0.3 : 0.5} />
+                  <Cell
+                    key={j}
+                    fill="#94a3b8"
+                    fillOpacity={(entry.is_future as boolean) ? 0.3 : 0.5}
+                  />
                 ))}
               </Bar>
               {/* Negative halves of each feature (below 0) */}
               {allFeatNames.map((feat, i) => (
-                <Bar key={`${feat}__n`} dataKey={`${feat}__n`} stackId="neg" fill={featureColor(i)} legendType="none" name={feat}>
+                <Bar
+                  key={`${feat}__n`}
+                  dataKey={`${feat}__n`}
+                  stackId="neg"
+                  fill={featureColor(i)}
+                  legendType="none"
+                  name={feat}
+                >
                   {chartData.map((entry, j) => (
-                    <Cell key={j} fill={featureColor(i)} fillOpacity={(entry.is_future as boolean) ? 0.4 : 0.88} />
+                    <Cell
+                      key={j}
+                      fill={featureColor(i)}
+                      fillOpacity={(entry.is_future as boolean) ? 0.4 : 0.88}
+                    />
                   ))}
                 </Bar>
               ))}
-              <Bar key="__other__n" dataKey="__other__n" stackId="neg" fill="#94a3b8" legendType="none" name="Other features">
+              <Bar
+                key="__other__n"
+                dataKey="__other__n"
+                stackId="neg"
+                fill="#94a3b8"
+                legendType="none"
+                name="Other features"
+              >
                 {chartData.map((entry, j) => (
-                  <Cell key={j} fill="#94a3b8" fillOpacity={(entry.is_future as boolean) ? 0.3 : 0.5} />
+                  <Cell
+                    key={j}
+                    fill="#94a3b8"
+                    fillOpacity={(entry.is_future as boolean) ? 0.3 : 0.5}
+                  />
                 ))}
               </Bar>
             </BarChart>

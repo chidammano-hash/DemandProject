@@ -345,17 +345,14 @@ There is no global-strategy exception: `cluster_strategy: global` trains one mod
 
 ### 7.2 Intermittent cluster routing
 
-Clusters with more than 70% zero-demand rows skip the tree model entirely and fall back to a rolling-mean baseline during backtest. Configured in `forecast_pipeline_config.yaml`:
 
 ```yaml
 backtest:
   baseline_intermittent: true
   baseline_intermittent_window: 12
-  intermittent_threshold: 0.7         # zero_demand_pct > this -> rolling-mean baseline
   lumpy_threshold: 0.3
 ```
 
-If a cluster you expected to see tree-model predictions for is silently rolling-mean, check `compute_cluster_demand_stats()` output for that cluster — its `zero_demand_pct` is likely above 0.7.
 
 ### 7.3 Clustering reads `dim_sku`, not raw sales
 

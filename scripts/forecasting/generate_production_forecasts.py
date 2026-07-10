@@ -51,30 +51,26 @@ if str(ROOT) not in sys.path:
 
 import psycopg
 
-from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.core.constants import (
+    CAT_FEATURES,
+    CHAMPION_MODEL_ID,
+    LAG_RANGE,
+    ROLLING_WINDOWS,
+)
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.core.sql_helpers import read_sql_chunked
 from common.ml.forecast_ci import build_sigma_lookup, compute_ci_bounds
-from common.ml.seasonal_naive import make_dfu_key
+from common.services.forecast_lineage import (
+    compute_staging_payload_stats,
+    sha256_file,
+)  # noqa: E402
 from common.services.perf_profiler import profiled_section
 
 PIPELINE_CONFIG_PATH = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 CHAMPION_WINNERS_DIR = ROOT / "data" / "champion"
 
 logger = logging.getLogger(__name__)
-
-
-def _detect_framework(model) -> str:
-    """Return 'catboost', 'lgbm', or 'xgboost' based on model object type."""
-    mod = type(model).__module__
-    if "catboost" in mod:
-        return "catboost"
-    if "lightgbm" in mod:
-        return "lgbm"
-    if "xgboost" in mod:
-        return "xgboost"
-    return "lgbm"
 
 
 def _to_cluster_id(cluster_id) -> int | str | None:
@@ -102,9 +98,7 @@ def load_config() -> dict:
     Reads from the consolidated forecast_pipeline_config.yaml (production_forecast section).
     """
     if not PIPELINE_CONFIG_PATH.exists():
-        raise FileNotFoundError(
-            f"Pipeline config not found: {PIPELINE_CONFIG_PATH}"
-        )
+        raise FileNotFoundError(f"Pipeline config not found: {PIPELINE_CONFIG_PATH}")
     with open(PIPELINE_CONFIG_PATH) as f:
         pipeline = yaml.safe_load(f) or {}
     pf = pipeline.get("production_forecast", {})
@@ -128,7 +122,7 @@ def load_config() -> dict:
         "_pipeline": {
             "lookback_months": pf.get("lookback_months", 36),
             "min_history_months": pf.get("min_history_months", 12),
-            "cold_start_model_id": pf.get("cold_start_model_id", "rolling_mean"),
+            "cold_start_model_id": pf.get("cold_start_model_id", "lgbm_cluster"),
             "cold_start_min_months": pf.get("cold_start_min_months", 3),
         },
     }
@@ -139,13 +133,11 @@ def load_non_tree_model_ids() -> set[str]:
     from history by :func:`generate_forecasts_statistical`.
 
     These are every algorithm whose config ``type`` is not ``tree`` — the
-    statistical baselines (seasonal_naive, rolling_mean, rolling_median, mstl),
-    the foundation models, and the deep-learning models. Routing a champion whose
+    MSTL, the foundation model, and the deep-learning models. Routing a champion whose
     ``source_model_id`` is one of these through the statistical generator (rather
     than the tree-batch path) keeps the SHIPPED model equal to the DISPLAYED
-    champion: otherwise the tree path substitutes ``fallback_model_id``
-    (lgbm_cluster) and ships LightGBM under, e.g., a "Seasonal Naive" label
-    (Gap-10 / F-11). Tree champions keep the tree-batch path.
+    champion: otherwise the tree path substitutes ``fallback_model_id``.
+    Tree champions keep the tree-batch path.
     """
     with open(PIPELINE_CONFIG_PATH) as f:
         pipeline = yaml.safe_load(f) or {}
@@ -258,7 +250,8 @@ def check_champion_cluster_lineage(conn, allow_mismatch: bool = False) -> None:
     if champ_cluster_id is None:
         logger.warning(
             "Champion experiment %s has no cluster lineage (pre-sql/198 row); "
-            "generation match cannot be verified.", champ_id,
+            "generation match cannot be verified.",
+            champ_id,
         )
         return
     if current_cluster_id is not None and int(champ_cluster_id) != int(current_cluster_id):
@@ -317,7 +310,14 @@ def _load_promoted_winners_assignments(
         winners = winners[winners["loc"] == str(loc)]
     if winners.empty:
         return pd.DataFrame(
-            columns=["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]
+            columns=[
+                "item_id",
+                "loc",
+                "startdate",
+                "source_model_id",
+                "cluster_id",
+                "customer_group",
+            ]
         )
 
     winners = winners.copy()
@@ -326,27 +326,28 @@ def _load_promoted_winners_assignments(
     sort_cols = ["item_id", "loc", "startdate", "source_model_id"]
     if "customer_group" in winners.columns:
         sort_cols.append("customer_group")
-    winners = (
-        winners.sort_values(sort_cols)
-        .drop_duplicates(["item_id", "loc", "startdate"], keep="first")
+    winners = winners.sort_values(sort_cols).drop_duplicates(
+        ["item_id", "loc", "startdate"], keep="first"
     )
 
     attrs = load_dfu_attrs(conn, item_id, loc)
     if attrs.empty:
         winners["cluster_id"] = pd.NA
-        winners["customer_group"] = winners.get("customer_group", pd.Series(pd.NA, index=winners.index))
-        return winners[["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]]
+        winners["customer_group"] = winners.get(
+            "customer_group", pd.Series(pd.NA, index=winners.index)
+        )
+        return winners[
+            ["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]
+        ]
 
     attrs = attrs.copy()
     attrs["item_id"] = attrs["item_id"].astype(str)
     attrs["loc"] = attrs["loc"].astype(str)
     attrs["customer_group"] = attrs["customer_group"].astype(str)
     attrs = attrs.rename(columns={"ml_cluster": "cluster_id"})
-    default_attrs = (
-        attrs.sort_values(["item_id", "loc", "customer_group"])
-        .drop_duplicates(["item_id", "loc"], keep="first")
-        [["item_id", "loc", "customer_group", "cluster_id"]]
-    )
+    default_attrs = attrs.sort_values(["item_id", "loc", "customer_group"]).drop_duplicates(
+        ["item_id", "loc"], keep="first"
+    )[["item_id", "loc", "customer_group", "cluster_id"]]
 
     if "customer_group" in winners.columns and winners["customer_group"].notna().any():
         merged = winners.merge(
@@ -381,7 +382,9 @@ def _load_promoted_winners_assignments(
     return df.reset_index(drop=True)
 
 
-def get_champion_assignments(conn, item_id: str | None = None, loc: str | None = None) -> pd.DataFrame:
+def get_champion_assignments(
+    conn, item_id: str | None = None, loc: str | None = None
+) -> pd.DataFrame:
     """Return the champion model assignment per DFU-MONTH.
 
     Returns `source_model_id` — the underlying algorithm (e.g. lgbm_cluster) whose
@@ -453,7 +456,9 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
     n_dfus = df.drop_duplicates(["item_id", "loc"]).shape[0] if len(df) else 0
     logger.info(
         "Champion assignments loaded: %s DFU-months across %s DFUs (%s with source_model_id)",
-        f"{len(df):,}", f"{n_dfus:,}", f"{with_src:,}",
+        f"{len(df):,}",
+        f"{n_dfus:,}",
+        f"{with_src:,}",
     )
     return df
 
@@ -527,9 +532,7 @@ def filter_rows_to_champion_months(
     if not month_routing:
         return rows
     # Deterministic fallback model per DFU for months with no recorded winner.
-    fallback_model = {
-        dfu: min(per_month.values()) for dfu, per_month in month_routing.items()
-    }
+    fallback_model = {dfu: min(per_month.values()) for dfu, per_month in month_routing.items()}
     kept: list[dict] = []
     for row in rows:
         dfu = (row["item_id"], row["loc"])
@@ -551,8 +554,9 @@ def filter_rows_to_champion_months(
 # ---------------------------------------------------------------------------
 
 
-def load_recent_sales(conn, item_id: str | None = None, loc: str | None = None,
-                      lookback_months: int = 36) -> pd.DataFrame:
+def load_recent_sales(
+    conn, item_id: str | None = None, loc: str | None = None, lookback_months: int = 36
+) -> pd.DataFrame:
     """Load the last N months of sales for all DFUs (or a specific DFU).
 
     Returns DataFrame with columns: item_id, loc, startdate, qty.
@@ -594,8 +598,11 @@ def load_recent_sales(conn, item_id: str | None = None, loc: str | None = None,
     df = read_sql_chunked(conn, sql, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    logger.info("Recent sales loaded: %s rows, %s DFUs",
-                f"{len(df):,}", f"{df.groupby(['item_id','loc']).ngroups:,}")
+    logger.info(
+        "Recent sales loaded: %s rows, %s DFUs",
+        f"{len(df):,}",
+        f"{df.groupby(['item_id', 'loc']).ngroups:,}",
+    )
     return df
 
 
@@ -698,9 +705,7 @@ def build_cat_encoders(dfu_attrs: pd.DataFrame) -> dict[str, dict]:
     encoders: dict[str, dict] = {}
     for col in CAT_FEATURES:
         if col in dfu_attrs.columns:
-            cats = sorted(
-                dfu_attrs[col].fillna("__unknown__").astype(str).unique()
-            )
+            cats = sorted(dfu_attrs[col].fillna("__unknown__").astype(str).unique())
             encoders[col] = {v: i for i, v in enumerate(cats)}
     return encoders
 
@@ -752,7 +757,11 @@ def _compute_ts_profile_from_history(qty_series: list[float]) -> dict[str, float
             monthly_cnt[i % 12] += 1
         mask = monthly_cnt > 0
         monthly_avg[mask] /= monthly_cnt[mask]
-        seasonal_amp = float(np.max(monthly_avg) - np.min(monthly_avg)) / (abs(mean_val) + 1e-9) if abs(mean_val) > 1e-9 else 0.0
+        seasonal_amp = (
+            float(np.max(monthly_avg) - np.min(monthly_avg)) / (abs(mean_val) + 1e-9)
+            if abs(mean_val) > 1e-9
+            else 0.0
+        )
     else:
         seasonal_amp = 0.0
 
@@ -824,9 +833,11 @@ def build_inference_grid(
         last_month = pd.Timestamp(dates_arr[-1])
     else:
         # Legacy DataFrame path — used by tests
-        dfu_sales = sales_history[
-            (sales_history["item_id"] == item_id) & (sales_history["loc"] == loc)
-        ].sort_values("startdate").copy()
+        dfu_sales = (
+            sales_history[(sales_history["item_id"] == item_id) & (sales_history["loc"] == loc)]
+            .sort_values("startdate")
+            .copy()
+        )
         if len(dfu_sales) < min_months:
             return None
         last_month = dfu_sales["startdate"].max()
@@ -842,9 +853,7 @@ def build_inference_grid(
     if attrs_index is not None:
         attrs = attrs_index.get((item_id, loc), {})
     else:
-        dfu_row = dfu_attrs[
-            (dfu_attrs["item_id"] == item_id) & (dfu_attrs["loc"] == loc)
-        ]
+        dfu_row = dfu_attrs[(dfu_attrs["item_id"] == item_id) & (dfu_attrs["loc"] == loc)]
         attrs = dfu_row.iloc[0].to_dict() if len(dfu_row) > 0 else {}
 
     # Item-level attributes (bpc, item_proof, case_weight from dim_item)
@@ -866,10 +875,12 @@ def build_inference_grid(
 
         # Rolling features
         for w in ROLLING_WINDOWS:
-            window_vals = qty_series[max(0, n - w):n]
+            window_vals = qty_series[max(0, n - w) : n]
             if window_vals:
                 row[f"rolling_mean_{w}m"] = float(np.mean(window_vals))
-                row[f"rolling_std_{w}m"] = float(np.std(window_vals, ddof=1)) if len(window_vals) > 1 else 0.0
+                row[f"rolling_std_{w}m"] = (
+                    float(np.std(window_vals, ddof=1)) if len(window_vals) > 1 else 0.0
+                )
             else:
                 row[f"rolling_mean_{w}m"] = 0.0
                 row[f"rolling_std_{w}m"] = 0.0
@@ -885,7 +896,11 @@ def build_inference_grid(
             row[f"fourier_cos_{period}"] = float(np.cos(angle))
         row["is_quarter_end"] = 1 if month_num in (3, 6, 9, 12) else 0
         row["is_year_end"] = 1 if month_num == 12 else 0
-        row["days_in_month"] = float(fmonth.days_in_month if hasattr(fmonth, "days_in_month") else pd.Timestamp(fmonth).days_in_month)
+        row["days_in_month"] = float(
+            fmonth.days_in_month
+            if hasattr(fmonth, "days_in_month")
+            else pd.Timestamp(fmonth).days_in_month
+        )
 
         # DFU attributes (categorical and numeric)
         for col in CAT_FEATURES:
@@ -943,6 +958,7 @@ def build_inference_grid(
             # Use the most recent feature row and apply to all horizon months
             latest = item_cf.sort_values("startdate").iloc[-1]
             from common.core.constants import CUSTOMER_FEATURE_COLS
+
             for col in CUSTOMER_FEATURE_COLS:
                 if col in latest.index:
                     grid_df[col] = float(latest[col])
@@ -1033,15 +1049,29 @@ def generate_forecast_recursive(
                         lag_vals.append(float(row_data[lag_col].iloc[0]))
                 if lag_vals:
                     row_data[f"rolling_mean_{w}m"] = np.mean(lag_vals)
-                    row_data[f"rolling_std_{w}m"] = np.std(lag_vals, ddof=1) if len(lag_vals) > 1 else 0.0
+                    row_data[f"rolling_std_{w}m"] = (
+                        np.std(lag_vals, ddof=1) if len(lag_vals) > 1 else 0.0
+                    )
             # Recompute derived features after lag/rolling update
             l1 = float(row_data["qty_lag_1"].iloc[0]) if "qty_lag_1" in row_data.columns else 0.0
             l2 = float(row_data["qty_lag_2"].iloc[0]) if "qty_lag_2" in row_data.columns else 0.0
             row_data["mom_growth"] = max(-2.0, min(2.0, (l1 - l2) / (abs(l2) + 1.0)))
-            rm3 = float(row_data["rolling_mean_3m"].iloc[0]) if "rolling_mean_3m" in row_data.columns else 0.0
-            rm6 = float(row_data["rolling_mean_6m"].iloc[0]) if "rolling_mean_6m" in row_data.columns else 0.0
+            rm3 = (
+                float(row_data["rolling_mean_3m"].iloc[0])
+                if "rolling_mean_3m" in row_data.columns
+                else 0.0
+            )
+            rm6 = (
+                float(row_data["rolling_mean_6m"].iloc[0])
+                if "rolling_mean_6m" in row_data.columns
+                else 0.0
+            )
             row_data["demand_accel"] = rm3 - rm6
-            rs3 = float(row_data["rolling_std_3m"].iloc[0]) if "rolling_std_3m" in row_data.columns else 0.0
+            rs3 = (
+                float(row_data["rolling_std_3m"].iloc[0])
+                if "rolling_std_3m" in row_data.columns
+                else 0.0
+            )
             row_data["volatility_ratio"] = rs3 / (abs(rm3) + 1.0)
 
         # Predict using only the features the model was trained on
@@ -1057,22 +1087,24 @@ def generate_forecast_recursive(
         else:
             forecast_month_date = forecast_month
 
-        rows.append({
-            "forecast_month_generated": forecast_month_generated,
-            "item_id": item_id,
-            "loc": loc,
-            "forecast_month": forecast_month_date,
-            "forecast_qty": pred,
-            "forecast_qty_lower": None,
-            "forecast_qty_upper": None,
-            "model_id": model_id,
-            "cluster_id": _to_cluster_id(cluster_id),
-            "horizon_months": h + 1,
-            "is_recursive": h > 0,
-            "lag_source": "actual" if h == 0 else "predicted",
-            "run_id": run_id,
-            "generated_at": datetime.now(timezone.utc),
-        })
+        rows.append(
+            {
+                "forecast_month_generated": forecast_month_generated,
+                "item_id": item_id,
+                "loc": loc,
+                "forecast_month": forecast_month_date,
+                "forecast_qty": pred,
+                "forecast_qty_lower": None,
+                "forecast_qty_upper": None,
+                "model_id": model_id,
+                "cluster_id": _to_cluster_id(cluster_id),
+                "horizon_months": h + 1,
+                "is_recursive": h > 0,
+                "lag_source": "actual" if h == 0 else "predicted",
+                "run_id": run_id,
+                "generated_at": datetime.now(timezone.utc),
+            }
+        )
 
     return rows
 
@@ -1117,10 +1149,6 @@ def generate_forecasts_batch(
     valid_champs = [t[1] for t in valid_pairs]
     valid_grids = [t[2] for t in valid_pairs]
 
-    # Detect model framework to choose correct categorical encoding strategy
-    framework = _detect_framework(model)
-    is_catboost = (framework == "catboost")
-
     # -----------------------------------------------------------------------
     # Build initial feature matrix X_np[j, :] from row 0 of each DFU's grid
     # -----------------------------------------------------------------------
@@ -1136,30 +1164,14 @@ def generate_forecasts_batch(
 
     X_df = init_df[avail].fillna(0).copy()
 
-    if is_catboost:
-        # CatBoost was trained on raw STRING category labels (cat_dtype="str").
-        # Passing integers would hash "3" instead of "NE" — completely different
-        # categorical signal. Keep strings; categorical columns are static across
-        # horizon steps so we store them once and re-inject into Pool each step.
-        cat_cols_in_avail = [c for c in avail if c in CAT_FEATURES]
-        cat_str_df = init_df[cat_cols_in_avail].fillna("__unknown__").astype(str)
-        # Build float numpy for numeric-only columns (updated during recursive loop)
-        numeric_cols = [c for c in avail if c not in CAT_FEATURES]
-        X_np = X_df[numeric_cols].to_numpy(dtype=float)
-        col_idx = {c: i for i, c in enumerate(numeric_cols)}
-    else:
-        # LGBM / XGBoost: trained on pandas Categorical codes (sorted-unique → 0-based int)
-        for col in CAT_FEATURES:
-            if col in X_df.columns and col in cat_encoders:
-                X_df[col] = X_df[col].map(cat_encoders[col]).fillna(0).astype(int)
-        X_np = X_df.to_numpy(dtype=float)            # (n_valid, n_avail)
-        col_idx = {c: i for i, c in enumerate(avail)}
-        cat_cols_in_avail = []
-        cat_str_df = pd.DataFrame()
+    for col in CAT_FEATURES:
+        if col in X_df.columns and col in cat_encoders:
+            X_df[col] = X_df[col].map(cat_encoders[col]).fillna(0).astype(int)
+    X_np = X_df.to_numpy(dtype=float)  # (n_valid, n_avail)
+    col_idx = {c: i for i, c in enumerate(avail)}
 
     # Index positions of lag and rolling columns (only those present in col_idx)
-    lag_pos = {k: col_idx[f"qty_lag_{k}"]
-               for k in LAG_RANGE if f"qty_lag_{k}" in col_idx}
+    lag_pos = {k: col_idx[f"qty_lag_{k}"] for k in LAG_RANGE if f"qty_lag_{k}" in col_idx}
     rolling_pos: dict[int, tuple] = {}
     for w in ROLLING_WINDOWS:
         mi = col_idx.get(f"rolling_mean_{w}m")
@@ -1186,38 +1198,13 @@ def generate_forecasts_batch(
     for h in range(horizon):
         # Batch predict on current feature matrix
         try:
-            if hasattr(model, "_sku_cks"):
-                model._sku_cks = [
-                    make_dfu_key(
-                        champ.get("item_id"),
-                        champ.get("customer_group", "__unknown__"),
-                        champ.get("loc"),
-                    )
-                    for champ in valid_champs
-                ]
-            if hasattr(model, "_months"):
-                model._months = [
-                    pd.Timestamp(forecast_months[j][h]).month
-                    for j in range(len(valid_champs))
-                ]
-            if is_catboost:
-                import catboost as cb
-                # Rebuild dataframe: numeric features (updated) + string categoricals (static)
-                pred_df = pd.DataFrame(X_np, columns=numeric_cols)
-                for col in cat_cols_in_avail:
-                    pred_df[col] = cat_str_df[col].values
-                pool = cb.Pool(pred_df, cat_features=cat_cols_in_avail)
-                step_preds = np.maximum(0.0, model.predict(pool))
-            else:
-                step_preds = np.maximum(0.0, model.predict(X_np))
+            step_preds = np.maximum(0.0, model.predict(X_np))
         except (ValueError, TypeError, ArithmeticError):
             # Previously this substituted a full column of zeros, which silently
             # corrupts the forecast (an all-zero forecast reads downstream as
             # "no demand"). Fail loud instead so a systematic feature/dtype/model
             # bug surfaces rather than writing zeros to staging.
-            logger.exception(
-                "Prediction failed for cluster group at horizon step %d", h
-            )
+            logger.exception("Prediction failed for cluster group at horizon step %d", h)
             raise
 
         all_preds[:, h] = step_preds
@@ -1235,7 +1222,7 @@ def generate_forecasts_batch(
             for w, (mean_idx, std_idx) in rolling_pos.items():
                 lag_cols = [lag_pos[k] for k in range(1, w + 1) if k in lag_pos]
                 if lag_cols:
-                    lag_mat = X_np[:, lag_cols]          # (n_valid, w)
+                    lag_mat = X_np[:, lag_cols]  # (n_valid, w)
                     X_np[:, mean_idx] = lag_mat.mean(axis=1)
                     if std_idx is not None and len(lag_cols) > 1:
                         X_np[:, std_idx] = lag_mat.std(axis=1, ddof=1)
@@ -1281,7 +1268,7 @@ def generate_forecasts_batch(
                 lower, upper = compute_ci_bounds(
                     point_forecast=pred,
                     sigma=sigma,
-                    horizon=h + 1,          # h is 0-indexed; horizon is 1-indexed
+                    horizon=h + 1,  # h is 0-indexed; horizon is 1-indexed
                     z_lower=ci_cfg.get("z_lower", 1.282),
                     z_upper=ci_cfg.get("z_upper", 1.282),
                     scaling=ci_cfg.get("horizon_scaling", "sqrt"),
@@ -1289,22 +1276,24 @@ def generate_forecasts_batch(
             else:
                 lower, upper = None, None
 
-            all_rows.append({
-                "forecast_month_generated": forecast_month_generated,
-                "item_id": item_id,
-                "loc": loc,
-                "forecast_month": months[h],
-                "forecast_qty": pred,
-                "forecast_qty_lower": lower,
-                "forecast_qty_upper": upper,
-                "model_id": model_id,
-                "cluster_id": cluster_id,
-                "horizon_months": h + 1,
-                "is_recursive": h > 0,
-                "lag_source": "actual" if h == 0 else "predicted",
-                "run_id": run_id,
-                "generated_at": ts_now,
-            })
+            all_rows.append(
+                {
+                    "forecast_month_generated": forecast_month_generated,
+                    "item_id": item_id,
+                    "loc": loc,
+                    "forecast_month": months[h],
+                    "forecast_qty": pred,
+                    "forecast_qty_lower": lower,
+                    "forecast_qty_upper": upper,
+                    "model_id": model_id,
+                    "cluster_id": cluster_id,
+                    "horizon_months": h + 1,
+                    "is_recursive": h > 0,
+                    "lag_source": "actual" if h == 0 else "predicted",
+                    "run_id": run_id,
+                    "generated_at": ts_now,
+                }
+            )
 
     return all_rows
 
@@ -1314,100 +1303,6 @@ def generate_forecasts_batch(
 # ---------------------------------------------------------------------------
 
 
-def _generate_finetuned_bolt_production(
-    model_id: str,
-    sales_index: dict,
-    champion_df: pd.DataFrame,
-    horizon: int,
-    forecast_month_generated,
-    run_id: str,
-) -> list[dict] | None:
-    """Forward production forecast for fine-tuned Chronos-Bolt using the REAL model (spec 32).
-
-    Closes the foundation production gap: the generic statistical path uses a
-    seasonal+recency *formula*, not the model. Returns ``None`` when no fine-tuned
-    checkpoint exists yet (caller falls through to the formula). Forecasts H steps
-    after each series' last month — matching the per-DFU ``last_month + h`` convention
-    — by grouping series by last month so the dispatcher's uniform month labels are
-    correct within each cohort.
-    """
-    from common.core.constants import FORECAST_QTY_COL
-    from common.core.utils import get_algorithm_params
-    from common.ml.expert_panel.foundation_models import (
-        _resolve_ft_checkpoint,
-        _run_chronos_bolt_ft,
-    )
-
-    params = get_algorithm_params(model_id)
-    base = params.get("base_model") or f"amazon/chronos-bolt-{params.get('model_size', 'base')}"
-    _ckpt, is_ft = _resolve_ft_checkpoint(params.get("checkpoint_dir"), base)
-    if not is_ft:
-        logger.warning(
-            "%s: no fine-tuned checkpoint at %s — falling back to formula path",
-            model_id, params.get("checkpoint_dir"),
-        )
-        return None
-
-    ts_now = datetime.now(timezone.utc)
-    by_last: dict = defaultdict(list)
-    for champ in champion_df.itertuples(index=False):
-        item_id, loc = champ.item_id, champ.loc
-        entry = sales_index.get((item_id, loc))
-        if entry is None:
-            continue
-        dates_arr, qty_arr = entry
-        if len(qty_arr) < 3:
-            continue
-        last_month = pd.Timestamp(dates_arr[-1]).to_period("M").to_timestamp()
-        key = f"{item_id}\x1f{loc}"  # unit-separator -> unique, decodable sku_ck
-        cid = _to_cluster_id(getattr(champ, "cluster_id", None))
-        by_last[last_month].append((key, item_id, loc, cid, dates_arr, qty_arr))
-
-    all_rows: list[dict] = []
-    for last_month, members in by_last.items():
-        frames = [
-            pd.DataFrame({
-                "sku_ck": key,
-                "startdate": pd.to_datetime(dates_arr),
-                "qty": np.asarray(qty_arr, dtype=np.float64),
-            })
-            for key, _it, _lo, _cid, dates_arr, qty_arr in members
-        ]
-        sdf = pd.concat(frames, ignore_index=True)
-        predict_months = [last_month + pd.DateOffset(months=h) for h in range(1, horizon + 1)]
-        preds = _run_chronos_bolt_ft(sdf, predict_months, params)
-        if preds.empty:
-            continue
-        pmap = {
-            (r.sku_ck, pd.Timestamp(r.startdate)): float(getattr(r, FORECAST_QTY_COL))
-            for r in preds.itertuples(index=False)
-        }
-        meta = {key: (it, lo, cid) for key, it, lo, cid, _d, _q in members}
-        for h, pm in enumerate(predict_months, start=1):
-            fmonth_date = pm.date().replace(day=1)
-            for key, (item_id, loc, cid) in meta.items():
-                pred = pmap.get((key, pd.Timestamp(pm)))
-                if pred is None:
-                    continue
-                all_rows.append({
-                    "forecast_month_generated": forecast_month_generated,
-                    "item_id": item_id,
-                    "loc": loc,
-                    "forecast_month": fmonth_date,
-                    "forecast_qty": max(0.0, round(pred, 2)),
-                    "forecast_qty_lower": None,
-                    "forecast_qty_upper": None,
-                    "model_id": model_id,
-                    "cluster_id": cid,
-                    "horizon_months": h,
-                    "is_recursive": h > 1,
-                    "lag_source": "actual" if h == 1 else "predicted",
-                    "run_id": run_id,
-                    "generated_at": ts_now,
-                })
-    logger.info("%s: real-model production forecast — %s rows for %s DFUs",
-                model_id, f"{len(all_rows):,}", champion_df.shape[0])
-    return all_rows
 
 
 def generate_forecasts_statistical(
@@ -1425,19 +1320,9 @@ def generate_forecasts_statistical(
     with seasonal patterns and trend, not flat lines.
 
     Methods:
-    - seasonal_naive: same calendar month from the most recent year available
-    - rolling_mean: exponentially weighted mean with trend adjustment
-    - mstl / foundation / DL: seasonal decomposition (monthly profile +
+    - MSTL / Chronos 2E / N-BEATS / N-HiTS: seasonal decomposition (monthly profile +
       level scaling + damped linear trend)
     """
-    # Fine-tuned Chronos-Bolt: use the REAL model (spec 32), not the formula fallback.
-    if model_id == "chronos_bolt_ft":
-        ft_rows = _generate_finetuned_bolt_production(
-            model_id, sales_index, champion_df, horizon, forecast_month_generated, run_id,
-        )
-        if ft_rows is not None:
-            return ft_rows
-        # No checkpoint yet -> fall through to the generic formula path below.
 
     ts_now = datetime.now(timezone.utc)
     all_rows: list[dict] = []
@@ -1489,49 +1374,18 @@ def generate_forecasts_statistical(
             slope_per_month = 0.0
 
         # Dampen trend to avoid explosive forecasts (±5% of mean per month)
-        slope_per_month = np.clip(
-            slope_per_month, -overall_mean * 0.05, overall_mean * 0.05
-        )
+        slope_per_month = np.clip(slope_per_month, -overall_mean * 0.05, overall_mean * 0.05)
 
         # ------------------------------------------------------------------
         # Generate each horizon step
         # ------------------------------------------------------------------
         for h in range(1, horizon + 1):
             fmonth = last_month + pd.DateOffset(months=h)
-            fmonth_date = (
-                fmonth.date().replace(day=1) if hasattr(fmonth, "date") else fmonth
-            )
+            fmonth_date = fmonth.date().replace(day=1) if hasattr(fmonth, "date") else fmonth
             target_cal_month = fmonth.month - 1  # 0-indexed
 
-            if model_id == "seasonal_naive":
-                # Use the most recent occurrence of the same calendar month
-                target_month_num = fmonth.month
-                found = None
-                for i in range(n - 1, -1, -1):
-                    if pd.Timestamp(dates_arr[i]).month == target_month_num:
-                        found = float(qty[i])
-                        break
-                pred = found if found is not None else monthly_avg[target_cal_month]
 
-            elif model_id == "rolling_mean":
-                # Exponentially weighted mean with trend adjustment
-                w_len = min(n, 6)
-                weights = np.exp(np.linspace(-1, 0, w_len))
-                window = qty[-w_len:]
-                pred = float(np.average(window, weights=weights))
-                pred += slope_per_month * h  # trend adjustment
-
-            elif model_id == "rolling_median":
-                # Outlier-robust sibling of rolling_mean: a FLAT forecast equal to
-                # the median of the last `window` months. Mirrors the backtest
-                # baseline common/ml/expert_panel/baselines.py::predict_rolling_median
-                # (window=6, flat) so the shipped production curve reproduces the
-                # champion that won the backtest. The median resists spikes / stale-
-                # high tails that would drag the mean, so no trend term is added.
-                w_len = min(n, 6)
-                pred = float(np.median(qty[-w_len:]))
-
-            elif model_id == "mstl":
+            if model_id == "mstl":
                 # MSTL: seasonal profile + full trend (no dampening)
                 seasonal = monthly_avg[target_cal_month]
                 if n >= 6 and overall_mean > 0:
@@ -1541,15 +1395,15 @@ def generate_forecasts_statistical(
                     level_ratio = 1.0
                 pred = seasonal * level_ratio + slope_per_month * h
 
-            elif model_id in ("chronos_bolt", "chronos", "chronos2", "chronos2_enriched", "bolt_hierarchical"):
+            elif model_id == "chronos2_enriched":
                 # Foundation models: weighted blend of seasonal + recent (recency-biased)
                 seasonal = monthly_avg[target_cal_month]
-                recent_3 = float(np.mean(qty[-min(n, 3):]))
+                recent_3 = float(np.mean(qty[-min(n, 3) :]))
                 # Blend: 60% seasonal, 40% recent level, plus damped trend
                 pred = 0.6 * seasonal + 0.4 * recent_3
                 pred += slope_per_month * h * max(0.0, 1 - h / (horizon * 1.5))
 
-            elif model_id in ("nbeats", "nbeats_cluster"):
+            elif model_id == "nbeats":
                 # N-BEATS style: use last 12 months as a repeating pattern with trend
                 if n >= 12:
                     # Repeat the last 12 months cyclically
@@ -1560,9 +1414,9 @@ def generate_forecasts_statistical(
                 # Add light trend
                 pred = base + slope_per_month * h * 0.5
 
-            elif model_id in ("nhits", "nhits_cluster"):
+            elif model_id == "nhits":
                 # N-HiTS style: multi-scale — blend short + long patterns
-                short_avg = float(np.mean(qty[-min(n, 3):])) if n >= 3 else overall_mean
+                short_avg = float(np.mean(qty[-min(n, 3) :])) if n >= 3 else overall_mean
                 long_seasonal = monthly_avg[target_cal_month]
                 # 50/50 blend of short-term signal and long-term seasonal
                 pred = 0.5 * short_avg + 0.5 * long_seasonal
@@ -1570,34 +1424,28 @@ def generate_forecasts_statistical(
                 pred += slope_per_month * h * 0.8
 
             else:
-                # Generic fallback: seasonal decomposition with damped trend
-                seasonal = monthly_avg[target_cal_month]
-                if n >= 6 and overall_mean > 0:
-                    recent_level = float(np.mean(qty[-6:]))
-                    level_ratio = recent_level / overall_mean
-                else:
-                    level_ratio = 1.0
-                trend = slope_per_month * h * max(0.0, 1 - h / (horizon * 2))
-                pred = seasonal * level_ratio + trend
+                raise ValueError(f"Unsupported non-tree forecast model: {model_id}")
 
             pred = max(0.0, round(pred, 2))
 
-            all_rows.append({
-                "forecast_month_generated": forecast_month_generated,
-                "item_id": item_id,
-                "loc": loc,
-                "forecast_month": fmonth_date,
-                "forecast_qty": pred,
-                "forecast_qty_lower": None,
-                "forecast_qty_upper": None,
-                "model_id": model_id,
-                "cluster_id": cluster_id,
-                "horizon_months": h,
-                "is_recursive": h > 1,
-                "lag_source": "actual" if h == 1 else "predicted",
-                "run_id": run_id,
-                "generated_at": ts_now,
-            })
+            all_rows.append(
+                {
+                    "forecast_month_generated": forecast_month_generated,
+                    "item_id": item_id,
+                    "loc": loc,
+                    "forecast_month": fmonth_date,
+                    "forecast_qty": pred,
+                    "forecast_qty_lower": None,
+                    "forecast_qty_upper": None,
+                    "model_id": model_id,
+                    "cluster_id": cluster_id,
+                    "horizon_months": h,
+                    "is_recursive": h > 1,
+                    "lag_source": "actual" if h == 1 else "predicted",
+                    "run_id": run_id,
+                    "generated_at": ts_now,
+                }
+            )
 
     logger.info(
         "Statistical/fallback forecast for %s: %s rows, %s skipped",
@@ -1613,121 +1461,215 @@ def generate_forecasts_statistical(
 # ---------------------------------------------------------------------------
 
 
-def write_forecast(rows: list[dict], conn, dry_run: bool = False) -> int:
-    """Upsert forecast rows into fact_production_forecast.
-
-    Uses ON CONFLICT DO UPDATE so repeated runs for the same plan_version
-    overwrite rather than error.
-    """
-    if not rows:
-        return 0
-
-    if dry_run:
-        logger.info("[DRY RUN] Would insert %s rows", f"{len(rows):,}")
-        return len(rows)
-
-    sql = """
-        INSERT INTO fact_production_forecast
-            (plan_version, item_id, loc, forecast_month, forecast_qty,
-             forecast_qty_lower, forecast_qty_upper, model_id, cluster_id,
-             horizon_months, is_recursive, lag_source, run_id, generated_at)
-        VALUES
-            (%(plan_version)s, %(item_id)s, %(loc)s, %(forecast_month)s, %(forecast_qty)s,
-             %(forecast_qty_lower)s, %(forecast_qty_upper)s, %(model_id)s, %(cluster_id)s,
-             %(horizon_months)s, %(is_recursive)s, %(lag_source)s, %(run_id)s, %(generated_at)s)
-        ON CONFLICT (plan_version, item_id, loc, forecast_month)
-        DO UPDATE SET
-            forecast_qty        = EXCLUDED.forecast_qty,
-            forecast_qty_lower  = EXCLUDED.forecast_qty_lower,
-            forecast_qty_upper  = EXCLUDED.forecast_qty_upper,
-            model_id            = EXCLUDED.model_id,
-            cluster_id          = EXCLUDED.cluster_id,
-            horizon_months      = EXCLUDED.horizon_months,
-            is_recursive        = EXCLUDED.is_recursive,
-            lag_source          = EXCLUDED.lag_source,
-            generated_at        = EXCLUDED.generated_at
-    """
+def _collect_generation_evidence(
+    conn,
+    *,
+    candidate_model_id: str,
+    generation_purpose: str,
+) -> dict[str, object | None]:
+    """Capture release-control evidence before an immutable run is persisted."""
+    if generation_purpose == "snapshot_contender":
+        return {
+            "champion_experiment_id": None,
+            "cluster_experiment_id": None,
+            "source_sales_batch_id": None,
+            "routing_artifact_checksum": None,
+            "champion_results_checksum": None,
+        }
 
     with conn.cursor() as cur:
-        cur.executemany(sql, rows)
-    conn.commit()
-    return len(rows)
+        cur.execute(
+            """SELECT batch_id
+               FROM audit_load_batch
+               WHERE domain = 'sales' AND status = 'completed'
+               ORDER BY completed_at DESC NULLS LAST, batch_id DESC
+               LIMIT 1"""
+        )
+        sales_row = cur.fetchone()
+        if sales_row is None:
+            raise ValueError("a completed sales load is required before release generation")
+
+        cur.execute(
+            """SELECT experiment_id
+               FROM cluster_experiment
+               WHERE is_promoted = TRUE
+               ORDER BY promoted_at DESC, experiment_id DESC
+               LIMIT 1"""
+        )
+        cluster_row = cur.fetchone()
+
+        champion_experiment_id: int | None = None
+        routing_checksum: str | None = None
+        cluster_experiment_id = int(cluster_row[0]) if cluster_row else None
+        if candidate_model_id == CHAMPION_MODEL_ID:
+            cur.execute(
+                """SELECT experiment_id, cluster_experiment_id,
+                          COALESCE(is_results_promoted, FALSE),
+                          results_artifact_checksum,
+                          results_forecast_checksum
+                   FROM champion_experiment
+                   WHERE is_promoted = TRUE
+                   ORDER BY promoted_at DESC, experiment_id DESC
+                   LIMIT 1"""
+            )
+            champion_row = cur.fetchone()
+            if champion_row is None:
+                raise ValueError(
+                    "a promoted champion experiment is required for champion generation"
+                )
+            champion_experiment_id = int(champion_row[0])
+            champion_cluster_id = champion_row[1]
+            if not bool(champion_row[2]):
+                raise ValueError(
+                    "promote the champion experiment results before release generation"
+                )
+            if champion_cluster_id is None or cluster_experiment_id is None:
+                raise ValueError("champion and promoted cluster lineage are required")
+            if int(champion_cluster_id) != cluster_experiment_id:
+                raise ValueError("champion and promoted cluster experiment lineage do not match")
+            stored_routing_checksum = str(champion_row[3]) if champion_row[3] else None
+            champion_results_checksum = str(champion_row[4]) if champion_row[4] else None
+            if stored_routing_checksum is None or champion_results_checksum is None:
+                raise ValueError("promoted champion results are missing checksum evidence")
+            winners_path = CHAMPION_WINNERS_DIR / f"experiment_{champion_experiment_id}_winners.csv"
+            if not winners_path.exists():
+                raise ValueError("the promoted champion routing artifact is missing")
+            routing_checksum = sha256_file(winners_path)
+            if routing_checksum != stored_routing_checksum:
+                raise ValueError("promoted champion routing artifact checksum has changed")
+        else:
+            champion_results_checksum = None
+
+    return {
+        "champion_experiment_id": champion_experiment_id,
+        "cluster_experiment_id": cluster_experiment_id,
+        "source_sales_batch_id": int(sales_row[0]),
+        "routing_artifact_checksum": routing_checksum,
+        "champion_results_checksum": champion_results_checksum,
+    }
 
 
-def write_forecast_staging(rows: list[dict], conn, model_id: str, dry_run: bool = False) -> int:
-    """Write forecast rows to staging table, replacing any existing rows for this model."""
-    if not rows:
-        return 0
+def write_forecast_staging(
+    rows: list[dict],
+    conn,
+    model_id: str,
+    dry_run: bool = False,
+    *,
+    generation_purpose: str = "release_candidate",
+    generation_evidence: dict[str, object | None] | None = None,
+    promotion_eligible: bool = True,
+    requested_horizon: int | None = None,
+) -> int:
+    """Persist one immutable generation run and its exact staging payload."""
     if dry_run:
         logger.info("[DRY RUN] Would insert %s rows for %s", f"{len(rows):,}", model_id)
         return len(rows)
+    if not rows:
+        raise ValueError("no forecast rows were generated for the requested run")
+    if generation_purpose not in {"release_candidate", "snapshot_contender"}:
+        raise ValueError("generation purpose must be release_candidate or snapshot_contender")
 
-    with conn.cursor() as cur:
-        # Delete previous staging rows for this model
-        cur.execute(
-            "DELETE FROM fact_production_forecast_staging WHERE model_id = %s",
-            (model_id,),
+    run_ids = {str(row["run_id"]) for row in rows}
+    record_months = {row["forecast_month_generated"] for row in rows}
+    if len(run_ids) != 1 or len(record_months) != 1:
+        raise ValueError("one staging write must contain exactly one run and record month")
+    run_id = next(iter(run_ids))
+    record_month = next(iter(record_months))
+    horizon_months = requested_horizon or max(int(row["horizon_months"]) for row in rows)
+    evidence = (
+        generation_evidence
+        if generation_evidence is not None
+        else _collect_generation_evidence(
+            conn,
+            candidate_model_id=model_id,
+            generation_purpose=generation_purpose,
         )
-        deleted = cur.rowcount
-        if deleted:
-            logger.info("Deleted %s old staging rows for %s", f"{deleted:,}", model_id)
+    )
+    eligible = bool(promotion_eligible and generation_purpose == "release_candidate")
+
+    manifest_params = (
+        run_id,
+        generation_purpose,
+        model_id,
+        record_month,
+        horizon_months,
+        evidence.get("champion_experiment_id"),
+        evidence.get("cluster_experiment_id"),
+        evidence.get("source_sales_batch_id"),
+        evidence.get("routing_artifact_checksum"),
+        evidence.get("champion_results_checksum"),
+    )
+    staged_rows = [
+        {
+            **row,
+            "generation_purpose": generation_purpose,
+            "candidate_model_id": model_id,
+        }
+        for row in rows
+    ]
 
     sql = """
         INSERT INTO fact_production_forecast_staging
-            (model_id, item_id, loc, forecast_month, forecast_month_generated,
+            (model_id, candidate_model_id, generation_purpose,
+             item_id, loc, forecast_month, forecast_month_generated,
              forecast_qty, forecast_qty_lower, forecast_qty_upper, cluster_id,
              horizon_months, is_recursive, lag_source, generated_at, run_id)
         VALUES
-            (%(model_id)s, %(item_id)s, %(loc)s, %(forecast_month)s, %(forecast_month_generated)s,
+            (%(model_id)s, %(candidate_model_id)s, %(generation_purpose)s,
+             %(item_id)s, %(loc)s, %(forecast_month)s, %(forecast_month_generated)s,
              %(forecast_qty)s, %(forecast_qty_lower)s, %(forecast_qty_upper)s, %(cluster_id)s,
              %(horizon_months)s, %(is_recursive)s, %(lag_source)s, %(generated_at)s, %(run_id)s)
-        ON CONFLICT (model_id, item_id, loc, forecast_month)
-        DO UPDATE SET
-            forecast_month_generated = EXCLUDED.forecast_month_generated,
-            forecast_qty        = EXCLUDED.forecast_qty,
-            forecast_qty_lower  = EXCLUDED.forecast_qty_lower,
-            forecast_qty_upper  = EXCLUDED.forecast_qty_upper,
-            cluster_id          = EXCLUDED.cluster_id,
-            horizon_months      = EXCLUDED.horizon_months,
-            is_recursive        = EXCLUDED.is_recursive,
-            lag_source          = EXCLUDED.lag_source,
-            generated_at        = EXCLUDED.generated_at,
-            run_id              = EXCLUDED.run_id
+        ON CONFLICT (run_id, generation_purpose, candidate_model_id,
+                     item_id, loc, forecast_month)
+        DO NOTHING
     """
-    with conn.cursor() as cur:
-        cur.executemany(sql, rows)
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO forecast_generation_run
+                       (run_id, generation_purpose, run_status,
+                        promotion_eligible, requested_model_id,
+                        forecast_month_generated, horizon_months,
+                        champion_experiment_id, cluster_experiment_id,
+                        source_sales_batch_id, routing_artifact_checksum,
+                        champion_results_checksum)
+                   VALUES (%s::uuid, %s, 'generating', FALSE, %s, %s, %s,
+                           %s, %s, %s, %s, %s)""",
+                manifest_params,
+            )
+            cur.executemany(sql, staged_rows)
+            stats = compute_staging_payload_stats(cur, run_id)
+            if stats.row_count != len(staged_rows):
+                raise ValueError(
+                    "staging row count does not match the immutable generation payload"
+                )
+            cur.execute(
+                """UPDATE forecast_generation_run
+                   SET run_status = 'ready',
+                       promotion_eligible = %s,
+                       row_count = %s,
+                       dfu_count = %s,
+                       candidate_model_count = %s,
+                       artifact_checksum = %s,
+                       completed_at = NOW()
+                   WHERE run_id = %s::uuid
+                     AND run_status = 'generating'""",
+                (
+                    eligible,
+                    stats.row_count,
+                    stats.dfu_count,
+                    stats.source_model_count,
+                    stats.checksum,
+                    run_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("generation manifest did not transition to ready")
+        conn.commit()
+    except (psycopg.Error, ValueError):
+        conn.rollback()
+        raise
     return len(rows)
-
-
-# ---------------------------------------------------------------------------
-# Old version cleanup
-# ---------------------------------------------------------------------------
-
-
-def purge_old_versions(conn, keep_n: int, dry_run: bool = False) -> None:
-    """Delete plan versions beyond the most recent keep_n."""
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT plan_version
-            FROM fact_production_forecast
-            GROUP BY plan_version
-            ORDER BY MIN(generated_at) DESC
-        """)
-        versions = [r[0] for r in cur.fetchall()]
-
-    to_delete = versions[keep_n:]
-    if not to_delete:
-        return
-
-    for v in to_delete:
-        if dry_run:
-            logger.info("[DRY RUN] Would delete version %s", v)
-        else:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM fact_production_forecast WHERE plan_version = %s", [v])
-            conn.commit()
-            logger.info("Purged old plan version: %s", v)
 
 
 # ---------------------------------------------------------------------------
@@ -1781,7 +1723,10 @@ def _required_tree_model_ids(
         for model_id in champion_month_df.get("source_model_id", pd.Series(dtype=object)).dropna()
         if str(model_id) not in non_tree_models
     }
-    if "source_model_id" in champion_month_df.columns and champion_month_df["source_model_id"].isna().any():
+    if (
+        "source_model_id" in champion_month_df.columns
+        and champion_month_df["source_model_id"].isna().any()
+    ):
         if fallback_model_id not in non_tree_models:
             required.add(fallback_model_id)
     return required
@@ -1792,7 +1737,9 @@ def _missing_required_tree_model_ids(
     loaded_models: dict[str, dict],
 ) -> list[str]:
     """Return required tree model ids without loaded cluster artifacts."""
-    return sorted(model_id for model_id in required_tree_model_ids if not loaded_models.get(model_id))
+    return sorted(
+        model_id for model_id in required_tree_model_ids if not loaded_models.get(model_id)
+    )
 
 
 def _cluster_assignments_wiped(
@@ -1835,28 +1782,54 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate production forecasts for future months (F1.1)"
     )
-    parser.add_argument("--horizon", type=int, default=None,
-                        help="Months ahead to forecast (default from config)")
-    parser.add_argument("--dfu", nargs=2, metavar=("ITEM", "LOC"),
-                        help="Run for a single DFU only: --dfu 100320 1401-BULK")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Preview without writing to DB")
-    parser.add_argument("--model-id", type=str, default=None,
-                        help="Override model_id (default: champion assignment per DFU)")
-    parser.add_argument("--run-id", type=str, default=None,
-                        help="Use this UUID for staging lineage (default: generate a new UUID)")
-    parser.add_argument("--plan-version", type=str, default=None,
-                        help="Override plan version label (e.g. '2026-02'). Defaults to current month.")
-    parser.add_argument("--max-dfus", type=int, default=None,
-                        help="Limit to first N DFUs (for testing/sampling). Default: all DFUs.")
-    parser.add_argument("--confidence-intervals", dest="confidence_intervals",
-                        action=argparse.BooleanOptionalAction, default=None,
-                        help="Force CI (P10/P90) bands on/off. Default: use config "
-                             "confidence_interval.enabled. Use --no-confidence-intervals to force off.")
-    parser.add_argument("--allow-cluster-mismatch", action="store_true",
-                        help="Proceed (with a warning) when the promoted champion was "
-                             "computed under a different cluster generation than the "
-                             "currently promoted one")
+    parser.add_argument(
+        "--horizon", type=int, default=None, help="Months ahead to forecast (default from config)"
+    )
+    parser.add_argument(
+        "--dfu",
+        nargs=2,
+        metavar=("ITEM", "LOC"),
+        help="Run for a single DFU only: --dfu 100320 1401-BULK",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Preview without writing to DB")
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default=None,
+        help="Override model_id (default: champion assignment per DFU)",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Use this UUID for staging lineage (default: generate a new UUID)",
+    )
+    parser.add_argument(
+        "--generation-purpose",
+        choices=("release_candidate", "snapshot_contender"),
+        default="release_candidate",
+        help="Immutable run purpose; snapshot contenders are never promotable",
+    )
+    parser.add_argument(
+        "--plan-version",
+        type=str,
+        default=None,
+        help="Override plan version label (e.g. '2026-02'). Defaults to current month.",
+    )
+    parser.add_argument(
+        "--max-dfus",
+        type=int,
+        default=None,
+        help="Limit to first N DFUs (for testing/sampling). Default: all DFUs.",
+    )
+    parser.add_argument(
+        "--confidence-intervals",
+        dest="confidence_intervals",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Force CI (P10/P90) bands on/off. Default: use config "
+        "confidence_interval.enabled. Use --no-confidence-intervals to force off.",
+    )
     args = parser.parse_args()
 
     config = load_config()
@@ -1865,13 +1838,15 @@ def main() -> None:
     fallback_model_id = config["model_selection"]["fallback_model_id"]
     lookback_months = pipeline_cfg.get("lookback_months", 36)
     min_history_months = pipeline_cfg.get("min_history_months", 12)
-    cold_start_model_id = pipeline_cfg.get("cold_start_model_id", "rolling_mean")
+    cold_start_model_id = pipeline_cfg.get("cold_start_model_id", "lgbm_cluster")
     cold_start_min_months = pipeline_cfg.get("cold_start_min_months", 3)
     # Champion sources with no .pkl (statistical / foundation / DL) — generated from
     # history with their TRUE model_id instead of the lgbm fallback (F-11).
     non_tree_models = load_non_tree_model_ids()
 
-    plan_version = args.plan_version or get_planning_date().strftime(config["plan_version"]["format"])
+    plan_version = args.plan_version or get_planning_date().strftime(
+        config["plan_version"]["format"]
+    )
     forecast_month_generated = get_planning_date().replace(day=1)
     if args.run_id:
         try:
@@ -1886,8 +1861,12 @@ def main() -> None:
 
     logger.info("Production Forecast Generation -- F1.1")
     logger.info("plan_version=%s, horizon=%d, run_id=%s...", plan_version, horizon, run_id[:8])
-    logger.info("Cold-start routing: DFUs with < %d months → %s, < %d months → skip",
-                min_history_months, cold_start_model_id, cold_start_min_months)
+    logger.info(
+        "Cold-start routing: DFUs with < %d months → %s, < %d months → skip",
+        min_history_months,
+        cold_start_model_id,
+        cold_start_min_months,
+    )
     if args.dry_run:
         logger.info("DRY RUN -- no data will be written")
 
@@ -1896,7 +1875,8 @@ def main() -> None:
 
     with psycopg.connect(**db) as conn:
         # Preflight: champion ↔ cluster generation lineage (sql/198)
-        check_champion_cluster_lineage(conn, allow_mismatch=args.allow_cluster_mismatch)
+        if args.generation_purpose == "release_candidate" and args.model_id is None:
+            check_champion_cluster_lineage(conn, allow_mismatch=False)
 
         # Load data
         logger.info("Step 1: Loading data...")
@@ -1905,8 +1885,9 @@ def main() -> None:
             # can win a different model each month; this frame preserves that.
             champion_month_df = get_champion_assignments(conn, item_filter, loc_filter)
             if len(champion_month_df) == 0:
-                logger.info("No champion assignments found. Run 'make champion-select' first.")
-                return
+                raise RuntimeError(
+                    "No champion assignments found. Run champion selection before generation."
+                )
 
             if args.max_dfus:
                 # Sample the FIRST N distinct DFUs (not the first N month-rows,
@@ -1928,8 +1909,9 @@ def main() -> None:
             # their own model and filtered in.
             champion_df = collapse_to_dfu(champion_month_df)
 
-            sales_df = load_recent_sales(conn, item_filter, loc_filter,
-                                         lookback_months=lookback_months)
+            sales_df = load_recent_sales(
+                conn, item_filter, loc_filter, lookback_months=lookback_months
+            )
             dfu_attrs = load_dfu_attrs(conn, item_filter, loc_filter)
             item_attrs_df = load_item_attrs(conn, item_filter)
 
@@ -1975,13 +1957,15 @@ def main() -> None:
         if not loaded_models:
             if args.model_id:
                 # Non-tree model: generate using statistical/direct inference from history
-                logger.info("No .pkl artifacts for %s — using direct inference from history",
-                            args.model_id)
+                logger.info(
+                    "No .pkl artifacts for %s — using direct inference from history", args.model_id
+                )
             else:
-                logger.info("No model artifacts found for: %s", model_ids_needed)
-                logger.info("Run 'make backtest-lgbm' (or backtest-catboost / backtest-xgboost) "
-                            "to train and persist model weights, then re-run this script.")
-                return
+                logger.info(
+                    "No tree artifacts are needed; champion routing will use direct "
+                    "non-tree inference for: %s",
+                    model_ids_needed,
+                )
 
         # Data-integrity guard: abort if promoted cluster assignments were wiped (every DFU
         # NULL while per-cluster trees are loaded). Otherwise tree inference would
@@ -2008,9 +1992,13 @@ def main() -> None:
             attrs_index = build_attrs_index(dfu_attrs)
             item_index = build_item_index(item_attrs_df)
             cat_encoders = build_cat_encoders(dfu_attrs)
-        logger.info("Indexed %s DFUs (sales), %s DFUs (attrs), %s items, %d cat encoders",
-                    f"{len(sales_index):,}", f"{len(attrs_index):,}",
-                    f"{len(item_index):,}", len(cat_encoders))
+        logger.info(
+            "Indexed %s DFUs (sales), %s DFUs (attrs), %s items, %d cat encoders",
+            f"{len(sales_index):,}",
+            f"{len(attrs_index):,}",
+            f"{len(item_index):,}",
+            len(cat_encoders),
+        )
 
         # Build forecast CI sigma lookup (per-DFU uncertainty from backtest residuals).
         # CLI --confidence-intervals/--no-confidence-intervals overrides the config
@@ -2048,8 +2036,11 @@ def main() -> None:
                     run_id=run_id,
                 )
             skipped = len(champion_df) - len(all_rows) // max(horizon, 1)
-            logger.info("Step 3 complete (direct inference): %s rows, %s skipped",
-                        f"{len(all_rows):,}", f"{skipped:,}")
+            logger.info(
+                "Step 3 complete (direct inference): %s rows, %s skipped",
+                f"{len(all_rows):,}",
+                f"{skipped:,}",
+            )
         else:
             # ── Tree model batch inference ───────────────────────────────
             # Group DFUs by (model_id, cluster_id) for batched inference
@@ -2062,6 +2053,7 @@ def main() -> None:
                 # they have no .pkl and must keep their TRUE model_id, never the lgbm
                 # fallback (F-11: displayed champion == shipped model).
                 statistical_routed: dict[str, list] = defaultdict(list)
+
                 def _resolve_artifact(model_id: str, cluster_id) -> dict | None:
                     nonlocal cluster_fallback_count
                     cluster_models = loaded_models.get(model_id)
@@ -2093,8 +2085,7 @@ def main() -> None:
                     filter later keeps only the winning months.
                     """
                     nonlocal skipped
-                    # Non-tree champion source (statistical baseline, foundation, DL,
-                    # or the cold-start rolling_mean): no .pkl exists, so the tree path
+                    # Non-tree champion source (MSTL, foundation, or DL): no .pkl exists, so the tree path
                     # would substitute the lgbm fallback and ship LightGBM under the
                     # champion's label. Route it to the statistical generator instead so
                     # the shipped forecast actually IS its champion model (F-11).
@@ -2173,10 +2164,14 @@ def main() -> None:
                     if not enqueued_any:
                         skipped += 1
 
-            logger.info("%s DFUs in %d cluster groups, %s skipped, %s cold-start (→ %s)",
-                        f"{sum(len(v) for v in cluster_groups.values()):,}",
-                        len(cluster_groups), f"{skipped:,}",
-                        f"{cold_start_count:,}", cold_start_model_id)
+            logger.info(
+                "%s DFUs in %d cluster groups, %s skipped, %s cold-start (→ %s)",
+                f"{sum(len(v) for v in cluster_groups.values()):,}",
+                len(cluster_groups),
+                f"{skipped:,}",
+                f"{cold_start_count:,}",
+                cold_start_model_id,
+            )
             n_statistical = sum(len(v) for v in statistical_routed.values())
             if n_statistical:
                 logger.info(
@@ -2197,8 +2192,11 @@ def main() -> None:
             # groups), ThreadPoolExecutor(max_workers=0) would raise — skip it.
             if cluster_groups:
                 n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))
-                logger.info("Step 3b: Running batched inference (%d groups, %d workers)...",
-                            len(cluster_groups), n_workers)
+                logger.info(
+                    "Step 3b: Running batched inference (%d groups, %d workers)...",
+                    len(cluster_groups),
+                    n_workers,
+                )
 
                 def _run_group(key_entries):
                     (mid, cid), entries = key_entries
@@ -2230,8 +2228,13 @@ def main() -> None:
                         for future in as_completed(futures):
                             mid, cid, n_dfus, batch_rows = future.result()
                             all_rows.extend(batch_rows)
-                            logger.info("(%s, cluster %s): %s DFUs -> %s rows",
-                                        mid, cid, f"{n_dfus:,}", f"{len(batch_rows):,}")
+                            logger.info(
+                                "(%s, cluster %s): %s DFUs -> %s rows",
+                                mid,
+                                cid,
+                                f"{n_dfus:,}",
+                                f"{len(batch_rows):,}",
+                            )
 
             # Non-tree champions (statistical baselines, foundation, DL, cold-start):
             # generate from history with their TRUE model_id. This is what makes the
@@ -2250,10 +2253,16 @@ def main() -> None:
                             run_id=run_id,
                         )
                         all_rows.extend(stat_rows)
-                        logger.info("(%s, statistical): %s DFUs -> %s rows",
-                                    mid, f"{len(champ_rows):,}", f"{len(stat_rows):,}")
+                        logger.info(
+                            "(%s, statistical): %s DFUs -> %s rows",
+                            mid,
+                            f"{len(champ_rows):,}",
+                            f"{len(stat_rows):,}",
+                        )
 
-            logger.info("Step 3 complete: %s rows, %s skipped", f"{len(all_rows):,}", f"{skipped:,}")
+            logger.info(
+                "Step 3 complete: %s rows, %s skipped", f"{len(all_rows):,}", f"{skipped:,}"
+            )
 
         # Per-month champion routing: each mature DFU was generated under every
         # model it wins across the horizon; drop the months where a given model
@@ -2262,19 +2271,44 @@ def main() -> None:
         if not args.model_id and month_routing:
             n_before = len(all_rows)
             all_rows = filter_rows_to_champion_months(all_rows, month_routing)
-            logger.info("Per-month champion filter: kept %s of %s rows",
-                        f"{len(all_rows):,}", f"{n_before:,}")
+            logger.info(
+                "Per-month champion filter: kept %s of %s rows",
+                f"{len(all_rows):,}",
+                f"{n_before:,}",
+            )
 
         # Write to staging table
         staging_model_id = args.model_id or "champion"
-        logger.info("Step 4: Writing to fact_production_forecast_staging (model_id=%s)...", staging_model_id)
+        logger.info(
+            "Step 4: Writing to fact_production_forecast_staging (model_id=%s)...", staging_model_id
+        )
         with profiled_section("write_forecast_staging"):
-            written = write_forecast_staging(all_rows, conn, staging_model_id, dry_run=args.dry_run)
+            generation_evidence = (
+                {}
+                if args.dry_run
+                else _collect_generation_evidence(
+                    conn,
+                    candidate_model_id=staging_model_id,
+                    generation_purpose=args.generation_purpose,
+                )
+            )
+            written = write_forecast_staging(
+                all_rows,
+                conn,
+                staging_model_id,
+                dry_run=args.dry_run,
+                generation_purpose=args.generation_purpose,
+                generation_evidence=generation_evidence,
+                promotion_eligible=not bool(args.dfu or args.max_dfus),
+                requested_horizon=horizon,
+            )
         logger.info("Written: %s rows", f"{written:,}")
 
     elapsed = time.time() - t_start
     logger.info("Production forecast complete in %.0fs (%.1fm)", elapsed, elapsed / 60)
-    logger.info("plan_version=%s, rows=%s, skipped=%s", plan_version, f"{written:,}", f"{skipped:,}")
+    logger.info(
+        "plan_version=%s, rows=%s, skipped=%s", plan_version, f"{written:,}", f"{skipped:,}"
+    )
 
 
 if __name__ == "__main__":

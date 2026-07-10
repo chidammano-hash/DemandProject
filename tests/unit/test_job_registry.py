@@ -95,8 +95,8 @@ class TestJobTypeRegistry:
         from common.services.job_registry import JOB_TYPE_REGISTRY
         expected = {
             "cluster_scenario", "cluster_pipeline", "seasonality_pipeline",
-            "backtest_lgbm", "backtest_catboost", "backtest_xgboost",
-            "backtest_rolling_median",
+            "backtest_lgbm", "backtest_chronos2_enriched", "backtest_mstl",
+            "backtest_nhits", "backtest_nbeats",
             "champion_select", "generate_ai_insights",
             "generate_production_forecast", "compute_replenishment_plan",
             "generate_storyboard", "compute_safety_stock", "compute_eoq",
@@ -253,7 +253,7 @@ class TestSubmitJob:
         assert id1 in mgr._active_jobs
 
         # Second job in same group should be queued
-        id2 = mgr.submit_job("backtest_catboost")
+        id2 = mgr.submit_job("backtest_mstl")
         assert id2 not in mgr._active_jobs
         assert len(mgr._pending_queues.get("backtest", [])) == 1
 

@@ -18,18 +18,9 @@ import {
 import { formatPct, formatFixed, formatInt } from "@/lib/formatters";
 import { modelLabel } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
-import {
-  fetchPipelineConfig,
-  pipelineConfigKeys,
-} from "@/api/queries/unified-model-tuning";
+import { fetchPipelineConfig, pipelineConfigKeys } from "@/api/queries/unified-model-tuning";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -96,33 +87,18 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
   });
 
   // Derive KPIs from current metadata or latest completed run
-  const latestCompleted = runs?.find(
-    (r) => r.status === "completed" && r.accuracy_pct != null,
-  );
+  const latestCompleted = runs?.find((r) => r.status === "completed" && r.accuracy_pct != null);
   const accuracy =
-    (current?.accuracy_pct as number | undefined) ??
-    latestCompleted?.accuracy_pct ??
-    null;
-  const wape =
-    (current?.wape as number | undefined) ?? latestCompleted?.wape ?? null;
-  const bias =
-    (current?.bias as number | undefined) ?? latestCompleted?.bias ?? null;
+    (current?.accuracy_pct as number | undefined) ?? latestCompleted?.accuracy_pct ?? null;
+  const wape = (current?.wape as number | undefined) ?? latestCompleted?.wape ?? null;
+  const bias = (current?.bias as number | undefined) ?? latestCompleted?.bias ?? null;
   const nPredictions =
-    (current?.n_predictions as number | undefined) ??
-    latestCompleted?.n_predictions ??
-    null;
-  const nDfus =
-    (current?.n_dfus as number | undefined) ??
-    latestCompleted?.n_dfus ??
-    null;
+    (current?.n_predictions as number | undefined) ?? latestCompleted?.n_predictions ?? null;
+  const nDfus = (current?.n_dfus as number | undefined) ?? latestCompleted?.n_dfus ?? null;
   const hasAnyRun = (runs?.length ?? 0) > 0;
-  const hasActiveRun = runs?.some(
-    (r) => r.status === "running" || r.status === "queued",
-  );
+  const hasActiveRun = runs?.some((r) => r.status === "running" || r.status === "queued");
   // A load is "active" if any run has a load_job_id but hasn't been marked loaded yet
-  const hasActiveLoad = runs?.some(
-    (r) => r.load_job_id != null && !r.is_loaded_to_db,
-  ) ?? false;
+  const hasActiveLoad = runs?.some((r) => r.load_job_id != null && !r.is_loaded_to_db) ?? false;
 
   // On mount, if a load is already active (e.g. page refresh), sync isLoading state
   useEffect(() => {
@@ -195,26 +171,14 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
           severity={accuracy != null && accuracy >= 80 ? "best" : "neutral"}
           size="md"
         />
-        <KpiCard
-          label="WAPE"
-          value={wape != null ? formatFixed(wape, 2) : "--"}
-          size="md"
-        />
-        <KpiCard
-          label="Bias"
-          value={bias != null ? formatFixed(bias, 2) : "--"}
-          size="md"
-        />
+        <KpiCard label="WAPE" value={wape != null ? formatFixed(wape, 2) : "--"} size="md" />
+        <KpiCard label="Bias" value={bias != null ? formatFixed(bias, 2) : "--"} size="md" />
         <KpiCard
           label="Predictions"
           value={nPredictions != null ? formatInt(nPredictions) : "--"}
           size="md"
         />
-        <KpiCard
-          label="DFUs"
-          value={nDfus != null ? formatInt(nDfus) : "--"}
-          size="md"
-        />
+        <KpiCard label="DFUs" value={nDfus != null ? formatInt(nDfus) : "--"} size="md" />
       </div>
 
       {/* Backtest config (tree models only) */}
@@ -222,11 +186,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
 
       {/* Action buttons */}
       <div className="flex gap-3">
-        <Button
-          onClick={handleRun}
-          disabled={isRunning || !!hasActiveRun}
-          className="gap-2"
-        >
+        <Button onClick={handleRun} disabled={isRunning || !!hasActiveRun} className="gap-2">
           {isRunning || hasActiveRun ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
@@ -237,8 +197,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
         {/* Backtests auto-load into the DB on completion, so the manual Load is
             a recovery affordance only — shown when a completed run never loaded
             (e.g. the best-effort auto-load failed). */}
-        {((isLoading || hasActiveLoad) ||
-          (latestCompleted && !latestCompleted.is_loaded_to_db)) && (
+        {(isLoading || hasActiveLoad || (latestCompleted && !latestCompleted.is_loaded_to_db)) && (
           <Button
             variant="outline"
             onClick={() => handleLoad(latestCompleted?.id)}
@@ -259,9 +218,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
       {/* Run history table */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">
-            Run History -- {modelLabel(modelId)}
-          </CardTitle>
+          <CardTitle className="text-sm">Run History -- {modelLabel(modelId)}</CardTitle>
           <CardDescription className="text-xs">
             {hasAnyRun
               ? `${runs?.length ?? 0} run${(runs?.length ?? 0) !== 1 ? "s" : ""} recorded`
@@ -278,9 +235,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
           ) : !hasAnyRun ? (
             <div className="flex flex-col items-center justify-center py-12 text-center px-6">
               <Clock className="h-8 w-8 text-muted-foreground/30 mb-2" />
-              <p className="text-sm text-muted-foreground">
-                No runs recorded for this model yet.
-              </p>
+              <p className="text-sm text-muted-foreground">No runs recorded for this model yet.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -300,16 +255,10 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
                 <TableBody>
                   {runs?.map((run) => (
                     <TableRow key={run.id}>
-                      <TableCell className="font-mono text-xs">
-                        #{run.id}
-                      </TableCell>
+                      <TableCell className="font-mono text-xs">#{run.id}</TableCell>
                       <TableCell
                         className="text-xs text-muted-foreground"
-                        title={
-                          run.created_at
-                            ? new Date(run.created_at).toLocaleString()
-                            : ""
-                        }
+                        title={run.created_at ? new Date(run.created_at).toLocaleString() : ""}
                       >
                         {timeAgo(run.created_at)}
                       </TableCell>
@@ -337,9 +286,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
                             Loaded
                           </Badge>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground">
-                            --
-                          </span>
+                          <span className="text-[10px] text-muted-foreground">--</span>
                         )}
                       </TableCell>
                       <TableCell className="text-center">
@@ -376,10 +323,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
 // BacktestConfigPanel — inline config for tree-model backtest options
 // ---------------------------------------------------------------------------
 
-const TREE_MODELS = new Set([
-  "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
-  "lgbm_cust_enriched", "catboost_cust_enriched", "xgboost_cust_enriched",
-]);
+const TREE_MODELS = new Set(["lgbm_cluster"]);
 
 function BacktestConfigPanel({ modelId }: { modelId: string }) {
   const isTree = TREE_MODELS.has(modelId);
@@ -397,16 +341,16 @@ function BacktestConfigPanel({ modelId }: { modelId: string }) {
   if (!isTree || !algo) return null;
 
   const strategy = algo.cluster_strategy ?? "per_cluster";
-  const recursive = params.recursive as boolean ?? true;
-  const shapSelect = params.shap_select as boolean ?? false;
-  const correlationFilter = params.correlation_filter as boolean ?? false;
-  const varianceFilter = params.variance_filter as boolean ?? false;
-  const tuneInline = params.tune_inline as boolean ?? false;
-  const nEstimators = params.n_estimators as number ?? 2000;
-  const learningRate = params.learning_rate as number ?? 0.015;
-  const numLeaves = params.num_leaves as number ?? 63;
-  const maxDepth = params.max_depth as number ?? 8;
-  const objective = params.objective as string ?? "regression_l1";
+  const recursive = (params.recursive as boolean) ?? true;
+  const shapSelect = (params.shap_select as boolean) ?? false;
+  const correlationFilter = (params.correlation_filter as boolean) ?? false;
+  const varianceFilter = (params.variance_filter as boolean) ?? false;
+  const tuneInline = (params.tune_inline as boolean) ?? false;
+  const nEstimators = (params.n_estimators as number) ?? 2000;
+  const learningRate = (params.learning_rate as number) ?? 0.015;
+  const numLeaves = (params.num_leaves as number) ?? 63;
+  const maxDepth = (params.max_depth as number) ?? 8;
+  const objective = (params.objective as string) ?? "regression_l1";
 
   return (
     <Card>
@@ -422,21 +366,27 @@ function BacktestConfigPanel({ modelId }: { modelId: string }) {
           <ConfigItem label="Strategy" value={strategy} />
           <ConfigItem label="Prediction" value={recursive ? "Recursive" : "Direct"} />
           <ConfigItem label="Objective" value={objective} />
-          <ConfigItem label="Inline Tune" value={tuneInline ? "ON" : "OFF"} highlight={tuneInline} />
+          <ConfigItem
+            label="Inline Tune"
+            value={tuneInline ? "ON" : "OFF"}
+            highlight={tuneInline}
+          />
         </div>
 
         {/* Hyperparams */}
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-            Hyperparameters {" "}
-            <span className="font-normal normal-case">(base — may be overridden by cluster profiles)</span>
+            Hyperparameters{" "}
+            <span className="font-normal normal-case">
+              (base — may be overridden by cluster profiles)
+            </span>
           </p>
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             <ConfigItem label="n_estimators" value={nEstimators} />
             <ConfigItem label="learning_rate" value={learningRate} />
             <ConfigItem label="num_leaves" value={numLeaves} />
             <ConfigItem label="max_depth" value={maxDepth} />
-            <ConfigItem label="subsample" value={params.subsample as number ?? 0.75} />
+            <ConfigItem label="subsample" value={(params.subsample as number) ?? 0.75} />
           </div>
         </div>
 
@@ -446,10 +396,22 @@ function BacktestConfigPanel({ modelId }: { modelId: string }) {
             Feature Selection
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <ConfigItem label="SHAP Select" value={shapSelect ? "ON" : "OFF"} highlight={shapSelect} />
-            <ConfigItem label="SHAP Threshold" value={params.shap_threshold as number ?? 0.9} />
-            <ConfigItem label="Corr. Filter" value={correlationFilter ? "ON" : "OFF"} highlight={correlationFilter} />
-            <ConfigItem label="Var. Filter" value={varianceFilter ? "ON" : "OFF"} highlight={varianceFilter} />
+            <ConfigItem
+              label="SHAP Select"
+              value={shapSelect ? "ON" : "OFF"}
+              highlight={shapSelect}
+            />
+            <ConfigItem label="SHAP Threshold" value={(params.shap_threshold as number) ?? 0.9} />
+            <ConfigItem
+              label="Corr. Filter"
+              value={correlationFilter ? "ON" : "OFF"}
+              highlight={correlationFilter}
+            />
+            <ConfigItem
+              label="Var. Filter"
+              value={varianceFilter ? "ON" : "OFF"}
+              highlight={varianceFilter}
+            />
           </div>
         </div>
 
@@ -459,9 +421,11 @@ function BacktestConfigPanel({ modelId }: { modelId: string }) {
             Cluster Tuning Profiles
           </p>
           <p className="text-xs text-muted-foreground">
-            Per-cluster hyperparameter overrides from <code className="text-[10px]">cluster_tuning_profiles.yaml</code>.
-            Run <code className="text-[10px]">make tune-lgbm-clusters</code> to auto-tune per cluster.
-            Set <code className="text-[10px]">enabled: false</code> in the YAML to use global params only.
+            Per-cluster hyperparameter overrides from{" "}
+            <code className="text-[10px]">cluster_tuning_profiles.yaml</code>. Run{" "}
+            <code className="text-[10px]">make tune-lgbm-clusters</code> to auto-tune per cluster.
+            Set <code className="text-[10px]">enabled: false</code> in the YAML to use global params
+            only.
           </p>
         </div>
       </CardContent>
@@ -470,12 +434,24 @@ function BacktestConfigPanel({ modelId }: { modelId: string }) {
 }
 
 // Small display-only config item
-function ConfigItem({ label, value, highlight }: { label: string; value: string | number | boolean; highlight?: boolean }) {
+function ConfigItem({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string | number | boolean;
+  highlight?: boolean;
+}) {
   const display = typeof value === "boolean" ? (value ? "ON" : "OFF") : String(value);
   return (
     <div className="rounded border px-2 py-1.5">
-      <p className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
-      <p className={cn("text-xs font-semibold tabular-nums", highlight && "text-primary")}>{display}</p>
+      <p className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">
+        {label}
+      </p>
+      <p className={cn("text-xs font-semibold tabular-nums", highlight && "text-primary")}>
+        {display}
+      </p>
     </div>
   );
 }

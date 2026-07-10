@@ -40,7 +40,6 @@ After any production pipeline run completes, the system **automatically register
 
 ## 3. Scope
 
-### 3.1 Model Tuning (LGBM, CatBoost, XGBoost)
 
 **Source artifacts per model** (`data/backtest/{model_id}/`):
 - `backtest_metadata.json` — portfolio accuracy, WAPE, bias, n_predictions, n_dfus, per-timeframe breakdowns
@@ -105,7 +104,6 @@ Single entry point that reads production artifacts and seeds all experiment tabl
 ```
 Usage:
   python scripts/ml/seed_production_baselines.py                    # Seed all (model tuning + champion + clustering)
-  python scripts/ml/seed_production_baselines.py --scope tuning     # Model tuning only (lgbm, catboost, xgboost)
   python scripts/ml/seed_production_baselines.py --scope champion   # Champion only
   python scripts/ml/seed_production_baselines.py --scope clustering # Clustering only
   python scripts/ml/seed_production_baselines.py --model lgbm       # Single model tuning only
@@ -125,7 +123,6 @@ def seed_tuning_baseline(model_id: str) -> None:
     acc = metadata["accuracy_at_execution_lag"]
 
     # 2. Load params from config YAML
-    model_key = model_id.replace("_cluster", "")  # lgbm, catboost, xgboost
     params = config["algorithms"][model_key]["params"]
     training = config["algorithms"][model_key]["training"]
 
@@ -215,7 +212,6 @@ seed-baselines-clustering:
 **Pipeline integration** — append to existing pipeline targets:
 
 ```makefile
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost seed-baselines-tuning
 champion-all: champion-select champion-simulate seed-baselines-champion
 cluster-all: cluster-train cluster-label seed-baselines-clustering
 setup-backtest: ... seed-baselines
@@ -233,8 +229,6 @@ template_id: "production_baseline"
 tuning:
   models:
     - lgbm_cluster
-    - catboost_cluster
-    - xgboost_cluster
   artifact_base: "data/backtest"
   model_artifact_base: "data/models"
 
@@ -324,7 +318,6 @@ The comparison panel will show full deltas: param diffs, accuracy changes per ti
 | Scenario | Handling |
 |---|---|
 | Artifacts don't exist yet (fresh install) | Script logs warning and skips that scope. No error. |
-| Partial artifacts (e.g., LGBM done, CatBoost not) | Seeds only models with complete artifacts |
 | User already promoted a different experiment | Production baseline replaces it (clears old `is_promoted`) |
 | User re-runs production backtest | Re-running `seed-baselines` replaces the old baseline with fresh data |
 | predictions CSV missing but metadata exists | Seed run-level metrics only; skip cluster/month/lag breakdowns. Log warning. |

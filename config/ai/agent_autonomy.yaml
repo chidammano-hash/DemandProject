@@ -34,7 +34,7 @@ policies:
 
   demand.retrain_cold_start:
     tier: auto_within_policy
-    description: Retrain rolling_mean baseline for new cold-start DFUs.
+    description: Retrain LightGBM for new cold-start DFUs.
     guardrails:
       max_blast_radius_skus: 500
       cooldown_hours: 6
