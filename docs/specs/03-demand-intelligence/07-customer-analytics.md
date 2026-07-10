@@ -10,10 +10,12 @@
 ## Overview
 
 Enhance the customer geographic visualization from a simple count-of-customers
-choropleth to a demand-aware analytics dashboard. The new **Customer Analytics**
-tab joins `fact_customer_demand_monthly` with `dim_customer`, `dim_location`,
-and `dim_item` to show demand volume, fill rate, OOS hotspots, channel mix,
-and customer concentration across 7 panel types.
+choropleth to a demand-aware, task-oriented analytics workspace. The **Customer
+Analytics** tab joins `fact_customer_demand_monthly` with `dim_customer`,
+`dim_location`, and `dim_item` to show demand volume, fill rate, OOS hotspots,
+channel mix, customer concentration, lifecycle, and buying behavior. Instead of
+mounting every chart in one long page, it groups analysis into five focused
+views: **Overview, Customers, Segments, Service risk, and Buying behavior**.
 
 ## Data Sources
 
@@ -40,6 +42,7 @@ prefix unchanged)
 | `ranking.py` | Customer ranking + behavior | `/ranking`, `/oos-impact`, `/affinity`, `/order-patterns` |
 | `lifecycle.py` | Lifecycle + risk views | `/lifecycle`, `/demand-at-risk` |
 | `kpis.py` | Item picker + KPI tiles + alerts | `/items`, `/kpis`, `/alerts` |
+| `assistant.py` | Grounded customer-intelligence Q&A | `/ask` |
 | `_helpers.py` | Geocoding cache + WHERE-clause builders (shared) | (helpers, no routes) |
 | `__init__.py` | Aggregates sub-router includes; re-exports `_get_nomi` and `get_planning_date` for test patching | (package init) |
 
@@ -63,6 +66,7 @@ prefix unchanged)
 | 14 | GET | `/customer-analytics/items` | `kpis.py` | Typeahead item search for filters |
 | 15 | GET | `/customer-analytics/kpis` | `kpis.py` | Aggregate KPI tiles |
 | 16 | GET | `/customer-analytics/alerts` | `kpis.py` | Threshold-based alert feed |
+| 17 | POST | `/customer-analytics/ask` | `assistant.py` | Answer from filtered KPIs and customer rankings |
 
 ### Common Filter Parameters
 
@@ -71,6 +75,7 @@ All endpoints (except `/items`) accept:
 - `date_from`, `date_to` (optional) — date range, default last 12 months
 - `channel` (optional) — `rpt_channel_desc` filter
 - `store_type` (optional) — `store_type_desc` filter
+- `state` (optional) — normalized customer-state filter
 
 ### SQL Pattern
 
@@ -87,8 +92,40 @@ GROUP BY ...
 
 ### Tab: `CustomerAnalyticsTab.tsx`
 
-Shared filter bar at top (item picker, date range, channel, store type)
-with 7 panels in a 2-column grid below.
+Shared collapsible filter bar at top (item picker, date range, state, channel,
+store type), KPI summary, embedded **Customer Intelligence** question bar, and
+a five-item task navigation. Only the active view mounts, avoiding the previous
+wall of charts while preserving one filter context across planning questions.
+
+### Task Views
+
+| View | Primary planning question | Panels |
+|---|---|---|
+| Overview | Where is demand and how concentrated is it? | Demand Map, Customer Treemap |
+| Customers | Which customers drive value or need retention attention? | Ranking, Lifecycle, Demand at Risk |
+| Segments | Which channel/store segments are growing or weakening? | Channel Mix, Segment Trends, Item × State Heatmap |
+| Service risk | Where are fill-rate and OOS losses concentrated? | OOS Impact, Demand at Risk, Fill-rate Heatmap |
+| Buying behavior | What cadence, affinity, and flow patterns stand out? | Customer-Item Affinity, Order Patterns, Demand Flow |
+
+### Embedded Customer Intelligence
+
+`CustomerAnalyticsAssistant.tsx` posts the question, active view, current
+filters, and a bounded six-message history to `POST /customer-analytics/ask`.
+The backend refreshes database evidence for that exact scope: aggregate KPIs,
+the top five demand customers, and the five lowest-fill-rate customers. The
+model must use only this evidence, disclose when it is insufficient, and avoid
+claiming causation from correlation.
+
+- **Laptop development:** the default `codex` runtime invokes the same
+  read-only `codex exec` path and GPT model tiers as SKU Chat, reusing saved
+  Codex/ChatGPT login without a separate API key.
+- **Production:** set `CUSTOMER_ANALYTICS_AI_RUNTIME=openai` and provide
+  `OPENAI_API_KEY`; `config/ai/customer_analytics_assistant_config.yaml`
+  selects the production GPT model and cost controls.
+
+Every response displays provider, model, tier, and evidence-set count. The
+global SKU chat drawer is suppressed on this tab so users see one relevant,
+database-grounded assistant.
 
 ### Panels
 
@@ -121,6 +158,8 @@ with 7 panels in a 2-column grid below.
   `…customer_analytics.get_planning_date`), which the package `__init__.py` re-exports
   for test convenience.
 - Frontend: `frontend/src/tabs/__tests__/CustomerAnalyticsTab.test.tsx` — render, filter, panels
+- AI runtime: `tests/unit/test_customer_analytics_assistant.py` — Codex-local and OpenAI-production routing
+- AI API: `tests/api/test_customer_analytics_assistant.py` — filtered evidence grounding and contract
 - Scale: `tests/scale/test_customer_analytics_scale.py` — synthetic 100K-row run by default;
   nightly `make scale-test SCALE=10000000` (10M rows ≈ 40× production) verifies all
   MV-routed endpoints clear the 30s `statement_timeout` ceiling.
@@ -229,7 +268,7 @@ freshness still tracks ETL.
 | Panel | Before | After | Why |
 |---|---|---|---|
 | 8 ECharts panels | echarts (canvas, ~1 MB shared chunk) | recharts (SVG) | Reduced raw bundle by ~728 KB across the tab; SVG renders faster on the small datasets these panels return. |
-| Below-fold panels | Eager `useQuery` on tab mount | Wrapped in `LazyPanel` | Defers ~7 panel queries until the user scrolls; initial paint fires only the above-the-fold panels (`/kpis`, `/map`, `/filter-options`, `/items`). |
+| Specialized panels | All mounted in one long page | Mounted only for the active task view | Reduces initial work and removes the repeated loading-placeholder wall. |
 
 ### Performance Snapshot
 
@@ -237,5 +276,5 @@ freshness still tracks ETL.
 |---|---|---|
 | `/kpis` p50 (1× scale) | 10,805 ms | 63 ms |
 | `/kpis` at 40× scale | timeout (>30 s) | <30 s |
-| Initial-paint queries fired | 13 | ~4 |
+| Initial-paint panel queries fired | 13 | 2 overview panels + shared KPI/filter lookups |
 | Tab raw bundle | baseline | −728 KB |

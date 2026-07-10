@@ -16,9 +16,10 @@ from fastapi import APIRouter
 # (tests/api/test_customer_analytics.py patches
 #  api.routers.intelligence.customer_analytics.{get_planning_date,_get_nomi})
 from ._helpers import _get_nomi, get_planning_date  # noqa: F401
-from . import geo, kpis, lifecycle, ranking, recalculate, segments
+from . import assistant, geo, kpis, lifecycle, ranking, recalculate, segments
 
 router = APIRouter()
+router.include_router(assistant.router)
 router.include_router(geo.router)
 router.include_router(segments.router)
 router.include_router(ranking.router)

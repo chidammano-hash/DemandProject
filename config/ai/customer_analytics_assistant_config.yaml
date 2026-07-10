@@ -1,0 +1,17 @@
+# Customer Analytics embedded assistant.
+# Local development defaults to Codex CLI, which reuses the laptop's saved
+# ChatGPT/Codex authentication. Production sets
+# CUSTOMER_ANALYTICS_AI_RUNTIME=openai and supplies OPENAI_API_KEY.
+
+runtime:
+  provider: codex # codex for local subscription auth; openai for production API billing.
+
+models:
+  openai: gpt-5.5 # Production model used when runtime is openai.
+
+temperature: 0.1 # Keep analysis consistent while allowing natural phrasing.
+max_tokens: 900 # Answers should remain concise and decision-oriented.
+max_history_messages: 6 # Bounded conversational memory per browser session.
+
+cost_controls:
+  per_call_timeout_seconds: 60 # Wall-clock ceiling for either runtime.

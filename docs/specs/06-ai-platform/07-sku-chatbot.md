@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Partial — Phases 1 + 3 + agentic adjust + global page-aware chat (backend, persistence, standalone tab + a chat drawer on every tab, champion-adjust approval flow; 62 tests green). The live model path requires `uv sync --extra agent`; persistence requires `sql/196`–`197`. |
-| **UI Tab** | SkuChatTab (standalone) **+ a global, page-aware chat drawer (`GlobalChatDrawer`) on every tab** |
+| **UI Tab** | SkuChatTab (standalone) **+ a global, page-aware chat drawer (`GlobalChatDrawer`) on every tab except Customer Analytics, which has a database-grounded assistant** |
 | **Key Files** | `frontend/src/tabs/SkuChatTab.tsx`, `frontend/src/tabs/sku-chat/{SkuChatPanel,GlobalChatDrawer}.tsx` + `pageChatConfig.ts`, `frontend/src/context/ActiveSkuContext.tsx` (chat inherits the active page's SKU; `ItemAnalysisTab` publishes), `frontend/src/App.tsx` (mounts the global drawer + `ActiveSkuProvider`), `frontend/src/api/queries/sku-chat.ts`, `api/routers/intelligence/sku_chat.py`, `common/ai/sku_chat/` (config, auth, model_router, sku_data, tools, agent, prompts, store, champion_adjust), `config/ai/sku_chat_config.yaml`, `sql/196`, `sql/197` |
 | **API Prefixes** | `/sku-chat` |
 | **Depends On** | Claude Agent SDK (`claude-agent-sdk`, `agent` extra) for `runtime.provider: claude`; Codex CLI for `runtime.provider: codex`; `dim_sku` + SKU features (03-02), production/candidate forecast (02), demand history workbench (03-06), accuracy KPIs (02), AI Planning Agent (06-01) as the architectural sibling |

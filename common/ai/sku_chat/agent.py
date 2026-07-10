@@ -30,7 +30,9 @@ log = logging.getLogger(__name__)
 
 _CODEX_BINARY_FALLBACKS = (
     "/Applications/Codex.app/Contents/Resources/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
     "~/Applications/Codex.app/Contents/Resources/codex",
+    "~/Applications/ChatGPT.app/Contents/Resources/codex",
 )
 
 
@@ -403,6 +405,7 @@ async def _run_codex_exec(
     binary = str(codex_cfg.get("binary", "codex"))
     sandbox = str(codex_cfg.get("sandbox", "read-only"))
     approval = str(codex_cfg.get("approval_policy", "never"))
+    reasoning_effort = str(codex_cfg.get("reasoning_effort", "high"))
     cwd = str(PROJECT_ROOT)
     resolved_binary = _resolve_codex_binary(binary)
 
@@ -414,6 +417,8 @@ async def _run_codex_exec(
         sandbox,
         "-c",
         f'approval_policy="{approval}"',
+        "-c",
+        f'model_reasoning_effort="{reasoning_effort}"',
         "--model",
         model_id,
         "-",

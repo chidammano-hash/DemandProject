@@ -36,6 +36,7 @@ async def customer_analytics_ranking(
     date_to: str | None = Query(default=None),
     channel: str | None = Query(default=None),
     store_type: str | None = Query(default=None),
+    state: str | None = Query(default=None),
     min_demand: float = Query(default=0, ge=0),
 ):
     """Top/bottom customer ranking by demand or fill rate."""
@@ -45,13 +46,21 @@ async def customer_analytics_ranking(
     # the dim_customer attributes we group on, so no JOIN required.
     source_from, uses_mv = _customer_activity_source(item_id)
     if uses_mv:
-        where = _build_where_mv(params, date_from, date_to, channel, store_type)
+        where = _build_where_mv(params, date_from, date_to, channel, store_type, state=state)
         cust_no_col = "f.customer_no"
         cust_name_col = "f.customer_name"
         state_col = "f.state"
         channel_col = "f.rpt_channel_desc"
     else:
-        where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+        where = _build_where(
+            params,
+            item_id,
+            date_from,
+            date_to,
+            channel,
+            store_type,
+            state=state,
+        )
         cust_no_col = "c.customer_no"
         cust_name_col = "c.customer_name"
         state_col = "c.state"

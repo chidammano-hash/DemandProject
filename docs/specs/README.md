@@ -103,7 +103,7 @@ Understand demand patterns — descriptive analytics that inform forecasting and
 | 03 | [Blended Demand](03-demand-intelligence/03-blended-demand.md) | Alpha-weighted blend of statistical forecast + demand signals |
 | 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for 8 champion selection strategies (expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling) with 2-stage promotion |
 | 06 | [Demand History Workbench](03-demand-intelligence/06-demand-history-workbench.md) | 5-endpoint customer demand analysis API — reference panel, proportional decomposition, hierarchical drill-down, cross-reference matrix |
-| 07 | [Customer Analytics](03-demand-intelligence/07-customer-analytics.md) | Demand-aware customer map with volume, OOS hotspots, channel mix, and concentration analytics |
+| 07 | [Customer Analytics](03-demand-intelligence/07-customer-analytics.md) | Five-view customer intelligence workspace with demand, service, behavior visuals, and grounded GPT Q&A |
 
 ---
 

@@ -14,6 +14,33 @@ export interface CustomerAnalyticsFilters {
   state?: string;
 }
 
+export type CustomerAnalyticsView =
+  | "overview"
+  | "customers"
+  | "segments"
+  | "service"
+  | "behavior";
+
+export interface CustomerAnalyticsChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface CustomerAnalyticsAskRequest {
+  question: string;
+  filters: CustomerAnalyticsFilters;
+  active_view: CustomerAnalyticsView;
+  history: CustomerAnalyticsChatMessage[];
+}
+
+export interface CustomerAnalyticsAskResponse {
+  answer: string;
+  provider: string;
+  model: string;
+  tier: string;
+  evidence: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Channel Mix extended payload
 // ---------------------------------------------------------------------------
@@ -526,6 +553,16 @@ export function fetchCustomerAnalyticsAlerts(
 ): Promise<AlertsPayload> {
   const qs = buildQuerySuffix(filterParams(filters));
   return fetchJson(`/customer-analytics/alerts${qs}`);
+}
+
+export function askCustomerAnalytics(
+  request: CustomerAnalyticsAskRequest,
+): Promise<CustomerAnalyticsAskResponse> {
+  return fetchJson("/customer-analytics/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
 }
 
 // ---------------------------------------------------------------------------

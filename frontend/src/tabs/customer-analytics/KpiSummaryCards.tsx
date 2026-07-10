@@ -1,5 +1,14 @@
 import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  Gauge,
+  PackageX,
+  PieChart,
+  Scale,
+  TrendingUp,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -20,6 +29,7 @@ interface KpiCardDef {
   // Direction in which an increase is *good*. For OOS / lost sales /
   // concentration an increase is bad, so a green up-arrow would mislead.
   goodDirection?: "up" | "down";
+  icon: LucideIcon;
 }
 
 // Deltas with magnitude below this are treated as flat (no direction).
@@ -60,12 +70,12 @@ function fmtRatio(n: number): string {
 }
 
 const KPI_DEFS: KpiCardDef[] = [
-  { key: "total_demand", label: "Total Demand", format: fmtNum, suffix: " cases", goodDirection: "up" },
-  { key: "fill_rate", label: "Fill Rate", format: fmtPct, goodDirection: "up" },
-  { key: "lost_sales_oos", label: "Lost Sales (OOS)", format: fmtNum, suffix: " cases", goodDirection: "down" },
-  { key: "active_customers", label: "Active Customers", format: fmtNum, goodDirection: "up" },
-  { key: "demand_concentration", label: "Demand Concentration", format: fmtPct, goodDirection: "down" },
-  { key: "order_to_demand_ratio", label: "Order-to-Demand Ratio", format: fmtRatio, goodDirection: "up" },
+  { key: "total_demand", label: "Total Demand", format: fmtNum, suffix: " cases", goodDirection: "up", icon: TrendingUp },
+  { key: "fill_rate", label: "Fill Rate", format: fmtPct, goodDirection: "up", icon: Gauge },
+  { key: "lost_sales_oos", label: "Lost Sales (OOS)", format: fmtNum, suffix: " cases", goodDirection: "down", icon: PackageX },
+  { key: "active_customers", label: "Active Customers", format: fmtNum, goodDirection: "up", icon: Users },
+  { key: "demand_concentration", label: "Demand Concentration", format: fmtPct, goodDirection: "down", icon: PieChart },
+  { key: "order_to_demand_ratio", label: "Order-to-Demand Ratio", format: fmtRatio, goodDirection: "up", icon: Scale },
 ];
 
 // Backend returns {kpis: [{key, value, delta}, ...]} with keys like
@@ -135,21 +145,30 @@ function DeltaBadge({ delta, goodDirection }: { delta: number | null; goodDirect
 }
 
 function KpiCard({ metric, def }: { metric: KpiMetric | undefined; def: KpiCardDef }) {
+  const Icon = def.icon;
   if (!metric) {
     return (
       <Card>
         <CardContent className="py-3 px-4">
-          <div className="text-xs text-muted-foreground">{def.label}</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs text-muted-foreground">{def.label}</div>
+            <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          </div>
           <div className="text-lg font-semibold mt-1">--</div>
         </CardContent>
       </Card>
     );
   }
   return (
-    <Card>
+    <Card className="group hover:border-primary/20 hover:shadow-md">
       <CardContent className="py-3 px-4">
-        <div className="text-xs text-muted-foreground">{def.label}</div>
-        <div className="text-lg font-semibold mt-1">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs text-muted-foreground">{def.label}</div>
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:bg-primary/10 group-hover:text-primary">
+            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+        </div>
+        <div className="mt-1 text-lg font-semibold tracking-tight">
           {def.format(metric.value)}{def.suffix ?? ""}
         </div>
         <DeltaBadge delta={metric.delta} goodDirection={def.goodDirection} />
@@ -167,7 +186,10 @@ export function KpiSummaryCards({ filters }: Props) {
         {KPI_DEFS.map((def) => (
           <Card key={def.key}>
             <CardContent className="py-3 px-4">
-              <div className="text-xs text-muted-foreground">{def.label}</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">{def.label}</div>
+                <def.icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              </div>
               <div className="text-lg font-semibold mt-1 animate-pulse bg-muted rounded w-16 h-6" />
             </CardContent>
           </Card>

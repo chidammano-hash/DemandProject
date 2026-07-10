@@ -55,10 +55,12 @@ codex_models:
 # If "codex" is not visible to the API server PATH, agent.py also checks
 # CODEX_CLI_PATH and the Codex desktop bundle at:
 # /Applications/Codex.app/Contents/Resources/codex
+# or /Applications/ChatGPT.app/Contents/Resources/codex
 codex:
   binary: "codex"
   sandbox: "read-only"
   approval_policy: "never"
+  reasoning_effort: "high" # Override incompatible user-level values such as ultra/max.
 
 # ───────────────────────────────────────────────────────────────────────────
 # Routing rules — deterministic heuristics that map a question to a tier.

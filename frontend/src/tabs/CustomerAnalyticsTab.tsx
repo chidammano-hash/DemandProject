@@ -1,111 +1,79 @@
-import { lazy, Suspense, useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent } from "@/components/ui/card";
-import { LazyPanel } from "@/components/LazyPanel";
-import { SearchableSelect } from "@/components/SearchableSelect";
+import {
+  Filter,
+  MapPinned,
+  Network,
+  Search,
+  ShieldAlert,
+  SlidersHorizontal,
+  Users,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+
 import {
   customerAnalyticsKeys,
-  fetchCustomerAnalyticsItems,
   fetchCustomerAnalyticsFilterOptions,
+  fetchCustomerAnalyticsItems,
+  type CustomerAnalyticsFilters,
+  type CustomerAnalyticsView,
 } from "@/api/queries/customer-analytics";
-import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/SearchableSelect";
 import { useDebounce } from "@/hooks/useDebounce";
-import { DashboardFilterProvider, useDashboardFilter } from "./customer-analytics/DashboardFilterContext";
-// Eager: above-the-fold panels visible on first paint.
-import { RecalculateButton } from "./customer-analytics/RecalculateButton";
+import { cn } from "@/lib/utils";
+import { CustomerAnalyticsAssistant } from "./customer-analytics/CustomerAnalyticsAssistant";
+import { CustomerAnalyticsWorkspace } from "./customer-analytics/CustomerAnalyticsWorkspace";
+import {
+  DashboardFilterProvider,
+  useDashboardFilter,
+} from "./customer-analytics/DashboardFilterContext";
 import { KpiSummaryCards } from "./customer-analytics/KpiSummaryCards";
-import { CustomerDemandMap } from "./customer-analytics/CustomerDemandMap";
-import { CustomerTreemap } from "./customer-analytics/CustomerTreemap";
+import { RecalculateButton } from "./customer-analytics/RecalculateButton";
 
-// Lazy: below-the-fold or chart-heavy panels. Each gets its own JS chunk so
-// initial bundle stays small and ECharts init is deferred until scrolled.
-const CustomerHeatmap = lazy(() =>
-  import("./customer-analytics/CustomerHeatmap").then((m) => ({ default: m.CustomerHeatmap })),
-);
-const ChannelSunburst = lazy(() =>
-  import("./customer-analytics/ChannelSunburst").then((m) => ({ default: m.ChannelSunburst })),
-);
-const SegmentSparklines = lazy(() =>
-  import("./customer-analytics/SegmentSparklines").then((m) => ({ default: m.SegmentSparklines })),
-);
-const CustomerRanking = lazy(() =>
-  import("./customer-analytics/CustomerRanking").then((m) => ({ default: m.CustomerRanking })),
-);
-const OosImpactBubble = lazy(() =>
-  import("./customer-analytics/OosImpactBubble").then((m) => ({ default: m.OosImpactBubble })),
-);
-const CustomerLifecycle = lazy(() =>
-  import("./customer-analytics/CustomerLifecycle").then((m) => ({ default: m.CustomerLifecycle })),
-);
-const DemandAtRisk = lazy(() =>
-  import("./customer-analytics/DemandAtRisk").then((m) => ({ default: m.DemandAtRisk })),
-);
-const CustomerItemAffinity = lazy(() =>
-  import("./customer-analytics/CustomerItemAffinity").then((m) => ({ default: m.CustomerItemAffinity })),
-);
-const OrderPatterns = lazy(() =>
-  import("./customer-analytics/OrderPatterns").then((m) => ({ default: m.OrderPatterns })),
-);
-const DemandFlowSankey = lazy(() =>
-  import("./customer-analytics/DemandFlowSankey").then((m) => ({ default: m.DemandFlowSankey })),
-);
-
-function PanelFallback({ height = 300 }: { height?: number }) {
-  return (
-    <div
-      className="flex items-center justify-center text-sm text-muted-foreground rounded-md border border-dashed"
-      style={{ height }}
-    >
-      Loading...
-    </div>
-  );
+interface ViewDefinition {
+  id: CustomerAnalyticsView;
+  label: string;
+  description: string;
+  icon: LucideIcon;
 }
 
-// Last 12 months window, aligned to the first of the month — matches the
-// backend's _default_date_range() so the picker shows what the API would
-// have used implicitly anyway.
+const VIEWS: ViewDefinition[] = [
+  { id: "overview", label: "Overview", description: "Demand footprint", icon: MapPinned },
+  { id: "customers", label: "Customers", description: "Rank and retain", icon: Users },
+  { id: "segments", label: "Segments", description: "Mix and trends", icon: Network },
+  { id: "service", label: "Service risk", description: "OOS and fill rate", icon: ShieldAlert },
+  { id: "behavior", label: "Buying behavior", description: "Cadence and affinity", icon: SlidersHorizontal },
+];
+
 function defaultDateRange(): { from: string; to: string } {
   const now = new Date();
   const to = new Date(now.getFullYear(), now.getMonth(), 1);
   const from = new Date(to.getFullYear(), to.getMonth() - 12, 1);
-  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-  return { from: fmt(from), to: fmt(to) };
+  const format = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+  return { from: format(from), to: format(to) };
 }
 
-type MapMetric = "customer_count" | "demand_qty" | "sales_qty" | "oos_qty" | "fill_rate";
-type GroupBy = "state" | "city" | "zip";
-type SegmentBy = "rpt_channel_desc" | "store_type_desc" | "chain_type_desc" | "state";
-type SortMode = "demand_desc" | "fill_rate_asc";
-type Grain = "customer" | "state";
-
 function CustomerAnalyticsContent() {
-  const { state: dashFilter, dispatch } = useDashboardFilter();
-
-  // Shared filters
-  const [itemId, setItemId] = useState<string>("");
-  const [itemSearch, setItemSearch] = useState("");
+  const { state: dashboardFilter, dispatch } = useDashboardFilter();
   const initialRange = useMemo(defaultDateRange, []);
+  const [activeView, setActiveView] = useState<CustomerAnalyticsView>("overview");
+  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [itemId, setItemId] = useState("");
+  const [itemSearch, setItemSearch] = useState("");
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [channel, setChannel] = useState("");
   const [storeType, setStoreType] = useState("");
   const [stateFilter, setStateFilter] = useState("");
 
-  // Panel-specific state
-  const [mapMetric, setMapMetric] = useState<MapMetric>("demand_qty");
-  const [groupBy, setGroupBy] = useState<GroupBy>("state");
-  const [segmentBy, setSegmentBy] = useState<SegmentBy>("rpt_channel_desc");
-  const [rankSort, setRankSort] = useState<SortMode>("demand_desc");
-  const [oosGrain, setOosGrain] = useState<Grain>("customer");
-
-  // Merge local and context filters
-  const effectiveChannel = dashFilter.selectedChannel || channel;
-  const effectiveState = dashFilter.selectedState || stateFilter;
-
-  // Stable identity across unrelated renders — otherwise every keystroke
-  // recreates `filters` and cache-busts the 13 panels that spread it into
-  // their React Query keys.
-  const filters: CustomerAnalyticsFilters = useMemo(
+  const effectiveChannel = dashboardFilter.selectedChannel || channel;
+  const effectiveState = dashboardFilter.selectedState || stateFilter;
+  const filters = useMemo<CustomerAnalyticsFilters>(
     () => ({
       item_id: itemId || undefined,
       date_from: dateFrom || undefined,
@@ -117,7 +85,6 @@ function CustomerAnalyticsContent() {
     [itemId, dateFrom, dateTo, effectiveChannel, storeType, effectiveState],
   );
 
-  // Debounced typeahead — each keystroke hits an ILIKE scan on dim_item.
   const debouncedItemSearch = useDebounce(itemSearch, 300);
   const { data: itemsData } = useQuery({
     queryKey: customerAnalyticsKeys.items(debouncedItemSearch),
@@ -125,279 +92,247 @@ function CustomerAnalyticsContent() {
     staleTime: 5 * 60_000,
     enabled: debouncedItemSearch.length >= 1 || debouncedItemSearch === "",
   });
-
-  // Filter options for dropdowns
   const { data: filterOptions } = useQuery({
     queryKey: customerAnalyticsKeys.filterOptions(),
     queryFn: () => fetchCustomerAnalyticsFilterOptions(),
-    staleTime: 60 * 60_000, // enums are essentially static; 1h is plenty
+    staleTime: 60 * 60_000,
   });
 
-  const handleItemSelect = useCallback((val: string) => {
-    setItemId(val);
-    setItemSearch(val ? (itemsData?.items.find((i) => i.item_id === val)?.item_desc ?? val) : "");
-  }, [itemsData]);
+  const handleItemSelect = useCallback(
+    (value: string) => {
+      setItemId(value);
+      setItemSearch(
+        value ? (itemsData?.items.find((item) => item.item_id === value)?.item_desc ?? value) : "",
+      );
+    },
+    [itemsData],
+  );
 
-  const handleClear = () => {
-    const r = defaultDateRange();
-    setItemId(""); setItemSearch(""); setDateFrom(r.from); setDateTo(r.to);
-    setChannel(""); setStoreType(""); setStateFilter("");
+  const clearFilters = () => {
+    const range = defaultDateRange();
+    setItemId("");
+    setItemSearch("");
+    setDateFrom(range.from);
+    setDateTo(range.to);
+    setChannel("");
+    setStoreType("");
+    setStateFilter("");
     dispatch({ type: "CLEAR_ALL" });
   };
 
+  const activeFilterCount = [itemId, effectiveState, effectiveChannel, storeType].filter(Boolean).length;
+  const assistantScopeKey = [
+    activeView,
+    itemId,
+    dateFrom,
+    dateTo,
+    effectiveState,
+    effectiveChannel,
+    storeType,
+  ].join("|");
+
+  const handleViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % VIEWS.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + VIEWS.length) % VIEWS.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = VIEWS.length - 1;
+    if (nextIndex == null) return;
+
+    event.preventDefault();
+    const nextView = VIEWS[nextIndex];
+    setActiveView(nextView.id);
+    document.getElementById(`customer-analytics-tab-${nextView.id}`)?.focus();
+  };
+
   return (
-    <div className="space-y-4 p-4">
-      {/* 0. Page header — title + one-line description, matching the sidebar
-          label ("Customer Analytics") and every other tab's chrome (U4.4).
-          Recalculate button refreshes the backing MVs (mirrors SKU Features). */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Customer Analytics</h2>
-          <p className="text-sm text-muted-foreground">
-            Geographic demand, fill rate, and concentration across customers,
-            channels, and store types.
+    <div className="space-y-4 p-4 sm:p-5">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="max-w-2xl">
+          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-primary">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            Customer intelligence workspace
+          </div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Customer Analytics</h1>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Move from demand footprint to customer risk, segment performance, and buying behavior
+            without losing your filter context.
           </p>
         </div>
-        <RecalculateButton />
-      </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+            aria-controls="customer-analytics-filters"
+          >
+            <Filter className="h-4 w-4" aria-hidden="true" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+          <RecalculateButton />
+        </div>
+      </header>
 
-      {/* 1. KPI Summary Cards */}
-      <KpiSummaryCards filters={filters} />
-
-      {/* 2. Filter Bar */}
-      <Card>
-        <CardContent className="py-3">
-          <div className="flex flex-wrap gap-3 items-end">
-            {/* Item picker */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">Item</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search item..."
-                  value={itemSearch}
-                  onChange={(e) => {
-                    setItemSearch(e.target.value);
-                    if (!e.target.value) setItemId("");
-                  }}
-                  className="w-52 px-2 py-1 text-sm border rounded"
-                  list="ca-items"
-                />
-                <datalist id="ca-items">
-                  {(itemsData?.items ?? []).map((it) => (
-                    <option key={it.item_id} value={it.item_id}>
-                      {it.item_desc}
-                    </option>
-                  ))}
-                </datalist>
-                {itemId && (
-                  <button
-                    onClick={() => { setItemId(""); setItemSearch(""); }}
-                    className="absolute right-1 top-1 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    x
-                  </button>
+      <nav
+        className="overflow-x-auto overscroll-x-none rounded-xl border bg-card p-1 shadow-card"
+        aria-label="Customer Analytics views"
+      >
+        <div className="grid min-w-[660px] grid-cols-5 gap-1" role="tablist">
+          {VIEWS.map((view, index) => {
+            const Icon = view.icon;
+            const selected = activeView === view.id;
+            return (
+              <button
+                key={view.id}
+                id={`customer-analytics-tab-${view.id}`}
+                type="button"
+                role="tab"
+                aria-label={view.label}
+                aria-selected={selected}
+                aria-controls={`customer-analytics-panel-${view.id}`}
+                onClick={() => setActiveView(view.id)}
+                onKeyDown={(event) => handleViewKeyDown(event, index)}
+                tabIndex={selected ? 0 : -1}
+                className={cn(
+                  "flex min-h-14 items-center gap-2 rounded-lg px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  selected
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
-              </div>
-              {itemSearch && !itemId && (itemsData?.items ?? []).length > 0 && (
-                <div className="absolute z-50 mt-14 bg-popover text-popover-foreground border rounded shadow-lg max-h-40 overflow-y-auto w-52">
-                  {itemsData!.items.slice(0, 10).map((it) => (
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-xs font-semibold">{view.label}</span>
+                  <span className={cn("block truncate text-[10px]", selected ? "text-primary-foreground/75" : "text-muted-foreground")}>
+                    {view.description}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      <Card id="customer-analytics-filters" hidden={!filtersOpen}>
+        <CardContent className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+              <Search className="h-4 w-4 text-primary" aria-hidden="true" />
+              Focus the analysis
+            </div>
+            <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <div className="relative space-y-1 sm:col-span-2 xl:col-span-1">
+              <label htmlFor="customer-analytics-item" className="text-xs font-medium text-muted-foreground">
+                Item
+              </label>
+              <Input
+                id="customer-analytics-item"
+                type="text"
+                placeholder="Search item..."
+                value={itemSearch}
+                onChange={(event) => {
+                  setItemSearch(event.target.value);
+                  if (!event.target.value) setItemId("");
+                }}
+                className="pr-9"
+              />
+              {itemId && (
+                <button
+                  type="button"
+                  onClick={() => handleItemSelect("")}
+                  className="absolute right-2 top-[27px] flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Clear selected item"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
+              {itemSearch && !itemId && (itemsData?.items.length ?? 0) > 0 && (
+                <div className="absolute z-50 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg">
+                  {itemsData?.items.slice(0, 10).map((item) => (
                     <button
-                      key={it.item_id}
-                      onClick={() => handleItemSelect(it.item_id)}
-                      className="block w-full text-left px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground"
+                      key={item.item_id}
+                      type="button"
+                      onClick={() => handleItemSelect(item.item_id)}
+                      className="block min-h-10 w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      <span className="font-medium">{it.item_id}</span>
-                      <span className="text-muted-foreground ml-1">{it.item_desc}</span>
+                      <span className="block font-mono font-medium">{item.item_id}</span>
+                      <span className="block truncate text-muted-foreground">{item.item_desc}</span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Date range */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">From</label>
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-2 py-1 text-sm border rounded" />
+            <div className="space-y-1">
+              <label htmlFor="customer-analytics-from" className="text-xs font-medium text-muted-foreground">From</label>
+              <Input id="customer-analytics-from" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">To</label>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-2 py-1 text-sm border rounded" />
+            <div className="space-y-1">
+              <label htmlFor="customer-analytics-to" className="text-xs font-medium text-muted-foreground">To</label>
+              <Input id="customer-analytics-to" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
             </div>
-
-            {/* State dropdown */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">State</label>
+            <div className="space-y-1">
+              <label htmlFor="customer-analytics-state" className="text-xs font-medium text-muted-foreground">State</label>
               <select
+                id="customer-analytics-state"
                 value={effectiveState}
-                onChange={(e) => {
-                  setStateFilter(e.target.value);
-                  dispatch({ type: "SET_STATE", payload: e.target.value });
+                onChange={(event) => {
+                  setStateFilter(event.target.value);
+                  dispatch({ type: "SET_STATE", payload: event.target.value });
                 }}
-                className="w-36 px-2 py-1 text-sm border rounded"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <option value="">All states</option>
-                {(filterOptions?.states ?? []).map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
+                {(filterOptions?.states ?? []).map((state) => <option key={state} value={state}>{state}</option>)}
               </select>
             </div>
-
-            {/* Channel dropdown — U7.11: searchable combobox matching the Store
-                Type filter beside it, so both filters share one affordance and
-                the casing-duplicated channel list is type-ahead navigable. */}
-            <div className="flex flex-col gap-1">
+            <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Channel</label>
               <SearchableSelect
                 value={effectiveChannel}
                 options={filterOptions?.channels ?? []}
                 placeholder="All channels"
                 ariaLabel="Channel"
-                onChange={(val) => {
-                  setChannel(val);
-                  dispatch({ type: "SET_CHANNEL", payload: val });
+                className="w-full"
+                onChange={(value) => {
+                  setChannel(value);
+                  dispatch({ type: "SET_CHANNEL", payload: value });
                 }}
               />
             </div>
-
-            {/* Store Type dropdown */}
-            <div className="flex flex-col gap-1">
+            <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Store Type</label>
               <SearchableSelect
                 value={storeType}
                 options={filterOptions?.store_types ?? []}
                 placeholder="All types"
                 ariaLabel="Store Type"
+                className="w-full"
                 onChange={setStoreType}
               />
             </div>
-
-            {/* Active cross-filter badges */}
-            {(dashFilter.selectedState || dashFilter.selectedChannel || dashFilter.selectedCustomer || dashFilter.selectedSegment) && (
-              <div className="flex gap-1 items-center">
-                {dashFilter.selectedState && (
-                  <span className="px-2 py-0.5 text-xs bg-teal-100 text-teal-700 rounded-full">
-                    State: {dashFilter.selectedState}
-                  </span>
-                )}
-                {dashFilter.selectedChannel && (
-                  <span className="px-2 py-0.5 text-xs bg-indigo-100 text-indigo-700 rounded-full">
-                    Channel: {dashFilter.selectedChannel}
-                  </span>
-                )}
-                {dashFilter.selectedCustomer && (
-                  <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">
-                    Customer: {dashFilter.selectedCustomer}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Clear */}
-            <button
-              onClick={handleClear}
-              className="px-3 py-1 text-xs bg-muted text-muted-foreground rounded hover:bg-accent hover:text-accent-foreground"
-            >
-              Clear
-            </button>
           </div>
         </CardContent>
       </Card>
 
-      {/* 3. Demand Map | Treemap */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CustomerDemandMap
-          filters={filters}
-          metric={mapMetric}
-          groupBy={groupBy}
-          onMetricChange={setMapMetric}
-          onGroupByChange={setGroupBy}
-        />
-        <CustomerTreemap filters={filters} />
-      </div>
-
-      {/* 4. Heatmap | Sunburst — viewport-gated: useQuery only fires when scrolled into view */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
-          <Suspense fallback={<PanelFallback height={400} />}>
-            <CustomerHeatmap filters={filters} metric="demand_qty" topN={25} />
-          </Suspense>
-        </LazyPanel>
-        <LazyPanel fallback={<PanelFallback height={420} />} minHeight={420}>
-          <Suspense fallback={<PanelFallback height={420} />}>
-            <ChannelSunburst filters={filters} />
-          </Suspense>
-        </LazyPanel>
-      </div>
-
-      {/* 5. Sparklines | OOS Bubble */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LazyPanel fallback={<PanelFallback height={300} />} minHeight={300}>
-          <Suspense fallback={<PanelFallback height={300} />}>
-            <SegmentSparklines
-              filters={filters}
-              segmentBy={segmentBy}
-              onSegmentByChange={setSegmentBy}
-            />
-          </Suspense>
-        </LazyPanel>
-        <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
-          <Suspense fallback={<PanelFallback height={400} />}>
-            <OosImpactBubble
-              filters={filters}
-              grain={oosGrain}
-              onGrainChange={setOosGrain}
-            />
-          </Suspense>
-        </LazyPanel>
-      </div>
-
-      {/* 6. Full-width ranking */}
-      <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
-        <Suspense fallback={<PanelFallback height={400} />}>
-          <CustomerRanking
-            filters={filters}
-            sort={rankSort}
-            topN={20}
-            onSortChange={setRankSort}
-          />
-        </Suspense>
-      </LazyPanel>
-
-      {/* 7. Lifecycle | Demand at Risk */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LazyPanel fallback={<PanelFallback />} minHeight={300}>
-          <Suspense fallback={<PanelFallback />}>
-            <CustomerLifecycle filters={filters} />
-          </Suspense>
-        </LazyPanel>
-        <LazyPanel fallback={<PanelFallback />} minHeight={300}>
-          <Suspense fallback={<PanelFallback />}>
-            <DemandAtRisk filters={filters} />
-          </Suspense>
-        </LazyPanel>
-      </div>
-
-      {/* 8. Affinity | Order Patterns */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <LazyPanel fallback={<PanelFallback height={400} />} minHeight={400}>
-          <Suspense fallback={<PanelFallback height={400} />}>
-            <CustomerItemAffinity filters={filters} />
-          </Suspense>
-        </LazyPanel>
-        <LazyPanel fallback={<PanelFallback />} minHeight={300}>
-          <Suspense fallback={<PanelFallback />}>
-            <OrderPatterns filters={filters} />
-          </Suspense>
-        </LazyPanel>
-      </div>
-
-      {/* 9. Full-width Demand Flow Sankey */}
-      <LazyPanel fallback={<PanelFallback height={500} />} minHeight={500}>
-        <Suspense fallback={<PanelFallback height={500} />}>
-          <DemandFlowSankey filters={filters} />
-        </Suspense>
-      </LazyPanel>
+      <KpiSummaryCards filters={filters} />
+      <CustomerAnalyticsAssistant
+        key={assistantScopeKey}
+        filters={filters}
+        activeView={activeView}
+      />
+      <CustomerAnalyticsWorkspace activeView={activeView} filters={filters} />
     </div>
   );
 }

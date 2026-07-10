@@ -113,6 +113,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Notifications + Webhooks | [../08-integration/04-notifications.md](../08-integration/04-notifications.md) | Integration |
 | FVA + ROI Measurement | [../08-integration/07-fva.md](../08-integration/07-fva.md) | Integration |
 | Demand History Workbench (5 endpoints) | [../03-demand-intelligence/06-demand-history-workbench.md](../03-demand-intelligence/06-demand-history-workbench.md) | Demand Intelligence |
+| Customer Analytics progressive workspace + grounded GPT assistant | [../03-demand-intelligence/07-customer-analytics.md](../03-demand-intelligence/07-customer-analytics.md) | Demand Intelligence / AI |
 | Mechanical lint gates for 7 unenforced rules (`scripts/ai_checks/check_unenforced_rules.sh`) | — | Foundation |
 | Central MV-refresh service (`common/core/mv_refresh.py` — table→MV dependency map, DDL-diff tested, nightly `refresh_all_mvs` safety net) | — | Foundation |
 | Workflow orchestration (named pipelines, boot-restored schedules, cross-stage staleness lineage + readiness checks) | [../07-user-experience/04-job-scheduler.md](../07-user-experience/04-job-scheduler.md) | Foundation |

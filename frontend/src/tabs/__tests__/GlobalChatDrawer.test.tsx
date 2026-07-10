@@ -95,12 +95,15 @@ describe("GlobalChatDrawer", () => {
     );
   });
 
-  it("is hidden on the standalone SKU Chat tab", () => {
-    const { container } = render(
-      <TestQueryWrapper>
-        <GlobalChatDrawer activeTab="skuChat" />
-      </TestQueryWrapper>,
-    );
-    expect(container.querySelector("button")).toBeNull();
-  });
+  it.each(["skuChat", "customerAnalytics"])(
+    "is hidden when %s owns its own assistant surface",
+    (activeTab) => {
+      const { container } = render(
+        <TestQueryWrapper>
+          <GlobalChatDrawer activeTab={activeTab} />
+        </TestQueryWrapper>,
+      );
+      expect(container.querySelector("button")).toBeNull();
+    },
+  );
 });

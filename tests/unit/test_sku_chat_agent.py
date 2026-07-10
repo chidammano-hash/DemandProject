@@ -272,6 +272,7 @@ async def test_run_codex_exec_uses_current_cli_flags(monkeypatch):
         "-c",
     )
     assert 'approval_policy="never"' in calls["cmd"]
+    assert 'model_reasoning_effort="high"' in calls["cmd"]
     assert calls["cmd"][-3:] == ("--model", "gpt-5.5", "-")
     assert calls["input"] == b"hello"
 

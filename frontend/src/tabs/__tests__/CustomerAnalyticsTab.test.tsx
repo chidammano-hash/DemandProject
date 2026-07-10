@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
 // Mock leaflet CSS
@@ -67,6 +67,13 @@ vi.mock("@/api/queries/customer-analytics", () => ({
     orderPatterns: (...args: unknown[]) => ["customer-analytics-order-patterns", ...args],
     demandFlow: (...args: unknown[]) => ["customer-analytics-demand-flow", ...args],
   },
+  askCustomerAnalytics: vi.fn().mockResolvedValue({
+    answer: "Fill rate is under pressure in the selected scope.",
+    provider: "codex",
+    model: "gpt-5.5",
+    tier: "deep",
+    evidence: ["KPIs", "Top demand customers", "Lowest fill-rate customers"],
+  }),
   fetchCustomerAnalyticsMap: vi.fn().mockResolvedValue({
     locations: [
       { label: "CA", state: "CA", customer_count: 500, demand_qty: 10000, sales_qty: 9000, oos_qty: 1000, fill_rate: 90, lat: 36.78, lon: -119.42 },
@@ -205,7 +212,58 @@ function renderTab() {
   );
 }
 
+async function openView(name: string) {
+  fireEvent.click(await screen.findByRole("tab", { name }));
+}
+
 describe("CustomerAnalyticsTab", () => {
+  it("opens as a focused overview instead of rendering every analysis at once", async () => {
+    renderTab();
+    expect(await screen.findByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(await screen.findByText("Customer Demand Map")).toBeInTheDocument();
+    expect(screen.queryByText("Customer Ranking")).not.toBeInTheDocument();
+    expect(screen.queryByText("Customer-Item Affinity")).not.toBeInTheDocument();
+  });
+
+  it("switches between task-oriented analytics views", async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole("tab", { name: "Customers" }));
+    expect(await screen.findByText("Customer Ranking")).toBeInTheDocument();
+    expect(screen.queryByText("Customer Demand Map")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Buying behavior" }));
+    expect(await screen.findByText("Customer-Item Affinity")).toBeInTheDocument();
+  });
+
+  it("supports arrow-key navigation between analytics views", async () => {
+    renderTab();
+    const overview = await screen.findByRole("tab", { name: "Overview" });
+    fireEvent.keyDown(overview, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Customers" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("embeds a grounded Customer Intelligence question flow", async () => {
+    renderTab();
+    const input = await screen.findByPlaceholderText(/Ask about demand, service, or customers/i);
+    fireEvent.change(input, { target: { value: "Why is fill rate falling?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask customer intelligence" }));
+    expect(
+      await screen.findByText("Fill rate is under pressure in the selected scope."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/gpt-5.5/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Customers" }));
+    expect(
+      screen.queryByText("Fill rate is under pressure in the selected scope."),
+    ).not.toBeInTheDocument();
+  });
+
   it("U4.4: opens with a page heading matching its sidebar label + a description", async () => {
     renderTab();
     // The tab must lead with a title+description header like every other tab,
@@ -214,7 +272,7 @@ describe("CustomerAnalyticsTab", () => {
     const heading = await screen.findByRole("heading", { name: /Customer Analytics/i });
     expect(heading).toBeInTheDocument();
     expect(
-      screen.getByText(/Geographic demand, fill rate, and concentration/i),
+      screen.getByText(/Move from demand footprint to customer risk/i),
     ).toBeInTheDocument();
   });
 
@@ -289,6 +347,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders heatmap panel", async () => {
     renderTab();
+    await openView("Segments");
     await waitFor(() => {
       expect(screen.getByText("Item x State Heatmap")).toBeDefined();
     });
@@ -296,6 +355,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders channel mix sunburst", async () => {
     renderTab();
+    await openView("Segments");
     await waitFor(() => {
       expect(screen.getByText("Channel Mix")).toBeDefined();
     });
@@ -303,6 +363,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders segment trends with segment-by buttons", async () => {
     renderTab();
+    await openView("Segments");
     await waitFor(() => {
       expect(screen.getByText("Segment Trends")).toBeDefined();
       expect(screen.getAllByText("Channel").length).toBeGreaterThanOrEqual(1);
@@ -312,6 +373,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders OOS impact bubble chart", async () => {
     renderTab();
+    await openView("Service risk");
     await waitFor(() => {
       expect(screen.getByText("OOS Impact Analysis")).toBeDefined();
     });
@@ -319,6 +381,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders customer ranking panel", async () => {
     renderTab();
+    await openView("Customers");
     await waitFor(() => {
       expect(screen.getByText("Customer Ranking")).toBeDefined();
       expect(screen.getByText("Top by Demand")).toBeDefined();
@@ -328,6 +391,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders lifecycle panel", async () => {
     renderTab();
+    await openView("Customers");
     await waitFor(() => {
       expect(screen.getByText("Customer Lifecycle")).toBeDefined();
     });
@@ -335,6 +399,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders demand at risk", async () => {
     renderTab();
+    await openView("Service risk");
     await waitFor(() => {
       expect(screen.getByText("Demand at Risk")).toBeDefined();
     });
@@ -342,6 +407,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders affinity heatmap", async () => {
     renderTab();
+    await openView("Buying behavior");
     await waitFor(() => {
       expect(screen.getByText("Customer-Item Affinity")).toBeDefined();
     });
@@ -349,6 +415,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders order patterns", async () => {
     renderTab();
+    await openView("Buying behavior");
     await waitFor(() => {
       expect(screen.getByText("Order Patterns")).toBeDefined();
     });
@@ -356,6 +423,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders demand flow sankey", async () => {
     renderTab();
+    await openView("Buying behavior");
     await waitFor(() => {
       expect(screen.getByText("Demand Flow")).toBeDefined();
     });
@@ -370,10 +438,10 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders ECharts panels", async () => {
     renderTab();
+    await openView("Segments");
     await waitFor(() => {
       const charts = screen.getAllByTestId("echart");
-      // treemap + heatmap + sunburst + oos bubble + lifecycle + affinity + order patterns scatter + sankey = 8
-      expect(charts.length).toBeGreaterThanOrEqual(4);
+      expect(charts.length).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -387,7 +455,7 @@ describe("CustomerAnalyticsTab", () => {
   it("renders Clear button", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getByText("Clear")).toBeDefined();
+      expect(screen.getByText("Clear filters")).toBeDefined();
     });
   });
 
@@ -408,6 +476,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders sunburst metric toggle buttons", async () => {
     renderTab();
+    await openView("Segments");
     await waitFor(() => {
       expect(screen.getByText("Demand Volume")).toBeDefined();
       expect(screen.getByText("Customer Count")).toBeDefined();
@@ -416,6 +485,7 @@ describe("CustomerAnalyticsTab", () => {
 
   it("renders customer search in ranking panel", async () => {
     renderTab();
+    await openView("Customers");
     await waitFor(() => {
       expect(screen.getByPlaceholderText("Search customer...")).toBeDefined();
     });

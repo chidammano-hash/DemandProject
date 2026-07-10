@@ -102,4 +102,4 @@ export function getPageChatConfig(tab: string): PageChatConfig {
 
 // Tabs where the global chat drawer should NOT appear (the standalone SKU Chat
 // tab is already a full-page chat).
-export const CHAT_HIDDEN_TABS = new Set<string>(["skuChat"]);
+export const CHAT_HIDDEN_TABS = new Set<string>(["skuChat", "customerAnalytics"]);
