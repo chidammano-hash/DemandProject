@@ -15,8 +15,8 @@ async def test_scan_plan_endpoint_returns_planner_result():
     pool, _, _ = make_pool(fetchall_return=[], fetchone_return=None, description=[])
     payload = {
         "plan_id": "plan-1",
-        "provider": "ollama",
-        "model": "llama3.1:8b",
+        "provider": "codex",
+        "model": "gpt-5.5",
         "status": "planned",
         "confidence": 0.9,
         "explanation": "Run sales first.",
@@ -44,7 +44,7 @@ async def test_scan_plan_endpoint_returns_planner_result():
     assert resp.status_code == 200
     body = resp.json()
     assert body["plan_id"] == "plan-1"
-    assert body["provider"] == "ollama"
+    assert body["provider"] == "codex"
     assert body["recommended_chain"][0]["domain"] == "sales"
     assert body["status"] == "planned"
     mock_plan.assert_called_once()

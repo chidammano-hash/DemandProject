@@ -27,8 +27,8 @@ describe("ScanPanel", () => {
   it("asks follow-up questions when the planner is unsure", async () => {
     mockedPlanScan.mockResolvedValue({
       plan_id: "plan-1",
-      provider: "ollama",
-      model: "llama3.1:8b",
+      provider: "codex",
+      model: "gpt-5.5",
       status: "questions",
       confidence: 0.61,
       explanation: "Need one more answer.",
@@ -61,8 +61,8 @@ describe("ScanPanel", () => {
     mockedPlanScan
       .mockResolvedValueOnce({
         plan_id: "plan-1",
-        provider: "ollama",
-        model: "llama3.1:8b",
+        provider: "codex",
+        model: "gpt-5.5",
         status: "questions",
         confidence: 0.61,
         explanation: "Need one more answer.",
@@ -85,8 +85,8 @@ describe("ScanPanel", () => {
       })
       .mockResolvedValueOnce({
         plan_id: "plan-2",
-        provider: "ollama",
-        model: "llama3.1:8b",
+        provider: "codex",
+        model: "gpt-5.5",
         status: "planned",
         confidence: 0.93,
         explanation: "Queue behind the job and keep the chain conservative.",

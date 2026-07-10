@@ -34,11 +34,11 @@ The planner does not replace the existing scanner. It consumes the scanner's evi
 1. `NeedInfo` - a small set of targeted questions the user must answer before the plan is final.
 2. `ExecutionPlan` - a ranked, evidence-backed sequence of jobs that the existing `POST /integration/chains` endpoint can run unchanged.
 
-The planner uses the repo's provider abstraction so development can stay free on a laptop and production can use the paid OpenAI API:
+The planner uses the repo's two OpenAI runtime paths so local development can reuse the developer's Codex sign-in and production can use the paid OpenAI API:
 
-- local development: `provider: ollama` or another local OpenAI-compatible runtime, so no API credits are consumed
-- production: `provider: openai`, backed by `OPENAI_API_KEY`
-- optional enterprise gateway: `provider: openai_compat`
+- local development: `provider: codex`, model `gpt-5.5`, through `codex exec` and the laptop's saved ChatGPT/Codex authentication; the subprocess is read-only and does not use an API key
+- production: `provider: openai`, model `gpt-5.5`, backed by `OPENAI_API_KEY`
+- runtime selection: `INTEGRATION_SCAN_AI_RUNTIME=codex|openai` overrides the YAML default
 
 The key design choice is separation of concerns:
 
@@ -159,8 +159,10 @@ File: `config/ai/integration_scan_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|
-| `provider` | `ollama`, `openai`, or `openai_compat` | `ollama` in development, `openai` in production |
-| `model` | Model id used for planning | local model in dev, centrally configured model in prod |
+| `runtime.provider` | `codex` or `openai` | `codex` in development; set `INTEGRATION_SCAN_AI_RUNTIME=openai` in production |
+| `models.codex` | Codex subscription-authenticated model id | `gpt-5.5` |
+| `models.openai` | OpenAI API model id | `gpt-5.5` |
+| `codex.sandbox` | Filesystem permission for local planning | `read-only` |
 | `confidence_threshold` | Below this, the planner must ask more questions | `0.80` |
 | `max_questions_per_scan` | Cap on interactive questions | `3` |
 | `max_turns` | Upper bound on the reasoning loop | `8` |

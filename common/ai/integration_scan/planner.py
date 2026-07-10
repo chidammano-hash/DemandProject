@@ -1,8 +1,10 @@
 """AI planning layer for the Integration tab's Scan Now flow."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -10,6 +12,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from common.ai.llm_client import LLMClientError, LLMJSONParseError, build_from_config
+from common.ai.sku_chat.agent import CodexRuntimeError, _run_codex_exec
+from common.ai.sku_chat.auth import SkuChatAuthError, resolve_auth_env
 from common.core.utils import load_config
 from common.services.integration_scanner import scan_input_dir
 
@@ -18,6 +22,7 @@ logger = logging.getLogger(__name__)
 _CFG_NAME = "integration_scan_config"
 _DEFAULT_THRESHOLD = 0.8
 _DEFAULT_MAX_QUESTIONS = 3
+_VALID_RUNTIMES = {"codex", "openai"}
 
 
 class PlannerAnswer(BaseModel):
@@ -86,11 +91,41 @@ def _load_cfg() -> dict[str, Any]:
     cfg = load_config(_CFG_NAME)
     if not cfg:
         cfg = {
-            "provider": "ollama",
-            "models": {"ollama": "llama3.1:8b"},
+            "runtime": {"provider": "codex"},
+            "models": {"codex": "gpt-5.5", "openai": "gpt-5.5"},
             "cost_controls": {"per_call_timeout_seconds": 45},
         }
     return cfg
+
+
+def _runtime_provider(cfg: dict[str, Any]) -> str:
+    configured = str((cfg.get("runtime") or {}).get("provider", "codex"))
+    provider = os.getenv("INTEGRATION_SCAN_AI_RUNTIME", configured).strip().lower()
+    if provider not in _VALID_RUNTIMES:
+        raise ValueError("Integration Scan AI runtime must be 'codex' or 'openai'.")
+    return provider
+
+
+def _planner_model(cfg: dict[str, Any], provider: str) -> str:
+    model = str((cfg.get("models") or {}).get(provider, "")).strip()
+    if not model:
+        raise ValueError(f"Integration Scan AI has no model configured for {provider}.")
+    return model
+
+
+def _normalize_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize harmless Codex status aliases before strict Pydantic validation."""
+    normalized = dict(payload)
+    status = str(normalized.get("status", "")).strip().lower()
+    if status.startswith("no_change") or status in {"ready", "safe", "final", "complete"}:
+        normalized["status"] = "planned"
+    elif status.startswith("need") or "clarif" in status:
+        normalized["status"] = "questions"
+    normalized.setdefault("risk_flags", [])
+    normalized.setdefault("questions", [])
+    normalized.setdefault("recommended_chain", [])
+    normalized.setdefault("explanation", "")
+    return normalized
 
 
 def _row_dicts(cur) -> list[dict[str, Any]]:
@@ -281,8 +316,35 @@ def _build_decision(
     answers: list[PlannerAnswer],
     cfg: dict[str, Any],
 ) -> PlannerDecision:
-    client = build_from_config(cfg)
     messages = _build_prompt(scan, jobs, batches, answers, cfg)
+    provider = _runtime_provider(cfg)
+    if provider == "codex":
+        model = _planner_model(cfg, provider)
+        prompt = "\n\n".join(
+            f"{message['role'].upper()}:\n{message['content']}" for message in messages
+        )
+        timeout = float((cfg.get("cost_controls") or {}).get("per_call_timeout_seconds", 90))
+        answer = asyncio.run(
+            _run_codex_exec(
+                prompt,
+                model_id=model,
+                cfg=cfg,
+                env=resolve_auth_env(cfg, provider="codex"),
+                timeout_s=timeout,
+            )
+        )
+        cleaned = answer.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.removeprefix("```json").removeprefix("```")
+            cleaned = cleaned.removesuffix("```").strip()
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMJSONParseError("Could not parse JSON from codex") from exc
+        return PlannerDecision.model_validate(_normalize_decision_payload(parsed))
+
+    openai_cfg = {**cfg, "provider": "openai"}
+    client = build_from_config(openai_cfg)
     response = client.chat(
         messages,
         json_mode=True,
@@ -329,7 +391,14 @@ def run_scan_planner(pool, *, answers: list[dict[str, Any]] | None = None) -> di
                 questions=heuristic_questions,
                 recommended_chain=decision.recommended_chain or list(scan.get("proposed_chain") or []),
             )
-    except (LLMClientError, LLMJSONParseError, ValidationError, ValueError) as exc:
+    except (
+        CodexRuntimeError,
+        LLMClientError,
+        LLMJSONParseError,
+        SkuChatAuthError,
+        ValidationError,
+        ValueError,
+    ) as exc:
         logger.warning("integration scan planner fell back to deterministic plan: %s", exc)
         decision = _fallback_decision(scan, job_rows, heuristic_questions, threshold=threshold)
         used_fallback = True
@@ -338,10 +407,11 @@ def run_scan_planner(pool, *, answers: list[dict[str, Any]] | None = None) -> di
     if used_fallback and not decision.questions:
         response_status = "fallback"
 
+    provider = _runtime_provider(cfg)
     result = PlannerRun(
         plan_id=plan_id,
-        provider=str(cfg.get("provider", "ollama")),
-        model=str((cfg.get("models") or {}).get(str(cfg.get("provider", "ollama")), "")),
+        provider=provider,
+        model=_planner_model(cfg, provider),
         status=response_status,
         confidence=decision.confidence,
         explanation=decision.explanation,

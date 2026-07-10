@@ -572,3 +572,18 @@ Operational notes:
   chatbot fully read-only.
 - The agent **never** writes the forecast directly — the only forecast write is
   the human-approved, key-guarded endpoint.
+
+## 9.13 Integration Scan planner
+
+The Integration tab's **Scan Now** action uses the same local Codex runtime as
+SKU Chat. In development, `config/ai/integration_scan_config.yaml` selects
+`runtime.provider: codex` and `models.codex: gpt-5.5`; `codex exec` inherits the
+laptop's saved ChatGPT/Codex sign-in and runs with a read-only sandbox. No
+`OPENAI_API_KEY` is required for this local path.
+
+Production must use the metered API path: set
+`INTEGRATION_SCAN_AI_RUNTIME=openai` and provide `OPENAI_API_KEY`. The response
+badge reports the effective provider and model, so `codex · gpt-5.5` confirms
+the subscription-authenticated local runtime. `llm_unavailable` means the
+planner safely returned the deterministic scan plan; confirm `codex` is on
+`PATH` and that `codex exec --model gpt-5.5` succeeds under the service user.

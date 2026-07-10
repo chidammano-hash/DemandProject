@@ -1,10 +1,10 @@
 """Unit tests for the AI Integration Scan Orchestrator."""
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from common.ai.llm_client import LLMClientError
+from common.ai.sku_chat.agent import CodexRuntimeError
 
 
 def _scan_payload() -> dict[str, object]:
@@ -27,9 +27,8 @@ def _scan_payload() -> dict[str, object]:
 
 def test_run_scan_planner_returns_model_decision():
     pool = MagicMock()
-    mock_client = MagicMock()
-    mock_client.chat.return_value = SimpleNamespace(
-        parsed={
+    codex_answer = json.dumps(
+        {
             "status": "planned",
             "confidence": 0.92,
             "explanation": "Sales can run immediately.",
@@ -43,7 +42,10 @@ def test_run_scan_planner_returns_model_decision():
         patch("common.ai.integration_scan.planner.scan_input_dir", return_value=_scan_payload()),
         patch("common.ai.integration_scan.planner._fetch_job_context", return_value=[]),
         patch("common.ai.integration_scan.planner._fetch_batch_context", return_value=[]),
-        patch("common.ai.integration_scan.planner.build_from_config", return_value=mock_client),
+        patch(
+            "common.ai.integration_scan.planner._run_codex_exec",
+            new=AsyncMock(return_value=codex_answer),
+        ) as codex_exec,
     ):
         from common.ai.integration_scan.planner import run_scan_planner
 
@@ -52,9 +54,10 @@ def test_run_scan_planner_returns_model_decision():
     assert out["status"] == "planned"
     assert out["confidence"] == 0.92
     assert out["recommended_chain"][0]["domain"] == "sales"
-    assert out["provider"] == "ollama"
+    assert out["provider"] == "codex"
+    assert out["model"] == "gpt-5.5"
     assert out["questions"] == []
-    mock_client.chat.assert_called_once()
+    codex_exec.assert_awaited_once()
 
 
 def test_run_scan_planner_falls_back_when_model_unavailable():
@@ -65,7 +68,10 @@ def test_run_scan_planner_falls_back_when_model_unavailable():
         patch("common.ai.integration_scan.planner.scan_input_dir", return_value=fallback_scan),
         patch("common.ai.integration_scan.planner._fetch_job_context", return_value=[]),
         patch("common.ai.integration_scan.planner._fetch_batch_context", return_value=[]),
-        patch("common.ai.integration_scan.planner.build_from_config", side_effect=LLMClientError("boom")),
+        patch(
+            "common.ai.integration_scan.planner._run_codex_exec",
+            new=AsyncMock(side_effect=CodexRuntimeError("boom")),
+        ),
     ):
         from common.ai.integration_scan.planner import run_scan_planner
 
@@ -75,3 +81,27 @@ def test_run_scan_planner_falls_back_when_model_unavailable():
     assert out["recommended_chain"] == fallback_scan["proposed_chain"]
     assert out["risk_flags"] == ["llm_unavailable"]
     assert out["questions"] == []
+
+
+def test_integration_scan_runtime_can_switch_to_openai_for_production(monkeypatch):
+    monkeypatch.setenv("INTEGRATION_SCAN_AI_RUNTIME", "openai")
+    from common.ai.integration_scan.planner import _runtime_provider
+
+    assert _runtime_provider({"runtime": {"provider": "codex"}}) == "openai"
+
+
+def test_codex_decision_normalizes_safe_terminal_status_alias():
+    from common.ai.integration_scan.planner import _normalize_decision_payload
+
+    payload = _normalize_decision_payload(
+        {
+            "status": "no_changes_detected",
+            "confidence": 0.99,
+            "explanation": "No inputs changed.",
+        }
+    )
+
+    assert payload["status"] == "planned"
+    assert payload["risk_flags"] == []
+    assert payload["questions"] == []
+    assert payload["recommended_chain"] == []
