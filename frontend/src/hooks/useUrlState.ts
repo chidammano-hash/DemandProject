@@ -17,6 +17,7 @@ const TAB_REDIRECTS: Record<string, string> = {
   aiPlanner: "commandCenter",
   controlTower: "commandCenter",
   storyboard: "commandCenter",
+  jobs: "integration",
 };
 
 /**

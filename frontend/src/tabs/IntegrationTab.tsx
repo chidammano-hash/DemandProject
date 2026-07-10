@@ -36,8 +36,18 @@ type PendingPurge = {
 
 const ACTIVE_STATUSES: ReadonlyArray<Job["status"]> = ["queued", "running"];
 
-export default function IntegrationTab(): JSX.Element {
+interface IntegrationTabProps {
+  view?: "all" | "guided" | "manual";
+  embedded?: boolean;
+}
+
+export default function IntegrationTab({
+  view = "all",
+  embedded = false,
+}: IntegrationTabProps): JSX.Element {
   const queryClient = useQueryClient();
+  const showGuided = view === "all" || view === "guided";
+  const showManual = view === "all" || view === "manual";
 
   const [domain, setDomain] = useState<string>("");
   const [mode, setMode] = useState<Mode>("onetime");
@@ -171,32 +181,36 @@ export default function IntegrationTab(): JSX.Element {
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <header>
+      {!embedded && <header>
         <h1 className="text-xl font-bold text-foreground">Data Integration</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Trigger and monitor ETL load jobs across all domains.
         </p>
-      </header>
+      </header>}
 
-      {/* Smart change detection + chain composer (top-level so it's the
-          first thing the user sees — one-click to scan + run masters→facts) */}
-      <ScanPanel onPlanned={setScan} />
-      {scan && scan.status !== "questions" && (
-        <ChainComposer
-          scan={scan}
-          onSubmitted={(chainId) => {
-            setActiveChainId(chainId);
-            queryClient.invalidateQueries({
-              predicate: (q) => q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
-            });
-          }}
-        />
-      )}
-      {activeChainId && (
-        <ChainProgress chainId={activeChainId} onClose={() => setActiveChainId(null)} />
+      {showGuided && (
+        <>
+          {/* Smart change detection + chain composer (top-level so it's the
+              first thing the user sees — one-click to scan + run masters→facts) */}
+          <ScanPanel onPlanned={setScan} />
+          {scan && scan.status !== "questions" && (
+            <ChainComposer
+              scan={scan}
+              onSubmitted={(chainId) => {
+                setActiveChainId(chainId);
+                queryClient.invalidateQueries({
+                  predicate: (q) => q.queryKey[0] === "integration" && q.queryKey[1] === "jobs",
+                });
+              }}
+            />
+          )}
+          {activeChainId && (
+            <ChainProgress chainId={activeChainId} onClose={() => setActiveChainId(null)} />
+          )}
+        </>
       )}
 
-      <section aria-labelledby="manual-operations-heading" className="space-y-3">
+      {showManual && <section aria-labelledby="manual-operations-heading" className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-2 px-1">
           <div>
             <h2 id="manual-operations-heading" className="text-sm font-semibold text-foreground">
@@ -317,10 +331,10 @@ export default function IntegrationTab(): JSX.Element {
             </form>
           )}
         </CollapsibleSection>
-      </section>
+      </section>}
 
       {/* Active Jobs */}
-      <CollapsibleSection
+      {showManual && <CollapsibleSection
         title="Active Jobs"
         storageKey="integration.active_jobs"
         headerRight={
@@ -328,10 +342,10 @@ export default function IntegrationTab(): JSX.Element {
         }
       >
         <JobHistoryTable jobs={activeJobs} emptyMessage="No active jobs." />
-      </CollapsibleSection>
+      </CollapsibleSection>}
 
       {/* Recent Jobs */}
-      <CollapsibleSection
+      {showManual && <CollapsibleSection
         title="Recent Jobs"
         storageKey="integration.recent_jobs"
         headerRight={
@@ -389,7 +403,7 @@ export default function IntegrationTab(): JSX.Element {
         }
       >
         <JobHistoryTable jobs={recentJobs} emptyMessage="No recent jobs." />
-      </CollapsibleSection>
+      </CollapsibleSection>}
 
       <ConfirmDialog
         open={pendingSubmit != null}

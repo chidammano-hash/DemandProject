@@ -14,6 +14,7 @@ import {
   fetchPlanningDate,
   pipelineReadinessKeys,
 } from "@/api/queries/dashboard";
+import { queryKeys } from "@/api/queries/core";
 import { fetchActiveJobs } from "@/api/queries/jobs";
 import { useJobNotification } from "@/context/JobNotificationContext";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,7 @@ export function OperationsStatusBar({
   const { activeJobCount: localActiveJobCount } = useJobNotification();
 
   const planningDateQuery = useQuery({
-    queryKey: ["dashboard", "planning-date"],
+    queryKey: queryKeys.planningDate(),
     queryFn: fetchPlanningDate,
     staleTime: 60_000,
     refetchInterval: 60_000,
@@ -92,7 +93,7 @@ export function OperationsStatusBar({
   });
 
   const activeJobsQuery = useQuery({
-    queryKey: ["jobs", "active"],
+    queryKey: queryKeys.activeJobs(),
     queryFn: fetchActiveJobs,
     staleTime: 15_000,
     refetchInterval: 15_000,
@@ -133,8 +134,8 @@ export function OperationsStatusBar({
         </StatusPill>
 
         <StatusPill
-          onClick={() => onNavigate("jobs")}
-          title="Open Jobs"
+          onClick={() => onNavigate("integration")}
+          title="Open workflow monitoring"
           className={
             activeJobCount > 0
               ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"

@@ -26,7 +26,7 @@ describe("AppSidebar", () => {
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(18);  // +SKU Chat (06-07)
+    expect(NAV_ITEMS.length).toBe(17);  // Jobs consolidated into Workflows
   });
 
   it("sections appear in Tower -> Demand -> Supply -> Operations -> System order (UX-1)", () => {

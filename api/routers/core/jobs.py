@@ -9,15 +9,18 @@ Also supports:
 - Dashboard statistics
 - Foundation for agentic AI automation
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from api import core as api_core
 from api.auth import require_api_key
+from common.ai.workflow_planner import run_workflow_planner
 
 router = APIRouter(tags=["jobs"])
 
@@ -25,6 +28,7 @@ router = APIRouter(tags=["jobs"])
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
+
 
 class SubmitJobRequest(BaseModel):
     job_type: str
@@ -52,6 +56,15 @@ class SubmitPipelineRequest(BaseModel):
     label: str = "Pipeline"
 
 
+class WorkflowPlanAnswerRequest(BaseModel):
+    question_id: str
+    answer: str
+
+
+class WorkflowPlanRequest(BaseModel):
+    answers: list[WorkflowPlanAnswerRequest] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Lazy-init JobManager to avoid import-time DB access
 # ---------------------------------------------------------------------------
@@ -62,6 +75,7 @@ def _get_manager():
     global _manager
     if _manager is None:
         from common.services.job_registry import JobManager
+
         _manager = JobManager()
     return _manager
 
@@ -69,6 +83,7 @@ def _get_manager():
 # ---------------------------------------------------------------------------
 # Endpoints — Core CRUD
 # ---------------------------------------------------------------------------
+
 
 @router.get("/jobs/types")
 def list_job_types():
@@ -94,11 +109,14 @@ def submit_job(req: SubmitJobRequest):
     mgr = _get_manager()
 
     from common.services.job_registry import JOB_TYPE_REGISTRY
+
     if req.job_type not in JOB_TYPE_REGISTRY:
         raise HTTPException(status_code=422, detail=f"Unknown job type: {req.job_type}")
 
     job_id = mgr.submit_job(
-        req.job_type, req.params, req.label,
+        req.job_type,
+        req.params,
+        req.label,
         triggered_by="api",
         max_retries=req.max_retries,
     )
@@ -129,11 +147,21 @@ def list_jobs(
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
 
 
+@router.post("/jobs/workflow-plan", dependencies=[Depends(require_api_key)])
+def plan_operational_workflows(req: WorkflowPlanRequest):
+    """Return a system-derived, AI-verified operational workflow plan."""
+    return run_workflow_planner(
+        api_core._get_pool(),
+        answers=[answer.model_dump() for answer in req.answers],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints — Scheduling (recurring jobs)
 # IMPORTANT: These must be registered BEFORE /jobs/{job_id} so that
 # FastAPI does not match "schedules" or "schedule" as a job_id.
 # ---------------------------------------------------------------------------
+
 
 @router.post("/jobs/schedule", dependencies=[Depends(require_api_key)])
 def schedule_recurring_job(req: ScheduleJobRequest):
@@ -145,6 +173,7 @@ def schedule_recurring_job(req: ScheduleJobRequest):
     mgr = _get_manager()
 
     from common.services.job_registry import JOB_TYPE_REGISTRY
+
     if req.job_type not in JOB_TYPE_REGISTRY:
         raise HTTPException(status_code=422, detail=f"Unknown job type: {req.job_type}")
     if not req.cron and not req.interval_minutes:
@@ -152,13 +181,22 @@ def schedule_recurring_job(req: ScheduleJobRequest):
 
     try:
         schedule_id = mgr.schedule_recurring(
-            req.job_type, req.params, req.label,
-            cron=req.cron, interval_minutes=req.interval_minutes,
+            req.job_type,
+            req.params,
+            req.label,
+            cron=req.cron,
+            interval_minutes=req.interval_minutes,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))  # controlled validation message
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),  # controlled validation message
+        ) from None
     except RuntimeError:
-        raise HTTPException(status_code=409, detail="Schedule conflict or scheduler unavailable.")
+        raise HTTPException(
+            status_code=409,
+            detail="Schedule conflict or scheduler unavailable.",
+        ) from None
 
     return JSONResponse(
         status_code=201,
@@ -188,6 +226,7 @@ def remove_schedule(schedule_id: str):
 # IMPORTANT: Must be registered BEFORE /jobs/{job_id} to avoid path conflict.
 # ---------------------------------------------------------------------------
 
+
 @router.post("/jobs/pipeline", dependencies=[Depends(require_api_key)])
 def submit_pipeline(req: SubmitPipelineRequest):
     """Submit a pipeline of chained jobs to run sequentially.
@@ -198,13 +237,13 @@ def submit_pipeline(req: SubmitPipelineRequest):
     mgr = _get_manager()
 
     from common.services.job_registry import JOB_TYPE_REGISTRY
+
     for step in req.steps:
         if step.job_type not in JOB_TYPE_REGISTRY:
             raise HTTPException(status_code=422, detail=f"Unknown job type: {step.job_type}")
 
     steps_dicts = [
-        {"job_type": s.job_type, "params": s.params, "label": s.label}
-        for s in req.steps
+        {"job_type": s.job_type, "params": s.params, "label": s.label} for s in req.steps
     ]
 
     pipeline_id = mgr.submit_pipeline(
@@ -251,13 +290,14 @@ def run_named_pipeline(name: str):
         preset = get_pipeline_preset(name)
         steps = preset_steps(preset)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from None
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     if not steps:
         raise HTTPException(status_code=422, detail=f"Pipeline '{name}' has no steps")
 
     from common.services.job_registry import JOB_TYPE_REGISTRY
+
     for step in steps:
         if step["job_type"] not in JOB_TYPE_REGISTRY:
             raise HTTPException(
@@ -269,8 +309,12 @@ def run_named_pipeline(name: str):
     pipeline_id = mgr.submit_pipeline(steps=steps, label=name, triggered_by="api")
     return JSONResponse(
         status_code=202,
-        content={"pipeline_id": pipeline_id, "name": name, "status": "running",
-                 "steps": len(steps)},
+        content={
+            "pipeline_id": pipeline_id,
+            "name": name,
+            "status": "running",
+            "steps": len(steps),
+        },
     )
 
 
@@ -279,6 +323,7 @@ def run_named_pipeline(name: str):
 # IMPORTANT: These MUST come after all /jobs/<literal> routes above,
 # otherwise FastAPI would match "schedules", "pipeline", etc. as a job_id.
 # ---------------------------------------------------------------------------
+
 
 @router.get("/jobs/{job_id}/logs")
 def get_job_logs(
@@ -336,7 +381,8 @@ def delete_job(job_id: str):
 @router.delete("/jobs", dependencies=[Depends(require_api_key)])
 def purge_jobs(
     older_than_hours: int | None = Query(
-        default=None, ge=0,
+        default=None,
+        ge=0,
         description="Only purge jobs whose submitted_at is older than N hours. Omit for no age filter.",
     ),
     status: str | None = Query(
@@ -350,6 +396,7 @@ def purge_jobs(
 ):
     """Bulk-delete terminal jobs. Running/queued jobs are always preserved."""
     from common.services.job_registry import JobManager
+
     deleted = JobManager.purge_history(
         older_than_hours=older_than_hours,
         status=status,

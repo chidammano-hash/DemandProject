@@ -84,7 +84,7 @@ graph TB
     end
 
     subgraph Supply Chain Command Center
-        UI[React UI<br>21 Tabs]
+        UI[React UI<br>17 Destinations]
         API[FastAPI Backend<br>83 Routers]
         ML[ML Pipeline<br>LGBM/CatBoost/XGBoost]
         ETL[ETL Pipeline<br>Normalize + Load]
@@ -167,7 +167,7 @@ graph TB
 | Inventory Planning | Safety stock, EOQ, 4 replenishment policies, exception queue, fill rate, rebalancing | 11 |
 | Operations | S&OP 6-stage cycle, financial planning, event calendar, scenario planning | 4 |
 | AI & Decision Support | Claude planning agent, market intelligence, control tower, storyboard | 4 |
-| User Experience | 21 lazy-loaded tabs, global filters, theming, job scheduler UI | 6 |
+| User Experience | 17 lazy-loaded destinations, local filters, theming, unified Workflows UI | 6 |
 | Integration | JWT + RBAC, notifications (4 channels), webhooks (HMAC-SHA256), API governance | 10 |
 
 **Non-Functional Constraints**:
@@ -268,6 +268,8 @@ Supply Chain Command Center
 │   │   └── Claude-powered, 10 tools (9 read-only SQL + 1 create_insight), portfolio scans
 │   ├── L2: SKU Chatbot
 │   │   └── Claude Agent SDK, 7 read-only per-SKU tools, tiered Haiku/Sonnet/Opus, side chat
+│   ├── L2: AI Operations Workbench
+│   │   └── System-safe cross-workflow readiness scan, GPT verification, clarification, named-pipeline execution
 │   ├── L2: Control Tower
 │   │   └── Cross-dimensional KPI command center with drill-down
 │   ├── L2: Market Intelligence
@@ -277,11 +279,11 @@ Supply Chain Command Center
 │
 ├── L1: USER EXPERIENCE
 │   ├── L2: Interactive Analytics
-│   │   └── 21 lazy-loaded tabs, Recharts + ECharts visualization
+│   │   └── 17 lazy-loaded destinations with progressive sub-views and Recharts visualization
 │   ├── L2: Data Explorer
 │   │   └── Type-aware filtering, pagination, CSV export, full-text search
-│   ├── L2: Job Automation
-│   │   └── APScheduler with 8 job types, cron/interval scheduling, progress tracking
+│   ├── L2: Workflow Automation
+│   │   └── Unified guided operations, APScheduler, named pipelines, schedules, logs, and progress tracking
 │   └── L2: Theming & Personalization
 │       └── Light/dark modes, keyboard shortcuts, command palette (Cmd+K)
 │
@@ -730,7 +732,7 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 | # | Component | Technology | Purpose | Key Files |
 |---|---|---|---|---|
 | 1 | **FastAPI Backend** | Python, FastAPI, Uvicorn | REST API serving 83 routers | `api/main.py`, `api/routers/` |
-| 2 | **React Frontend** | React 18, Vite, TypeScript | 21 lazy-loaded interactive tabs | `frontend/src/` |
+| 2 | **React Frontend** | React 18, Vite, TypeScript | 17 lazy-loaded destinations; unified Workflows command center | `frontend/src/` |
 | 3 | **ETL Pipeline** | Python scripts, Make | Data normalization + loading for 10 domains | `scripts/etl/` |
 | 4 | **ML Pipeline** | scikit-learn, LightGBM, CatBoost, XGBoost | Training, backtesting, champion selection | `scripts/ml/`, `common/ml/` |
 | 5 | **Forecasting Pipeline** | Python scripts | Production forecast, consensus, blended demand | `scripts/forecasting/` |
@@ -821,8 +823,8 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 | Component | Purpose |
 |---|---|
-| `App.tsx` | 21 lazy-loaded tabs with ErrorBoundary + Suspense wrapping |
-| `AppSidebar.tsx` | 21-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System) |
+| `App.tsx` | 17 lazy-loaded destinations with ErrorBoundary + Suspense wrapping |
+| `AppSidebar.tsx` | 17-destination sidebar across 5 sections (Tower, Demand, Supply, Operations, System) |
 | `hooks/useUrlState.ts` | URL state management for tab + filters with history |
 | `hooks/useGlobalFilters.ts` | Global filter bar (brand, category, item, location, market, channel) |
 | `context/ThemeContext.tsx` | Light/dark mode with supply chain theme |
@@ -1076,7 +1078,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │  PRESENTATION LAYER                                        │  │
 │  │                                                             │  │
 │  │  React 18 + Vite + TypeScript + Tailwind + shadcn/ui       │  │
-│  │  21 lazy-loaded tabs, ErrorBoundary, Suspense              │  │
+│  │  17 destinations, ErrorBoundary, Suspense, sub-views       │  │
 │  │  Charts: Recharts (simple) + ECharts (complex)             │  │
 │  │  State: TanStack Query (server) + Context (UI) + URL       │  │
 │  └────────────────────────────────────────────────────────────┘  │

@@ -19,8 +19,8 @@ test.describe("Aggregate Analysis — Local Filter Bar", () => {
     await expect(brandBtn).not.toBeVisible();
   });
 
-  test("not visible on Jobs tab", async ({ page }) => {
-    await navigateToTab(page, "jobs");
+  test("not visible on Workflows tab", async ({ page }) => {
+    await navigateToTab(page, "integration");
 
     const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
     await expect(brandBtn).not.toBeVisible();

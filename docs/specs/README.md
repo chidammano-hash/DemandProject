@@ -161,6 +161,7 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | 06 | [Forecast Explain API](06-ai-platform/06-explain-api.md) | SHAP-based forecast explanation per DFU |
 | 07 | [SKU Chatbot](06-ai-platform/07-sku-chatbot.md) | Conversational per-SKU assistant on the Claude Agent SDK; tiered Haiku/Sonnet/Opus routing; standalone tab + Item Analysis side chat; best-effort persistence (sql/196). Subscription auth in Claude Code, API key/Bedrock/Vertex standalone (**Partial** — Phases 1+3 shipped; needs `uv sync --extra agent` for the live path) |
 | 08 | [AI Integration Scan Orchestrator](06-ai-platform/08-integration-scan-orchestrator.md) | AI-assisted Scan Now planner that asks clarifying questions and returns the safest load sequence |
+| 09 | [AI Operations Workbench](06-ai-platform/09-ai-operations-workbench.md) | Unified Workflows command center that scans integration, clustering, model, forecast, archive, and inventory readiness; AI verifies a system-safe sequence and asks only decision-changing questions |
 
 ---
 

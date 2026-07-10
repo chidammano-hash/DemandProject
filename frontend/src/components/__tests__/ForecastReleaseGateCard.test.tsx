@@ -121,9 +121,9 @@ const blockedPayload = {
     },
   ],
   next_action: {
-    tab: "jobs",
+    tab: "integration",
     pipeline: "model-refresh",
-    label: "Open Jobs for model refresh",
+    label: "Open Workflows for model refresh",
     reason: "Forecast evidence or model lineage is stale or below policy.",
   },
 } satisfies ForecastReleaseReadiness;
@@ -144,9 +144,9 @@ describe("ForecastReleaseGateCard", () => {
     expect(screen.getByText("12.5%")).toBeInTheDocument();
     expect(screen.getByText("-2.9 pts")).toBeInTheDocument();
     expect(screen.getByText(/45,812 common DFU-months/)).toBeInTheDocument();
-    const action = screen.getByRole("button", { name: "Open Jobs for model refresh" });
+    const action = screen.getByRole("button", { name: "Open Workflows for model refresh" });
     fireEvent.click(action);
-    expect(onNavigate).toHaveBeenCalledWith("jobs");
+    expect(onNavigate).toHaveBeenCalledWith("integration");
   });
 
   it("shows a planner-safe state when every gate passes", async () => {

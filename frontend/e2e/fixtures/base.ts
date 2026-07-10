@@ -58,18 +58,22 @@ export async function clickNavItem(
 /** Sidebar nav item labels (in order — operations-first layout) */
 export const SIDEBAR_LABELS = [
   "Command Center",
-  "S&OP",
-  "Jobs",
-  "Data Quality",
-  "Inv. Planning",
-  "Clusters",
-  "Inv. Backtest",
   "Portfolio",
   "Item Analysis",
-  "SKU Chat",
   "FVA & ROI",
-  "Customer Map",
+  "Model Tuning",
+  "Customer Analytics",
+  "Demand History",
+  "SKU Features",
+  "SKU Chat",
+  "Inv. Planning",
+  "Inv. Backtest",
+  "S&OP",
+  "Workflows",
+  "Data Quality",
   "Explorer",
+  "SQL Runner",
+  "Settings",
 ] as const;
 
 /** Tabs that show the global filter bar */

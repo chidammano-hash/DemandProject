@@ -30,9 +30,12 @@ import { ChampionConfigPanel } from "./jobs/ChampionConfigPanel";
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-type JobsTabProps = { onNavigateToScenario?: (jobId: string) => void };
+type JobsTabProps = {
+  onNavigateToScenario?: (jobId: string) => void;
+  embedded?: boolean;
+};
 
-export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
+export default function JobsTab({ onNavigateToScenario, embedded = false }: JobsTabProps) {
   const queryClient = useQueryClient();
   const jobNotification = useJobNotification();
   const [historyFilter, setHistoryFilter] = useState<string>("");
@@ -94,7 +97,7 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
   // ---- shared invalidation ----
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.activeJobs() });
-    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.jobsAll() });
     queryClient.invalidateQueries({ queryKey: queryKeys.jobStats() });
   }, [queryClient]);
 
@@ -138,7 +141,7 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      {!embedded && <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-foreground">Job Scheduler</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -148,7 +151,7 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
         <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold text-primary uppercase tracking-wider">
           APScheduler Engine
         </span>
-      </div>
+      </div>}
 
       {/* KPI cards */}
       {statsData && <KpiSection stats={statsData} />}

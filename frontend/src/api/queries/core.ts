@@ -43,6 +43,7 @@ export const queryKeys = {
   customerMap: (groupBy: string) => ["customer-map", groupBy] as const,
   // Job scheduler keys (Feature 39)
   jobTypes: () => ["job-types"] as const,
+  jobsAll: () => ["jobs"] as const,
   jobs: (params: Record<string, unknown>) => ["jobs", params] as const,
   jobDetail: (id: string) => ["job-detail", id] as const,
   activeJobs: () => ["active-jobs"] as const,
@@ -203,10 +204,13 @@ export {
   submitJob, cancelJob, deleteJob, fetchScenarioHistory,
   fetchJobLogs, fetchJobStats, fetchJobSchedules,
   createSchedule, deleteSchedule, submitPipeline,
+  planOperationalWorkflows, runNamedPipeline,
 } from "./jobs";
 export type {
   Job, JobType, JobListPayload, JobTypesPayload, ActiveJobsPayload,
   JobStats, JobSchedule, JobSchedulesPayload, JobLogsPayload,
+  WorkflowPlanAnswer, WorkflowQuestion, WorkflowStep,
+  WorkflowRecommendation, WorkflowPlan,
 } from "./jobs";
 
 export {

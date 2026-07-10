@@ -96,8 +96,8 @@ flowchart TD
         REST["/domains, /forecast,<br/>/inventory, /inv-planning,<br/>/ai-planner, /jobs, ..."]
     end
 
-    subgraph UI["React UI (21 Tabs)"]
-        TABS["Dashboard, Explorer,<br/>Accuracy, Item Analysis,<br/>Clusters, Inv Planning,<br/>Control Tower, AI Planner,<br/>Jobs, Data Quality, ..."]
+    subgraph UI["React UI (17 Destinations)"]
+        TABS["Command Center, Portfolio,<br/>Item Analysis, Workflows,<br/>Model Tuning, Inv Planning,<br/>Customer Analytics,<br/>Data Quality, ..."]
     end
 
     CSV --> N1 --> L1
@@ -657,6 +657,16 @@ cleanup methods (the submit/subprocess paths were retired). Chains are read back
 via `ChainJobRunner` (`common/services/chain_shape.py` + `integration_chain_jobs.py`)
 with a legacy-archive read-fallback.
 
+**AI Operations Workbench.** The single **Workflows** destination consolidates
+the former Integration and Jobs tabs into Plan & Run, Workflow Library, and
+Manual Load views. `POST /jobs/workflow-plan` combines input-file scan evidence
+with cluster, tuning, champion, production-release, snapshot-archive, inventory,
+and active-job readiness. Deterministic rules own executable order; GPT verifies
+and explains and may ask decision-changing questions, while every runnable step
+is grounded to `config/forecasting/pipelines.yaml`. Local development uses
+subscription-authenticated `codex exec`; production selects the metered OpenAI
+runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
+
 ### Detailed Table Descriptions
 
 1. `backtest_lag_archive` — stores all-lag (0–4) predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability; for external forecasts, archive is loaded BEFORE staging mutation (original lag values preserved); for backtest models, each row preserves its original lag
@@ -978,7 +988,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Control Tower** | `/control-tower/kpis`, `/alerts`, `/top-critical`, `/trend` | `mv_control_tower_kpis` |
 | **AI Planner** | `/ai-planner/insights`, `/portfolio-scan`, `/metrics` | `ai_insights`, `ai_planning_memos`, `ai_call_log` |
 | **Storyboard** | `/storyboard/exceptions`, `/summary`, `/detail` | `fact_storyboard_exceptions` |
-| **Jobs** | `/jobs/*` (12 endpoints) | `job_history`, `job_schedule` |
+| **Workflows** | `/jobs/*` including `/jobs/workflow-plan`; `/integration/*` | `job_history`, `job_schedule`, `integration_job_unified`, readiness evidence tables |
 | **Data Quality** | `/data-quality/dashboard`, `/checks`, `/results`, `/run` | `dim_dq_check_catalog`, `fact_dq_check_results`, `mv_dq_dashboard` |
 | **FVA** | `/fva/waterfall`, `/roi`, `/detail` | `fact_fva_tracking` |
 | **S&OP** | `/sop/cycles`, `/advance`, `/plan` | `fact_sop_cycles` + 4 phase tables |
@@ -1342,18 +1352,18 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Persistent `job_history` + `job_schedule` tables in Postgres
    - `JobManager` singleton with per-group concurrency control (one active job per group)
    - 8 job types across 5 groups: clustering (cluster_scenario, cluster_pipeline), backtest (lgbm, catboost, xgboost), seasonality (seasonality_pipeline), champion (champion_select), tuning (tuning_backtest)
-   - REST API: 13 endpoints — core CRUD (types, submit, list, active, detail, cancel, delete), logs (`GET /jobs/{id}/logs`), scheduling (create schedule, list schedules, remove schedule), pipeline (submit pipeline), stats (dashboard aggregates)
+   - REST API: core CRUD (types, submit, list, active, detail, cancel, delete), logs (`GET /jobs/{id}/logs`), scheduling, custom and named pipelines, workflow planning, and dashboard statistics
    - Cron/interval scheduling for recurring automation (e.g., daily 2AM backtest, weekly clustering refresh)
    - Job pipelines: sequential chaining of multi-step workflows (cluster → backtest → champion select)
    - Retry logic with exponential backoff (configurable max_retries per job)
    - Professional automation dashboard UI: KPI cards, grouped job type cards with category colors, live active job monitoring with animated progress bars, schedule dialog, schedules section, expandable job history
    - `JobNotificationContext` for cross-tab completion/failure alerts on Dashboard
    - Clustering What-If scenarios from ClustersTab delegate to JobManager ("Schedule Scenario Job")
-   - Sidebar nav item with active job count badge, keyboard shortcut `6`
+   - Unified Workflows nav item with active job count badge, keyboard shortcut `6`
    - Foundation for agentic AI automation
    - **Vite proxy requirement:** `frontend/vite.config.ts` must include `/jobs` proxy entry to forward API calls to FastAPI backend; without it the UI receives HTML instead of JSON
    - **Scenario queueing:** When a group is busy, new jobs are queued (`status="queued"`) instead of rejected with 409. Queued jobs auto-dispatch via `_dispatch_next()` when the active job completes (FIFO order)
-   - **View Results navigation:** "View Results" button in JobsTab navigates to ClustersTab with `?scenario_job=<id>` URL param for completed cluster_scenario jobs; ClustersTab auto-loads and renders ScenarioCharts
+   - **View Results navigation:** "View Results" in Workflows → Workflow Library navigates to Clusters with `?scenario_job=<id>` for completed cluster-scenario jobs; Clusters auto-loads and renders ScenarioCharts
    - **Past Scenarios history:** ClustersTab What-If panel shows last 10 completed scenarios in an accordion with inline charts and promote buttons
    - **Resilient execution:** All subprocess jobs use `Popen(start_new_session=True)` — stopping the API does NOT kill running jobs. PID stored in `job_history.pid` for real kill via `os.killpg(SIGTERM)` and PID-aware startup recovery (re-adopt live PIDs, fail dead ones). Persistent `log` column streams subprocess output to DB in real-time. Kill button with 2-step confirmation in ActiveJobsPanel. Execution logs visible in both active and history panels via `GET /jobs/{id}/logs` polling
    - **AI Tuning integration:** Tuning chat `confirm-run` submits via `JobManager.submit_job("tuning_backtest")` instead of standalone `ThreadPoolExecutor` — gets PID tracking, cancel, log streaming, and restart recovery for free
@@ -1977,15 +1987,23 @@ Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBA
 
 ### 8. Job Automation & Workflow Orchestration
 
-APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Persisted `job_schedule` rows are **re-registered into APScheduler at API boot** (`restore_schedules()`), and config-declared defaults (`config/platform/jobs_config.yaml`) are guaranteed via `ensure_default_schedules()` — the nightly `refresh_all_mvs` staleness safety net ships enabled. Jobs tab with live progress, kill button, cross-tab completion alerts.
+APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Persisted `job_schedule` rows are **re-registered into APScheduler at API boot** (`restore_schedules()`), and config-declared defaults (`config/platform/jobs_config.yaml`) are guaranteed via `ensure_default_schedules()` — the nightly `refresh_all_mvs` staleness safety net ships enabled. Workflows → Workflow Library provides live progress, kill controls, schedules, logs, and cross-tab completion alerts.
 
-**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the forecasting lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh` (ETL delta → SKU features → MV refresh), `model-refresh` (stale-cluster re-tune → 3 tree backtests → champion selection), `forecast-publish` (production training → staging generation), and `full-refresh` (everything; promotion stays a manual review step). `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
+**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `inventory-refresh`, and `full-refresh`. The publish pipeline has no leading archive step because the required outgoing archive is inside the promotion transaction. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
+
+**AI-verified operational planning:** `common/ai/workflow_planner/` evaluates
+input changes and database readiness, then asks GPT to verify and explain the
+bounded system plan. The deterministic order cannot be changed or reduced by
+the model. The UI executes one named workflow at a time and requires a rescan
+before downstream work. Codex subscription auth is used locally; OpenAI API
+credits are used in production. See
+`docs/specs/06-ai-platform/09-ai-operations-workbench.md`.
 
 **Cross-stage staleness lineage**: cluster promotion flags `cluster_tuning_profile_state` (consumed by `tune_cluster_hyperparams.py --stale-only` / job `tune_stale_clusters`); `champion_experiment.cluster_experiment_id` (sql/198) records the cluster generation a champion was computed under, and both production generation and champion promotion refuse on a generation mismatch (overridable). `GET /dashboard/pipeline-readiness` derives four live checks: clustering wiped, stale tuning profiles, champion↔cluster mismatch, and sales data newer than the promoted champion.
 
 ### 9. UI Platform
 
-21-tab sidebar across 5 sections (Tower, Operations, Supply, Demand, System). Light/dark themes. Global filter bar synced across tabs via URL state. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the 8 heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
+17-destination sidebar across 5 sections (Tower, Demand, Supply, Operations, System). Integration and Jobs are consolidated into one **Workflows** command center with Plan & Run, Workflow Library, and Manual Load views. Light/dark themes. Local filters are URL-aware. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
 
 ---
 

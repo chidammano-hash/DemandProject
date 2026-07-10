@@ -20,10 +20,12 @@ class TestPresetConfig:
         presets = load_pipeline_presets()
         for name in (
             "data-refresh",
+            "clustering-refresh",
             "model-refresh",
             "forecast-publish",
             "forecast-snapshot-bundle",
             "full-refresh",
+            "inventory-refresh",
         ):
             assert name in presets, f"missing preset {name}"
 

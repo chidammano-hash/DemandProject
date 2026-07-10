@@ -44,7 +44,6 @@ const SkuChatTab = lazy(() => import("./tabs/SkuChatTab").then((m) => ({ default
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
 const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
-const JobsTab = lazy(() => import("./tabs/JobsTab"));
 const StoryboardTab = lazy(() => import("./tabs/StoryboardTab"));
 const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 const SopTab = lazy(() => import("./tabs/SopTab"));
@@ -57,7 +56,7 @@ const SettingsTab = lazy(() => import("./tabs/SettingsTab"));
 const ModelTuningTab = lazy(() => import("./tabs/ModelTuningTab"));
 const DemandHistoryTab = lazy(() => import("./tabs/DemandHistoryTab"));
 const SkuFeaturesTab = lazy(() => import("./tabs/SkuFeaturesTab"));
-const IntegrationTab = lazy(() => import("./tabs/IntegrationTab"));
+const OperationsTab = lazy(() => import("./tabs/OperationsTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -126,14 +125,15 @@ export default function App() {
   // Tab switching logic
   const handleTabSwitch = useCallback(
     (tab: string) => {
-      setActiveTab(tab);
-      if (tab === "explorer" && (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain))) setDomain("item");
-      if (tab === "clusters" && domain !== "sku") setDomain("sku");
+      const destination = tab === "jobs" ? "integration" : tab;
+      setActiveTab(destination);
+      if (destination === "explorer" && (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain))) setDomain("item");
+      if (destination === "clusters" && domain !== "sku") setDomain("sku");
     },
     [domain],
   );
 
-  // Navigate from JobsTab to ClustersTab with scenario result
+  // Navigate from the Workflow Library to Clusters with a scenario result.
   const handleNavigateToScenario = useCallback((jobId: string) => {
     setScenarioJobParam(jobId);
     handleTabSwitch("clusters");
@@ -249,11 +249,6 @@ export default function App() {
                     <InvPlanningTab />
                   </TabPanel>
                 )}
-                {activeTab === "jobs" && (
-                  <TabPanel tabKey="jobs" resetKeys={[activeTab]}>
-                    <JobsTab onNavigateToScenario={handleNavigateToScenario} />
-                  </TabPanel>
-                )}
                 {activeTab === "exceptions" && (
                   <TabPanel tabKey="exceptions" resetKeys={[activeTab]}>
                     <ExceptionsTab />
@@ -311,7 +306,7 @@ export default function App() {
                 )}
                 {activeTab === "integration" && (
                   <TabPanel tabKey="integration" resetKeys={[activeTab]}>
-                    <IntegrationTab />
+                    <OperationsTab onNavigateToScenario={handleNavigateToScenario} />
                   </TabPanel>
                 )}
               </div>

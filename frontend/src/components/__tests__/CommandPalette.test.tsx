@@ -11,8 +11,7 @@ vi.mock("../AppSidebar", () => ({
     { key: "aggregateAnalysis", label: "Portfolio", icon: () => null, section: "demand", shortcut: "2" },
     { key: "itemAnalysis", label: "Item Analysis", icon: () => null, section: "demand", shortcut: "3" },
     { key: "invPlanning", label: "Inv. Planning", icon: () => null, section: "supply", shortcut: "4" },
-    { key: "jobs", label: "Jobs", icon: () => null, section: "operations", shortcut: "6" },
-    { key: "integration", label: "Integration", icon: () => null, section: "operations" },
+    { key: "integration", label: "Workflows", icon: () => null, section: "operations", shortcut: "6" },
   ],
 }));
 
@@ -49,7 +48,7 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Portfolio")).toBeDefined();
     expect(screen.getByText("Item Analysis")).toBeDefined();
     expect(screen.getByText("Inv. Planning")).toBeDefined();
-    expect(screen.getByText("Jobs")).toBeDefined();
+    expect(screen.getByText("Workflows")).toBeDefined();
   });
 
   it("shows quick action items", () => {
@@ -152,7 +151,7 @@ describe("CommandPalette", () => {
     render(<CommandPalette {...defaultProps} />);
     const input = screen.getByLabelText("Search commands");
     fireEvent.change(input, { target: { value: "etl" } });
-    expect(screen.getByText("Integration")).toBeDefined();
+    expect(screen.getByText("Workflows")).toBeDefined();
     expect(screen.queryByText("Portfolio")).toBeNull();
   });
 });

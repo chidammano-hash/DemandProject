@@ -587,3 +587,32 @@ badge reports the effective provider and model, so `codex · gpt-5.5` confirms
 the subscription-authenticated local runtime. `llm_unavailable` means the
 planner safely returned the deterministic scan plan; confirm `codex` is on
 `PATH` and that `codex exec --model gpt-5.5` succeeds under the service user.
+
+## 9.14 AI Operations Workbench
+
+Open **Workflows → Plan & Run** and choose **Analyze workflows**. This extends
+the input scan across promoted clustering, stale tuning, champion freshness,
+planning-month production coverage, champion-plus-three archive readiness, and
+inventory refresh state. The result shows one safe sequence made only from
+named pipelines in `config/forecasting/pipelines.yaml`.
+
+Operational loop:
+
+1. Review provider/model, confidence, evidence, and prerequisites.
+2. Answer a clarification only if shown (for example, active jobs already in
+   flight), then choose **Refine recommendation**.
+3. Choose **Run next** on the first unblocked workflow.
+4. Monitor it in **Workflows → Workflow Library**.
+5. When it completes, return to **Plan & Run** and analyze again before starting
+   the next downstream stage.
+
+The system owns dependency order; GPT verifies and explains but cannot invent,
+omit, or reorder executable stages. `System verified` means the deterministic
+plan is being shown; the risk flag distinguishes a usage limit, authentication
+problem, timeout, or other runtime outage. Manual domain loading remains under
+**Workflows → Manual Load**.
+
+Runtime selection is shared with §9.13. Local development uses saved Codex
+subscription authentication. Production sets
+`INTEGRATION_SCAN_AI_RUNTIME=openai` and `OPENAI_API_KEY` for the metered API.
+See spec `docs/specs/06-ai-platform/09-ai-operations-workbench.md`.

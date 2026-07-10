@@ -57,6 +57,7 @@ test.describe("Sidebar Navigation", () => {
       "aiPlanner",
       "controlTower",
       "jobs",
+      "integration",
       "exceptions",
       "fva",
       "dataQuality",
@@ -87,9 +88,9 @@ test.describe("Keyboard Shortcuts", () => {
     await expect(page).toHaveURL(/tab=invPlanning/);
   });
 
-  test("pressing 6 navigates to Portfolio", async ({ page }) => {
+  test("pressing 6 navigates to Workflows", async ({ page }) => {
     await page.keyboard.press("6");
-    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
+    await expect(page).toHaveURL(/tab=integration/);
   });
 });
 

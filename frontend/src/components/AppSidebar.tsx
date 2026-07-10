@@ -5,9 +5,7 @@ import {
   Database,
   TrendingUp,
   Activity,
-  Network,
   PlayCircle,
-  Plug,
   Brain, Monitor,
   CalendarDays,
   Shield, BarChart3, MapPin, FlaskConical,
@@ -55,8 +53,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },
   // Operations — planning processes & admin
   { key: "sop",               label: "S&OP",           icon: CalendarDays,    section: "operations",  shortcut: "5" },
-  { key: "jobs",              label: "Jobs",           icon: PlayCircle,      section: "operations",  shortcut: "6" },
-  { key: "integration",       label: "Integration",    icon: Plug,            section: "operations" },
+  { key: "integration",       label: "Workflows",      icon: PlayCircle,      section: "operations",  shortcut: "6" },
   { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
@@ -91,7 +88,7 @@ export interface AppSidebarProps {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName, themeFooter }: AppSidebarProps) {
+export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName: _appName, themeFooter }: AppSidebarProps) {
   let lastSection: SidebarSection | null = null;
   const { activeJobCount } = useJobNotification();
 
@@ -183,7 +180,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                     <span className="flex-1 truncate text-left">{item.label}</span>
                   )}
                   {/* Active job count badge */}
-                  {item.key === "jobs" && activeJobCount > 0 && (
+                  {item.key === "integration" && activeJobCount > 0 && (
                     <span className={cn(
                       "flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white",
                       !collapsed && "ml-auto mr-1",

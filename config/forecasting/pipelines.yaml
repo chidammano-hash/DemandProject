@@ -8,6 +8,17 @@
 # through JobManager.submit_pipeline — a failed step stops the pipeline.
 # tests/unit/test_pipeline_presets.py verifies every step's job_type is registered.
 pipelines:
+  clustering-refresh:
+    description: >-
+      Recompute SKU features, run the unified clustering pipeline, label the
+      resulting segments, and automatically promote the completed clustering
+      experiment for downstream model training.
+    steps:
+      - job_type: compute_sku_features
+        params: {time_window_months: 36}
+      - job_type: cluster_pipeline
+        params: {auto_promote: true}
+
   data-refresh:
     description: >-
       Detect changed source files, reload the deltas, recompute SKU features,
@@ -56,6 +67,18 @@ pipelines:
       - job_type: prepare_forecast_snapshot_contenders
       - job_type: archive_forecast_snapshot
       - job_type: cleanup_forecast_staging
+
+  inventory-refresh:
+    description: >-
+      Recompute safety stock, EOQ, replenishment plans, policies, health scores,
+      and planning exceptions from the current promoted forecast.
+    steps:
+      - job_type: compute_safety_stock
+      - job_type: compute_eoq
+      - job_type: compute_replenishment_plan
+      - job_type: assign_policies
+      - job_type: refresh_health_scores
+      - job_type: generate_exceptions
 
   full-refresh:
     description: >-

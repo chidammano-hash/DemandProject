@@ -20,13 +20,15 @@ Everything is triggered from one of two tabs:
 | Surface | Sidebar tab | What it drives |
 |---|---|---|
 | **Guided modeling flow** | **Model Tuning** (3 stages: **Backtest → Champion → Forecast**) | Phases 5–8: run backtests, load results, select/promote champion, train + generate + promote production forecasts |
-| **Generic job runner** | **Jobs** (panels: Job Groups, Active Jobs, Pipeline Builder, Schedules, Job History) | Phase 9 (inventory, demand planning, ops), running many jobs at once, monitoring, chaining, and scheduling |
+| **AI-guided operations + generic runner** | **Workflows** (**Plan & Run**, **Workflow Library**, **Manual Load**) | Input readiness through clustering, forecasting, archive, and inventory; plus monitoring, chaining, scheduling, and advanced loading |
 
 **Key facts that apply to everything below:**
 
 - **All long steps run as background jobs** (pg-queue). Firing a control returns immediately
-  with a job id; watch it in **Jobs → Active Jobs** (status `queued → running → completed/failed`)
-  and read output in **Jobs → Job History → logs**.
+  with a job id; watch it in **Workflows → Workflow Library → Active Jobs**
+  (status `queued → running → completed/failed`) and read output under **Job History → logs**.
+- **Preferred operating path:** use **Workflows → Plan & Run → Analyze workflows**,
+  run only the first safe recommendation, then analyze again after it completes.
 - **Write actions require the API key.** The UI sends `X-API-Key` automatically once you're
   authenticated; for direct `curl` you must pass `-H "X-API-Key: $API_KEY"`.
 - **Prerequisite:** API on `:8000` and UI on `:5173` running (`make api`, `make ui`). Data must
@@ -56,7 +58,7 @@ families run concurrently — same family stays serial).
 > `uv pip install statsforecast` (or `uv sync --extra statistical`), then re-run.
 
 **Running the whole roster from the UI** (no single "Run all" button): use the
-**Jobs → Pipeline Builder** and add one step per backtest job type (`backtest_lgbm`,
+**Workflows → Workflow Library → Pipeline Builder** and add one step per backtest job type (`backtest_lgbm`,
 `backtest_catboost`, … `backtest_nbeats`) → submit as one pipeline (`POST /jobs/pipeline`).
 Or click **Run** on each model card. The foundation/DL backtests are the multi-hour
 wall — fire them and monitor in Active Jobs.
@@ -82,7 +84,7 @@ wall — fire them and monitor in Active Jobs.
   `GET /backtest-management/{model_id}/runs`.
 - **External ML extracts** (`ext_lgbm/cat/xg/best`) and the **accuracy-MV refresh** have **no
   dedicated UI button** — run `make load-ext-all` and `make refresh-accuracy-mvs`, or submit a
-  `refresh_forecast_views` job from the Jobs tab.
+  `refresh_forecast_views` job from **Workflows → Workflow Library**.
 
 ---
 
@@ -95,7 +97,7 @@ The Champion stage (`ChampionExperimentsPanel`) creates and runs selection exper
   writes the per-DFU winners.
 - **Load results** → `champion_results_load` (requires the experiment to be promoted).
 - These three job types are in the `champion` group and are **managed only here**, not in the
-  generic Jobs tab job-group list.
+  generic Workflow Library job-group list.
 
 **Champion Strategy Sweep (tournament).** The **Run Sweep** button (next to "New Experiment")
 launches a `champion_sweep` job (`POST /champion-sweeps`) that fans out a grid of candidate champion
@@ -139,9 +141,9 @@ system date aligned with the planning month so staging and promote `plan_version
 
 ---
 
-## 12.5 Phase 9 — Inventory, demand planning, ops (Jobs tab)
+## 12.5 Phase 9 — Inventory, demand planning, ops (Workflows)
 
-These run as generic jobs from **Jobs → Job Groups** (pick a group → pick a job → Run →
+These run as generic jobs from **Workflows → Workflow Library → Job Groups** (pick a group → pick a job → Run →
 `POST /jobs {job_type, params}`), or chained in **Pipeline Builder**.
 
 **`inventory` group (13 jobs):**
@@ -178,9 +180,9 @@ service-level, lead-time, echelon) beyond `compute_replenishment_plan`, and the 
 
 ---
 
-## 12.6 Phase 10 — MV refresh + verify (Jobs tab)
+## 12.6 Phase 10 — MV refresh + verify (Workflows)
 
-- **Refresh views:** `refresh_forecast_views` and `refresh_customer_analytics` jobs (Jobs tab),
+- **Refresh views:** `refresh_forecast_views` and `refresh_customer_analytics` jobs (Workflow Library),
   or `make refresh-mvs-tiered` for the full tiered pass.
 - **Verify:** `GET /backtest-management/promotion-status` and `staging-summary` on the Forecast
   stage; row-count health via `make health`.
@@ -189,12 +191,12 @@ service-level, lead-time, echelon) beyond `compute_replenishment_plan`, and the 
 
 ## 12.7 Monitoring, chaining, scheduling
 
-- **Monitor:** Jobs → **Active Jobs** (live status), **Job History** (+ per-job logs via
+- **Monitor:** Workflows → **Workflow Library → Active Jobs** (live status), **Job History** (+ per-job logs via
   `GET /jobs/{id}/logs`). Cancel a stuck job → `POST /jobs/{id}/cancel`.
-- **Chain (run many in order):** Jobs → **Pipeline Builder** → add steps → submit
+- **Chain (run many in order):** Workflows → **Workflow Library → Pipeline Builder** → add steps → submit
   (`POST /jobs/pipeline {steps:[{job_type, params}]}`). This is the UI way to run all of
   Phase 5, or the full inventory sequence, in one shot.
-- **Schedule (recurring):** Jobs → **Schedules** → `POST /jobs/schedule {job_type, cron|interval}`.
+- **Schedule (recurring):** Workflows → **Workflow Library → Schedules** → `POST /jobs/schedule {job_type, cron|interval}`.
   Useful for nightly backtests / MV refreshes.
 
 ---

@@ -19,7 +19,7 @@ describe("KeyboardShortcutHelp", () => {
     expect(screen.getByText("Item Analysis")).toBeInTheDocument();
     expect(screen.getByText("Inv. Planning")).toBeInTheDocument();
     expect(screen.getByText("S&OP")).toBeInTheDocument();
-    expect(screen.getByText("Jobs")).toBeInTheDocument();
+    expect(screen.getByText("Workflows")).toBeInTheDocument();
     // global shortcuts
     expect(screen.getByText("Focus search")).toBeInTheDocument();
     expect(screen.getByText("Close panel / help")).toBeInTheDocument();

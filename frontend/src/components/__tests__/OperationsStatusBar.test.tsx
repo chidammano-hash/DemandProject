@@ -59,7 +59,7 @@ describe("OperationsStatusBar", () => {
     expect(screen.getByText("ML inputs current")).toBeInTheDocument();
   });
 
-  it("opens Jobs when the active job pill is clicked", async () => {
+  it("opens Workflows when the active job pill is clicked", async () => {
     mockedActiveJobs.mockResolvedValue({
       jobs: [
         {
@@ -83,7 +83,7 @@ describe("OperationsStatusBar", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /1 active job/i }));
 
-    expect(onNavigate).toHaveBeenCalledWith("jobs");
+    expect(onNavigate).toHaveBeenCalledWith("integration");
   });
 
   it("opens the readiness remediation target for stale stages", async () => {

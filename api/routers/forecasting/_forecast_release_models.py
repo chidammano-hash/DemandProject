@@ -139,7 +139,7 @@ class ForecastReleaseArchive(BaseModel):
 class ForecastReleaseNextAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tab: Literal["jobs", "fva", "dataQuality", "clusters", "lgbmTuning"]
+    tab: Literal["integration", "fva", "dataQuality", "clusters", "lgbmTuning"]
     pipeline: str | None
     label: str
     reason: str

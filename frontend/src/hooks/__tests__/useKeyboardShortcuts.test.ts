@@ -40,7 +40,7 @@ describe("useKeyboardShortcuts", () => {
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("sop");
 
     act(() => fireKey("6"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("integration");
   });
 
   it("focuses search on /", () => {

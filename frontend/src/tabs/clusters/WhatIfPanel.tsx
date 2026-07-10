@@ -287,7 +287,7 @@ export default function WhatIfPanel({
               <span className="text-blue-700 dark:text-blue-300 text-xs">
                 {scenarioQueued
                   ? "Your scenario is queued. A clustering job is currently running \u2014 yours will start automatically when it finishes."
-                  : "Job scheduled successfully. Track progress in the Jobs tab."}
+                  : "Job scheduled successfully. Track progress in the Workflow Library."}
               </span>
               <span className="text-[10px] font-mono text-blue-500 bg-blue-100 dark:bg-blue-900/50 rounded px-1.5 py-0.5">
                 {scheduledJobId}

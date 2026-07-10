@@ -277,7 +277,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
             {pipelineJobId && (
               <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-3 text-sm flex items-center justify-between">
                 <span className="text-blue-700 dark:text-blue-300 text-xs">
-                  Pipeline job scheduled. Track progress in the Jobs tab.
+                  Pipeline job scheduled. Track progress in the Workflow Library.
                 </span>
                 <span className="text-[10px] font-mono text-blue-500 bg-blue-100 dark:bg-blue-900/50 rounded px-1.5 py-0.5">
                   {pipelineJobId}

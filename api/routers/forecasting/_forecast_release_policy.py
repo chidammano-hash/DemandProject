@@ -189,16 +189,16 @@ def next_release_action(
         "tuning_freshness",
     }:
         return {
-            "tab": "jobs",
+            "tab": "integration",
             "pipeline": "model-refresh",
-            "label": "Open Jobs for model refresh",
+            "label": "Open Workflows for model refresh",
             "reason": "Forecast evidence or model lineage is stale or below policy.",
         }
     if "sales_freshness" in blocked:
         return {
-            "tab": "jobs",
+            "tab": "integration",
             "pipeline": "forecast-publish",
-            "label": "Open Jobs for forecast publish",
+            "label": "Open Workflows for forecast publish",
             "reason": "The active release must be regenerated after the latest sales load.",
         }
     if "outgoing_archive" in blocked:
@@ -210,9 +210,9 @@ def next_release_action(
         }
     if blocked & {"current_plan_version", "current_plan_coverage", "release_integrity"}:
         return {
-            "tab": "jobs",
+            "tab": "integration",
             "pipeline": "forecast-publish",
-            "label": "Open Jobs for forecast publish",
+            "label": "Open Workflows for forecast publish",
             "reason": "No complete champion plan is available for the planning month.",
         }
     return None
