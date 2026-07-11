@@ -570,6 +570,109 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
+# Configuration metadata completion
+# ---------------------------------------------------------------------------
+def _iter_config_leaves(data: Any, prefix: str = ""):
+    """Yield dot paths for every value editable as one Settings control."""
+    if isinstance(data, dict) and data:
+        for key, value in data.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield from _iter_config_leaves(value, path)
+        return
+    yield prefix, data
+
+
+def _humanize_config_key(key: str) -> str:
+    """Turn a YAML key into a compact UI label."""
+    acronyms = {
+        "ci": "CI",
+        "cv": "CV",
+        "dfu": "DFU",
+        "id": "ID",
+        "lgbm": "LightGBM",
+        "shap": "SHAP",
+        "sku": "SKU",
+        "wape": "WAPE",
+    }
+    return " ".join(acronyms.get(part, part.capitalize()) for part in key.split("_"))
+
+
+def _infer_field_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "text"
+
+
+def _generated_field_meta(path: str, value: Any) -> FieldMeta:
+    parts = path.split(".")
+    if parts[0] == "algorithms" and len(parts) > 2:
+        group = f"Model: {_humanize_config_key(parts[1])}"
+    else:
+        group = _humanize_config_key(parts[0])
+    return {
+        "label": _humanize_config_key(parts[-1]),
+        "description": f"Configuration setting: {path}.",
+        "type": _infer_field_type(value),
+        "group": group,
+    }
+
+
+def _complete_registry_fields() -> None:
+    """Expose every YAML leaf while preserving hand-authored field metadata."""
+    for name, config_meta in CONFIG_REGISTRY.items():
+        config_path = _resolve_yaml_path(f"{name}.yaml")
+        if not config_path.exists():
+            continue
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            logger.exception("Failed to load config metadata for %s", name)
+            continue
+
+        fields = config_meta["fields"]
+        for path, value in _iter_config_leaves(raw):
+            fields.setdefault(path, _generated_field_meta(path, value))
+
+    # Operationally important controls get explicit guidance instead of a
+    # generated description.
+    fields = CONFIG_REGISTRY["forecast_pipeline_config"]["fields"]
+    fields["algorithms.lgbm_cluster.params.tune_inline"].update(
+        {
+            "label": "Tune During Backtest",
+            "description": (
+                "Run Optuna inside each LightGBM backtest. Keep off for fast "
+                "backtests; use tuning experiments to optimize parameters separately."
+            ),
+            "group": "Model: LightGBM",
+        }
+    )
+    fields["backtest.embargo_months"].update(
+        {
+            "label": "Embargo Months",
+            "description": (
+                "Closed months withheld between the planning cutoff and the latest "
+                "backtest prediction window to prevent leakage."
+            ),
+            "min": 0,
+            "max": 24,
+            "unit": "months",
+            "group": "Clustering & Backtest",
+        }
+    )
+
+
+_complete_registry_fields()
+
+
+# ---------------------------------------------------------------------------
 # Helper — resolve a dot-path in a nested dict
 # ---------------------------------------------------------------------------
 def _get_nested(data: dict, path: str, default: Any = None) -> Any:

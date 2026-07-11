@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Status** | Implemented |
-| **UI Tab** | N/A (config file only) |
-| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `common/core/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`, `get_competing_model_ids`, `get_forecastable_model_ids`) |
+| **UI Tab** | Operations → Settings → Forecasting & Models → Forecast Pipeline (Master) |
+| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `api/routers/platform/config_manager.py`, `common/core/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`, `get_competing_model_ids`, `get_forecastable_model_ids`) |
 
 ---
 
@@ -33,6 +33,16 @@ Pipeline configuration was fragmented across 4 separate YAML files, each governi
 A single master config file (`config/forecasting/forecast_pipeline_config.yaml`) consolidates all pipeline settings. It introduces a new `algorithms` section -- a master roster of all 12 algorithms with per-algorithm lifecycle flags that control which pipeline stages each algorithm participates in. Helper functions in `common/core/utils.py` provide filtered access to the roster.
 
 Model-specific hyperparameters (learning_rate, n_estimators, etc.) are now inline under `algorithms.<model_id>.params` in the master config. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve them.
+
+### Settings UI coverage
+
+The System Configuration editor exposes every leaf value from each registered YAML
+configuration. Metadata is completed automatically for newly added keys, while curated labels,
+descriptions, bounds, and select options take precedence. This prevents new backtest or model
+parameters from silently remaining file-only. In particular, `tune_inline` appears under
+**Model: LightGBM**, and the complete `backtest` section—including `embargo_months`—appears under
+**Clustering & Backtest**. Saving uses the authenticated configuration endpoint, preserves a
+`.yaml.bak` copy, and invalidates the configuration cache for subsequent runs.
 
 ---
 

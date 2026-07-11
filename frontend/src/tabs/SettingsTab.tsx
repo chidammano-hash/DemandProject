@@ -325,6 +325,7 @@ export function SettingsTab() {
   const [selectedCategory, setSelectedCategory] = useState<string>("forecasting");
   const [selectedConfig, setSelectedConfig] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [fieldSearch, setFieldSearch] = useState("");
   const [editValues, setEditValues] = useState<Record<string, unknown>>({});
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
@@ -353,6 +354,10 @@ export function SettingsTab() {
       setSaveStatus("idle");
     }
   }, [detailQ.data]);
+
+  useEffect(() => {
+    setFieldSearch("");
+  }, [selectedConfig]);
 
   // Auto-select first config when category changes
   useEffect(() => {
@@ -403,8 +408,8 @@ export function SettingsTab() {
   }, [detailQ.data]);
 
   // --- Derived ---
-  const categories = listQ.data?.categories ?? [];
-  const configs = listQ.data?.configs ?? [];
+  const categories = useMemo(() => listQ.data?.categories ?? [], [listQ.data]);
+  const configs = useMemo(() => listQ.data?.configs ?? [], [listQ.data]);
   const detail = detailQ.data;
 
   const filteredConfigs = useMemo(() => {
@@ -424,9 +429,17 @@ export function SettingsTab() {
   }, [detail, editValues]);
 
   const fieldGroups = useMemo(() => {
-    if (!detail) return new Map();
-    return groupFields(detail.fields);
-  }, [detail]);
+    if (!detail) return new Map<string, ConfigField[]>();
+    const query = fieldSearch.trim().toLowerCase();
+    const fields = query
+      ? detail.fields.filter((field) => {
+          const group = (field as unknown as Record<string, unknown>).group;
+          return [field.label, field.description, field.path, group]
+            .some((value) => String(value ?? "").toLowerCase().includes(query));
+        })
+      : detail.fields;
+    return groupFields(fields);
+  }, [detail, fieldSearch]);
 
   // --- Render ---
   if (listQ.isLoading) {
@@ -592,14 +605,31 @@ export function SettingsTab() {
                     </Button>
                   </div>
                 </div>
+                <label className="relative mt-3 block" htmlFor="config-field-search">
+                  <span className="sr-only">Search parameters</span>
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    id="config-field-search"
+                    type="search"
+                    value={fieldSearch}
+                    onChange={(event) => setFieldSearch(event.target.value)}
+                    placeholder="Search parameters..."
+                    className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </label>
               </CardHeader>
               <CardContent className="p-2">
+                {fieldGroups.size === 0 && (
+                  <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                    No parameters match “{fieldSearch}”.
+                  </div>
+                )}
                 {Array.from(fieldGroups.entries()).map(([group, fields]) => {
                   const isModelToggleGroup = fields.every((f) => f.type === "model_toggle");
                   return (
                     <div key={group} className="mb-5">
                       {fieldGroups.size > 1 && (
-                        <div className="sticky top-[76px] z-[5] bg-card px-3 py-2.5 border-b border-border/30">
+                        <div className="sticky top-[124px] z-[5] bg-card px-3 py-2.5 border-b border-border/30">
                           <div className="flex items-center gap-2">
                             <GroupIcon groupKey={group} />
                             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

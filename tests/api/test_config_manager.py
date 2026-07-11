@@ -1,12 +1,12 @@
 """Tests for config management API — /config endpoints."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import httpx
+import pytest
 from httpx import ASGITransport
 
 from tests.api.conftest import make_pool as _make_pool
-
 
 # ===========================================================================
 # GET /config — list all configs
@@ -228,7 +228,7 @@ async def test_reset_config_restores_backup(tmp_path):
 
 def test_all_configs_have_valid_categories():
     """Every config in CONFIG_REGISTRY has a valid category."""
-    from api.routers.platform.config_manager import CONFIG_REGISTRY, CATEGORIES
+    from api.routers.platform.config_manager import CATEGORIES, CONFIG_REGISTRY
     valid_cats = {c["key"] for c in CATEGORIES}
     for name, meta in CONFIG_REGISTRY.items():
         assert meta["category"] in valid_cats, f"{name} has invalid category {meta['category']}"
@@ -259,8 +259,8 @@ def test_select_fields_have_options():
 def test_number_fields_have_min_or_max():
     """Number/integer fields should have at least min or max constraint."""
     from api.routers.platform.config_manager import CONFIG_REGISTRY
-    for name, meta in CONFIG_REGISTRY.items():
-        for path, field in meta["fields"].items():
+    for _name, meta in CONFIG_REGISTRY.items():
+        for _path, field in meta["fields"].items():
             if field["type"] in ("number", "integer"):
                 has_bounds = "min" in field or "max" in field
                 # Not strictly required but almost all should have bounds
@@ -279,3 +279,25 @@ def test_nested_helper_get_set():
     assert data["a"]["b"]["c"] == 99
     _set_nested(data, "x.y.z", "new")
     assert data["x"]["y"]["z"] == "new"
+
+
+def test_registry_exposes_every_config_leaf():
+    """The Settings UI must not hide leaves from any registered YAML file."""
+    import yaml
+
+    from api.routers.platform.config_manager import CONFIG_REGISTRY, _iter_config_leaves
+    from common.core.paths import CONFIG_DIR
+
+    for name, metadata in CONFIG_REGISTRY.items():
+        matches = list(CONFIG_DIR.rglob(f"{name}.yaml"))
+        if not matches:
+            continue
+        assert len(matches) == 1, f"ambiguous config fixture for {name}"
+        raw = yaml.safe_load(matches[0].read_text(encoding="utf-8")) or {}
+        expected_paths = {path for path, _value in _iter_config_leaves(raw)}
+        exposed_paths = set(metadata["fields"])
+        assert expected_paths <= exposed_paths, f"{name} has hidden fields"
+
+    exposed_paths = set(CONFIG_REGISTRY["forecast_pipeline_config"]["fields"])
+    assert "algorithms.lgbm_cluster.params.tune_inline" in exposed_paths
+    assert "backtest.embargo_months" in exposed_paths

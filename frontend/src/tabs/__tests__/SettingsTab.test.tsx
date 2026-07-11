@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
@@ -31,6 +31,7 @@ vi.mock("@/api/queries/config", () => ({
       { path: "lgbm.recursive", value: true, label: "LGBM Recursive Inference", description: "Enable recursive multi-step forecasting", type: "boolean" },
       { path: "lgbm.hyperparameters.n_estimators", value: 500, label: "LGBM Number of Trees", description: "Maximum boosting rounds", type: "integer", min: 50, max: 5000, step: 50 },
       { path: "lgbm.cluster_strategy", value: "per_cluster", label: "LGBM Cluster Strategy", description: "Training approach", type: "select", options: ["per_cluster", "global"] },
+      { path: "algorithms.lgbm_cluster.params.tune_inline", value: false, label: "Tune During Backtest", description: "Run Optuna inside each backtest", type: "boolean", group: "Model: LightGBM" },
     ],
     raw: { lgbm: { recursive: true, hyperparameters: { n_estimators: 500 }, cluster_strategy: "per_cluster" } },
   }),
@@ -126,5 +127,15 @@ describe("SettingsTab", () => {
       const numberInputs = document.querySelectorAll('input[type="number"]');
       expect(numberInputs.length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it("filters parameters by label and YAML path", async () => {
+    renderTab();
+    const search = await screen.findByPlaceholderText("Search parameters...");
+
+    fireEvent.change(search, { target: { value: "tune_inline" } });
+
+    expect(screen.getByText("Tune During Backtest")).toBeDefined();
+    expect(screen.queryByText("LGBM Number of Trees")).toBeNull();
   });
 });
