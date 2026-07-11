@@ -112,14 +112,12 @@ algorithm entry) and a per-run summary JSON. Each backtest also trains
 models AND persists `.pkl` artifacts to `data/models/<model_id>/` for
 downstream production forecasting.
 
-> **Persistence under embargo (2026-06-20 fix):** with `embargo_months >= 1`
-> (the default) the final timeframe is skipped because its predict window lands
-> past the data end. Model persistence now targets `_last_persistable_timeframe()`
-> — the last timeframe that actually produced predictions — instead of the raw
-> last timeframe index. Before the fix, the `.pkl`-persisting backtest mode wrote
-> **no** model artifacts at all under the default embargo, so `data/models/<id>/`
-> stayed empty and production generate had nothing to load. If you ran backtests
-> before this fix and `data/models/<id>/` is empty, re-run the backtest.
+> **Valid windows under embargo (2026-07-11 fix):** `generate_timeframes()` shifts
+> each training cutoff earlier by `embargo_months`, preserving the causal gap while
+> keeping all requested prediction windows non-empty. For a July 2026 planning date,
+> June 2026 is the latest scoreable closed month; timeframe J trains through April,
+> embargoes May, and predicts June. Partial July actuals are excluded at load time.
+> `_last_persistable_timeframe()` remains a defensive guard for custom timeframes.
 
 ### UI run concurrency (Model Tuning → Backtest stage)
 

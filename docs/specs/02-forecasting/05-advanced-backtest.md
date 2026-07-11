@@ -62,6 +62,10 @@ For each backtest timeframe, runs a 4-stage pipeline to remove redundant, low-in
 
 Feature importance and correlation structure shift over time. A single static feature list is suboptimal across 10 expanding timeframes.
 
+Backtest windows end at the last fully closed actual month. Embargo months shift the training
+cutoff earlier instead of pushing prediction starts beyond the data end, so every displayed
+timeframe is a real, non-empty scoring window.
+
 ### How It Works
 
 1. **Stage 0 — Duplicate removal**: Drop exact-duplicate aliases (e.g., `sparsity_score` → keep `zero_demand_pct`)

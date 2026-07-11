@@ -52,10 +52,10 @@ logger = logging.getLogger(__name__)
 # Profile priority order — first match wins
 _PROFILE_PRIORITY = [
     "sparse_intermittent",
-    "high_volume_stable",       # mean demand >= 50, low zeros — gets deeper trees
-    "medium_volume_periodic",   # mean demand 5–100, low zeros
+    "high_volume_stable",  # mean demand >= 50, low zeros — gets deeper trees
+    "medium_volume_periodic",  # mean demand 5–100, low zeros
     "low_volume_volatile",
-    "volatile_large_cluster",   # large (>300k rows) + high CV + mostly continuous
+    "volatile_large_cluster",  # large (>300k rows) + high CV + mostly continuous
     "seasonal_dominant",
     "default",
 ]
@@ -105,9 +105,7 @@ def compute_cluster_demand_stats(
     # Seasonal amplitude: variability of monthly means relative to overall mean
     seasonal_amplitude = 0.0
     if "startdate" in cluster_data.columns and overall_mean > 0:
-        monthly_means = cluster_data.groupby(
-            cluster_data["startdate"].dt.month
-        )["qty"].mean()
+        monthly_means = cluster_data.groupby(cluster_data["startdate"].dt.month)["qty"].mean()
         if len(monthly_means) > 1:
             seasonal_amplitude = float(monthly_means.std()) / overall_mean
 
@@ -200,14 +198,17 @@ def resolve_cluster_params(
                 # default profile or profile with no overrides
                 logger.debug(
                     "Cluster '%s' matched profile '%s' (no overrides)",
-                    cluster_id, profile_name,
+                    cluster_id,
+                    profile_name,
                 )
                 return base_params, profile_name
 
             resolved = {**base_params, **overrides}
             logger.info(
                 "Cluster '%s' matched profile '%s': overrides=%s",
-                cluster_id, profile_name, overrides,
+                cluster_id,
+                profile_name,
+                overrides,
             )
             return resolved, profile_name
 
@@ -234,9 +235,7 @@ def warn_if_profiles_stale(db_params: dict[str, Any]) -> None:
 
     try:
         with psycopg.connect(**db_params) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE"
-            )
+            cur.execute("SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE")
             row = cur.fetchone()
             stale_count = int(row[0]) if row else 0
             cur.execute(
@@ -271,11 +270,18 @@ def warn_if_profiles_stale(db_params: dict[str, Any]) -> None:
             "cluster_tuning_profiles.yaml was tuned against cluster experiment %s "
             "but experiment %d is promoted — per-cluster overrides may not match "
             "current cluster membership. Re-run 'make tune-clusters'.",
-            yaml_experiment, promoted_id,
+            yaml_experiment,
+            promoted_id,
         )
 
 
 # ── Timeframe generation ─────────────────────────────────────────────────────
+
+
+def _closed_month_cutoff(planning_date: pd.Timestamp) -> pd.Timestamp:
+    """Return the first day of the last fully closed month."""
+    planning_month = planning_date.normalize().replace(day=1)
+    return planning_month - pd.DateOffset(months=1)
 
 
 def generate_timeframes(
@@ -287,13 +293,14 @@ def generate_timeframes(
     """Generate N expanding-window timeframes with optional embargo gap.
 
     For timeframe i (A=0 .. J=9):
-      train_end     = latest - (N - i) months
+      train_end     = latest - (N - i + embargo_months) months
       predict_start = train_end + 1 + embargo_months months
 
     The embargo creates a gap between the last training month and the first
     prediction month, matching the causality gap used during hyperparameter
-    tuning (``gap_months`` in ``tuning.py``).  An embargo of 0 preserves
-    the legacy behaviour (predict starts 1 month after train_end).
+    tuning (``gap_months`` in ``tuning.py``). Training cutoffs shift earlier
+    by the embargo width so all N prediction windows remain non-empty. An
+    embargo of 0 preserves the legacy behaviour.
 
     Args:
         earliest: First available month.
@@ -305,30 +312,28 @@ def generate_timeframes(
     """
     timeframes = []
     for i in range(n):
-        train_end = latest - pd.DateOffset(months=(n - i))
+        train_end = latest - pd.DateOffset(months=(n - i + embargo_months))
         train_end = train_end.normalize()  # midnight
         predict_start = train_end + pd.DateOffset(months=1 + embargo_months)
         label = chr(ord("A") + i)
-        timeframes.append({
-            "label": label,
-            "index": i,
-            "train_start": earliest,
-            "train_end": train_end,
-            "predict_start": predict_start,
-            "predict_end": latest,
-        })
+        timeframes.append(
+            {
+                "label": label,
+                "index": i,
+                "train_start": earliest,
+                "train_end": train_end,
+                "predict_start": predict_start,
+                "predict_end": latest,
+            }
+        )
     return timeframes
 
 
 def _last_persistable_timeframe(timeframes: list[dict], all_months: list) -> int:
     """Index of the last timeframe with a non-empty predict window.
 
-    Under ``embargo_months >= 1`` the final timeframe's predict window starts past
-    the data end, so the backtest loop skips it (``if not predict_months:
-    continue``). Production-model persistence must therefore target the last
-    timeframe that actually trains/predicts, not ``len(timeframes) - 1`` — else
-    no ``.pkl`` artifacts get written. At ``embargo_months == 0`` this returns the
-    last index (unchanged behaviour).
+    Generated windows are valid under every supported embargo. This remains a
+    defensive guard for custom or externally supplied timeframe lists.
     """
     return max(
         (
@@ -348,18 +353,21 @@ def load_backtest_data(
     include_item_attrs: bool = True,
     algo_config: dict[str, Any] | None = None,
     include_customer_features: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> (
+    tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
+    | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
+):
     """Load sales, DFU attributes, and item attributes from Postgres.
 
-    Sales are capped at the planning date (first of month) to ensure
-    no future data leaks into backtesting.
+    Sales are capped at the last fully closed month to ensure partial planning-
+    month actuals cannot leak into backtesting.
 
     When include_customer_features=True, also loads customer_features_monthly
     and returns a 4-tuple: (sales_df, dfu_attrs, item_attrs, customer_features).
     Otherwise returns 3-tuple: (sales_df, dfu_attrs, item_attrs).
     """
     t1 = time.time()
-    planning_cutoff = get_planning_date().replace(day=1)
+    planning_cutoff = _closed_month_cutoff(pd.Timestamp(get_planning_date())).date()
     with psycopg.connect(**db) as conn:
         # Prefer uncorrected sales for accuracy (medallion dual-track)
         sales_table = "fact_sales_monthly"
@@ -374,7 +382,8 @@ def load_backtest_data(
             pass  # Table doesn't exist or is empty, use default
 
         with conn.cursor() as _cur:
-            _cur.execute(f"""
+            _cur.execute(
+                f"""
                 SELECT d.sku_ck, s.item_id, s.customer_group, s.loc, s.startdate, s.qty
                 FROM {sales_table} s
                 INNER JOIN dim_sku d
@@ -382,7 +391,9 @@ def load_backtest_data(
                 WHERE s.qty IS NOT NULL
                   AND s.startdate <= %s
                 ORDER BY d.sku_ck, s.startdate
-            """, (planning_cutoff,))
+            """,
+                (planning_cutoff,),
+            )
             _cols = [d[0] for d in _cur.description]
             sales_df = pd.DataFrame(_cur.fetchall(), columns=_cols)
 
@@ -430,11 +441,15 @@ def load_backtest_data(
         override_df = pd.read_csv(cluster_override_path, usecols=["sku_ck", "cluster_label"])
         override_map = dict(zip(override_df["sku_ck"], override_df["cluster_label"]))
         original_clusters = dfu_attrs["ml_cluster"].copy()
-        dfu_attrs["ml_cluster"] = dfu_attrs["sku_ck"].map(override_map).fillna(dfu_attrs["ml_cluster"])
+        dfu_attrs["ml_cluster"] = (
+            dfu_attrs["sku_ck"].map(override_map).fillna(dfu_attrs["ml_cluster"])
+        )
         n_remapped = int((dfu_attrs["ml_cluster"] != original_clusters).sum())
         logger.info(
             "Cluster override applied: %s entries from %s, %s DFUs remapped",
-            f"{len(override_map):,}", cluster_override_path, f"{n_remapped:,}",
+            f"{len(override_map):,}",
+            cluster_override_path,
+            f"{n_remapped:,}",
         )
 
     # Restrict to specific cluster labels when requested (for experiments / quick runs)
@@ -446,13 +461,20 @@ def load_backtest_data(
         sales_df = sales_df[sales_df["sku_ck"].isin(dfus_in_filter)].copy()
         logger.info(
             "Cluster filter applied: clusters=%s → %s DFUs, %s sales rows retained",
-            cluster_filter, f"{len(dfu_attrs):,}", f"{len(sales_df):,}",
+            cluster_filter,
+            f"{len(dfu_attrs):,}",
+            f"{len(sales_df):,}",
         )
 
     # Classify DFUs into cohorts based on sales history depth
     dfu_attrs = classify_dfu_cohorts(sales_df, dfu_attrs)
 
-    logger.info("Sales: %s rows, %s DFUs (%.1fs)", f"{len(sales_df):,}", f"{len(dfus_with_sales):,}", time.time() - t1)
+    logger.info(
+        "Sales: %s rows, %s DFUs (%.1fs)",
+        f"{len(sales_df):,}",
+        f"{len(dfus_with_sales):,}",
+        time.time() - t1,
+    )
     logger.info("DFU attrs: %s, Item attrs: %s", f"{len(dfu_attrs):,}", f"{len(item_attrs):,}")
 
     if not include_customer_features:
@@ -528,8 +550,13 @@ def classify_dfu_cohorts(
     n_cold = int((result["cohort"] == "cold_start").sum())
     n_sparse = int((result["cohort"] == "sparse").sum())
     n_active = int((result["cohort"] == "active").sum())
-    logger.info("DFU cohorts: active=%d, sparse=%d, cold_start=%d (total=%d)",
-                n_active, n_sparse, n_cold, len(result))
+    logger.info(
+        "DFU cohorts: active=%d, sparse=%d, cold_start=%d (total=%d)",
+        n_active,
+        n_sparse,
+        n_cold,
+        len(result),
+    )
 
     result.drop(columns=["_month_count"], inplace=True)
     return result
@@ -556,16 +583,23 @@ def assign_execution_lag(
     # Group by unique lag values to minimize DateOffset calls
     for lag_val in result["lag"].unique():
         mask = result["lag"] == lag_val
-        result.loc[mask, "fcstdate"] = result.loc[mask, "startdate"] - pd.DateOffset(months=int(lag_val))
+        result.loc[mask, "fcstdate"] = result.loc[mask, "startdate"] - pd.DateOffset(
+            months=int(lag_val)
+        )
 
     # Build forecast_ck (vectorized string concat via str.cat)
     result["forecast_ck"] = (
-        result["item_id"].astype(str).str.cat([
-            result["customer_group"].astype(str),
-            result["loc"].astype(str),
-            result["fcstdate"].dt.strftime("%Y-%m-%d"),
-            result["startdate"].dt.strftime("%Y-%m-%d"),
-        ], sep="_")
+        result["item_id"]
+        .astype(str)
+        .str.cat(
+            [
+                result["customer_group"].astype(str),
+                result["loc"].astype(str),
+                result["fcstdate"].dt.strftime("%Y-%m-%d"),
+                result["startdate"].dt.strftime("%Y-%m-%d"),
+            ],
+            sep="_",
+        )
     )
 
     logger.info("Execution-lag assignment done (%.1fs)", time.time() - t0)
@@ -629,18 +663,28 @@ def assign_natural_lags(
 
     # Build forecast_ck (vectorized string concat via str.cat)
     df["forecast_ck"] = (
-        df["item_id"].astype(str).str.cat([
-            df["customer_group"].astype(str),
-            df["loc"].astype(str),
-            df["fcstdate"].dt.strftime("%Y-%m-%d"),
-            df["startdate"].dt.strftime("%Y-%m-%d"),
-        ], sep="_")
+        df["item_id"]
+        .astype(str)
+        .str.cat(
+            [
+                df["customer_group"].astype(str),
+                df["loc"].astype(str),
+                df["fcstdate"].dt.strftime("%Y-%m-%d"),
+                df["startdate"].dt.strftime("%Y-%m-%d"),
+            ],
+            sep="_",
+        )
     )
 
     # Drop helper column
     df = df.drop(columns=["_train_end"])
 
-    logger.info("Natural lag assignment (0-%d) done: %s rows (%.1fs)", max_lag, f"{len(df):,}", time.time() - t0)
+    logger.info(
+        "Natural lag assignment (0-%d) done: %s rows (%.1fs)",
+        max_lag,
+        f"{len(df):,}",
+        time.time() - t0,
+    )
     return df
 
 
@@ -673,11 +717,11 @@ class BacktestCheckpointer:
         # Default: start fresh. Only resume if explicitly requested.
         if not resume and self._dir.exists():
             import shutil
+
             shutil.rmtree(self._dir, ignore_errors=True)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._existing: dict[int, Path] = {
-            int(p.stem.split("_")[1]): p
-            for p in self._dir.glob("tf_*.parquet")
+            int(p.stem.split("_")[1]): p for p in self._dir.glob("tf_*.parquet")
         }
         if self._existing:
             logger.info(
@@ -711,6 +755,7 @@ class BacktestCheckpointer:
     def cleanup(self) -> None:
         """Remove checkpoint directory after successful completion."""
         import shutil
+
         if self._dir.exists():
             shutil.rmtree(self._dir, ignore_errors=True)
             logger.info("Checkpoint: cleaned up %s", self._dir)
@@ -751,16 +796,19 @@ def postprocess_predictions(
 
     # Build actuals lookup once (small — one row per DFU×month)
     logger.info("Building actuals lookup...")
-    actuals = sales_df.drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]].rename(
-        columns={"qty": "tothist_dmd"}
-    )
+    actuals = sales_df.drop_duplicates(subset=["sku_ck", "startdate"])[
+        ["sku_ck", "startdate", "qty"]
+    ].rename(columns={"qty": "tothist_dmd"})
 
     # ── All-lags archive (compute BEFORE execution-lag to share `combined`) ──
     logger.info("Generating all-lags archive (lag 0-%d)...", MAX_ARCHIVE_LAG)
 
     if timeframes is not None:
         archive_expanded = assign_natural_lags(
-            combined, timeframes, MAX_ARCHIVE_LAG, exec_lag_map,
+            combined,
+            timeframes,
+            MAX_ARCHIVE_LAG,
+            exec_lag_map,
         )
     else:
         logger.warning(
@@ -768,7 +816,9 @@ def postprocess_predictions(
             "archive will have identical predictions across all lags"
         )
         archive_expanded = _expand_to_all_lags_legacy(
-            combined, MAX_ARCHIVE_LAG, exec_lag_map,
+            combined,
+            MAX_ARCHIVE_LAG,
+            exec_lag_map,
         )
 
     archive_expanded = archive_expanded.sort_values("timeframe_idx")
@@ -816,15 +866,25 @@ def _expand_to_all_lags_legacy(
     result["execution_lag"] = result["sku_ck"].map(execution_lag_map).fillna(0).astype(int)
 
     result["forecast_ck"] = (
-        result["item_id"].astype(str).str.cat([
-            result["customer_group"].astype(str),
-            result["loc"].astype(str),
-            result["fcstdate"].dt.strftime("%Y-%m-%d"),
-            result["startdate"].dt.strftime("%Y-%m-%d"),
-        ], sep="_")
+        result["item_id"]
+        .astype(str)
+        .str.cat(
+            [
+                result["customer_group"].astype(str),
+                result["loc"].astype(str),
+                result["fcstdate"].dt.strftime("%Y-%m-%d"),
+                result["startdate"].dt.strftime("%Y-%m-%d"),
+            ],
+            sep="_",
+        )
     )
 
-    logger.info("Legacy all-lag expansion (0-%d) done: %s rows (%.1fs)", max_lag, f"{len(result):,}", time.time() - t0)
+    logger.info(
+        "Legacy all-lag expansion (0-%d) done: %s rows (%.1fs)",
+        max_lag,
+        f"{len(result):,}",
+        time.time() - t0,
+    )
     return result
 
 
@@ -914,7 +974,10 @@ def save_backtest_output(
         metadata["accuracy_overall"] = acc["accuracy_pct"]
         logger.info(
             "Accuracy at execution lag (%s rows): WAPE=%.2f%%, Bias=%.4f, Accuracy=%.2f%%",
-            f"{acc['n_rows']:,}", acc["wape"], acc["bias"], acc["accuracy_pct"],
+            f"{acc['n_rows']:,}",
+            acc["wape"],
+            acc["bias"],
+            acc["accuracy_pct"],
         )
 
     # Per-cohort accuracy breakdown
@@ -938,7 +1001,8 @@ def save_backtest_output(
                 cohort_accuracy[f"accuracy_{cohort_name}"] = cohort_acc.get("accuracy_pct")
                 logger.info(
                     "  Accuracy [%s] (%d DFUs): %s%%",
-                    cohort_name, cohort_counts[f"n_dfus_{cohort_name}"],
+                    cohort_name,
+                    cohort_counts[f"n_dfus_{cohort_name}"],
                     cohort_acc.get("accuracy_pct"),
                 )
             else:
@@ -974,10 +1038,12 @@ def save_feature_importance(
         else:
             return None
 
-        importance = pd.DataFrame({
-            "feature": feature_cols,
-            "importance": importances,
-        }).sort_values("importance", ascending=False)
+        importance = pd.DataFrame(
+            {
+                "feature": feature_cols,
+                "importance": importances,
+            }
+        ).sort_values("importance", ascending=False)
         imp_path = output_dir / "feature_importance.csv"
         importance.to_csv(imp_path, index=False)
         logger.info("Saved feature importance to %s", imp_path)
@@ -1088,10 +1154,9 @@ def _log_timeframe_accuracy(
 
     # Join predictions with actuals from sales_df
     predict_months = preds["startdate"].unique()
-    actuals = (
-        sales_df[sales_df["startdate"].isin(predict_months)]
-        .drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]]
-    )
+    actuals = sales_df[sales_df["startdate"].isin(predict_months)].drop_duplicates(
+        subset=["sku_ck", "startdate"]
+    )[["sku_ck", "startdate", "qty"]]
     merged = preds.merge(actuals, on=["sku_ck", "startdate"], how="inner")
     if merged.empty:
         logger.info("Timeframe %s accuracy: no actuals available", label)
@@ -1120,11 +1185,16 @@ def _log_timeframe_accuracy(
             c_acc = round(100.0 - c_wape, 2)
         else:
             c_wape, c_acc = 0.0, 0.0
-        cluster_lines.append(f"    {cluster_label}: accuracy={c_acc:.1f}% wape={c_wape:.1f}% ({len(grp):,} rows)")
+        cluster_lines.append(
+            f"    {cluster_label}: accuracy={c_acc:.1f}% wape={c_wape:.1f}% ({len(grp):,} rows)"
+        )
 
     logger.info(
         "Timeframe %s accuracy: %.1f%% (wape=%.1f%%, %s matched rows)\n%s",
-        label, overall_acc, overall_wape, f"{len(merged):,}",
+        label,
+        overall_acc,
+        overall_wape,
+        f"{len(merged):,}",
         "\n".join(cluster_lines),
     )
 
@@ -1143,21 +1213,15 @@ def _compute_cluster_wape(
     Returns WAPE as a percentage, or None if no matching actuals.
     """
     # Build cluster SKU set from predict_data
-    cluster_skus = set(
-        predict_data.loc[predict_data["ml_cluster"] == cluster_label, "sku_ck"]
-    )
+    cluster_skus = set(predict_data.loc[predict_data["ml_cluster"] == cluster_label, "sku_ck"])
     cluster_preds = preds_df[preds_df["sku_ck"].isin(cluster_skus)]
     if cluster_preds.empty:
         return None
 
     predict_months = cluster_preds["startdate"].unique()
-    actuals = (
-        sales_df[
-            (sales_df["startdate"].isin(predict_months))
-            & (sales_df["sku_ck"].isin(cluster_skus))
-        ]
-        .drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]]
-    )
+    actuals = sales_df[
+        (sales_df["startdate"].isin(predict_months)) & (sales_df["sku_ck"].isin(cluster_skus))
+    ].drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]]
     merged = cluster_preds.merge(actuals, on=["sku_ck", "startdate"], how="inner")
     if merged.empty:
         return None
@@ -1249,9 +1313,11 @@ def run_tree_backtest(
     feature_selector_fn: Callable[
         [Any, pd.DataFrame, list[str], list[str], int, pd.Timestamp],
         tuple[list[str] | dict[str, list[str]], pd.DataFrame],
-    ] | None = None,
+    ]
+    | None = None,
     recursive: bool = False,
-    model_persistence_fn: Callable[[Any, list[str] | dict[str, list[str]], str], None] | None = None,
+    model_persistence_fn: Callable[[Any, list[str] | dict[str, list[str]], str], None]
+    | None = None,
     algo_config: dict[str, Any] | None = None,
     embargo_months: int = 0,
     resume: bool = False,
@@ -1274,7 +1340,10 @@ def run_tree_backtest(
 
     logger.info(
         "Backtest: strategy=%s, model_id=%s, n_timeframes=%d, recursive=%s",
-        cluster_strategy, model_id, n_timeframes, recursive,
+        cluster_strategy,
+        model_id,
+        n_timeframes,
+        recursive,
     )
 
     # ── Step 1: Load data ────────────────────────────────────────────────────
@@ -1304,26 +1373,33 @@ def run_tree_backtest(
 
     # ── Step 2: Generate timeframes ──────────────────────────────────────────
     planning_dt = pd.Timestamp(get_planning_date())
-    # Cap to first-of-planning-month so we only use complete months
-    planning_cutoff = planning_dt.normalize().replace(day=1)
+    # Backtests only score fully closed actual months; the planning month is open.
+    planning_cutoff = _closed_month_cutoff(planning_dt)
     latest_month = min(sales_df["startdate"].max(), planning_cutoff)
     earliest_month = sales_df["startdate"].min()
     # Filter out any sales beyond the planning date
     sales_df = sales_df[sales_df["startdate"] <= latest_month].copy()
     logger.info(
         "Date range: %s -> %s (planning date: %s)",
-        earliest_month.date(), latest_month.date(), planning_dt.date(),
+        earliest_month.date(),
+        latest_month.date(),
+        planning_dt.date(),
     )
 
-    timeframes = generate_timeframes(earliest_month, latest_month, n_timeframes, embargo_months=embargo_months)
+    timeframes = generate_timeframes(
+        earliest_month, latest_month, n_timeframes, embargo_months=embargo_months
+    )
     if embargo_months:
         logger.info("Embargo gap: %d month(s) between train_end and predict_start", embargo_months)
     logger.info("Step 2: Generated %d timeframes:", len(timeframes))
     for tf in timeframes:
         logger.info(
             "  %s: train [%s -> %s], predict [%s -> %s]",
-            tf["label"], tf["train_start"].date(), tf["train_end"].date(),
-            tf["predict_start"].date(), tf["predict_end"].date(),
+            tf["label"],
+            tf["train_start"].date(),
+            tf["train_end"].date(),
+            tf["predict_start"].date(),
+            tf["predict_end"].date(),
         )
 
     all_months = sorted(sales_df["startdate"].unique())
@@ -1361,8 +1437,12 @@ def run_tree_backtest(
 
     for ti, tf in enumerate(timeframes):
         if ckpt.exists(tf["index"]):
-            logger.info("Timeframe %s (%d/%d) — checkpoint exists, skipping",
-                        tf["label"], ti + 1, len(timeframes))
+            logger.info(
+                "Timeframe %s (%d/%d) — checkpoint exists, skipping",
+                tf["label"],
+                ti + 1,
+                len(timeframes),
+            )
             continue
         label = tf["label"]
         train_end = tf["train_end"]
@@ -1381,7 +1461,8 @@ def run_tree_backtest(
         if len(train_months) < min_training_months:
             logger.info(
                 "Insufficient training months (%d) -- need %d min -- skipping",
-                len(train_months), min_training_months,
+                len(train_months),
+                min_training_months,
             )
             continue
 
@@ -1410,7 +1491,9 @@ def run_tree_backtest(
             if col in predict_data.columns and col not in cat_cols:
                 predict_data[col] = predict_data[col].fillna(0)
 
-        logger.info("Train: %s rows, Predict: %s rows", f"{len(train_data):,}", f"{len(predict_data):,}")
+        logger.info(
+            "Train: %s rows, Predict: %s rows", f"{len(train_data):,}", f"{len(predict_data):,}"
+        )
 
         if len(train_data) == 0 or len(predict_data) == 0:
             logger.info("Empty train or predict -- skipping")
@@ -1436,11 +1519,13 @@ def run_tree_backtest(
             sorted_months = sorted(predict_months)
             first_predict = _fill_predict_nans(
                 masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
-                feature_cols, cat_cols,
+                feature_cols,
+                cat_cols,
             )
             logger.info(
                 "Recursive: training on first month %s, then iterating %d months...",
-                sorted_months[0].date(), len(sorted_months),
+                sorted_months[0].date(),
+                len(sorted_months),
             )
 
             # ── Noise injection (teacher forcing lite) ────────────────────────
@@ -1464,7 +1549,8 @@ def run_tree_backtest(
                         )
                     logger.info(
                         "Recursive noise injection: %.1f%% on %d lag cols",
-                        noise_pct * 100, len(lag_cols),
+                        noise_pct * 100,
+                        len(lag_cols),
                     )
             if lag_smooth > 0:
                 logger.info(
@@ -1487,14 +1573,20 @@ def run_tree_backtest(
             logger.info("SHAP feature selection (timeframe %s)...", label)
             t_shap = time.time()
             selected_features, shap_df = feature_selector_fn(
-                models, train_data, feature_cols, cat_cols,
-                tf["index"], train_end,
+                models,
+                train_data,
+                feature_cols,
+                cat_cols,
+                tf["index"],
+                train_end,
             )
             shap_timeframe_reports.append(shap_df)
             logger.info("SHAP done (%.1fs)", time.time() - t_shap)
 
             # Retrain if SHAP dropped >= threshold of features (configurable via forecast_pipeline_config.yaml)
-            retrain_threshold = algo_config.get("shap_retrain_threshold", 0.10) if algo_config else 0.10
+            retrain_threshold = (
+                algo_config.get("shap_retrain_threshold", 0.10) if algo_config else 0.10
+            )
 
             if isinstance(selected_features, dict):
                 # ── Per-cluster feature selection ──────────────────────────────
@@ -1508,7 +1600,9 @@ def run_tree_backtest(
                     drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
                     if drop_pct >= retrain_threshold and set(sel_feats) != set(feature_cols):
                         per_cluster_feature_cols[cluster_label] = sel_feats
-                        per_cluster_cat_cols[cluster_label] = [c for c in cat_cols if c in sel_feats]
+                        per_cluster_cat_cols[cluster_label] = [
+                            c for c in cat_cols if c in sel_feats
+                        ]
                         clusters_to_retrain.append(cluster_label)
                     else:
                         per_cluster_feature_cols[cluster_label] = feature_cols
@@ -1517,7 +1611,8 @@ def run_tree_backtest(
                 if clusters_to_retrain:
                     logger.info(
                         "Retraining %d/%d clusters with per-cluster SHAP-selected features...",
-                        len(clusters_to_retrain), len(selected_features),
+                        len(clusters_to_retrain),
+                        len(selected_features),
                     )
                     t_retrain = time.time()
                     reverted_clusters: list[str] = []
@@ -1532,19 +1627,25 @@ def run_tree_backtest(
                                     (masked_grid["startdate"] == sorted_months[0])
                                     & (masked_grid["ml_cluster"] == cluster_label)
                                 ].copy(),
-                                sel_feats, sel_cats,
+                                sel_feats,
+                                sel_cats,
                             )
                         else:
                             cluster_predict = _fill_predict_nans(
                                 predict_data[predict_data["ml_cluster"] == cluster_label].copy(),
-                                sel_feats, sel_cats,
+                                sel_feats,
+                                sel_cats,
                             )
 
                         # Save original model for safety check
                         original_model = models.get(cluster_label)
 
                         retrain_preds, retrain_models = train_fn_per_cluster(
-                            cluster_train, cluster_predict, sel_feats, sel_cats, effective_params,
+                            cluster_train,
+                            cluster_predict,
+                            sel_feats,
+                            sel_cats,
+                            effective_params,
                         )
 
                         # ── Safety check: revert if retrained model is worse ──
@@ -1552,12 +1653,18 @@ def run_tree_backtest(
                         # If retrained is worse, keep original model and predictions.
                         original_preds_source = preds_first if recursive else preds
                         orig_wape = _compute_cluster_wape(
-                            original_preds_source, sales_df, cluster_label, predict_data,
+                            original_preds_source,
+                            sales_df,
+                            cluster_label,
+                            predict_data,
                         )
                         retrain_wape = None
                         if not retrain_preds.empty:
                             retrain_wape = _compute_cluster_wape(
-                                retrain_preds, sales_df, cluster_label, predict_data,
+                                retrain_preds,
+                                sales_df,
+                                cluster_label,
+                                predict_data,
                             )
 
                         if (
@@ -1569,7 +1676,9 @@ def run_tree_backtest(
                             logger.warning(
                                 "SHAP retrain safety: cluster '%s' reverted "
                                 "(retrain_wape=%.1f%% > orig_wape=%.1f%%)",
-                                cluster_label, retrain_wape, orig_wape,
+                                cluster_label,
+                                retrain_wape,
+                                orig_wape,
                             )
                             per_cluster_feature_cols[cluster_label] = feature_cols
                             per_cluster_cat_cols[cluster_label] = cat_cols
@@ -1577,28 +1686,48 @@ def run_tree_backtest(
                             reverted_clusters.append(cluster_label)
                             continue
 
-                        models[cluster_label] = retrain_models.get(cluster_label, models.get(cluster_label))
+                        models[cluster_label] = retrain_models.get(
+                            cluster_label, models.get(cluster_label)
+                        )
 
                         # Merge retrained predictions
                         if not retrain_preds.empty:
                             if recursive:
                                 retrain_keys = set(retrain_preds["sku_ck"])
-                                preds_first = pd.concat([
-                                    preds_first[~preds_first["sku_ck"].isin(retrain_keys)],
-                                    retrain_preds,
-                                ], ignore_index=True)
+                                preds_first = pd.concat(
+                                    [
+                                        preds_first[~preds_first["sku_ck"].isin(retrain_keys)],
+                                        retrain_preds,
+                                    ],
+                                    ignore_index=True,
+                                )
                             else:
                                 retrain_keys = set(
-                                    zip(retrain_preds["sku_ck"], retrain_preds["startdate"], strict=True)
+                                    zip(
+                                        retrain_preds["sku_ck"],
+                                        retrain_preds["startdate"],
+                                        strict=True,
+                                    )
                                 )
-                                keep_mask = pd.Series(
-                                    [k not in retrain_keys
-                                     for k in zip(preds["sku_ck"], preds["startdate"], strict=True)]
-                                ).values if len(preds) > 0 else []
-                                preds = pd.concat([
-                                    preds[keep_mask] if len(preds) > 0 else preds,
-                                    retrain_preds,
-                                ], ignore_index=True)
+                                keep_mask = (
+                                    pd.Series(
+                                        [
+                                            k not in retrain_keys
+                                            for k in zip(
+                                                preds["sku_ck"], preds["startdate"], strict=True
+                                            )
+                                        ]
+                                    ).values
+                                    if len(preds) > 0
+                                    else []
+                                )
+                                preds = pd.concat(
+                                    [
+                                        preds[keep_mask] if len(preds) > 0 else preds,
+                                        retrain_preds,
+                                    ],
+                                    ignore_index=True,
+                                )
 
                     if reverted_clusters:
                         logger.info(
@@ -1611,7 +1740,10 @@ def run_tree_backtest(
                     else:
                         logger.info("Per-cluster retrain done (%.1fs)", time.time() - t_retrain)
                 else:
-                    logger.info("SHAP per-cluster: all %d clusters retained all features", len(selected_features))
+                    logger.info(
+                        "SHAP per-cluster: all %d clusters retained all features",
+                        len(selected_features),
+                    )
 
             else:
                 # ── Legacy single-selection path (global strategy) ─────────────
@@ -1621,7 +1753,8 @@ def run_tree_backtest(
                 if drop_pct >= retrain_threshold and set(selected_features) != set(feature_cols):
                     logger.info(
                         "Retraining with %d SHAP-selected features (was %d)...",
-                        len(selected_features), len(feature_cols),
+                        len(selected_features),
+                        len(feature_cols),
                     )
                     selected_cat_cols = [c for c in cat_cols if c in selected_features]
                     effective_feature_cols = selected_features
@@ -1631,10 +1764,13 @@ def run_tree_backtest(
                     shap_predict_data = (
                         _fill_predict_nans(
                             masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
-                            selected_features, selected_cat_cols,
+                            selected_features,
+                            selected_cat_cols,
                         )
                         if recursive
-                        else _fill_predict_nans(predict_data.copy(), selected_features, selected_cat_cols)
+                        else _fill_predict_nans(
+                            predict_data.copy(), selected_features, selected_cat_cols
+                        )
                     )
 
                     # Save original state for safety check
@@ -1644,44 +1780,80 @@ def run_tree_backtest(
 
                     t_retrain = time.time()
                     preds_retrain, models_retrain = train_fn_per_cluster(
-                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
+                        train_data,
+                        shap_predict_data,
+                        selected_features,
+                        selected_cat_cols,
+                        effective_params,
                     )
 
                     # ── Safety check: compare overall WAPE before/after retrain ──
                     orig_source = preds_first if recursive else preds
-                    orig_overall_wape = _compute_cluster_wape(
-                        orig_source, sales_df, "__all__", predict_data,
-                    ) if not orig_source.empty else None
-                    retrain_overall_wape = _compute_cluster_wape(
-                        preds_retrain, sales_df, "__all__", predict_data,
-                    ) if not preds_retrain.empty else None
+                    orig_overall_wape = (
+                        _compute_cluster_wape(
+                            orig_source,
+                            sales_df,
+                            "__all__",
+                            predict_data,
+                        )
+                        if not orig_source.empty
+                        else None
+                    )
+                    retrain_overall_wape = (
+                        _compute_cluster_wape(
+                            preds_retrain,
+                            sales_df,
+                            "__all__",
+                            predict_data,
+                        )
+                        if not preds_retrain.empty
+                        else None
+                    )
 
                     # For __all__ cluster, _compute_cluster_wape won't find matches
                     # since it filters by ml_cluster. Use direct WAPE comparison:
                     if not preds_retrain.empty:
                         _r_months = preds_retrain["startdate"].unique()
-                        _r_actuals = sales_df[sales_df["startdate"].isin(_r_months)].drop_duplicates(
-                            subset=["sku_ck", "startdate"]
-                        )[["sku_ck", "startdate", "qty"]]
-                        _r_merged = preds_retrain.merge(_r_actuals, on=["sku_ck", "startdate"], how="inner")
+                        _r_actuals = sales_df[
+                            sales_df["startdate"].isin(_r_months)
+                        ].drop_duplicates(subset=["sku_ck", "startdate"])[
+                            ["sku_ck", "startdate", "qty"]
+                        ]
+                        _r_merged = preds_retrain.merge(
+                            _r_actuals, on=["sku_ck", "startdate"], how="inner"
+                        )
                         if not _r_merged.empty:
                             _r_total = float(np.abs(_r_merged["qty"].sum()))
                             if _r_total > 0:
                                 retrain_overall_wape = round(
-                                    100.0 * float(np.abs(_r_merged[FORECAST_QTY_COL] - _r_merged["qty"]).sum()) / _r_total, 2
+                                    100.0
+                                    * float(
+                                        np.abs(_r_merged[FORECAST_QTY_COL] - _r_merged["qty"]).sum()
+                                    )
+                                    / _r_total,
+                                    2,
                                 )
 
                     if not orig_source.empty:
                         _o_months = orig_source["startdate"].unique()
-                        _o_actuals = sales_df[sales_df["startdate"].isin(_o_months)].drop_duplicates(
-                            subset=["sku_ck", "startdate"]
-                        )[["sku_ck", "startdate", "qty"]]
-                        _o_merged = orig_source.merge(_o_actuals, on=["sku_ck", "startdate"], how="inner")
+                        _o_actuals = sales_df[
+                            sales_df["startdate"].isin(_o_months)
+                        ].drop_duplicates(subset=["sku_ck", "startdate"])[
+                            ["sku_ck", "startdate", "qty"]
+                        ]
+                        _o_merged = orig_source.merge(
+                            _o_actuals, on=["sku_ck", "startdate"], how="inner"
+                        )
                         if not _o_merged.empty:
                             _o_total = float(np.abs(_o_merged["qty"].sum()))
                             if _o_total > 0:
                                 orig_overall_wape = round(
-                                    100.0 * float(np.abs(_o_merged[FORECAST_QTY_COL] - _o_merged["qty"]).sum()) / _o_total, 2
+                                    100.0
+                                    * float(
+                                        np.abs(_o_merged[FORECAST_QTY_COL] - _o_merged["qty"]).sum()
+                                    )
+                                    / _o_total,
+                                    2,
                                 )
 
                     if (
@@ -1692,7 +1864,8 @@ def run_tree_backtest(
                         logger.warning(
                             "SHAP retrain safety: global retrain reverted "
                             "(retrain_wape=%.1f%% > orig_wape=%.1f%%)",
-                            retrain_overall_wape, orig_overall_wape,
+                            retrain_overall_wape,
+                            orig_overall_wape,
                         )
                         effective_feature_cols = feature_cols
                         effective_cat_cols = cat_cols
@@ -1739,12 +1912,14 @@ def run_tree_backtest(
             # Step 1 accuracy (first month)
             if sorted_months[0] in actuals_by_month:
                 step1_wape = _compute_step_wape(preds_first, actuals_by_month[sorted_months[0]])
-                step_metrics.append({
-                    "step": 1,
-                    "month": str(sorted_months[0].date()),
-                    "wape": step1_wape,
-                    "n_dfus": len(preds_first),
-                })
+                step_metrics.append(
+                    {
+                        "step": 1,
+                        "month": str(sorted_months[0].date()),
+                        "wape": step1_wape,
+                        "n_dfus": len(preds_first),
+                    }
+                )
 
             for step_idx, month in enumerate(sorted_months[1:], start=2):
                 # When per-cluster SHAP is active, fill NaNs using the union of
@@ -1754,15 +1929,20 @@ def run_tree_backtest(
                     all_cats_union = [c for c in cat_cols if c in all_feats_union]
                     month_data = _fill_predict_nans(
                         current_grid[current_grid["startdate"] == month].copy(),
-                        all_feats_union, all_cats_union,
+                        all_feats_union,
+                        all_cats_union,
                     )
                 else:
                     month_data = _fill_predict_nans(
                         current_grid[current_grid["startdate"] == month].copy(),
-                        effective_feature_cols, effective_cat_cols,
+                        effective_feature_cols,
+                        effective_cat_cols,
                     )
                 preds_month = _predict_single_month(
-                    models, month_data, effective_feature_cols, per_cluster_feature_cols,
+                    models,
+                    month_data,
+                    effective_feature_cols,
+                    per_cluster_feature_cols,
                 )
                 all_month_preds.append(preds_month)
                 # Apply lag smoothing for step 3+. Step 2 uses raw prediction
@@ -1770,23 +1950,30 @@ def run_tree_backtest(
                 # lag history, so smoothing with a masked zero would be harmful).
                 step_smooth = lag_smooth if step_idx > 2 else 0.0
                 update_grid_incremental(
-                    current_grid, month, preds_month, all_months,
+                    current_grid,
+                    month,
+                    preds_month,
+                    all_months,
                     smooth_factor=step_smooth,
                 )
 
                 # Compute per-step accuracy if actuals available
                 if month in actuals_by_month:
                     step_wape = _compute_step_wape(preds_month, actuals_by_month[month])
-                    step_metrics.append({
-                        "step": step_idx,
-                        "month": str(month.date()),
-                        "wape": step_wape,
-                        "n_dfus": len(preds_month),
-                    })
+                    step_metrics.append(
+                        {
+                            "step": step_idx,
+                            "month": str(month.date()),
+                            "wape": step_wape,
+                            "n_dfus": len(preds_month),
+                        }
+                    )
 
                 logger.debug(
                     "Recursive step %d, month %s: %s predictions",
-                    step_idx, month.date(), f"{len(preds_month):,}",
+                    step_idx,
+                    month.date(),
+                    f"{len(preds_month):,}",
                 )
 
             preds = pd.concat(all_month_preds, ignore_index=True)
@@ -1798,7 +1985,8 @@ def run_tree_backtest(
                 recursive_step_metrics.extend(step_metrics)
                 logger.info(
                     "Timeframe %s: %d recursive steps tracked",
-                    label, len(step_metrics),
+                    label,
+                    len(step_metrics),
                 )
 
         preds["model_id"] = model_id
@@ -1818,13 +2006,20 @@ def run_tree_backtest(
             try:
                 model_persistence_fn(
                     models,
-                    per_cluster_feature_cols if per_cluster_feature_cols else effective_feature_cols,
+                    per_cluster_feature_cols
+                    if per_cluster_feature_cols
+                    else effective_feature_cols,
                     label,
                 )
             except Exception as exc:
                 logger.warning("Model persistence failed: %s", exc)
 
-        logger.info("Timeframe %s complete: %s predictions (%.1fs)", label, f"{len(preds):,}", time.time() - tf_start)
+        logger.info(
+            "Timeframe %s complete: %s predictions (%.1fs)",
+            label,
+            f"{len(preds):,}",
+            time.time() - tf_start,
+        )
 
     if not all_predictions:
         logger.error("No predictions generated. Check data range and timeframe count.")
@@ -1833,7 +2028,10 @@ def run_tree_backtest(
     # ── Step 5: Combine, assign execution lag, attach actuals ────────────────
     logger.info("Step 5: Combining predictions...")
     expanded, archive_expanded, combined = postprocess_predictions(
-        all_predictions, sales_df, exec_lag_map, timeframes=timeframes,
+        all_predictions,
+        sales_df,
+        exec_lag_map,
+        timeframes=timeframes,
     )
 
     # ── Step 6: Save output ──────────────────────────────────────────────────
@@ -1848,11 +2046,19 @@ def run_tree_backtest(
         # Attach per-step accuracy metrics collected across all timeframes
         if recursive_step_metrics:
             _extra_meta["recursive_step_metrics"] = recursive_step_metrics
-            wapes_with_values = [m["wape"] for m in recursive_step_metrics if m.get("wape") is not None]
+            wapes_with_values = [
+                m["wape"] for m in recursive_step_metrics if m.get("wape") is not None
+            ]
             _extra_meta["recursive_accuracy_degradation"] = {
-                "step_1_wape": recursive_step_metrics[0]["wape"] if recursive_step_metrics else None,
-                "last_step_wape": recursive_step_metrics[-1]["wape"] if recursive_step_metrics else None,
-                "mean_wape": round(float(np.mean(wapes_with_values)), 2) if wapes_with_values else None,
+                "step_1_wape": recursive_step_metrics[0]["wape"]
+                if recursive_step_metrics
+                else None,
+                "last_step_wape": recursive_step_metrics[-1]["wape"]
+                if recursive_step_metrics
+                else None,
+                "mean_wape": round(float(np.mean(wapes_with_values)), 2)
+                if wapes_with_values
+                else None,
             }
     output_path, archive_path, meta_path, metadata = save_backtest_output(
         output_df=expanded,
@@ -1874,6 +2080,7 @@ def run_tree_backtest(
     extra_artifact_paths: list[str] = []
     if feature_selector_fn is not None and shap_timeframe_reports:
         from common.ml.shap_selector import save_shap_outputs
+
         logger.info("Saving SHAP feature selection outputs...")
         _, shap_summary_path = save_shap_outputs(
             shap_timeframe_reports, output_path.parent, len(timeframes)

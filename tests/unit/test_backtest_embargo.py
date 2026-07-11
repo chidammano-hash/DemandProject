@@ -5,7 +5,6 @@ predict_start is consistent with the gap_months used in tuning CV splits.
 """
 
 import pandas as pd
-import pytest
 
 from common.ml.backtest_framework import (
     _last_persistable_timeframe,
@@ -48,13 +47,26 @@ class TestEmbargoMonthsOne:
         tfs = generate_timeframes(earliest, latest, n=10, embargo_months=1)
         assert len(tfs) == 10
         for tf in tfs:
-            gap_months = (
-                (tf["predict_start"].year * 12 + tf["predict_start"].month)
-                - (tf["train_end"].year * 12 + tf["train_end"].month)
+            gap_months = (tf["predict_start"].year * 12 + tf["predict_start"].month) - (
+                tf["train_end"].year * 12 + tf["train_end"].month
             )
             assert gap_months == 2, (
                 f"Timeframe {tf['label']}: expected 2-month gap, got {gap_months}"
             )
+
+    def test_j_is_a_valid_closed_month_window_for_july_planning(self):
+        tfs = generate_timeframes(
+            pd.Timestamp("2023-07-01"),
+            pd.Timestamp("2026-06-01"),
+            n=10,
+            embargo_months=1,
+        )
+
+        assert tfs[-1]["label"] == "J"
+        assert tfs[-1]["train_end"] == pd.Timestamp("2026-04-01")
+        assert tfs[-1]["predict_start"] == pd.Timestamp("2026-06-01")
+        assert tfs[-1]["predict_end"] == pd.Timestamp("2026-06-01")
+        assert all(tf["predict_start"] <= tf["predict_end"] for tf in tfs)
 
 
 class TestEmbargoMonthsTwo:
@@ -73,21 +85,12 @@ class TestEmbargoDoesNotCollapseWindow:
     """Embargo should not cause empty prediction windows."""
 
     def test_most_timeframes_have_valid_windows_embargo_1(self):
-        """With embargo_months=1, the last timeframe may have predict_start
-        beyond predict_end (the backtest loop filters these out).  But most
-        timeframes should still have valid windows."""
+        """Every requested timeframe remains a valid evaluation window."""
         earliest = pd.Timestamp("2021-01-01")
         latest = pd.Timestamp("2024-12-01")
         tfs = generate_timeframes(earliest, latest, n=10, embargo_months=1)
-        valid = [
-            tf for tf in tfs
-            if tf["predict_start"] <= tf["predict_end"]
-        ]
-        # With 10 timeframes and embargo=1, only the last TF (J) loses
-        # its window (train_end = latest-1mo, predict_start = latest+1mo).
-        assert len(valid) >= 9, (
-            f"Expected at least 9 valid timeframes, got {len(valid)}"
-        )
+        valid = [tf for tf in tfs if tf["predict_start"] <= tf["predict_end"]]
+        assert len(valid) == 10
 
     def test_large_embargo_still_produces_at_least_one_month(self):
         """Even with a large embargo, the last timeframe (J) should still
@@ -95,21 +98,11 @@ class TestEmbargoDoesNotCollapseWindow:
         shrinks but the last timeframe's train_end is close to latest."""
         earliest = pd.Timestamp("2021-01-01")
         latest = pd.Timestamp("2024-12-01")
-        # embargo=3 is aggressive — verify at least the last timeframe
-        # still has a valid window (train_end is latest - 1 month for
-        # the last TF, so predict_start = latest - 1 + 1 + 3 = latest + 3
-        # which would be > latest). Early timeframes will definitely
-        # have predict_start > predict_end. This is expected — the caller
-        # filters out months with no data.
         tfs = generate_timeframes(earliest, latest, n=10, embargo_months=3)
         assert len(tfs) == 10
-        # The last timeframe J has train_end = latest - 1 month
         last_tf = tfs[-1]
-        # With embargo=3, predict_start = train_end + 4 months
-        # This will exceed latest for the last timeframe, but the framework
-        # handles this in the prediction loop by filtering predict_months.
-        # The function itself should still return all 10 timeframes.
         assert last_tf["label"] == "J"
+        assert last_tf["predict_start"] <= last_tf["predict_end"]
 
     def test_moderate_embargo_last_tf_window_valid(self):
         """With a longer date range, even embargo=2 leaves valid windows."""
@@ -146,15 +139,17 @@ class TestEmbargoConsistencyWithTuning:
 
         # Tuning CV with gap_months=1
         splits = generate_cv_month_splits(
-            all_months, n_splits=5, gap_months=1,
-            min_train_months=13, val_months_per_fold=3,
+            all_months,
+            n_splits=5,
+            gap_months=1,
+            min_train_months=13,
+            val_months_per_fold=3,
         )
 
         # Verify backtest gap: predict_start - train_end = 2 months
         for tf in tfs:
-            gap = (
-                (tf["predict_start"].year * 12 + tf["predict_start"].month)
-                - (tf["train_end"].year * 12 + tf["train_end"].month)
+            gap = (tf["predict_start"].year * 12 + tf["predict_start"].month) - (
+                tf["train_end"].year * 12 + tf["train_end"].month
             )
             assert gap == 2, f"Backtest gap should be 2 months, got {gap}"
 
@@ -163,10 +158,7 @@ class TestEmbargoConsistencyWithTuning:
         for train_months, val_months in splits:
             train_end = max(train_months)
             val_start = min(val_months)
-            gap = (
-                (val_start.year * 12 + val_start.month)
-                - (train_end.year * 12 + train_end.month)
-            )
+            gap = (val_start.year * 12 + val_start.month) - (train_end.year * 12 + train_end.month)
             assert gap == 2, f"Tuning gap should be 2 months, got {gap}"
 
 
@@ -180,28 +172,28 @@ class TestDefaultEmbargoIsZero:
         tfs_default = generate_timeframes(earliest, latest, n=10)
         tfs_explicit = generate_timeframes(earliest, latest, n=10, embargo_months=0)
         assert len(tfs_default) == len(tfs_explicit)
-        for d, e in zip(tfs_default, tfs_explicit):
+        for d, e in zip(tfs_default, tfs_explicit, strict=True):
             assert d["predict_start"] == e["predict_start"]
             assert d["train_end"] == e["train_end"]
 
 
 class TestEmbargoPreservesStructure:
-    """Embargo changes predict_start but not other timeframe properties."""
+    """Embargo preserves valid window structure by shifting train cutoffs."""
 
-    def test_train_end_unchanged(self):
+    def test_train_end_shifts_earlier_by_embargo(self):
         earliest = pd.Timestamp("2021-01-01")
         latest = pd.Timestamp("2024-12-01")
         tfs_0 = generate_timeframes(earliest, latest, n=10, embargo_months=0)
         tfs_1 = generate_timeframes(earliest, latest, n=10, embargo_months=1)
-        for t0, t1 in zip(tfs_0, tfs_1):
-            assert t0["train_end"] == t1["train_end"]
+        for t0, t1 in zip(tfs_0, tfs_1, strict=True):
+            assert t1["train_end"] == t0["train_end"] - pd.DateOffset(months=1)
 
     def test_predict_end_unchanged(self):
         earliest = pd.Timestamp("2021-01-01")
         latest = pd.Timestamp("2024-12-01")
         tfs_0 = generate_timeframes(earliest, latest, n=10, embargo_months=0)
         tfs_1 = generate_timeframes(earliest, latest, n=10, embargo_months=1)
-        for t0, t1 in zip(tfs_0, tfs_1):
+        for t0, t1 in zip(tfs_0, tfs_1, strict=True):
             assert t0["predict_end"] == t1["predict_end"]
 
     def test_labels_unchanged(self):
@@ -223,8 +215,7 @@ class TestEmbargoPreservesStructure:
 class TestPersistableTimeframe:
     """Model persistence must target the last timeframe with a real predict window.
 
-    Under embargo the final timeframe's predict_start is past the data end, so
-    guarding persistence on the last index would write no .pkl artifacts.
+    Every generated timeframe is now valid, so persistence targets the last one.
     """
 
     earliest = pd.Timestamp("2021-01-01")
@@ -236,11 +227,9 @@ class TestPersistableTimeframe:
         # Last timeframe predicts the final month -> persist the last index.
         assert _last_persistable_timeframe(tfs, self.all_months) == len(tfs) - 1
 
-    def test_embargo_one_skips_invalid_final_timeframe(self):
+    def test_embargo_one_persists_valid_final_timeframe(self):
         tfs = generate_timeframes(self.earliest, self.latest, n=10, embargo_months=1)
-        # Final timeframe has no predict window -> persist the previous one.
         persist_ti = _last_persistable_timeframe(tfs, self.all_months)
-        assert persist_ti == len(tfs) - 2
-        # And that target genuinely has a non-empty predict window.
+        assert persist_ti == len(tfs) - 1
         tf = tfs[persist_ti]
         assert any(tf["predict_start"] <= m <= tf["predict_end"] for m in self.all_months)
