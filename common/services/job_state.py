@@ -399,7 +399,7 @@ def _auto_load_backtest(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> None:
-    """Best-effort: load a completed backtest's predictions into the DB.
+    """Load a completed backtest's predictions into the DB.
 
     Runs immediately after a successful backtest so results show up in accuracy
     views and the Item Analysis ``forecast_<model>`` line without a separate
@@ -408,35 +408,38 @@ def _auto_load_backtest(
     metadata) and reuses :func:`_run_load_backtest_model`, which writes
     ``fact_external_forecast_monthly`` + refreshes ``agg_forecast_monthly``.
 
-    Never raises: any load failure is swallowed and logged for manual retry —
-    the run itself already succeeded, so it must not be reported as failed.
+    Loading is part of successful backtest completion. Missing predictions or
+    loader errors propagate so the managed job and ``backtest_run`` both fail;
+    the UI must never present an unloaded run as successfully completed.
 
     Note: the load refreshes the ``agg_forecast_monthly`` MV. Under a parallel
     "Run all", concurrent refreshes serialize on the MV lock (slower, not a
     deadlock); sequential runs (the default) avoid this.
     """
-    import psycopg  # lazy — module keeps psycopg off the top-level import path
-
     from common.core.paths import PROJECT_ROOT as ROOT
 
     model_dir = _BACKTEST_OUTPUT_DIRS.get(model, model)
     pred_path = ROOT / "data" / "backtest" / model_dir / "backtest_predictions.csv"
     if not pred_path.exists():
-        logger.warning("Auto-load skipped for %s: no predictions at %s", model, pred_path)
-        return
+        raise RuntimeError(f"Backtest predictions file is missing for {model}")
+    _run_load_backtest_model(
+        {"model_id": model_dir, "run_id": run_id},
+        progress_cb,
+        cancel_event,
+        job_id,
+    )
+
+
+def _mark_backtest_run_failed(run_id: int) -> None:
+    """Best-effort status update for any generation or auto-load failure."""
     try:
-        _run_load_backtest_model(
-            {"model_id": model_dir, "run_id": run_id},
-            progress_cb, cancel_event, job_id,
-        )
-    except (RuntimeError, OSError, subprocess.SubprocessError, psycopg.Error):
-        # Best-effort: a load failure must not fail an already-completed backtest.
-        # _run_subprocess raises RuntimeError on non-zero exit / timeout / cancel;
-        # psycopg.Error guards a transient DB blip during the load's status write.
-        logger.warning(
-            "Auto-load failed for %s (run %s); load manually if needed",
-            model, run_id, exc_info=True,
-        )
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE backtest_run SET status = 'failed', completed_at = NOW() WHERE id = %s",
+                (run_id,),
+            )
+    except Exception:  # noqa: BLE001 — failure status updates must never mask the root error.
+        logger.warning("Failed to mark backtest_run %d as failed", run_id, exc_info=True)
 
 
 def _run_backtest(
@@ -525,29 +528,24 @@ def _run_backtest(
         output = _run_subprocess(cmd, progress_cb, cancel_event=cancel_event, job_id=job_id)
     except Exception:
         if backtest_run_id:
-            try:
-                with _get_conn() as conn:
-                    conn.execute(
-                        "UPDATE backtest_run SET status = 'failed', completed_at = NOW() WHERE id = %s",
-                        (backtest_run_id,),
-                    )
-            except Exception:
-                pass
+            _mark_backtest_run_failed(backtest_run_id)
         raise
 
     # Auto-load predictions into the DB so backtest results appear without a
     # separate "Load" click. Run it BEFORE the completion update so, in the happy
     # path, is_loaded_to_db is set before the UI sees status='completed' (avoids a
     # poll landing in the gap and showing completed-but-unloaded). The completion
-    # update runs in `finally` so an unexpected auto-load error can never strand a
-    # successful backtest as 'running' — at worst it stays completed-but-unloaded,
-    # which the panel's recovery "Load to DB" button handles.
+    # update happens only after a successful load. A load failure is a
+    # failed managed run because execution-lag accuracy is not usable until both
+    # database destinations are populated.
     if backtest_run_id:
         output_model = str(params.get("model_id") or model)
         try:
             _auto_load_backtest(output_model, backtest_run_id, progress_cb, cancel_event, job_id)
-        finally:
-            _update_backtest_run_on_completion(backtest_run_id, output_model)
+        except Exception:  # noqa: BLE001 — any load failure makes the backtest unusable.
+            _mark_backtest_run_failed(backtest_run_id)
+            raise
+        _update_backtest_run_on_completion(backtest_run_id, output_model)
 
     if progress_cb:
         progress_cb(pct=100, msg=f"{model} backtest complete (results loaded)")

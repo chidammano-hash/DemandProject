@@ -533,15 +533,39 @@ class TestExecuteJob:
 class TestRecoverStaleJobs:
     """Tests for recovery on startup."""
 
-    def test_recover_marks_running_as_failed(self, mock_db, mock_scheduler):
+    def test_recover_checks_persisted_running_and_queued_jobs(self, mock_db, mock_scheduler):
         from common.services.job_registry import JobManager
         mock_db.execute.return_value.rowcount = 2
         mock_db.execute.return_value.fetchall.return_value = []
         mgr = JobManager()
         mgr._ensure_init()
         # recover_stale_jobs is called during _ensure_init, so just check it ran
-        # The mock_db.execute should have been called with UPDATE ... WHERE status = 'running'
+        # Recovery inspects durable DB state rather than relying on memory.
         assert mock_db.execute.called
+
+    def test_recovered_backtest_is_loaded_before_job_completion(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+
+        mgr = JobManager()
+        type_def = _make_type_def(type_id="backtest_nhits", group="backtest_dl")
+        job = {"params": {"backtest_run_id": 53, "model_id": "nhits"}}
+        with (
+            patch("common.services.job_state._auto_load_backtest") as auto_load,
+            patch("common.services.job_state._update_backtest_run_on_completion") as update_run,
+        ):
+            mgr._finalize_recovered_job("job-53", type_def, job)
+
+        auto_load.assert_called_once_with("nhits", 53, job_id="job-53")
+        update_run.assert_called_once_with(53, "nhits")
+
+    def test_recovered_non_backtest_needs_no_special_finalizer(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+
+        mgr = JobManager()
+        type_def = _make_type_def(type_id="data_quality", group="platform")
+        with patch("common.services.job_state._auto_load_backtest") as auto_load:
+            mgr._finalize_recovered_job("job-dq", type_def, {"params": {}})
+        auto_load.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

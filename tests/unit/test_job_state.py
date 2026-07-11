@@ -481,7 +481,7 @@ _MOD = "common.services.job_state"
 
 
 class TestAutoLoadBacktest:
-    """_auto_load_backtest loads predictions on completion, best-effort."""
+    """_auto_load_backtest makes database loading part of successful completion."""
 
     def test_calls_loader_when_predictions_exist(self):
         from common.services.job_state import _auto_load_backtest
@@ -495,23 +495,24 @@ class TestAutoLoadBacktest:
         # First positional arg is the params dict: full dir model_id + run_id.
         assert args[0] == {"model_id": "lgbm_cluster", "run_id": 7}
 
-    def test_skips_when_no_predictions(self):
+    def test_fails_when_no_predictions(self):
         from common.services.job_state import _auto_load_backtest
         with (
             patch("pathlib.Path.exists", return_value=False),
             patch(f"{_MOD}._run_load_backtest_model") as m_load,
         ):
-            _auto_load_backtest("catboost", 3)
+            with pytest.raises(RuntimeError, match="predictions file is missing"):
+                _auto_load_backtest("catboost", 3)
         m_load.assert_not_called()
 
-    def test_swallows_loader_errors(self):
+    def test_propagates_loader_errors(self):
         from common.services.job_state import _auto_load_backtest
         with (
             patch("pathlib.Path.exists", return_value=True),
             patch(f"{_MOD}._run_load_backtest_model", side_effect=RuntimeError("boom")),
         ):
-            # Must not raise — a load failure cannot fail a completed backtest.
-            _auto_load_backtest("lgbm", 9)
+            with pytest.raises(RuntimeError, match="boom"):
+                _auto_load_backtest("lgbm", 9)
 
     def test_non_tree_model_uses_identity_dir(self):
         from common.services.job_state import _auto_load_backtest
@@ -547,3 +548,21 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         # ordering: auto-load before completion update
         names = [c[0] for c in manager.mock_calls]
         assert names.index("auto") < names.index("update")
+
+    def test_auto_load_failure_marks_backtest_failed(self):
+        from common.services.job_state import _run_backtest
+
+        conn = MagicMock()
+        conn.__enter__.return_value = conn
+        conn.__exit__.return_value = False
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok"),
+            patch(f"{_MOD}._get_conn", return_value=conn),
+            patch(f"{_MOD}._auto_load_backtest", side_effect=RuntimeError("load failed")),
+            patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
+        ):
+            with pytest.raises(RuntimeError, match="load failed"):
+                _run_backtest("lgbm", {"backtest_run_id": 5})
+
+        m_update.assert_not_called()
+        assert any("status = 'failed'" in call.args[0] for call in conn.execute.call_args_list)

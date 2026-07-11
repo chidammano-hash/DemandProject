@@ -1141,11 +1141,15 @@ class JobManager:
             return int(result.rowcount or 0)
 
     def recover_stale_jobs(self) -> int:
-        """On startup: recover running jobs (PID-aware) and re-enqueue queued jobs.
+        """On startup: re-adopt live processes and re-queue interrupted jobs.
 
         For running jobs:
         - If PID is alive → re-adopt via a monitoring thread
-        - If PID is dead or missing → mark as failed
+        - If PID is dead or missing → re-queue from persisted parameters
+
+        Jobs previously marked failed specifically because of a server restart
+        are also re-queued. This makes API hot reloads and process restarts
+        transparent to UI-launched work while preserving explicit cancellation.
         """
         recovered = 0
 
@@ -1161,11 +1165,29 @@ class JobManager:
             for row in running_rows:
                 job_id, job_type, pid, params_raw, max_retries, pipeline_id = row
                 if pid and self._is_pid_alive(pid):
-                    # Process is still running — re-adopt it
                     type_def = JOB_TYPE_REGISTRY.get(job_type)
                     if type_def:
-                        self._readopt_job(job_id, type_def, pid)
-                        logger.info("Re-adopted running job %s (PID %d) on startup", job_id, pid)
+                        readoptable_types = {
+                            "backtest_lgbm",
+                            "backtest_chronos2_enriched",
+                            "backtest_mstl",
+                            "backtest_nhits",
+                            "backtest_nbeats",
+                            "model_tuning_run",
+                        }
+                        if job_type in readoptable_types:
+                            self._readopt_job(job_id, type_def, pid)
+                            logger.info(
+                                "Re-adopted running job %s (PID %d) on startup",
+                                job_id,
+                                pid,
+                            )
+                        else:
+                            # Without a job-specific finalizer the new API cannot
+                            # know the orphan's exit code. Stop and restart it
+                            # from durable parameters instead of guessing success.
+                            self._kill_process(job_id)
+                            self._db_requeue_after_restart(job_id)
                     else:
                         self._db_update_status(
                             job_id, "failed",
@@ -1173,29 +1195,48 @@ class JobManager:
                             completed_at=datetime.now(timezone.utc),
                         )
                 else:
-                    # PID is dead or missing — mark as failed
-                    self._db_update_status(
-                        job_id, "failed",
-                        error="Interrupted by server restart (process not found)",
-                        completed_at=datetime.now(timezone.utc),
+                    # The API process disappeared before it could finish or
+                    # monitor this job. Re-run it from its persisted params.
+                    self._db_requeue_after_restart(job_id)
+                    logger.info(
+                        "Re-queued interrupted job %s (%s) after server restart",
+                        job_id,
+                        job_type,
                     )
                 recovered += 1
         except Exception:
             logger.exception("Failed to recover running jobs on startup")
-            # Fallback: mark all running as failed
+            # Fallback: preserve work by returning running jobs to the queue.
             try:
                 with _get_conn() as conn:
                     result = conn.execute(
-                        """UPDATE job_history SET status = 'failed',
-                                  error = 'Interrupted by server restart',
-                                  completed_at = NOW()
+                        """UPDATE job_history SET status = 'queued', pid = NULL,
+                                  started_at = NULL, completed_at = NULL,
+                                  error = NULL, progress_pct = 0,
+                                  progress_msg = 'Re-queued after server restart'
                            WHERE status = 'running'"""
                     )
                     recovered += result.rowcount
             except Exception:
                 logger.exception("Fallback recovery also failed")
 
-        # 2. Re-enqueue queued jobs into memory (in submission order)
+        # 2. Recover rows marked failed by older server versions, which treated
+        # a restart as terminal instead of durable/retryable.
+        try:
+            with _get_conn() as conn:
+                result = conn.execute(
+                    """UPDATE job_history SET status = 'queued', pid = NULL,
+                              started_at = NULL, completed_at = NULL,
+                              error = NULL, progress_pct = 0,
+                              progress_msg = 'Re-queued after server restart'
+                       WHERE status = 'failed'
+                         AND error LIKE 'Interrupted by server restart%'"""
+                )
+                recovered += int(result.rowcount or 0)
+        except Exception:
+            logger.exception("Failed to re-queue restart-interrupted jobs")
+
+        # 3. Re-enqueue queued jobs into memory (in submission order)
         try:
             with _get_conn() as conn:
                 rows = conn.execute(
@@ -1241,6 +1282,19 @@ class JobManager:
         return recovered
 
     @staticmethod
+    def _db_requeue_after_restart(job_id: str) -> None:
+        """Return an interrupted job to the durable queue."""
+        with _get_conn() as conn:
+            conn.execute(
+                """UPDATE job_history SET status = 'queued', pid = NULL,
+                          started_at = NULL, completed_at = NULL,
+                          error = NULL, progress_pct = 0,
+                          progress_msg = 'Re-queued after server restart'
+                   WHERE job_id = %s""",
+                (job_id,),
+            )
+
+    @staticmethod
     def _is_pid_alive(pid: int) -> bool:
         """Check if a process with the given PID is still running."""
         try:
@@ -1278,10 +1332,11 @@ class JobManager:
                 # If the subprocess wrote its own result, status may already be completed
                 job = self._db_get(job_id)
                 if job and job["status"] == "running":
-                    # Subprocess exited but didn't update status — assume success
-                    # For tuning jobs, run post-completion registration
+                    # Subprocess exited but its original API callback no longer
+                    # exists. Complete the job-specific durable finalization.
                     if type_def.type_id == "model_tuning_run":
                         self._finalize_tuning_run(job_id)
+                    self._finalize_recovered_job(job_id, type_def, job)
                     self._db_update_status(
                         job_id, "completed",
                         completed_at=datetime.now(timezone.utc),
@@ -1305,6 +1360,41 @@ class JobManager:
 
         t = threading.Thread(target=_monitor, name=f"readopt-{job_id}", daemon=True)
         t.start()
+
+    @staticmethod
+    def _finalize_recovered_job(
+        job_id: str,
+        type_def: JobTypeDef,
+        job: dict[str, Any],
+    ) -> None:
+        """Run completion work lost when the original API process exited."""
+        backtest_types = {
+            "backtest_lgbm",
+            "backtest_chronos2_enriched",
+            "backtest_mstl",
+            "backtest_nhits",
+            "backtest_nbeats",
+        }
+        if type_def.type_id not in backtest_types:
+            return
+
+        from common.services.job_state import (
+            _auto_load_backtest,
+            _mark_backtest_run_failed,
+            _update_backtest_run_on_completion,
+        )
+
+        params = job.get("params") or {}
+        run_id = params.get("backtest_run_id")
+        if not run_id:
+            raise RuntimeError("Recovered backtest is missing backtest_run_id")
+        model = str(params.get("model_id") or type_def.type_id.removeprefix("backtest_"))
+        try:
+            _auto_load_backtest(model, int(run_id), job_id=job_id)
+        except Exception:  # noqa: BLE001 — all finalizer failures must fail the recovered job.
+            _mark_backtest_run_failed(int(run_id))
+            raise
+        _update_backtest_run_on_completion(int(run_id), model)
 
     def _finalize_tuning_run(self, job_id: str) -> None:
         """Post-completion registration for re-adopted tuning jobs.

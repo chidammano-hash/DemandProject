@@ -166,6 +166,9 @@ export function BacktestStagePanel({
     if (status === "queued") {
       return <span className="text-yellow-600 dark:text-yellow-400">Queued…</span>;
     }
+    if (status === "failed") {
+      return <span className="font-medium text-destructive">Failed</span>;
+    }
     if (bt?.latest_run?.is_loaded_to_db) {
       return (
         <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">

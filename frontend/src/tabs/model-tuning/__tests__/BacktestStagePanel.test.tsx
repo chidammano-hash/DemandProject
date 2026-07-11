@@ -93,6 +93,23 @@ describe("BacktestStagePanel — grouped table", () => {
     expect(await screen.findByText("Loaded")).toBeDefined();
   });
 
+  it("shows failed instead of completed when the latest job failed", async () => {
+    const { fetchBacktestSummary } = await import("@/api/queries/backtest-management");
+    vi.mocked(fetchBacktestSummary).mockResolvedValueOnce({
+      nbeats: {
+        latest_run: { status: "failed", is_loaded_to_db: false },
+        has_predictions: true,
+        current_accuracy: null,
+      },
+    });
+    renderPanel();
+
+    const labelCell = screen.getAllByText("N-BEATS").find((el) => el.closest("tr"));
+    const row = labelCell!.closest("tr") as HTMLElement;
+    expect(await within(row).findByText("Failed")).toBeDefined();
+    expect(within(row).queryByText("Completed")).toBeNull();
+  });
+
   it("shows execution-lag and fixed-lag accuracy for each model", async () => {
     renderPanel();
 

@@ -4,6 +4,20 @@ Operational deep-dive reference for keeping the platform healthy: the Postgres-b
 
 ## pg-queue (Postgres-Backed Job Queue)
 
+### UI job restart recovery
+
+Jobs submitted through the UI are persisted in `job_history` before dispatch. On API restart,
+`JobManager` re-adopts supported live backtest/tuning subprocesses by PID. A recovered backtest is
+not marked successful until its predictions have loaded into both the execution-lag fact path and
+the all-lag archive. Other orphaned subprocesses are stopped and re-queued from their persisted
+parameters because an API replacement process cannot reliably recover their exit code. Jobs with
+dead or missing PIDs—and legacy failures whose error begins `Interrupted by server restart`—are
+also re-queued automatically. Explicitly cancelled jobs remain cancelled and are never recovered.
+
+Development uses `make api`, which starts Uvicorn with `--reload`; editing backend Python files can
+therefore restart the API while a job is running. The recovery rules above keep UI work durable,
+but production should run Uvicorn without `--reload` to avoid unnecessary process churn.
+
 A minimal Postgres-backed job queue runs **alongside** APScheduler for jobs that
 must survive API restarts, span multiple workers, or run for many hours
 without blocking the API thread pool. Item 22 introduces this as a pilot:
