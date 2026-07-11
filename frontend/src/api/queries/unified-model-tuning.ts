@@ -177,6 +177,23 @@ export interface CreateExperimentResponse {
   message: string;
 }
 
+export interface CreateSampledExperimentPayload {
+  target_n: number;
+  method: "proportional" | "equal" | "sqrt";
+  run_label: string;
+  notes?: string;
+  param_overrides: Record<string, unknown>;
+}
+
+export interface CreateSampledExperimentResponse {
+  run_id: number;
+  job_id: string;
+  sample_size: number;
+  total_dfus: number;
+  method: string;
+  estimated_deviation_pct: number;
+}
+
 export interface ExperimentLogsResponse {
   run_id: number;
   model?: string;
@@ -422,6 +439,17 @@ export async function submitModelExperiment(
   payload: CreateExperimentPayload
 ): Promise<CreateExperimentResponse> {
   return fetchOrThrow(`${prefix(model)}/experiments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Launch a bounded stratified LGBM validation run from the experiment dialog. */
+export async function submitSampledLgbmExperiment(
+  payload: CreateSampledExperimentPayload
+): Promise<CreateSampledExperimentResponse> {
+  return fetchOrThrow("/lgbm-tuning/sampled/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

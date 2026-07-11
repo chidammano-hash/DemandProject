@@ -23,6 +23,8 @@ import type { ModelType } from "@/api/queries";
 import {
   clusterExperimentKeys,
   fetchCompletedClusterExperiments,
+  modelTuningKeys,
+  submitSampledLgbmExperiment,
   submitModelExperiment,
   type ClusterExperiment,
 } from "@/api/queries";
@@ -56,6 +58,8 @@ const MODEL_LABELS: Record<ModelType, string> = {
   lgbm: "LightGBM",
 };
 
+type ExecutionMode = "quick" | "full";
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -75,6 +79,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [clusterSource, setClusterSource] = useState<"production" | "experimental">("production");
   const [clusterExperimentId, setClusterExperimentId] = useState<number | null>(null);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("quick");
 
   // Fetch completed cluster experiments for the dropdown
   const { data: completedExperimentsData } = useQuery({
@@ -99,6 +104,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
     setAdvancedOpen(false);
     setClusterSource("production");
     setClusterExperimentId(null);
+    setExecutionMode("quick");
   }, [model]);
 
   // Apply template
@@ -127,8 +133,17 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
 
   // Submit mutation
   const submitMut = useMutation({
-    mutationFn: () =>
-      submitModelExperiment(model, {
+    mutationFn: () => {
+      if (executionMode === "quick") {
+        return submitSampledLgbmExperiment({
+          target_n: 1000,
+          method: "proportional",
+          run_label: runLabel.trim(),
+          notes: notes.trim(),
+          param_overrides: params,
+        });
+      }
+      return submitModelExperiment(model, {
         run_label: runLabel.trim(),
         notes: notes.trim(),
         template: selectedTemplate,
@@ -138,10 +153,10 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
           cluster_source: clusterSource,
           cluster_experiment_id: clusterSource === "experimental" ? clusterExperimentId : undefined,
         },
-      }),
+      });
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["model-tuning"] });
-      queryClient.invalidateQueries({ queryKey: [`${model}-tuning`] });
+      queryClient.invalidateQueries({ queryKey: modelTuningKeys.all });
       onSubmitted();
     },
   });
@@ -192,6 +207,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
           </div>
           <button
             onClick={onClose}
+            aria-label="Close experiment dialog"
             className="rounded-md p-1 text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -264,6 +280,56 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
             </div>
           </div>
 
+          <fieldset>
+            <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Execution mode
+            </legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label
+                className={cn(
+                  "flex min-h-16 items-start gap-2 rounded-md border p-3 transition-colors",
+                  executionMode === "quick" && "border-primary bg-primary/5 ring-1 ring-primary"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="execution-mode"
+                  value="quick"
+                  checked={executionMode === "quick"}
+                  onChange={() => setExecutionMode("quick")}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-xs font-semibold">Quick validation</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    Target ≤5 min · 1,000 stratified DFUs · exploratory
+                  </span>
+                </span>
+              </label>
+              <label
+                className={cn(
+                  "flex min-h-16 items-start gap-2 rounded-md border p-3 transition-colors",
+                  executionMode === "full" && "border-primary bg-primary/5 ring-1 ring-primary"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="execution-mode"
+                  value="full"
+                  checked={executionMode === "full"}
+                  onChange={() => setExecutionMode("full")}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-xs font-semibold">Full backtest</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    All DFUs · 10 timeframes · promotion-grade
+                  </span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
           {/* Template selection */}
           <TemplateSelector
             templates={templates}
@@ -284,170 +350,179 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
             onUpdateParam={updateParam}
           />
 
+          {executionMode === "quick" && (
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300">
+              Quick validation uses production clusters and a representative sample. Run a full
+              backtest before promotion.
+            </div>
+          )}
+
           {/* Advanced Training Options (collapsed by default) */}
-          <div className="border rounded-md overflow-hidden">
-            <button
-              onClick={() => setAdvancedOpen((prev) => !prev)}
-              className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-            >
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Advanced Training Options
-              </span>
-              {advancedOpen ? (
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-              )}
-            </button>
-            {advancedOpen && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-3 py-3">
-                {/* Cluster Source selector */}
-                <div>
-                  <label className="text-[10px] text-muted-foreground mb-1 block">
-                    Cluster Source
-                  </label>
-                  <select
-                    value={
-                      clusterSource === "experimental" && clusterExperimentId
-                        ? String(clusterExperimentId)
-                        : "production"
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === "production") {
-                        setClusterSource("production");
-                        setClusterExperimentId(null);
-                      } else {
-                        setClusterSource("experimental");
-                        setClusterExperimentId(Number(val));
-                      }
-                    }}
-                    className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                    aria-label="Cluster Source"
-                  >
-                    <option value="production">Production Clusters</option>
-                    {completedExperiments.length > 0 && <option disabled>---</option>}
-                    {completedExperiments.length === 0 && (
-                      <option disabled>No cluster experiments yet</option>
-                    )}
-                    {completedExperiments.map((exp: ClusterExperiment) => (
-                      <option key={exp.experiment_id} value={String(exp.experiment_id)}>
-                        {exp.label} — K={exp.optimal_k ?? "?"}, Sil=
-                        {exp.silhouette_score != null ? exp.silhouette_score.toFixed(3) : "?"}
-                      </option>
-                    ))}
-                  </select>
-                  {clusterSource === "experimental" && clusterExperimentId && (
-                    <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                      Using clusters from experiment #{clusterExperimentId}
-                    </div>
-                  )}
-                  {completedExperiments.length === 0 && clusterSource === "production" && (
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      <a
-                        href="#"
-                        className="text-blue-600 dark:text-blue-400 hover:underline"
-                        onClick={(e) => e.preventDefault()}
-                      >
-                        Create one in the Clusters tab &rarr;
-                      </a>
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-[10px] text-muted-foreground mb-1 block">
-                    Cluster Strategy
-                  </label>
-                  <Select
-                    value={config.cluster_strategy}
-                    onValueChange={(v) => setConfig((prev) => ({ ...prev, cluster_strategy: v }))}
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="per_cluster">per_cluster</SelectItem>
-                      <SelectItem value="global">global</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <label className="flex items-center gap-2 pt-4">
-                  <input
-                    type="checkbox"
-                    checked={config.recursive}
-                    onChange={(e) =>
-                      setConfig((prev) => ({
-                        ...prev,
-                        recursive: e.target.checked,
-                      }))
-                    }
-                    className="rounded"
-                  />
-                  <span className="text-xs text-foreground">Recursive</span>
-                </label>
-
-                <label className="flex items-center gap-2 pt-4">
-                  <input
-                    type="checkbox"
-                    checked={config.shap_select}
-                    onChange={(e) =>
-                      setConfig((prev) => ({
-                        ...prev,
-                        shap_select: e.target.checked,
-                      }))
-                    }
-                    className="rounded"
-                  />
-                  <span className="text-xs text-foreground">SHAP Selection</span>
-                </label>
-
-                {config.shap_select && (
-                  <>
-                    <div>
-                      <label className="text-[10px] text-muted-foreground mb-1 block">
-                        SHAP Threshold
-                      </label>
-                      <input
-                        type="number"
-                        value={config.shap_threshold}
-                        onChange={(e) =>
-                          setConfig((prev) => ({
-                            ...prev,
-                            shap_threshold: parseFloat(e.target.value) || 0.95,
-                          }))
-                        }
-                        step="0.01"
-                        min="0.5"
-                        max="1.0"
-                        className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-muted-foreground mb-1 block">
-                        SHAP Sample Size
-                      </label>
-                      <input
-                        type="number"
-                        value={config.shap_sample_size}
-                        onChange={(e) =>
-                          setConfig((prev) => ({
-                            ...prev,
-                            shap_sample_size: parseInt(e.target.value, 10) || 500,
-                          }))
-                        }
-                        step="100"
-                        min="100"
-                        max="5000"
-                        className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-                      />
-                    </div>
-                  </>
+          {executionMode === "full" && (
+            <div className="border rounded-md overflow-hidden">
+              <button
+                onClick={() => setAdvancedOpen((prev) => !prev)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+              >
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Advanced Training Options
+                </span>
+                {advancedOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                 )}
-              </div>
-            )}
-          </div>
+              </button>
+              {advancedOpen && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-3 py-3">
+                  {/* Cluster Source selector */}
+                  <div>
+                    <label className="text-[10px] text-muted-foreground mb-1 block">
+                      Cluster Source
+                    </label>
+                    <select
+                      value={
+                        clusterSource === "experimental" && clusterExperimentId
+                          ? String(clusterExperimentId)
+                          : "production"
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "production") {
+                          setClusterSource("production");
+                          setClusterExperimentId(null);
+                        } else {
+                          setClusterSource("experimental");
+                          setClusterExperimentId(Number(val));
+                        }
+                      }}
+                      className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                      aria-label="Cluster Source"
+                    >
+                      <option value="production">Production Clusters</option>
+                      {completedExperiments.length > 0 && <option disabled>---</option>}
+                      {completedExperiments.length === 0 && (
+                        <option disabled>No cluster experiments yet</option>
+                      )}
+                      {completedExperiments.map((exp: ClusterExperiment) => (
+                        <option key={exp.experiment_id} value={String(exp.experiment_id)}>
+                          {exp.label} — K={exp.optimal_k ?? "?"}, Sil=
+                          {exp.silhouette_score != null ? exp.silhouette_score.toFixed(3) : "?"}
+                        </option>
+                      ))}
+                    </select>
+                    {clusterSource === "experimental" && clusterExperimentId && (
+                      <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                        Using clusters from experiment #{clusterExperimentId}
+                      </div>
+                    )}
+                    {completedExperiments.length === 0 && clusterSource === "production" && (
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        <a
+                          href="#"
+                          className="text-blue-600 dark:text-blue-400 hover:underline"
+                          onClick={(e) => e.preventDefault()}
+                        >
+                          Create one in the Clusters tab &rarr;
+                        </a>
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-muted-foreground mb-1 block">
+                      Cluster Strategy
+                    </label>
+                    <Select
+                      value={config.cluster_strategy}
+                      onValueChange={(v) => setConfig((prev) => ({ ...prev, cluster_strategy: v }))}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="per_cluster">per_cluster</SelectItem>
+                        <SelectItem value="global">global</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <label className="flex items-center gap-2 pt-4">
+                    <input
+                      type="checkbox"
+                      checked={config.recursive}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          recursive: e.target.checked,
+                        }))
+                      }
+                      className="rounded"
+                    />
+                    <span className="text-xs text-foreground">Recursive</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 pt-4">
+                    <input
+                      type="checkbox"
+                      checked={config.shap_select}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          shap_select: e.target.checked,
+                        }))
+                      }
+                      className="rounded"
+                    />
+                    <span className="text-xs text-foreground">SHAP Selection</span>
+                  </label>
+
+                  {config.shap_select && (
+                    <>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground mb-1 block">
+                          SHAP Threshold
+                        </label>
+                        <input
+                          type="number"
+                          value={config.shap_threshold}
+                          onChange={(e) =>
+                            setConfig((prev) => ({
+                              ...prev,
+                              shap_threshold: parseFloat(e.target.value) || 0.95,
+                            }))
+                          }
+                          step="0.01"
+                          min="0.5"
+                          max="1.0"
+                          className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-muted-foreground mb-1 block">
+                          SHAP Sample Size
+                        </label>
+                        <input
+                          type="number"
+                          value={config.shap_sample_size}
+                          onChange={(e) =>
+                            setConfig((prev) => ({
+                              ...prev,
+                              shap_sample_size: parseInt(e.target.value, 10) || 500,
+                            }))
+                          }
+                          step="100"
+                          min="100"
+                          max="5000"
+                          className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Warnings */}
           {warnings.length > 0 && (
@@ -472,6 +547,10 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
               <span className="font-medium text-foreground">{config.cluster_strategy}</span> |
               Recursive:{" "}
               <span className="font-medium text-foreground">{config.recursive ? "Yes" : "No"}</span>
+              {" | "}Mode:{" "}
+              <span className="font-medium text-foreground">
+                {executionMode === "quick" ? "Quick validation" : "Full backtest"}
+              </span>
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {paramSpecs.length} hyperparameters configured |{" "}
@@ -514,7 +593,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
               className="gap-1.5"
             >
               {submitMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Launch Experiment
+              {executionMode === "quick" ? "Launch Quick Validation" : "Launch Full Backtest"}
             </Button>
           </div>
         </div>

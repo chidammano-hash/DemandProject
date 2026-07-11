@@ -3,6 +3,7 @@
 Provides endpoints to preview cluster strata, simulate sample allocations,
 and trigger sampled backtest runs that complete in ~3 min instead of ~30 min.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,6 +38,8 @@ class SampledRunBody(BaseModel):
     target_n: int = Field(default=5000, ge=100, le=20000)
     method: str = Field(default="proportional", pattern=r"^(proportional|equal|sqrt)$")
     param_overrides: dict[str, Any] | None = None
+    run_label: str | None = Field(default=None, min_length=1, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -74,9 +77,9 @@ def get_strata(response: FastAPIResponse) -> dict[str, Any]:
 
         with get_conn() as conn:
             strata = compute_cluster_strata(conn)
-    except psycopg.Error:
+    except psycopg.Error as exc:
         logger.exception("Failed to compute cluster strata")
-        raise HTTPException(status_code=500, detail="Failed to compute cluster strata")
+        raise HTTPException(status_code=500, detail="Failed to compute cluster strata") from exc
 
     total_dfus = sum(s["n_dfus"] for s in strata.values())
     formatted = [_format_stratum(cid, s) for cid, s in strata.items()]
@@ -110,9 +113,9 @@ def preview_sample(
 
         with get_conn() as conn:
             strata = compute_cluster_strata(conn)
-    except psycopg.Error:
+    except psycopg.Error as exc:
         logger.exception("Failed to compute cluster strata for preview")
-        raise HTTPException(status_code=500, detail="Failed to compute strata")
+        raise HTTPException(status_code=500, detail="Failed to compute strata") from exc
 
     if not strata:
         return {
@@ -135,22 +138,24 @@ def preview_sample(
     allocation = allocator(strata, body.target_n, min_per_cluster)
 
     total_dfus = sum(s["n_dfus"] for s in strata.values())
-    actual_n = sum(
-        min(n, strata[cid]["n_dfus"]) for cid, n in allocation.items()
-    )
+    actual_n = sum(min(n, strata[cid]["n_dfus"]) for cid, n in allocation.items())
     deviation = estimate_accuracy_deviation(actual_n, total_dfus, len(strata))
 
     alloc_details = []
     for cid, n_alloc in allocation.items():
         s = strata[cid]
         capped = min(n_alloc, s["n_dfus"])
-        alloc_details.append({
-            "cluster_id": cid,
-            "cluster_label": s.get("cluster_label", ""),
-            "n_dfus_total": s["n_dfus"],
-            "n_sampled": capped,
-            "pct_of_cluster": round(100.0 * capped / s["n_dfus"], 1) if s["n_dfus"] > 0 else 0.0,
-        })
+        alloc_details.append(
+            {
+                "cluster_id": cid,
+                "cluster_label": s.get("cluster_label", ""),
+                "n_dfus_total": s["n_dfus"],
+                "n_sampled": capped,
+                "pct_of_cluster": round(100.0 * capped / s["n_dfus"], 1)
+                if s["n_dfus"] > 0
+                else 0.0,
+            }
+        )
 
     return {
         "target_n": body.target_n,
@@ -192,9 +197,9 @@ def trigger_sampled_run(
                 method=body.method,
             )
             strata = compute_cluster_strata(conn)
-    except psycopg.Error:
+    except psycopg.Error as exc:
         logger.exception("Failed to compute stratified sample")
-        raise HTTPException(status_code=500, detail="Failed to compute stratified sample")
+        raise HTTPException(status_code=500, detail="Failed to compute stratified sample") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -217,24 +222,34 @@ def trigger_sampled_run(
                 RETURNING run_id
                 """,
                 (
-                    f"sampled_{body.method}_{len(sampled_skus)}",
+                    body.run_label or f"sampled_{body.method}_{len(sampled_skus)}",
                     "lgbm_cluster",
                     "running",
                     params_json,
-                    f"sampled_n={len(sampled_skus)} method={body.method}",
+                    " ".join(
+                        part
+                        for part in (
+                            f"sampled_n={len(sampled_skus)} method={body.method}",
+                            body.notes,
+                        )
+                        if part
+                    ),
                 ),
             )
             row = cur.fetchone()
             if row:
                 run_id = row[0]
             conn.commit()
-    except psycopg.Error:
+    except psycopg.Error as exc:
         logger.exception("Failed to register sampled run in tuning tracker")
-        raise HTTPException(status_code=500, detail="Failed to register sampled run")
+        raise HTTPException(status_code=500, detail="Failed to register sampled run") from exc
 
     # Write sampled SKU list to a named temp file (auto-cleaned on close/GC)
     sku_tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="sampled_skus_", delete=False,
+        mode="w",
+        suffix=".json",
+        prefix="sampled_skus_",
+        delete=False,
     )
     sku_tmp.write(json.dumps(sampled_skus))
     sku_tmp.close()
@@ -255,7 +270,14 @@ def trigger_sampled_run(
             label=f"Sampled backtest ({len(sampled_skus)} SKUs, {body.method})",
             triggered_by="api",
         )
-    except (ValueError, RuntimeError) as exc:
+        if run_id is not None:
+            with get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE lgbm_tuning_run SET job_id = %s WHERE run_id = %s",
+                    (job_id, run_id),
+                )
+                conn.commit()
+    except (ValueError, RuntimeError, psycopg.Error) as exc:
         logger.exception("Failed to submit sampled backtest job")
         # Mark run as failed if we registered one
         if run_id is not None:
@@ -275,7 +297,10 @@ def trigger_sampled_run(
 
     logger.info(
         "Submitted sampled backtest job %s: run_id=%s, n=%d, method=%s",
-        job_id, run_id, len(sampled_skus), body.method,
+        job_id,
+        run_id,
+        len(sampled_skus),
+        body.method,
     )
 
     return {

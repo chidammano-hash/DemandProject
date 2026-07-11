@@ -7,30 +7,125 @@ import { TestQueryWrapper } from "./test-utils";
 // ---------------------------------------------------------------------------
 const mockTemplatesLgbm = {
   templates: [
-    { id: "production_baseline", label: "Current Production Settings", description: "The parameters currently running in production", params: { n_estimators: 1500, learning_rate: 0.02, num_leaves: 127, max_depth: -1, reg_lambda: 1.0 }, config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true }, source: "algorithm_config" },
-    { id: "expert_aggressive_depth", label: "Conservative (Stable Demand)", description: "Best for stable, low-variability items with strong regularization", params: { n_estimators: 1500, learning_rate: 0.02, num_leaves: 63, max_depth: 10, reg_lambda: 3.5, reg_alpha: 0.5, path_smooth: 8.0, min_child_samples: 60 }, config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true }, source: "expert" },
-    { id: "expert_ultra_slow_lr", label: "High Precision (Long Training)", description: "Maximizes accuracy with extended training for subtle patterns", params: { n_estimators: 3000, learning_rate: 0.008, subsample: 0.85, colsample_bytree: 0.85 }, config: { cluster_strategy: "per_cluster", recursive: true }, source: "expert" },
-    { id: "expert_sparse_demand", label: "Intermittent Demand", description: "Optimized for sparse or intermittent demand patterns", params: { feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100 }, config: {}, source: "expert" },
-    { id: "expert_balanced", label: "Balanced (Best All-Around)", description: "Well-rounded settings combining top findings from prior experiments", params: { learning_rate: 0.015, n_estimators: 2000 }, config: {}, source: "expert" },
-    { id: "custom", label: "Custom", description: "Start from scratch", params: {}, config: {}, source: "custom" },
+    {
+      id: "production_baseline",
+      label: "Current Production Settings",
+      description: "The parameters currently running in production",
+      params: {
+        n_estimators: 1500,
+        learning_rate: 0.02,
+        num_leaves: 127,
+        max_depth: -1,
+        reg_lambda: 1.0,
+      },
+      config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true },
+      source: "algorithm_config",
+    },
+    {
+      id: "expert_aggressive_depth",
+      label: "Conservative (Stable Demand)",
+      description: "Best for stable, low-variability items with strong regularization",
+      params: {
+        n_estimators: 1500,
+        learning_rate: 0.02,
+        num_leaves: 63,
+        max_depth: 10,
+        reg_lambda: 3.5,
+        reg_alpha: 0.5,
+        path_smooth: 8.0,
+        min_child_samples: 60,
+      },
+      config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true },
+      source: "expert",
+    },
+    {
+      id: "expert_ultra_slow_lr",
+      label: "High Precision (Long Training)",
+      description: "Maximizes accuracy with extended training for subtle patterns",
+      params: { n_estimators: 3000, learning_rate: 0.008, subsample: 0.85, colsample_bytree: 0.85 },
+      config: { cluster_strategy: "per_cluster", recursive: true },
+      source: "expert",
+    },
+    {
+      id: "expert_sparse_demand",
+      label: "Intermittent Demand",
+      description: "Optimized for sparse or intermittent demand patterns",
+      params: { feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100 },
+      config: {},
+      source: "expert",
+    },
+    {
+      id: "expert_balanced",
+      label: "Balanced (Best All-Around)",
+      description: "Well-rounded settings combining top findings from prior experiments",
+      params: { learning_rate: 0.015, n_estimators: 2000 },
+      config: {},
+      source: "expert",
+    },
+    {
+      id: "custom",
+      label: "Custom",
+      description: "Start from scratch",
+      params: {},
+      config: {},
+      source: "custom",
+    },
   ],
 };
 
 const mockTemplatesCatboost = {
   templates: [
-    { id: "production_baseline", label: "Current Production Settings", description: "Current CatBoost parameters", params: { iterations: 3000, learning_rate: 0.008, depth: 10, l2_leaf_reg: 7.5 }, config: {}, source: "algorithm_config" },
-    { id: "expert_ordered_symmetric", label: "Temporal Optimized", description: "Best for time-series data with strong seasonal patterns", params: { grow_policy: "SymmetricTree", depth: 8, bootstrap_type: "Ordered", iterations: 4000 }, config: {}, source: "expert" },
+    {
+      id: "production_baseline",
+      label: "Current Production Settings",
+      description: "Current CatBoost parameters",
+      params: { iterations: 3000, learning_rate: 0.008, depth: 10, l2_leaf_reg: 7.5 },
+      config: {},
+      source: "algorithm_config",
+    },
+    {
+      id: "expert_ordered_symmetric",
+      label: "Temporal Optimized",
+      description: "Best for time-series data with strong seasonal patterns",
+      params: {
+        grow_policy: "SymmetricTree",
+        depth: 8,
+        bootstrap_type: "Ordered",
+        iterations: 4000,
+      },
+      config: {},
+      source: "expert",
+    },
   ],
 };
 
 const mockTemplatesXgboost = {
   templates: [
-    { id: "production_baseline", label: "Current Production Settings", description: "Current XGBoost parameters", params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 8 }, config: {}, source: "algorithm_config" },
-    { id: "expert_dart", label: "Balanced Diversity", description: "Uses tree dropout for robust, well-generalized forecasts", params: { booster: "dart", rate_drop: 0.08, skip_drop: 0.5 }, config: {}, source: "expert" },
+    {
+      id: "production_baseline",
+      label: "Current Production Settings",
+      description: "Current XGBoost parameters",
+      params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 8 },
+      config: {},
+      source: "algorithm_config",
+    },
+    {
+      id: "expert_dart",
+      label: "Balanced Diversity",
+      description: "Uses tree dropout for robust, well-generalized forecasts",
+      params: { booster: "dart", rate_drop: 0.08, skip_drop: 0.5 },
+      config: {},
+      source: "expert",
+    },
   ],
 };
 
-const mockSubmitResponse = { run_id: 15, job_id: "abc-123-def-456", status: "queued", message: "Experiment queued." };
+const mockSubmitResponse = {
+  run_id: 15,
+  job_id: "abc-123-def-456",
+  status: "queued",
+  message: "Experiment queued.",
+};
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -49,7 +144,12 @@ const mockCompletedClusterExperiments = [
     runtime_seconds: 299,
     job_id: "job-cluster-3",
     feature_params: { time_window_months: 48, min_months_history: 12 },
-    model_params: { k_range: [10, 20] as [number, number], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null },
+    model_params: {
+      k_range: [10, 20] as [number, number],
+      min_cluster_size_pct: 2.0,
+      use_pca: false,
+      pca_components: null,
+    },
     label_params: { seasonality_threshold: 0.2 },
     optimal_k: 15,
     silhouette_score: 0.342,
@@ -76,7 +176,12 @@ const mockCompletedClusterExperiments = [
     runtime_seconds: 179,
     job_id: "job-cluster-5",
     feature_params: { time_window_months: 36, min_months_history: 12 },
-    model_params: { k_range: [3, 8] as [number, number], min_cluster_size_pct: 5.0, use_pca: false, pca_components: null },
+    model_params: {
+      k_range: [3, 8] as [number, number],
+      min_cluster_size_pct: 5.0,
+      use_pca: false,
+      pca_components: null,
+    },
     label_params: null,
     optimal_k: 5,
     silhouette_score: 0.418,
@@ -94,7 +199,14 @@ const mockCompletedClusterExperiments = [
 
 const mockFetchModelTemplates = vi.fn().mockResolvedValue(mockTemplatesLgbm);
 const mockSubmitModelExperiment = vi.fn().mockResolvedValue(mockSubmitResponse);
-const mockFetchCompletedClusterExperiments = vi.fn().mockResolvedValue({ experiments: mockCompletedClusterExperiments });
+const mockSubmitSampledLgbmExperiment = vi.fn().mockResolvedValue({
+  run_id: 16,
+  job_id: "job-fast-16",
+  sample_size: 1000,
+});
+const mockFetchCompletedClusterExperiments = vi
+  .fn()
+  .mockResolvedValue({ experiments: mockCompletedClusterExperiments });
 const mockOnClose = vi.fn();
 const mockOnSuccess = vi.fn();
 
@@ -106,7 +218,15 @@ vi.mock("@/api/queries", () => ({
     comparisons: (n?: number) => ["lgbm-tuning-comparisons", n],
     promoted: () => ["lgbm-tuning-promoted"],
   },
-  STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
+  STALE: {
+    FOREVER: Infinity,
+    TEN_MIN: 600000,
+    FIVE_MIN: 300000,
+    TWO_MIN: 120000,
+    ONE_MIN: 60000,
+    THIRTY_SEC: 30000,
+    NONE: 0,
+  },
   fetchTuningRuns: vi.fn().mockResolvedValue({ runs: [], total: 0 }),
   fetchTuningComparison: vi.fn().mockResolvedValue({}),
   fetchTuningComparisons: vi.fn().mockResolvedValue({ comparisons: [] }),
@@ -129,6 +249,7 @@ vi.mock("@/api/queries", () => ({
   fetchModelExperimentLags: vi.fn().mockResolvedValue({ lags: [] }),
   fetchModelTemplates: (...args: unknown[]) => mockFetchModelTemplates(...args),
   submitModelExperiment: (...args: unknown[]) => mockSubmitModelExperiment(...args),
+  submitSampledLgbmExperiment: (...args: unknown[]) => mockSubmitSampledLgbmExperiment(...args),
   promoteModelExperiment: vi.fn().mockResolvedValue({ success: true }),
   cancelModelExperiment: vi.fn().mockResolvedValue({ success: true }),
   fetchModelPromoted: vi.fn().mockResolvedValue(null),
@@ -152,7 +273,9 @@ vi.mock("@/api/queries", () => ({
     seasonalityHeatmap: () => ["cluster-eda", "seasonality-heatmap"],
   },
   fetchClusterProfile: vi.fn().mockResolvedValue({ rows: [] }),
-  fetchErrorConcentration: vi.fn().mockResolvedValue({ top_10_pct_share: 47.0, worst_months: [], worst_clusters: [] }),
+  fetchErrorConcentration: vi
+    .fn()
+    .mockResolvedValue({ top_10_pct_share: 47.0, worst_months: [], worst_clusters: [] }),
   fetchClusterDistribution: vi.fn().mockResolvedValue({ cluster: 0, bins: [] }),
   fetchSeasonalityHeatmap: vi.fn().mockResolvedValue({ months: [], rows: [] }),
   featureLabKeys: {
@@ -177,15 +300,28 @@ vi.mock("@/api/queries", () => ({
     forecastValue: () => ["accuracy-budget", "forecast-value"],
   },
   fetchAccuracyDecomposition: vi.fn().mockResolvedValue({
-    current_accuracy: 69.3, current_wape: 30.7, current_bias: -0.012, n_dfus: 50602,
-    model_id: "lgbm_cluster", oracle_ceiling: 85.0, oracle_wape: 15.0, naive_baseline: 45.2,
-    naive_wape: 54.8, forecast_value_added: 24.1, addressable_gap: 15.7,
-    abc_breakdown: [], cluster_breakdown: [], components: [], irreducible_noise: 6.0,
+    current_accuracy: 69.3,
+    current_wape: 30.7,
+    current_bias: -0.012,
+    n_dfus: 50602,
+    model_id: "lgbm_cluster",
+    oracle_ceiling: 85.0,
+    oracle_wape: 15.0,
+    naive_baseline: 45.2,
+    naive_wape: 54.8,
+    forecast_value_added: 24.1,
+    addressable_gap: 15.7,
+    abc_breakdown: [],
+    cluster_breakdown: [],
+    components: [],
+    irreducible_noise: 6.0,
   }),
   fetchAbcBreakdown: vi.fn().mockResolvedValue({ classes: [] }),
   fetchMonthlyTrend: vi.fn().mockResolvedValue({ months: [], worst_month: null, best_month: null }),
   fetchModelComparison: vi.fn().mockResolvedValue({ models: [], oracle_ceiling: null }),
-  fetchForecastValue: vi.fn().mockResolvedValue({ baselines: [], ml_model: null, value_added: null }),
+  fetchForecastValue: vi
+    .fn()
+    .mockResolvedValue({ baselines: [], ml_model: null, value_added: null }),
   clusterExperimentKeys: {
     all: ["cluster-experiments"],
     experiments: (p?: Record<string, unknown>) => ["cluster-experiments", "list", p],
@@ -195,7 +331,8 @@ vi.mock("@/api/queries", () => ({
     completed: () => ["cluster-experiments", "completed"],
     usedBy: (id: number) => ["cluster-experiments", "used-by", id],
   },
-  fetchCompletedClusterExperiments: (...args: unknown[]) => mockFetchCompletedClusterExperiments(...args),
+  fetchCompletedClusterExperiments: (...args: unknown[]) =>
+    mockFetchCompletedClusterExperiments(...args),
   fetchClusterExperiments: vi.fn().mockResolvedValue({ experiments: [], total: 0 }),
   fetchClusterExperiment: vi.fn().mockResolvedValue({}),
   fetchClusterComparison: vi.fn().mockResolvedValue({}),
@@ -204,7 +341,14 @@ vi.mock("@/api/queries", () => ({
   createClusterExperiment: vi.fn().mockResolvedValue({ experiment_id: 1 }),
   deleteClusterExperiment: vi.fn().mockResolvedValue({ deleted: true }),
   promoteClusterExperiment: vi.fn().mockResolvedValue({ status: "promoted" }),
-  CLUSTER_EXP_STALE: { EXPERIMENTS: 10000, EXPERIMENT: 30000, COMPARE: 120000, TEMPLATES: 600000, COMPLETED: 300000, USED_BY: 60000 },
+  CLUSTER_EXP_STALE: {
+    EXPERIMENTS: 10000,
+    EXPERIMENT: 30000,
+    COMPARE: 120000,
+    TEMPLATES: 600000,
+    COMPLETED: 300000,
+    USED_BY: 60000,
+  },
   queryKeys: {},
   STALE_INSIGHTS: 300000,
   insightKeys: { all: () => ["insights"] },
@@ -218,6 +362,37 @@ describe("ExperimentBuilder", () => {
     vi.clearAllMocks();
     mockFetchModelTemplates.mockResolvedValue(mockTemplatesLgbm);
     mockSubmitModelExperiment.mockResolvedValue(mockSubmitResponse);
+    mockSubmitSampledLgbmExperiment.mockResolvedValue({
+      run_id: 16,
+      job_id: "job-fast-16",
+      sample_size: 1000,
+    });
+  });
+
+  it("launches the quick sampled workflow from the UI by default", async () => {
+    const { ExperimentBuilder } = await import("../model-tuning/ExperimentBuilder");
+    render(
+      <TestQueryWrapper>
+        <ExperimentBuilder model="lgbm" open onClose={vi.fn()} onSubmitted={vi.fn()} />
+      </TestQueryWrapper>
+    );
+
+    expect(screen.getByRole("radio", { name: /quick validation/i })).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/experiment label/i), {
+      target: { value: "Fast UI run" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /launch quick validation/i }));
+
+    await waitFor(() =>
+      expect(mockSubmitSampledLgbmExperiment).toHaveBeenCalledWith({
+        target_n: 1000,
+        method: "proportional",
+        run_label: "Fast UI run",
+        notes: "",
+        param_overrides: expect.any(Object),
+      })
+    );
+    expect(mockSubmitModelExperiment).not.toHaveBeenCalled();
   });
 
   it("renders template radio buttons", async () => {
@@ -234,7 +409,7 @@ describe("ExperimentBuilder", () => {
 
   it("pre-fills params on template select", async () => {
     const aggressiveDepth = mockTemplatesLgbm.templates.find(
-      (t) => t.id === "expert_aggressive_depth",
+      (t) => t.id === "expert_aggressive_depth"
     );
     expect(aggressiveDepth).toBeDefined();
     expect(aggressiveDepth!.params.max_depth).toBe(10);
@@ -303,9 +478,9 @@ describe("ExperimentBuilder", () => {
 
   it("shows error banner on API failure", async () => {
     mockSubmitModelExperiment.mockRejectedValueOnce(new Error("Network error: 500"));
-    await expect(
-      mockSubmitModelExperiment({ run_label: "Fail Test", params: {} }),
-    ).rejects.toThrow("Network error: 500");
+    await expect(mockSubmitModelExperiment({ run_label: "Fail Test", params: {} })).rejects.toThrow(
+      "Network error: 500"
+    );
   });
 
   it("closes modal on successful submit", async () => {
@@ -341,9 +516,7 @@ describe("ExperimentBuilder", () => {
     mockFetchModelTemplates.mockResolvedValue(mockTemplatesXgboost);
     const templates = await mockFetchModelTemplates("xgboost");
     // XGBoost DART template has booster, rate_drop, skip_drop
-    const dartTemplate = templates.templates.find(
-      (t: { id: string }) => t.id === "expert_dart",
-    );
+    const dartTemplate = templates.templates.find((t: { id: string }) => t.id === "expert_dart");
     expect(dartTemplate).toBeDefined();
     expect(dartTemplate.params).toHaveProperty("booster", "dart");
     expect(dartTemplate.params).toHaveProperty("rate_drop", 0.08);
@@ -418,7 +591,7 @@ describe("ExperimentBuilder", () => {
           cluster_source: "experimental",
           cluster_experiment_id: 3,
         }),
-      }),
+      })
     );
     expect(result.run_id).toBe(15);
   });
@@ -444,7 +617,7 @@ describe("ExperimentBuilder", () => {
           cluster_source: "production",
           cluster_experiment_id: undefined,
         }),
-      }),
+      })
     );
   });
 

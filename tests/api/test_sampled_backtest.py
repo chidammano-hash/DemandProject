@@ -1,9 +1,11 @@
 """Tests for sampled backtest endpoints — strata, preview, and run."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+# ruff: noqa: RUF059
+
+from unittest.mock import patch
 
 import httpx
+import pytest
 from httpx import ASGITransport
 
 from tests.api.conftest import make_pool as _make_pool
@@ -54,10 +56,13 @@ async def test_get_strata_returns_200():
     """GET /lgbm-tuning/sampled/strata returns cluster strata with stats."""
     pool, conn, cursor = _make_pool()
     strata = _mock_strata()
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata),
+    ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/lgbm-tuning/sampled/strata")
@@ -79,10 +84,13 @@ async def test_get_strata_returns_200():
 async def test_get_strata_empty():
     """GET /lgbm-tuning/sampled/strata returns empty strata when no clusters."""
     pool, conn, cursor = _make_pool()
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value={}):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value={}),
+    ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/lgbm-tuning/sampled/strata")
@@ -103,11 +111,17 @@ async def test_preview_sample_proportional():
     """POST /lgbm-tuning/sampled/preview returns allocation with proportional method."""
     pool, conn, cursor = _make_pool()
     strata = _mock_strata()
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
-         patch("common.ml.backtest_sampler._load_sampling_config", return_value={"min_per_cluster": 10, "seed": 42}):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata),
+        patch(
+            "common.ml.backtest_sampler._load_sampling_config",
+            return_value={"min_per_cluster": 10, "seed": 42},
+        ),
+    ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -133,11 +147,17 @@ async def test_preview_sample_equal():
     """POST /lgbm-tuning/sampled/preview works with equal method."""
     pool, conn, cursor = _make_pool()
     strata = _mock_strata()
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
-         patch("common.ml.backtest_sampler._load_sampling_config", return_value={"min_per_cluster": 10, "seed": 42}):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata),
+        patch(
+            "common.ml.backtest_sampler._load_sampling_config",
+            return_value={"min_per_cluster": 10, "seed": 42},
+        ),
+    ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -156,10 +176,13 @@ async def test_preview_sample_equal():
 async def test_preview_sample_empty_strata():
     """POST /lgbm-tuning/sampled/preview handles empty strata."""
     pool, conn, cursor = _make_pool()
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value={}):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value={}),
+    ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -178,6 +201,7 @@ async def test_preview_sample_invalid_method():
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -203,14 +227,17 @@ async def test_trigger_sampled_run_returns_200():
     # fetchone for INSERT RETURNING run_id
     cursor.fetchone.return_value = (42,)
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
-         patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=1.5), \
-         patch("common.services.job_registry.JobManager") as manager_cls:
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata),
+        patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=1.5),
+        patch("common.services.job_registry.JobManager") as manager_cls,
+    ):
         manager_cls.return_value.submit_job.return_value = "job_sampled_1"
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -231,17 +258,24 @@ async def test_trigger_sampled_run_returns_200():
     assert submit.call_args.args[0] == "sampled_backtest"
     assert submit.call_args.args[1]["run_id"] == 42
     assert submit.call_args.args[1]["sku_file"]
+    assert any(
+        "UPDATE lgbm_tuning_run SET job_id" in call.args[0]
+        for call in cursor.execute.call_args_list
+    )
 
 
 @pytest.mark.asyncio
 async def test_trigger_sampled_run_empty_sample():
     """POST /lgbm-tuning/sampled/run returns 400 when no DFUs available."""
     pool, conn, cursor = _make_pool()
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.stratified_sample", return_value=[]), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value={}):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.stratified_sample", return_value=[]),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value={}),
+    ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -260,14 +294,17 @@ async def test_trigger_sampled_run_with_param_overrides():
     sampled_skus = [f"DFU_{i}" for i in range(3000)]
     cursor.fetchone.return_value = (99,)
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
-         patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=2.0), \
-         patch("common.services.job_registry.JobManager") as manager_cls:
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata),
+        patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=2.0),
+        patch("common.services.job_registry.JobManager") as manager_cls,
+    ):
         manager_cls.return_value.submit_job.return_value = "job_sampled_2"
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -295,14 +332,17 @@ async def test_trigger_sampled_run_submit_failure():
     sampled_skus = [f"DFU_{i}" for i in range(2000)]
     cursor.fetchone.return_value = (50,)
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn), \
-         patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus), \
-         patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata), \
-         patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=2.5), \
-         patch("common.services.job_registry.JobManager") as manager_cls:
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.sampled_backtest.get_conn", return_value=conn),
+        patch("common.ml.backtest_sampler.stratified_sample", return_value=sampled_skus),
+        patch("common.ml.backtest_sampler.compute_cluster_strata", return_value=strata),
+        patch("common.ml.backtest_sampler.estimate_accuracy_deviation", return_value=2.5),
+        patch("common.services.job_registry.JobManager") as manager_cls,
+    ):
         manager_cls.return_value.submit_job.side_effect = RuntimeError("scheduler down")
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
@@ -319,6 +359,7 @@ async def test_preview_sample_target_validation():
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             # target_n < 100 should fail
@@ -335,6 +376,7 @@ async def test_preview_sample_target_too_high():
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(

@@ -459,6 +459,11 @@ feedback loop: at most 1,000 complete DFU histories, 8 Optuna trials, 2 walk-for
 never splits a DFU history and the causal gap remains enforced. `make tune-lgbm-full` retains the
 50-trial, 5-fold path required before governed promotion.
 
+The Model Experimentation Studio exposes the same fast-feedback intent through **Quick validation**
+in the New Experiment dialog. It submits 1,000 proportionally stratified DFUs to the managed
+sampled-backtest job, records the job ID for UI cancellation, and keeps **Full backtest** as the
+promotion-grade option.
+
 
 2. **Two-stage models for intermittent demand** -- Train a classifier (zero/non-zero) first, then a regressor (predict qty given demand occurs). This decomposes the problem into two tasks that tree models handle well individually.
 
