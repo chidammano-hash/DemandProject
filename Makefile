@@ -1532,13 +1532,17 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE fact_safety_stock_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_eoq_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_signals CASCADE;' \
+	  'TRUNCATE TABLE planning_decision_event CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_opportunity CASCADE;' \
 	  'TRUNCATE TABLE fact_replenishment_plan CASCADE;' \
+	  'TRUNCATE TABLE inventory_planning_run CASCADE;' \
 	  'TRUNCATE TABLE fact_replenishment_exceptions CASCADE;' \
 	  'TRUNCATE TABLE fact_planned_orders CASCADE;' \
 	  'TRUNCATE TABLE fact_plan_versions CASCADE;' \
 	  'TRUNCATE TABLE fact_financial_inventory_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_inventory_investment_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_efficient_frontier CASCADE;' \
+	  'TRUNCATE TABLE ai_copilot_session CASCADE;' \
 	  'TRUNCATE TABLE fact_echelon_reorder_points CASCADE;' \
 	  'TRUNCATE TABLE fact_echelon_ss_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_service_level_performance CASCADE;' \

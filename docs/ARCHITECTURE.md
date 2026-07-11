@@ -1935,7 +1935,7 @@ KMeans clustering of ~112K SKUs by demand patterns using 14 core features across
 
 ### 3. Inventory Planning (15 sub-features, 34 panels)
 
-Two-column layout, 8 color-coded sidebar groups, 5 role-based presets. **Insights group:** Unified Action Feed, Network Heatmap, Segment Dashboard, Planning Scorecard, Cash Flow Timeline, Service Level Waterfall, Budget Optimizer. **Core features:** Safety Stock Engine (Z-score + Monte Carlo), EOQ/Cycle Stock, Replenishment Policies (4 types, ABC-XYZ auto-assign), Exception Queue (6 types, dedup, root cause, AI annotations), Fill Rate Analytics, Demand Signals, Intramonth Stockout Detection, Supplier Performance, Capital Investment Optimization, Portfolio Health Score, Inventory Rebalancing (greedy + LP), Replenishment Plan, Blended Demand, Multi-Echelon Safety Stock, Inventory Projection. Formula math lives in `common/inventory/safety_stock.py`. See `docs/specs/04-inventory/`.
+Two-column layout, 8 color-coded sidebar groups, 5 role-based presets. **Insights group:** Unified Action Feed, Network Heatmap, Segment Dashboard, Planning Scorecard, Cash Flow Timeline, Service Level Waterfall, Budget Optimizer. **Core features:** Safety Stock Engine (Z-score + Monte Carlo), EOQ/Cycle Stock, Replenishment Policies (4 types, ABC-XYZ auto-assign), Exception Queue (6 types, dedup, root cause, AI annotations), Fill Rate Analytics, Demand Signals, Intramonth Stockout Detection, Supplier Performance, Capital Investment Optimization, Portfolio Health Score, Inventory Rebalancing (greedy + LP), Replenishment Plan, Blended Demand, Multi-Echelon Safety Stock, Inventory Projection, and overlap-safe reduction opportunities. Replenishment defaults to the verified active forecast release; quantile targets remain shadow-only. Formula math lives in `common/inventory/`. See `docs/specs/04-inventory/`.
 
 ### 4. AI Planning Agent
 
@@ -1944,6 +1944,14 @@ Proactive exception work-queue (not a chatbot) powered by Claude via the `tool_u
 ### 4b. SKU Chatbot
 
 The interactive complement to the AI Planning Agent: a conversational, read-only per-SKU assistant with a selectable local runtime. The current repo config uses `runtime.provider=codex`, which invokes **Codex CLI** (`codex exec`) with a pre-fetched read-only SKU context snapshot, so local Codex/ChatGPT auth can be used during Codex-based development. `runtime.provider=claude` uses the **Claude Agent SDK** (`claude-agent-sdk`) and gathers evidence through 7 read-only in-process MCP tools (`sku_data.py`: profile, sales, forecast, inventory, accuracy, cluster peers, search). Auth is config-driven: Claude supports `auto`/`api_key`/Bedrock/Vertex, Codex supports `auto`/`CODEX_API_KEY`. Surfaced as a standalone **SKU Chat** tab and a **global, page-aware chat drawer on every tab** (its focus, suggested prompts, and SKU scope adapt to the active page). Best-effort persistence to `sku_chat_session|message|call_log`. In Claude runtime it can also **drive the champion-forecast adjuster**: an `apply_champion_adjustment` tool stages a guardrail-validated proposal (reusing `champion_adjust_service.py`), an "AI Adjust" button + in-chat approval card gate it, and `POST /sku-chat/adjustment/{id}` performs the human-approved write via the existing `save_adjustment` (`sku_chat_pending_adjustment`, `sql/197`) — the agent never writes the forecast directly. Router `/sku-chat` (`common/ai/sku_chat/`); local agent dependencies are lazy. See `docs/specs/06-ai-platform/07-sku-chatbot.md`.
+
+### 4c. Grounded Planning Copilot
+
+The global drawer uses `/ai-copilot` owner-scoped sessions and a fixed read-only evidence registry.
+Same-turn citations carry source, business key, freshness, exact values, forecast/inventory lineage,
+and a reproducible SHA-256 hash. Local loopback Ollama is the configured default; cloud inference is
+fail-closed behind explicit consent and credentials. General responses cannot request actions. See
+`docs/specs/06-ai-platform/10-grounded-planning-copilot.md`.
 
 ### 5. Operations & Planning
 

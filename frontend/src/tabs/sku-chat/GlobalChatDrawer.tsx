@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useActiveSku } from "@/context/ActiveSkuContext";
-import { SkuChatPanel } from "./SkuChatPanel";
+import { GroundedCopilotPanel } from "./GroundedCopilotPanel";
 import { CHAT_HIDDEN_TABS, getPageChatConfig } from "./pageChatConfig";
 
 export interface GlobalChatDrawerProps {
@@ -56,7 +56,10 @@ export function GlobalChatDrawer({ activeTab }: GlobalChatDrawerProps) {
   useEffect(() => {
     if (!open || CHAT_HIDDEN_TABS.has(activeTab)) return;
     setThreads((prev) => {
-      const next = [...prev.filter((t) => t.key !== threadKey), { key: threadKey, tab: activeTab, itemId, loc }];
+      const next = [
+        ...prev.filter((t) => t.key !== threadKey),
+        { key: threadKey, tab: activeTab, itemId, loc },
+      ];
       return next.length > MAX_THREADS ? next.slice(next.length - MAX_THREADS) : next;
     });
   }, [open, threadKey, activeTab, itemId, loc]);
@@ -125,10 +128,10 @@ export function GlobalChatDrawer({ activeTab }: GlobalChatDrawerProps) {
               const isActive = t.key === threadKey;
               return (
                 <div key={t.key} hidden={!isActive} className={isActive ? "h-full" : undefined}>
-                  <SkuChatPanel
+                  <GroundedCopilotPanel
+                    page={t.tab}
                     itemId={t.itemId}
                     loc={t.loc}
-                    pageFocus={tcfg.focus}
                     suggestions={tcfg.suggestions}
                   />
                 </div>

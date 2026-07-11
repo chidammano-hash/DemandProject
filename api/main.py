@@ -144,7 +144,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "Idempotency-Key"],
 )
 
 
@@ -248,6 +248,7 @@ from api.routers.operations import sop              # noqa: E402
 from api.routers.intelligence import ai_planner      # noqa: E402
 from api.routers.intelligence import sku_chat      # noqa: E402  # 06-07 SKU Chatbot (Claude Agent SDK)
 from api.routers.intelligence import explain as explain_router  # noqa: E402  # Gen-4 G: forecast explain
+from api.routers.intelligence import copilot as copilot_router  # noqa: E402  # Grounded planning Copilot
 from api.routers.core import dashboard               # noqa: E402
 from api.routers.core import jobs                    # noqa: E402
 from api.routers.platform import auth_router         # noqa: E402  # 08-02 RBAC
@@ -378,6 +379,7 @@ app.include_router(inv_planning_algorithm_comparison.router)
 app.include_router(integrated_targets.router)
 app.include_router(working_capital.router)
 app.include_router(explain_router.router)
+app.include_router(copilot_router.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

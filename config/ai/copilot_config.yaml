@@ -1,0 +1,22 @@
+# Grounded planning Copilot. Local inference is the checked-in default; cloud
+# inference requires an explicit mode change, consent flag, and API credential.
+provider:
+  mode: local                 # disabled | local | cloud_explicit
+  provider: ollama            # ollama for local; openai for cloud_explicit
+  model: demand-copilot:latest
+  base_url: http://127.0.0.1:11434/v1  # loopback only; null for cloud_explicit
+  api_key_env: OPENAI_API_KEY
+  cloud_consent_env: DEMAND_AI_ALLOW_CLOUD
+  max_output_tokens: 1200
+  max_input_chars: 16000
+
+runtime:
+  max_turns: 6
+  max_prompt_chars: 4000
+  max_tool_calls: 8
+  session_ttl_minutes: 60
+  content_retention_days: 30
+  turn_timeout_seconds: 60
+  max_session_turns: 30
+  max_conversation_chars: 4000
+  max_concurrent_turns: 2

@@ -36,3 +36,4 @@ export * from "./sku-chat";
 export * from "./backtest-management";
 export * from "./forecast-release";
 export * from "./ai-champion";
+export * from "./ai-copilot";

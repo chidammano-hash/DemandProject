@@ -20,28 +20,28 @@ Usage:
     uv run python scripts/compute_replenishment_plan.py --item 100320 --loc 1401-BULK
     uv run python scripts/compute_replenishment_plan.py --config config/inventory/replenishment_plan_config.yaml
 """
+
 from __future__ import annotations
 
 import argparse
 import logging
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import psycopg
-import yaml
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from common.core.db import get_db_params
-from common.services.perf_profiler import profiled_section
-from common.core.utils import load_config as _load_config
+from common.core.db import get_db_params  # noqa: E402
+from common.core.utils import load_config as _load_config  # noqa: E402
+from common.services.perf_profiler import profiled_section  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -114,7 +114,7 @@ def compute_forward_ss(
     """
     ss_demand = z * sigma_monthly * math.sqrt(lt_mean_days / DAYS_PER_MONTH)
     ss_lt = avg_daily_demand * lt_std_days * z
-    ss_combined = math.sqrt(ss_demand ** 2 + ss_lt ** 2)
+    ss_combined = math.sqrt(ss_demand**2 + ss_lt**2)
     return {
         "ss_demand_only": round(ss_demand, 4),
         "ss_lt_only": round(ss_lt, 4),
@@ -244,7 +244,7 @@ def compute_policy_params(
 
     if policy_type == "min_max":
         return {
-            "reorder_point": round(rop, 4),         # s (lower trigger)
+            "reorder_point": round(rop, 4),  # s (lower trigger)
             "order_qty": None,
             "order_up_to_level": round(rop + effective_eoq, 4),  # S (upper target)
             "is_jit": False,
@@ -275,12 +275,22 @@ def compute_policy_params(
 # ---------------------------------------------------------------------------
 
 
-def get_latest_plan_version(conn: psycopg.Connection) -> str | None:
-    """Return the most recent plan_version from fact_production_forecast."""
+def get_active_plan_version(conn: psycopg.Connection) -> str | None:
+    """Return the plan version of the one verified active forecast release."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT plan_version FROM fact_production_forecast"
-            " ORDER BY plan_version DESC LIMIT 1"
+            """SELECT promotion.plan_version
+               FROM model_promotion_log AS promotion
+               WHERE promotion.is_active = TRUE
+                 AND EXISTS (
+                     SELECT 1
+                     FROM fact_production_forecast AS forecast
+                     WHERE forecast.promotion_log_id = promotion.id
+                       AND forecast.run_id = promotion.production_run_id
+                       AND forecast.lineage_status = 'verified'
+                 )
+               ORDER BY promotion.promoted_at DESC, promotion.id DESC
+               LIMIT 1"""
         )
         row = cur.fetchone()
     return row[0] if row else None
@@ -316,9 +326,15 @@ def load_production_forecasts(
         rows = cur.fetchall()
 
     cols = [
-        "item_id", "loc", "plan_version", "forecast_month",
-        "forecast_qty", "forecast_qty_lower", "forecast_qty_upper",
-        "horizon_months", "model_id",
+        "item_id",
+        "loc",
+        "plan_version",
+        "forecast_month",
+        "forecast_qty",
+        "forecast_qty_lower",
+        "forecast_qty_upper",
+        "horizon_months",
+        "model_id",
     ]
     return pd.DataFrame(rows, columns=cols)
 
@@ -387,7 +403,9 @@ def load_lead_times(conn: psycopg.Connection) -> pd.DataFrame:
             cur.execute(sql)
             rows = cur.fetchall()
     except psycopg.Error:
-        log.warning("Could not load lead times from fact_inventory_snapshot — config defaults will apply.")
+        log.warning(
+            "Could not load lead times from fact_inventory_snapshot — config defaults will apply."
+        )
         rows = []
 
     cols = ["item_id", "loc", "lt_mean_days", "lt_std_days"]
@@ -484,7 +502,9 @@ def compute_plan(
         log.info("Loading production forecasts (plan_version=%s)…", plan_version)
         forecasts = load_production_forecasts(conn, plan_version, item_id, loc)
         if forecasts.empty:
-            log.warning("No forecast rows found for plan_version=%s — nothing to compute.", plan_version)
+            log.warning(
+                "No forecast rows found for plan_version=%s — nothing to compute.", plan_version
+            )
             return 0
         log.info("  %d forecast rows loaded.", len(forecasts))
 
@@ -511,14 +531,10 @@ def compute_plan(
     # --- Build lookup dicts for O(1) access ---------------------------------
     with profiled_section("compute_plan_rows"):
         policy_map: dict[tuple, Any] = {
-        (r.item_id, r.loc): r for r in policies.itertuples(index=False)
-    }
-    dfu_map: dict[tuple, Any] = {
-        (r.item_id, r.loc): r for r in dfu_attrs.itertuples(index=False)
-    }
-    lt_map: dict[tuple, Any] = {
-        (r.item_id, r.loc): r for r in lead_times.itertuples(index=False)
-    }
+            (r.item_id, r.loc): r for r in policies.itertuples(index=False)
+        }
+    dfu_map: dict[tuple, Any] = {(r.item_id, r.loc): r for r in dfu_attrs.itertuples(index=False)}
+    lt_map: dict[tuple, Any] = {(r.item_id, r.loc): r for r in lead_times.itertuples(index=False)}
     hist_ss_map: dict[tuple, float] = {
         (r.item_id, r.loc): float(r.historical_ss)
         for r in hist_ss.itertuples(index=False)
@@ -532,7 +548,7 @@ def compute_plan(
 
     log.info("Computing replenishment plan rows…")
     rows_to_write: list[dict] = []
-    computed_at = datetime.now(timezone.utc)
+    computed_at = datetime.now(UTC)
 
     for (item, loc_val), grp in forecasts.groupby(["item_id", "loc"], sort=False):
         grp = grp.sort_values("forecast_month").head(horizon_months)
@@ -546,18 +562,24 @@ def compute_plan(
         pol = policy_map.get((item, loc_val))
         pol_id: str = pol.policy_id if pol is not None else "unassigned"
         pol_type: str = pol.policy_type if pol is not None else default_policy
-        review_days: int | None = int(pol.review_cycle_days) if (pol is not None and pd.notna(pol.review_cycle_days)) else None
+        review_days: int | None = (
+            int(pol.review_cycle_days)
+            if (pol is not None and pd.notna(pol.review_cycle_days))
+            else None
+        )
 
         # -- Lead time -------------------------------------------------------
         lt = lt_map.get((item, loc_val))
-        lt_mean: float = float(lt.lt_mean_days) if (lt is not None and lt.lt_mean_days) else lt_default
-        lt_std: float = float(lt.lt_std_days) if (lt is not None and lt.lt_std_days) else lt_mean * lt_std_pct
+        lt_mean: float = (
+            float(lt.lt_mean_days) if (lt is not None and lt.lt_mean_days) else lt_default
+        )
+        lt_std: float = (
+            float(lt.lt_std_days) if (lt is not None and lt.lt_std_days) else lt_mean * lt_std_pct
+        )
 
         # -- Service level + Z-score -----------------------------------------
         svc: float = float(service_levels.get(abc or "", service_levels.get("default", 0.95)))
-        z: float = float(
-            min(z_table.items(), key=lambda kv: abs(kv[0] - svc))[1]
-        )
+        z: float = float(min(z_table.items(), key=lambda kv: abs(kv[0] - svc))[1])
 
         # -- Annualised demand for EOQ (scale up when fewer than 12 months available) --
         n_months_available: int = len(grp)
@@ -596,7 +618,9 @@ def compute_plan(
                 sigma_method = "zero"
 
             avg_daily: float = fqty / DAYS_PER_MONTH if fqty > 0 else 0.0
-            sigma_daily: float = (sigma / math.sqrt(DAYS_PER_MONTH)) if (sigma and sigma > 0) else 0.0
+            sigma_daily: float = (
+                (sigma / math.sqrt(DAYS_PER_MONTH)) if (sigma and sigma > 0) else 0.0
+            )
 
             # Safety stock
             if avg_daily > 0 or (sigma and sigma > 0):
@@ -631,48 +655,54 @@ def compute_plan(
             ss_gap: float | None = round(current_oh - ss_combined, 4)
             is_below_ss: bool = bool(current_oh < ss_combined)
 
-            rows_to_write.append({
-                "plan_version":            plan_version,
-                "item_id":                 item,
-                "loc":                     loc_val,
-                "plan_month":              frow.forecast_month,
-                "horizon_months":          horizon_h,
-                "policy_id":               pol_id,
-                "policy_type":             pol_type,
-                "abc_vol":                 abc,
-                "review_cycle_days":       review_days,
-                "forecast_qty":            round(fqty, 4) if fqty else None,
-                "forecast_qty_lower":      round(flower, 4) if flower is not None else None,
-                "forecast_qty_upper":      round(fupper, 4) if fupper is not None else None,
-                "forecast_annual_demand":  round(annual_demand, 4),
-                "sigma_demand_monthly":    round(sigma, 4) if sigma else None,
-                "sigma_demand_daily":      round(sigma_daily, 4) if sigma_daily else None,
-                "avg_daily_demand":        round(avg_daily, 4),
-                "sigma_method":            sigma_method,
-                "lt_mean_days":            round(lt_mean, 2),
-                "lt_std_days":             round(lt_std, 2),
-                "service_level_target":    svc,
-                "z_score":                 z,
-                "ss_demand_only":          ss_result["ss_demand_only"],
-                "ss_lt_only":              ss_result["ss_lt_only"],
-                "ss_combined":             round(ss_combined, 4),
-                "eoq":                     eoq_result["eoq"],
-                "effective_eoq":           eoq_result["effective_eoq"],
-                "cycle_stock":             eoq_result["cycle_stock"],
-                "reorder_point":           pol_params["reorder_point"],
-                "order_qty":               pol_params["order_qty"],
-                "order_up_to_level":       pol_params["order_up_to_level"],
-                "is_jit":                  pol_params["is_jit"],
-                "historical_ss":           hist_ss_val,
-                "ss_delta":                ss_delta,
-                "ss_delta_pct":            ss_delta_pct,
-                "current_qty_on_hand":     round(current_oh, 4),
-                "ss_gap":                  ss_gap,
-                "is_below_ss":             is_below_ss,
-                "computed_at":             computed_at,
-            })
+            rows_to_write.append(
+                {
+                    "plan_version": plan_version,
+                    "item_id": item,
+                    "loc": loc_val,
+                    "plan_month": frow.forecast_month,
+                    "horizon_months": horizon_h,
+                    "policy_id": pol_id,
+                    "policy_type": pol_type,
+                    "abc_vol": abc,
+                    "review_cycle_days": review_days,
+                    "forecast_qty": round(fqty, 4) if fqty else None,
+                    "forecast_qty_lower": round(flower, 4) if flower is not None else None,
+                    "forecast_qty_upper": round(fupper, 4) if fupper is not None else None,
+                    "forecast_annual_demand": round(annual_demand, 4),
+                    "sigma_demand_monthly": round(sigma, 4) if sigma else None,
+                    "sigma_demand_daily": round(sigma_daily, 4) if sigma_daily else None,
+                    "avg_daily_demand": round(avg_daily, 4),
+                    "sigma_method": sigma_method,
+                    "lt_mean_days": round(lt_mean, 2),
+                    "lt_std_days": round(lt_std, 2),
+                    "service_level_target": svc,
+                    "z_score": z,
+                    "ss_demand_only": ss_result["ss_demand_only"],
+                    "ss_lt_only": ss_result["ss_lt_only"],
+                    "ss_combined": round(ss_combined, 4),
+                    "eoq": eoq_result["eoq"],
+                    "effective_eoq": eoq_result["effective_eoq"],
+                    "cycle_stock": eoq_result["cycle_stock"],
+                    "reorder_point": pol_params["reorder_point"],
+                    "order_qty": pol_params["order_qty"],
+                    "order_up_to_level": pol_params["order_up_to_level"],
+                    "is_jit": pol_params["is_jit"],
+                    "historical_ss": hist_ss_val,
+                    "ss_delta": ss_delta,
+                    "ss_delta_pct": ss_delta_pct,
+                    "current_qty_on_hand": round(current_oh, 4),
+                    "ss_gap": ss_gap,
+                    "is_below_ss": is_below_ss,
+                    "computed_at": computed_at,
+                }
+            )
 
-        log.info("Computed %d plan rows across %d DFUs.", len(rows_to_write), forecasts.groupby(["item_id", "loc"]).ngroups)
+        log.info(
+            "Computed %d plan rows across %d DFUs.",
+            len(rows_to_write),
+            forecasts.groupby(["item_id", "loc"]).ngroups,
+        )
 
     if dry_run:
         log.info("[DRY RUN] Would write %d rows to fact_replenishment_plan.", len(rows_to_write))
@@ -680,8 +710,11 @@ def compute_plan(
             sample = rows_to_write[0]
             log.info(
                 "  Sample: item=%s loc=%s plan_month=%s ss=%.2f eoq=%.2f rop=%s",
-                sample["item_id"], sample["loc"], sample["plan_month"],
-                sample["ss_combined"], sample["effective_eoq"],
+                sample["item_id"],
+                sample["loc"],
+                sample["plan_month"],
+                sample["ss_combined"],
+                sample["effective_eoq"],
                 sample["reorder_point"],
             )
         return len(rows_to_write)
@@ -764,10 +797,14 @@ def compute_plan(
                     batch = rows_to_write[i : i + batch_size]
                     cur.executemany(upsert_sql, batch)
                     total_written += len(batch)
-                    log.info("  Batch %d–%d written.", i + 1, i + len(batch))
+                    log.info("  Batch %d-%d written.", i + 1, i + len(batch))
             write_conn.commit()
 
-        log.info("Upserted %d rows into fact_replenishment_plan (plan_version=%s).", total_written, plan_version)
+        log.info(
+            "Upserted %d rows into fact_replenishment_plan (plan_version=%s).",
+            total_written,
+            plan_version,
+        )
     return total_written
 
 
@@ -813,7 +850,7 @@ def run(dry_run: bool = False) -> int:
     config = _load_config(Path(CONFIG_PATH).stem)
 
     with psycopg.connect(**get_db_params()) as conn:
-        plan_version = get_latest_plan_version(conn)
+        plan_version = get_active_plan_version(conn)
         if not plan_version:
             log.error(
                 "No plan_version found in fact_production_forecast. "
@@ -839,7 +876,7 @@ if __name__ == "__main__":
     config = _load_config(Path(args.config).stem)
 
     with psycopg.connect(**get_db_params()) as conn:
-        plan_version = args.plan_version or get_latest_plan_version(conn)
+        plan_version = args.plan_version or get_active_plan_version(conn)
         if not plan_version:
             log.error(
                 "No plan_version found in fact_production_forecast. "

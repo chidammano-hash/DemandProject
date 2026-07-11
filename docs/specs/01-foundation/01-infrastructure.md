@@ -93,6 +93,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Investment Optimization | [../04-inventory/08-investment.md](../04-inventory/08-investment.md) | Inventory |
 | Multi-Echelon Safety Stock | [../04-inventory/09-multi-echelon.md](../04-inventory/09-multi-echelon.md) | Inventory |
 | Replenishment Plan | [../04-inventory/10-replenishment-plan.md](../04-inventory/10-replenishment-plan.md) | Inventory |
+| Inventory Reduction Opportunities + Quantile Shadow Target | [../04-inventory/15-reduction-opportunities.md](../04-inventory/15-reduction-opportunities.md) | Inventory |
 | Inventory Rebalancing | [../04-inventory/11-rebalancing.md](../04-inventory/11-rebalancing.md) | Inventory |
 | S&OP Cycle Management | [../05-operations/01-sop-cycle.md](../05-operations/01-sop-cycle.md) | Operations |
 | Financial Planning | [../05-operations/02-financial-planning.md](../05-operations/02-financial-planning.md) | Operations |
@@ -100,6 +101,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Scenario Planning | [../05-operations/04-scenario-planning.md](../05-operations/04-scenario-planning.md) | Operations |
 | AI Planning Agent | [../06-ai-platform/01-ai-planning-agent.md](../06-ai-platform/01-ai-planning-agent.md) | AI |
 | SKU Chatbot (Claude Agent SDK, tiered Haiku/Sonnet/Opus, Item Analysis side chat) | [../06-ai-platform/07-sku-chatbot.md](../06-ai-platform/07-sku-chatbot.md) | AI |
+| Grounded Planning Copilot (owner scope, evidence hashes, explicit provider boundary) | [../06-ai-platform/10-grounded-planning-copilot.md](../06-ai-platform/10-grounded-planning-copilot.md) | AI |
 | Chatbot + Market Intelligence | [../06-ai-platform/02-market-intel.md](../06-ai-platform/02-market-intel.md) | AI |
 | Control Tower | [../06-ai-platform/03-control-tower.md](../06-ai-platform/03-control-tower.md) | AI |
 | Storyboard (Exception Workflow) | [../06-ai-platform/04-storyboard.md](../06-ai-platform/04-storyboard.md) | AI |

@@ -11,6 +11,7 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/sku",
   "/sku-features",
   "/sku-chat",
+  "/ai-copilot",
   "/ai-champion",
   "/competition",
   "/market-intelligence",
