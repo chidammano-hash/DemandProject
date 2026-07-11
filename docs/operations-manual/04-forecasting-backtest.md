@@ -112,12 +112,11 @@ algorithm entry) and a per-run summary JSON. Each backtest also trains
 models AND persists `.pkl` artifacts to `data/models/<model_id>/` for
 downstream production forecasting.
 
-> **Valid windows under embargo (2026-07-11 fix):** `generate_timeframes()` shifts
-> each training cutoff earlier by `embargo_months`, preserving the causal gap while
-> keeping all requested prediction windows non-empty. For a July 2026 planning date,
-> June 2026 is the latest scoreable closed month; timeframe J trains through April,
-> embargoes May, and predicts June. Partial July actuals are excluded at load time.
-> `_last_persistable_timeframe()` remains a defensive guard for custom timeframes.
+> **Closed-month and lag contract:** Backtests use `embargo_months: 0`, so a July
+> 2026 planning date scores through June and timeframe J trains through May to
+> predict June at natural lag 0. Partial July actuals are excluded. Non-zero embargo
+> remains supported for special studies but deliberately removes the corresponding
+> shortest natural lags.
 
 ### UI run concurrency (Model Tuning → Backtest stage)
 
@@ -195,7 +194,7 @@ to every backtest:
 | Key                          | Meaning                                                       |
 |------------------------------|---------------------------------------------------------------|
 | `n_timeframes`               | Number of expanding-window folds (default 10)                 |
-| `embargo_months`             | Gap between train end and validation start (default 1)        |
+| `embargo_months`             | Extra skipped months after the natural train/predict boundary (default 0) |
 | `forecast_horizon`           | Months predicted per fold (default 6 → produces lags 0–4 + 5) |
 | `early_stop_pct`             | Patience as fraction of `n_estimators` (5%, 10% for sparse)   |
 | `shap_retrain_threshold`     | Re-train trigger when SHAP set churns > 50%                   |

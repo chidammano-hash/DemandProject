@@ -313,13 +313,13 @@ Key backtest-level settings:
 - `shap_retrain_threshold: 0.50` — retrain safety check threshold (effectively disabled; original model consistently outperforms)
 - `recursive_noise_pct: 0.03` — Gaussian noise for recursive training (reduced from 0.08)
 - `recursive_lag_smooth: 0.15` — exponential smoothing for recursive lags from step 3+
-- `embargo_months: 1` — gap between each timeframe's train end and its predict window
+- `embargo_months: 0` — preserves one-month-ahead lag 0; prediction starts in the month after training ends
 
 ### Model persistence under embargo
 
 When the `.pkl`-persisting backtest mode runs (`model_persistence_fn` set), production-model artifacts are written for the **last timeframe that has a non-empty predict window**, resolved by `_last_persistable_timeframe()` — not blindly the last timeframe index.
 
-> **Change note (2026-06-20):** with `embargo_months >= 1` (the default), the final timeframe's `predict_start` lands past the data end, so the backtest loop skips it (`if not predict_months: continue`). Persistence had been guarded on `ti == len(timeframes) - 1` — exactly that skipped timeframe — so under the default embargo **no model artifacts were persisted at all**. Persistence now targets `_last_persistable_timeframe()` (equal to the last index when `embargo_months == 0`, so zero-embargo behaviour is unchanged). Separately, `_inject_recursive_noise` is now NaN-safe (it computes the noise scale over finite values only); a `NaN` scale had been wiping the entire `qty_lag_2..N` feature block on every recursive tree fit.
+> **Lag contract (2026-07-11):** operational backtests use embargo 0 because the natural next-month boundary already prevents same-month scoring. A positive embargo shifts the shortest available natural lag upward and must not be used for the standard lag 0–4 accuracy contract. `_last_persistable_timeframe()` remains a defensive guard for custom windows. Separately, `_inject_recursive_noise` is NaN-safe.
 
 ## Backtest Model Coverage
 

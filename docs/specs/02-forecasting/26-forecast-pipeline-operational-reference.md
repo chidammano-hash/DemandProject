@@ -531,7 +531,7 @@ Verify no cluster is below the minimum size threshold (2% of total).
 **Config files:**
 - `config/forecasting/forecast_pipeline_config.yaml` -- `backtest` section:
   - `n_timeframes`: 10 -- **When to change:** Reduce to 5 for faster iteration during experimentation; use 10+ for production evaluation
-  - `embargo_months`: 1 -- **Why:** Prevents data leakage from forecasts generated in the same month
+  - `embargo_months`: 0 -- **Why:** Prediction already starts after training ends; zero preserves lag-0 evidence
   - `forecast_horizon`: 6
   - `early_stop_pct`: 0.03 -- **Why:** 3% patience for early stopping prevents overfitting
 - `config/forecasting/forecast_pipeline_config.yaml` -- `algorithms` section (10 algorithms):

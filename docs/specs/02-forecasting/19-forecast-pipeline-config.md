@@ -173,7 +173,7 @@ best accuracy-to-maintenance ratio.
 ```yaml
 backtest:
   n_timeframes: 10
-  embargo_months: 1          # Gap between train and predict (was 0, now aligned with tuning gap_months)
+  embargo_months: 0          # Preserve natural lag 0 (next-month prediction)
   forecast_horizon: 6
   early_stop_pct: 0.03
   shap_retrain_threshold: 0.10
@@ -184,7 +184,7 @@ backtest:
   output_dir: data/backtest
 ```
 
-Key change: `embargo_months` increased from 0 to 1 to align with the tuning `gap_months` setting, preventing information leakage between training and evaluation windows.
+Backtest embargo and tuning CV gap are independent. Backtests use `0` because prediction already starts after the training month and lag-0 evidence is required. Tuning may use a positive `gap_months` as a stricter model-selection leakage guard.
 
 ### Tuning Settings
 
@@ -192,7 +192,7 @@ Key change: `embargo_months` increased from 0 to 1 to align with the tuning `gap
 tuning:
   n_trials: 50
   n_splits: 5
-  gap_months: 1              # Aligned with backtest embargo_months
+  gap_months: 2              # Tuning-only CV leakage guard; independent of backtest embargo
   val_months_per_fold: 3
   min_train_months: 13
   early_stopping_rounds: 50
@@ -422,7 +422,7 @@ models = get_competing_model_ids()
 |---|---|---|---|
 | `horizon_months` | 18 | 24 | `production_forecast.horizon_months` |
 | `lookback_months` | 24 | 36 | `production_forecast.lookback_months` |
-| `embargo_months` | 0 | 1 | `backtest.embargo_months` |
+| `embargo_months` | 1 | 0 | `backtest.embargo_months` |
 
 ---
 

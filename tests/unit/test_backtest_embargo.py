@@ -121,45 +121,39 @@ class TestEmbargoDoesNotCollapseWindow:
         )
 
 
-class TestEmbargoConsistencyWithTuning:
-    """embargo_months=1 in backtest should match gap_months=1 in tuning."""
+class TestOperationalBacktestCalendar:
+    """Regression coverage for planning-month rollover and natural lag 0."""
 
-    def test_gap_size_matches_tuning_cv(self):
-        """Both embargo_months and gap_months create the same number of
-        skipped months between training data and evaluation data."""
-        from common.ml.tuning import generate_cv_month_splits
-
-        # Setup: 48 months of data
-        all_months = pd.date_range("2021-01-01", periods=48, freq="MS").tolist()
-        earliest = all_months[0]
-        latest = all_months[-1]
-
-        # Backtest with embargo_months=1
-        tfs = generate_timeframes(earliest, latest, n=10, embargo_months=1)
-
-        # Tuning CV with gap_months=1
-        splits = generate_cv_month_splits(
-            all_months,
-            n_splits=5,
-            gap_months=1,
-            min_train_months=13,
-            val_months_per_fold=3,
+    def test_july_planning_scores_june_at_lag_zero(self):
+        latest_closed = pd.Timestamp("2026-06-01")
+        timeframes = generate_timeframes(
+            pd.Timestamp("2023-07-01"), latest_closed, n=10, embargo_months=0
         )
 
-        # Verify backtest gap: predict_start - train_end = 2 months
-        for tf in tfs:
-            gap = (tf["predict_start"].year * 12 + tf["predict_start"].month) - (
-                tf["train_end"].year * 12 + tf["train_end"].month
-            )
-            assert gap == 2, f"Backtest gap should be 2 months, got {gap}"
+        assert timeframes[-1]["train_end"] == pd.Timestamp("2026-05-01")
+        assert timeframes[-1]["predict_start"] == latest_closed
+        assert timeframes[-1]["predict_end"] == latest_closed
 
-        # Verify tuning gap: val_start - train_end = 2 months (1 natural + 1 gap)
-        assert len(splits) > 0, "Should produce at least one CV split"
-        for train_months, val_months in splits:
-            train_end = max(train_months)
-            val_start = min(val_months)
-            gap = (val_start.year * 12 + val_start.month) - (train_end.year * 12 + train_end.month)
-            assert gap == 2, f"Tuning gap should be 2 months, got {gap}"
+    def test_august_planning_rolls_j_forward_one_month(self):
+        latest_closed = pd.Timestamp("2026-07-01")
+        timeframes = generate_timeframes(
+            pd.Timestamp("2023-07-01"), latest_closed, n=10, embargo_months=0
+        )
+
+        assert timeframes[-1]["train_end"] == pd.Timestamp("2026-06-01")
+        assert timeframes[-1]["predict_start"] == latest_closed
+        assert timeframes[-1]["predict_end"] == latest_closed
+
+    def test_all_standard_timeframes_are_non_empty(self):
+        timeframes = generate_timeframes(
+            pd.Timestamp("2023-07-01"),
+            pd.Timestamp("2026-06-01"),
+            n=10,
+            embargo_months=0,
+        )
+
+        assert len(timeframes) == 10
+        assert all(tf["predict_start"] <= tf["predict_end"] for tf in timeframes)
 
 
 class TestDefaultEmbargoIsZero:

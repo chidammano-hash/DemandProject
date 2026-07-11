@@ -107,7 +107,7 @@ algorithms:
       early_stop_patience_steps: -1
 backtest:
   n_timeframes: 10
-  embargo_months: 1
+  embargo_months: 0
   forecast_horizon: 6
   early_stop_pct: 0.05
   shap_retrain_threshold: 0.5

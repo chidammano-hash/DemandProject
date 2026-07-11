@@ -60,11 +60,9 @@ def generate_cv_month_splits(
     leakage at the fold boundary (month-lag features use data up to train_end;
     the gap ensures the lag window is clean for the validation months).
 
-    NOTE: All production callers (tune_hyperparams.py, tune_for_timeframe) read
-    gap_months from config (hyperparameter_tuning.yaml / forecast_pipeline_config.yaml)
-    and always pass 1 — matching the backtest embargo_months=1 alignment requirement.
-    The parameter is kept explicit so the alignment invariant is visible at each call
-    site and configurable without touching this function.
+    Production callers read ``gap_months`` from tuning configuration. This CV
+    leakage guard is intentionally independent of ``backtest.embargo_months``:
+    operational backtests use embargo 0 to retain natural lag-0 evidence.
 
     Returns:
         List of (train_months, val_months) tuples in chronological order.

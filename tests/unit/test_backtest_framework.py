@@ -19,6 +19,10 @@ def test_closed_month_cutoff_for_july_planning_date():
     assert _closed_month_cutoff(pd.Timestamp("2026-07-11")) == pd.Timestamp("2026-06-01")
 
 
+def test_closed_month_cutoff_rolls_forward_for_august_planning_date():
+    assert _closed_month_cutoff(pd.Timestamp("2026-08-11")) == pd.Timestamp("2026-07-01")
+
+
 class TestGenerateTimeframes:
     def test_returns_10_timeframes(self):
         earliest = pd.Timestamp("2021-01-01")
