@@ -327,7 +327,9 @@ def prepare_fold_features(
                 X_tr[col] = train_values
                 X_va[col] = val_values
             else:
-                categories = pd.Index(train_values).union(pd.Index(val_values))
+                categories = pd.Index(
+                    pd.unique(pd.concat([train_values, val_values], ignore_index=True))
+                )
                 X_tr[col] = pd.Categorical(train_values, categories=categories)
                 X_va[col] = pd.Categorical(val_values, categories=categories)
             continue

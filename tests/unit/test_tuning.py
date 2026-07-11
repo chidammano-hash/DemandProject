@@ -385,6 +385,16 @@ class TestTrainFoldFnsRegistry:
 
 
 class TestPrepareFoldFeatures:
+    def test_lgbm_categories_are_unique_when_values_repeat(self):
+        X_train = pd.DataFrame({"region": ["WEST", "WEST", "EAST"]})
+        X_val = pd.DataFrame({"region": ["WEST", "EAST", "EAST"]})
+
+        X_tr, X_va, _ = prepare_fold_features("lgbm", X_train, X_val, ["region"])
+
+        assert X_tr["region"].cat.categories.is_unique
+        assert X_va["region"].cat.categories.is_unique
+        assert X_tr["region"].cat.categories.equals(X_va["region"].cat.categories)
+
     def test_lgbm_and_xgboost_cast_categoricals_and_fill_numeric_gaps(self):
         X_train = pd.DataFrame(
             {

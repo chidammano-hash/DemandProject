@@ -108,7 +108,7 @@ def make_cluster_objective(
             X_train = train_data[feature_cols]
             y_train = train_data["qty"]
             X_val = val_data[feature_cols]
-            y_val = val_data["qty"].values
+            y_val = cluster_grid.loc[val_data.index, "qty"].values
 
             try:
                 preds, best_rounds = train_fn(
@@ -228,9 +228,7 @@ def write_cluster_profiles(
         logger.info("Backed up existing profile to %s", bak_path)
 
     profiles: dict[str, Any] = {
-        name: profile
-        for name, profile in (existing_profiles or {}).items()
-        if name != "default"
+        name: profile for name, profile in (existing_profiles or {}).items() if name != "default"
     }
     skipped_nonfinite = 0
     for cluster_name, result in sorted(results.items()):
@@ -319,7 +317,7 @@ def main() -> None:
         "--stale-only",
         action="store_true",
         help="Only tune clusters flagged stale in cluster_tuning_profile_state "
-             "(set by cluster promotion); exits 0 when nothing is stale",
+        "(set by cluster promotion); exits 0 when nothing is stale",
     )
     parser.add_argument(
         "--min-rows",

@@ -63,11 +63,17 @@ Runs Bayesian tuning sequentially for all three core tree algorithms.
 
 | Target | Trials | Notes |
 |---|---|---|
-| `make tune-lgbm` | 50 (default) | LightGBM global tune |
+| `make tune-lgbm` | Up to 8 | Bounded exploratory tune: 1,000 complete DFU histories, 2 causal folds, 600-tree cap, 270-second optimization budget |
+| `make tune-lgbm-full` | 50 | Full 5-fold LightGBM tune for governed promotion decisions |
 
 Each run writes a JSON trial archive to `data/tuning/` and (on promotion)
 updates `algorithms.<id>.params` in `config/forecasting/forecast_pipeline_config.yaml`.
 The next `make backtest-all` cycle picks up the new params automatically.
+
+The fast profile is intended for interactive iteration and is configured in
+`config/forecasting/hyperparameter_tuning.yaml`. It preserves the full history of every sampled
+DFU and the causal gap, but its smaller sample is not sufficient evidence for automatic promotion.
+Use `make tune-lgbm-full` before adopting parameters into a governed production release.
 
 ---
 

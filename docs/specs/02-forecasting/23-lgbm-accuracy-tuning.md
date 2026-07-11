@@ -451,6 +451,14 @@ backtest:
 
 ## 5. Future Tuning Directions
 
+### Bounded interactive tuning
+
+`make tune-lgbm` uses a deterministic exploratory profile designed for a five-minute operator
+feedback loop: at most 1,000 complete DFU histories, 8 Optuna trials, 2 walk-forward folds, a
+600-tree ceiling, early stopping after 20 rounds, and a 270-second optimization budget. Sampling
+never splits a DFU history and the causal gap remains enforced. `make tune-lgbm-full` retains the
+50-trial, 5-fold path required before governed promotion.
+
 
 2. **Two-stage models for intermittent demand** -- Train a classifier (zero/non-zero) first, then a regressor (predict qty given demand occurs). This decomposes the problem into two tasks that tree models handle well individually.
 

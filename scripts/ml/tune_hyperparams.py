@@ -57,6 +57,28 @@ from common.ml.tuning import (
 )
 
 TREE_MODEL_PREFIXES = ("lgbm", "catboost", "xgboost")
+DFU_KEY_COLS = ["item_id", "customer_group", "loc"]
+
+
+def sample_tuning_dfus(
+    sales_df: pd.DataFrame,
+    *,
+    max_dfus: int,
+    random_seed: int,
+) -> pd.DataFrame:
+    """Deterministically sample DFUs while retaining every row in their histories."""
+    if max_dfus < 1:
+        raise ValueError("max_dfus must be positive")
+    missing = [column for column in DFU_KEY_COLS if column not in sales_df.columns]
+    if missing:
+        raise ValueError(f"sales data is missing DFU keys: {missing}")
+    dfus = sales_df[DFU_KEY_COLS].drop_duplicates()
+    if len(dfus) <= max_dfus:
+        return sales_df
+    selected = dfus.sample(n=max_dfus, random_state=random_seed)
+    row_keys = pd.MultiIndex.from_frame(sales_df[DFU_KEY_COLS])
+    selected_keys = pd.MultiIndex.from_frame(selected)
+    return sales_df.loc[row_keys.isin(selected_keys)].copy()
 
 
 def _base_model_name(model_id: str) -> str:
@@ -154,7 +176,7 @@ def make_objective(
             X_train = train_data[feature_cols]
             y_train = train_data["qty"]
             X_val = val_data[feature_cols]
-            y_val = val_data["qty"].values
+            y_val = full_grid.loc[val_data.index, "qty"].values
 
             try:
                 preds, best_rounds = train_fn(
@@ -236,7 +258,7 @@ def evaluate_per_cluster_wape(
             train_data[feature_cols],
             train_data["qty"],
             val_data[feature_cols],
-            val_data["qty"].values,
+            full_grid.loc[val_data.index, "qty"].values,
             cat_cols,
             best_params,
             n_estimators_max,
@@ -294,7 +316,13 @@ def main() -> None:
     parser.add_argument(
         "--resume", action="store_true", help="Resume an existing Optuna study from SQLite DB"
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use the bounded exploratory profile designed to finish within five minutes",
+    )
     args = parser.parse_args()
+    run_started_at = time.monotonic()
 
     load_dotenv(ROOT / ".env")
 
@@ -326,6 +354,19 @@ def main() -> None:
                 config["tuning"][key] = pipeline_tuning[key]
     except FileNotFoundError:
         pass  # No pipeline config — use hyperparameter_tuning.yaml as-is
+
+    if args.fast:
+        fast_profile = config["fast_profile"]
+        for key in (
+            "n_trials",
+            "n_splits",
+            "val_months_per_fold",
+            "early_stopping_rounds",
+            "n_estimators_max",
+            "pruner_n_startup_trials",
+            "pruner_n_warmup_steps",
+        ):
+            config["tuning"][key] = fast_profile[key]
 
     try:
         model_name, resolved_model_id, algo_entry = _resolve_tuning_target(
@@ -394,6 +435,16 @@ def main() -> None:
         sales_df, dfu_attrs, item_attrs = data_result
         customer_features = None
 
+    if args.fast:
+        original_dfus = sales_df[DFU_KEY_COLS].drop_duplicates().shape[0]
+        sales_df = sample_tuning_dfus(
+            sales_df,
+            max_dfus=int(config["fast_profile"]["max_dfus"]),
+            random_seed=int(t_cfg["random_seed"]),
+        )
+        sampled_dfus = sales_df[DFU_KEY_COLS].drop_duplicates().shape[0]
+        print(f"[{_ts()}] Fast profile DFU sample: {sampled_dfus}/{original_dfus}")
+
     # ── Build feature matrix ──────────────────────────────────────────────────
     all_months = sorted(sales_df["startdate"].unique())
     print(f"[{_ts()}] Building feature matrix ({len(all_months)} months)...")
@@ -430,9 +481,10 @@ def main() -> None:
         sys.exit(1)
 
     # ── Create Optuna study ───────────────────────────────────────────────────
-    study_path = output_dir / f"optuna_{output_stem}.db"
+    study_suffix = "_fast" if args.fast else ""
+    study_path = output_dir / f"optuna_{output_stem}{study_suffix}.db"
     storage = f"sqlite:///{study_path}"
-    study_name = f"{output_stem}_tuning"
+    study_name = f"{output_stem}_tuning{study_suffix}"
 
     sampler = optuna.samplers.TPESampler(seed=t_cfg["random_seed"])
     pruner = optuna.pruners.MedianPruner(
@@ -453,7 +505,15 @@ def main() -> None:
             load_if_exists=True,
         )
 
-    completed_before = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+    completed_before = len(
+        [
+            trial
+            for trial in study.trials
+            if trial.state == optuna.trial.TrialState.COMPLETE
+            and trial.value is not None
+            and np.isfinite(trial.value)
+        ]
+    )
     remaining = max(0, n_trials - completed_before)
     print(f"[{_ts()}] Study: {completed_before} existing complete trials, running {remaining} more")
 
@@ -479,7 +539,13 @@ def main() -> None:
     def _trial_callback(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
         if trial.state == optuna.trial.TrialState.COMPLETE:
             completed = len(
-                [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+                [
+                    row
+                    for row in study.trials
+                    if row.state == optuna.trial.TrialState.COMPLETE
+                    and row.value is not None
+                    and np.isfinite(row.value)
+                ]
             )
             best_wape_pct = (
                 study.best_value * 100 if study.best_value < float("inf") else float("inf")
@@ -490,9 +556,18 @@ def main() -> None:
             )
 
     if remaining > 0:
+        timeout_seconds = t_cfg.get("timeout_seconds")
+        if args.fast:
+            elapsed_total = time.monotonic() - run_started_at
+            timeout_seconds = max(
+                1.0,
+                float(config["fast_profile"]["time_budget_seconds"]) - elapsed_total,
+            )
+            print(f"[{_ts()}] Fast profile optimization budget: {timeout_seconds:.0f}s")
         study.optimize(
             objective_fn,
             n_trials=remaining,
+            timeout=timeout_seconds,
             callbacks=[_trial_callback],
             show_progress_bar=False,
         )
@@ -501,7 +576,13 @@ def main() -> None:
     print(f"\n[{_ts()}] Optimisation done in {elapsed:.0f}s ({elapsed / 60:.1f}m)")
 
     # ── Collect best trial ────────────────────────────────────────────────────
-    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    completed_trials = [
+        trial
+        for trial in study.trials
+        if trial.state == optuna.trial.TrialState.COMPLETE
+        and trial.value is not None
+        and np.isfinite(trial.value)
+    ]
     if not completed_trials:
         print(f"[{_ts()}] No completed trials — check data availability and config")
         sys.exit(1)
