@@ -812,7 +812,7 @@ def forecast_accuracy_lag_leaderboard(
 ):
     """Per-lag model leaderboard ranked by accuracy (data: agg_accuracy_lag_archive).
 
-    Returns WAPE and bias for each model at execution lags 0-4. Pinball loss
+    Returns WAPE and bias for each model at fixed forecast lags 0-4. Pinball loss
     requires quantile forecast rows and is not computed here.
     """
     set_cache(response, max_age=120, stale_while_revalidate=300)

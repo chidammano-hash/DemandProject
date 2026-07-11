@@ -33,6 +33,21 @@ vi.mock("@/api/queries/backtest-management", () => ({
   submitBacktestRun: (...args: unknown[]) => submitBacktestRun(...args),
 }));
 
+vi.mock("@/api/queries/accuracy", () => ({
+  lagLeaderboardKeys: { list: () => ["lag-leaderboard"] as const },
+  fetchLagLeaderboard: vi.fn().mockResolvedValue({
+    source: "agg_accuracy_lag_archive",
+    limit: 50,
+    lags: [
+      { lag: 0, rankings: [{ model_id: "lgbm_cluster", accuracy_pct: 71.2 }] },
+      { lag: 1, rankings: [{ model_id: "lgbm_cluster", accuracy_pct: 68.4 }] },
+      { lag: 2, rankings: [{ model_id: "lgbm_cluster", accuracy_pct: 64.1 }] },
+      { lag: 3, rankings: [{ model_id: "lgbm_cluster", accuracy_pct: 60.3 }] },
+      { lag: 4, rankings: [{ model_id: "lgbm_cluster", accuracy_pct: 57.8 }] },
+    ],
+  }),
+}));
+
 const MODELS: ModelInfo[] = [
   { id: "lgbm_cluster", label: "LightGBM", type: "tree", tunable: true },
   { id: "chronos2_enriched", label: "Chronos 2E", type: "foundation", tunable: false },
@@ -76,6 +91,19 @@ describe("BacktestStagePanel — grouped table", () => {
   it("shows 'Loaded' status once a run has auto-loaded", async () => {
     renderPanel();
     expect(await screen.findByText("Loaded")).toBeDefined();
+  });
+
+  it("shows execution-lag and fixed-lag accuracy for each model", async () => {
+    renderPanel();
+
+    const labelCell = screen.getAllByText("LightGBM").find((el) => el.closest("tr"));
+    const row = labelCell!.closest("tr") as HTMLElement;
+    expect(await within(row).findByText("Exec 66.5%")).toBeDefined();
+    expect(within(row).getByText("L0 71.2%")).toBeDefined();
+    expect(within(row).getByText("L1 68.4%")).toBeDefined();
+    expect(within(row).getByText("L2 64.1%")).toBeDefined();
+    expect(within(row).getByText("L3 60.3%")).toBeDefined();
+    expect(within(row).getByText("L4 57.8%")).toBeDefined();
   });
 
   it("runs a single model's backtest via its row Run button", () => {

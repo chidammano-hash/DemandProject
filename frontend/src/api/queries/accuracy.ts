@@ -87,6 +87,7 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
   return fetchJson(`/forecast/accuracy/lag-curve?${qs}`);
 }
 
+/** Accuracy for all DFUs evaluated at one fixed forecast lag. */
 export interface LagLeaderboardEntry {
   rank: number;
   model_id: string;

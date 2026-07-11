@@ -30,6 +30,11 @@ import {
   submitBacktestRun,
   type BacktestModelSummary,
 } from "@/api/queries/backtest-management";
+import {
+  fetchLagLeaderboard,
+  lagLeaderboardKeys,
+  type LagLeaderboardPayload,
+} from "@/api/queries/accuracy";
 
 import { BacktestDetailPanel } from "./BacktestDetailPanel";
 import { TYPE_COLORS } from "./_helpers";
@@ -78,6 +83,20 @@ export function BacktestStagePanel({
       return runningModels.size > 0 || anyRunInFlight ? 5_000 : false;
     },
   });
+  const { data: lagLeaderboard } = useQuery<LagLeaderboardPayload>({
+    queryKey: lagLeaderboardKeys.list({ limit: 50 }),
+    queryFn: () => fetchLagLeaderboard({ limit: 50 }),
+    staleTime: 30_000,
+  });
+
+  const lagAccuracyForModel = (modelId: string): Map<number, number | null> => {
+    const accuracyByLag = new Map<number, number | null>();
+    for (const lagBlock of lagLeaderboard?.lags ?? []) {
+      const modelResult = lagBlock.rankings.find((entry) => entry.model_id === modelId);
+      accuracyByLag.set(lagBlock.lag, modelResult?.accuracy_pct ?? null);
+    }
+    return accuracyByLag;
+  };
 
   const isModelActive = (id: string): boolean => {
     const status = backtestSummary?.[id]?.latest_run?.status;
@@ -216,7 +235,7 @@ export function BacktestStagePanel({
               <TableHeader>
                 <TableRow>
                   <TableHead className="h-8 text-xs">Model</TableHead>
-                  <TableHead className="h-8 text-right text-xs">Accuracy</TableHead>
+                  <TableHead className="h-8 text-xs">Accuracy by forecast lag</TableHead>
                   <TableHead className="h-8 text-xs">Status</TableHead>
                   <TableHead className="h-8 w-[1%] text-right text-xs">Action</TableHead>
                 </TableRow>
@@ -224,6 +243,7 @@ export function BacktestStagePanel({
               <TableBody>
                 {g.items.map((m) => {
                   const bt = backtestSummary?.[m.id];
+                  const lagAccuracy = lagAccuracyForModel(m.id);
                   const isSelected = selectedModelId === m.id;
                   return (
                     <TableRow
@@ -232,12 +252,30 @@ export function BacktestStagePanel({
                       onClick={() => onSelectModel(m.id)}
                     >
                       <TableCell className="py-1.5 text-sm font-medium">{m.label}</TableCell>
-                      <TableCell className="py-1.5 text-right text-sm tabular-nums">
-                        {bt?.current_accuracy != null ? (
-                          <span className="font-semibold">{bt.current_accuracy.toFixed(1)}%</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
+                      <TableCell className="py-1.5 tabular-nums">
+                        <div
+                          className="flex flex-wrap items-center gap-1"
+                          aria-label={`${m.label} accuracy by forecast lag`}
+                        >
+                          <span
+                            className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary"
+                            title="Execution lag: each DFU measured at its own production-relevant lag"
+                          >
+                            Exec {bt?.current_accuracy != null ? `${bt.current_accuracy.toFixed(1)}%` : "—"}
+                          </span>
+                          {[0, 1, 2, 3, 4].map((lag) => {
+                            const accuracy = lagAccuracy.get(lag);
+                            return (
+                              <span
+                                key={lag}
+                                className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                                title={`All DFUs measured at fixed forecast lag ${lag}`}
+                              >
+                                L{lag} {accuracy != null ? `${accuracy.toFixed(1)}%` : "—"}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </TableCell>
                       <TableCell className="py-1.5 text-xs">{statusCell(m.id, bt)}</TableCell>
                       <TableCell className="py-1.5 text-right">
