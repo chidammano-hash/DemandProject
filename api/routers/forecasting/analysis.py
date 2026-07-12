@@ -7,10 +7,17 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
 from common.core.sql_helpers import EXTERNAL_MODEL_ID
+from common.core.utils import get_algorithm_roster
 
 router = APIRouter(tags=["dfu-analysis"])
 
 _DFU_ANALYSIS_MODES = {"item_location", "all_items_at_location", "item_at_all_locations"}
+_ANALYSIS_REFERENCE_MODELS = {EXTERNAL_MODEL_ID, "champion", "ceiling"}
+
+
+def _visible_analysis_model_ids() -> set[str]:
+    """Configured forecast models plus intentional comparison/reference series."""
+    return set(get_algorithm_roster(stage="forecast")) | _ANALYSIS_REFERENCE_MODELS
 
 
 @router.get("/sku/analysis")
@@ -59,6 +66,7 @@ def sku_analysis(
     where_sql = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
     with get_conn() as conn, conn.cursor() as cur:
+        visible_model_ids = _visible_analysis_model_ids()
         # 1. Sales measures from agg_sales_monthly
         sales_measures_sql = f"""
             SELECT month_start,
@@ -95,6 +103,8 @@ def sku_analysis(
         for row in cur.fetchall():
             month_key = str(row[0])
             model_id = str(row[1])
+            if model_id not in visible_model_ids:
+                continue
             forecast_val = float(row[2] or 0)
             actual_val = float(row[3] or 0)
             model_set.add(model_id)

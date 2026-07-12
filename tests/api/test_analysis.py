@@ -303,6 +303,37 @@ async def test_sku_analysis_with_data_populates_series():
     assert "external" in data["models"]
 
 
+@pytest.mark.asyncio
+async def test_sku_analysis_hides_models_removed_from_pipeline_config():
+    import datetime
+
+    month = datetime.date(2026, 6, 1)
+    pool, conn, cursor = make_pool(fetchall_returns=[
+        [],
+        [
+            (month, "lgbm_cluster", 100.0, 90.0),
+            (month, "catboost_cluster", 101.0, 90.0),
+            (month, "champion", 99.0, 90.0),
+        ],
+        [(month, 90.0)],
+        [],
+        [],
+    ])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/sku/analysis",
+                params={"item": "I1", "location": "L1", "mode": "item_location"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json()["models"] == ["champion", "lgbm_cluster"]
+    assert "forecast_catboost_cluster" not in resp.json()["series"][0]
+
+
 # ---------------------------------------------------------------------------
 # Seasonality profile filter (Feature 32)
 # ---------------------------------------------------------------------------

@@ -67,6 +67,13 @@ No config file. Model IDs are strings -- any new algorithm can write to the tabl
 
 None beyond the base forecast table (`fact_external_forecast_monthly`).
 
+## Roster visibility
+
+Item Analysis and backtesting model selectors use the enabled stage-specific algorithm roster from
+`forecast_pipeline_config.yaml`. Rows retained for removed algorithms remain available for audit but
+are not exposed as graph series. Item Analysis additionally keeps the intentional `external`,
+`champion`, and `ceiling` reference series.
+
 ## See Also
 
 - [Accuracy KPIs](./01-accuracy-kpis.md) -- compares models using WAPE, bias, accuracy %
