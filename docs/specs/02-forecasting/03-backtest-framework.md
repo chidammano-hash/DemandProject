@@ -332,6 +332,12 @@ The backtest framework supports the full algorithm portfolio defined in `config/
 
 All models write to the same `data/backtest/<model_id>/` directory structure and are loaded through the same dual-path loader into `backtest_lag_archive` (all lags) and `fact_external_forecast_monthly` (execution lag only).
 
+Managed runs remove prior final CSV/metadata artifacts before execution (resume checkpoints are
+preserved), and database auto-load occurs only after the model process exits successfully. MSTL
+runs install the `statistical` dependency extra and fail when inference or post-processing produces
+no rows; an unavailable `statsforecast` installation can therefore never load stale results or be
+reported as completed.
+
 ## Dependencies
 
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column in the forecast table

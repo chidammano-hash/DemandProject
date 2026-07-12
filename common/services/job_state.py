@@ -470,6 +470,7 @@ def _run_backtest(
         "chronos2_enriched": "foundation",
         "nhits": "dl",
         "nbeats": "dl",
+        "mstl": "statistical",
     }
     # Special scripts: direct file path
     special_scripts = {
@@ -524,6 +525,18 @@ def _run_backtest(
     if params.get("resume"):
         cmd.append("--resume")
 
+    # Final artifacts are valid only for this invocation. Checkpoints live in a
+    # separate directory and remain available to --resume.
+    output_model = str(params.get("model_id") or model)
+    model_dir = _BACKTEST_OUTPUT_DIRS.get(output_model, output_model)
+    artifact_dir = _SCRIPTS_DIR.parent / "data" / "backtest" / model_dir
+    for filename in (
+        "backtest_predictions.csv",
+        "backtest_predictions_all_lags.csv",
+        "backtest_metadata.json",
+    ):
+        (artifact_dir / filename).unlink(missing_ok=True)
+
     try:
         output = _run_subprocess(cmd, progress_cb, cancel_event=cancel_event, job_id=job_id)
     except Exception:
@@ -539,7 +552,6 @@ def _run_backtest(
     # failed managed run because execution-lag accuracy is not usable until both
     # database destinations are populated.
     if backtest_run_id:
-        output_model = str(params.get("model_id") or model)
         try:
             _auto_load_backtest(output_model, backtest_run_id, progress_cb, cancel_event, job_id)
         except Exception:  # noqa: BLE001 — any load failure makes the backtest unusable.

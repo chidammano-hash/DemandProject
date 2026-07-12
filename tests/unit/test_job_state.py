@@ -566,3 +566,15 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
 
         m_update.assert_not_called()
         assert any("status = 'failed'" in call.args[0] for call in conn.execute.call_args_list)
+
+    def test_mstl_installs_statistical_extra_and_removes_stale_artifacts(self):
+        from common.services.job_state import _run_backtest
+
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok") as run,
+            patch("pathlib.Path.unlink") as unlink,
+        ):
+            _run_backtest("mstl", {})
+
+        assert run.call_args.args[0][1:4] == ["run", "--extra", "statistical"]
+        assert unlink.call_count == 3

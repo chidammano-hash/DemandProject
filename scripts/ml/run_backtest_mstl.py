@@ -121,8 +121,7 @@ def main() -> None:
         )
 
     if sales_df.empty:
-        logger.warning("No sales data found; exiting")
-        return
+        raise RuntimeError("MSTL backtest cannot run without sales data")
 
     exec_lag_map = (
         dfu_attrs.set_index("sku_ck")["execution_lag"]
@@ -253,8 +252,7 @@ def main() -> None:
         )
 
     if not all_predictions:
-        logger.warning("No predictions produced across any timeframe; exiting")
-        return
+        raise RuntimeError("MSTL produced no predictions across any timeframe")
 
     # ── Step 4: Post-process ────────────────────────────────────────────────
     logger.info("Step 4: Post-processing predictions...")
@@ -265,6 +263,9 @@ def main() -> None:
 
     output_df["model_id"] = model_id
     archive_df["model_id"] = model_id
+
+    if output_df.empty or archive_df.empty:
+        raise RuntimeError("MSTL post-processing produced empty output artifacts")
 
     logger.info(
         "Post-process complete: %s output rows, %s archive rows",
