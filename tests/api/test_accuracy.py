@@ -367,6 +367,22 @@ def test_add_item_location_filters_none():
     assert params == []
 
 
+def test_active_backtest_model_ids_excludes_retired_algorithms():
+    from api.routers.forecasting.accuracy import _active_backtest_model_ids
+
+    assert _active_backtest_model_ids("lgbm_cluster,catboost_cluster,mstl") == [
+        "lgbm_cluster",
+        "mstl",
+    ]
+    assert set(_active_backtest_model_ids()) == {
+        "lgbm_cluster",
+        "chronos2_enriched",
+        "mstl",
+        "nbeats",
+        "nhits",
+    }
+
+
 @pytest.mark.asyncio
 async def test_lag_leaderboard_returns_ranked_models():
     pool, conn, cursor = _make_pool(fetchall_return=[

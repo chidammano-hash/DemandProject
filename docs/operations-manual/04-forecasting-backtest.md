@@ -38,6 +38,17 @@ Use `get_algorithm_roster(stage="backtest")` to retrieve only models that
 should be backtested; use `get_competing_model_ids()` for champion
 selection and `get_forecastable_model_ids()` for production inference.
 
+After removing algorithms from the roster, run the roster cleanup first without flags to preview it,
+then with `--execute` to purge retired forecast/backtest rows and artifact directories:
+
+```bash
+uv run python scripts/ml/clean_algorithm_roster.py
+uv run python scripts/ml/clean_algorithm_roster.py --execute
+```
+
+It retains the configured forecast algorithms plus `champion`; `external` and `ceiling` remain only
+as benchmark rows in `fact_external_forecast_monthly`. Dependent views are refreshed automatically.
+
 ### 4.1.2 Model families
 
 | Family          | Model IDs                                                                                                | Notes                                                                  |

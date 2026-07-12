@@ -70,9 +70,10 @@ None beyond the base forecast table (`fact_external_forecast_monthly`).
 ## Roster visibility
 
 Item Analysis and backtesting model selectors use the enabled stage-specific algorithm roster from
-`forecast_pipeline_config.yaml`. Rows retained for removed algorithms remain available for audit but
-are not exposed as graph series. Item Analysis additionally keeps the intentional `external`,
-`champion`, and `ceiling` reference series.
+`forecast_pipeline_config.yaml`. Retired algorithms are excluded from accuracy curves and
+leaderboards. Item Analysis additionally keeps the intentional `external`, `champion`, and `ceiling`
+reference series. Run `uv run python scripts/ml/clean_algorithm_roster.py --execute` to purge retired
+rows and generated model/backtest artifacts; without `--execute`, the command is a safe preview.
 
 ## See Also
 

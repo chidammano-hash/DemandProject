@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import add_cross_dim_filters, compute_kpis, get_read_only_conn, set_cache
+from common.core.utils import get_algorithm_roster
 from common.services.cache import cached_sync
 from common.services.metrics import compute_unweighted_accuracy, compute_unweighted_mase
 
@@ -24,6 +25,15 @@ _MASE_SEASONAL_PERIOD_RULE = (
     "m=12 (annual seasonal-naive scale) for "
     f"{{{', '.join(sorted(_MASE_SEASONAL_PROFILES))}}}; m=1 (random-walk scale) otherwise"
 )
+
+
+def _active_backtest_model_ids(models: str = "") -> list[str]:
+    """Return only configured backtest models, preventing retired-model leakage."""
+    active = get_algorithm_roster(stage="backtest")
+    if not models.strip():
+        return sorted(active)
+    requested = [model.strip() for model in models.split(",") if model.strip()]
+    return list(dict.fromkeys(model for model in requested if model in active))
 
 # Dimensions that the per-DFU decomposition can group by. These are exactly the
 # DFU-constant attribute columns carried in agg_accuracy_by_dfu (sql/193);
@@ -161,7 +171,7 @@ def forecast_accuracy_slice(
             detail=f"Invalid group_by '{group_by}'. Valid: {sorted(_ACCURACY_SLICE_DIMS)}",
         )
 
-    model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+    model_list = _active_backtest_model_ids(models)
     if len(model_list) > 20:
         raise HTTPException(status_code=422, detail="models: max 20 values allowed")
 
@@ -553,7 +563,7 @@ def forecast_accuracy_lag_curve(
 ):
     set_cache(response, max_age=120, stale_while_revalidate=300)
     """Return accuracy by lag (0-4) for each model."""
-    model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+    model_list = _active_backtest_model_ids(models)
     if len(model_list) > 20:
         raise HTTPException(status_code=422, detail="models: max 20 values allowed")
 
@@ -817,8 +827,10 @@ def forecast_accuracy_lag_leaderboard(
     """
     set_cache(response, max_age=120, stale_while_revalidate=300)
 
-    where_parts: list[str] = []
-    params: list[Any] = []
+    active_models = _active_backtest_model_ids()
+    placeholders = ",".join(["%s"] * len(active_models))
+    where_parts: list[str] = [f"model_id IN ({placeholders})"]
+    params: list[Any] = list(active_models)
     if month_from.strip():
         where_parts.append("month_start >= %s::date")
         params.append(month_from.strip())
