@@ -78,7 +78,8 @@ period. Customer grain remains on `fact_customer_demand_monthly`, which the stan
 pipeline loads through the last available closed month. Customer labels join `dim_customer` at its
 `(site, customer_no)` grain to prevent duplicate UI series. If the source is less current than the
 planning calendar, the UI reports its latest genuinely available customer month rather than
-synthesizing allocations.
+synthesizing allocations. The Workbench also enforces one selectable row per API series key so
+cached or malformed duplicate rows cannot share selection state in the UI.
 
 ### Feature 5: Cross-Reference Matrix
 

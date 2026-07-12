@@ -313,23 +313,34 @@ export function DemandWorkbenchPanel() {
     queryEnabled,
   );
 
+  // API keys are the selection identity. Keep the first row for each key so a
+  // stale or malformed response cannot render multiple controls that toggle
+  // the same selection.
+  const uniqueSeries = useMemo(() => {
+    if (!data?.series) return [];
+    const byKey = new Map<string, WorkbenchSeries>();
+    for (const series of data.series) {
+      if (!byKey.has(series.key)) byKey.set(series.key, series);
+    }
+    return Array.from(byKey.values());
+  }, [data?.series]);
+
   // Filter series by search
   const filteredSeries = useMemo(() => {
-    if (!data?.series) return [];
-    if (!search) return data.series;
+    if (!search) return uniqueSeries;
     const q = search.toLowerCase();
-    return data.series.filter(
+    return uniqueSeries.filter(
       (s) => s.key.toLowerCase().includes(q) || s.label.toLowerCase().includes(q),
     );
-  }, [data?.series, search]);
+  }, [uniqueSeries, search]);
 
   // Resolve selected keys to series objects (preserving select order so the
   // first picked series gets trendColors[0], second gets [1], etc.)
   const selectedSeriesList = useMemo<WorkbenchSeries[]>(() => {
-    if (!data?.series || selectedKeys.length === 0) return [];
-    const byKey = new Map(data.series.map((s) => [s.key, s]));
+    if (uniqueSeries.length === 0 || selectedKeys.length === 0) return [];
+    const byKey = new Map(uniqueSeries.map((s) => [s.key, s]));
     return selectedKeys.map((k) => byKey.get(k)).filter((s): s is WorkbenchSeries => !!s);
-  }, [data?.series, selectedKeys]);
+  }, [uniqueSeries, selectedKeys]);
 
   // Forecast overlay availability:
   //  - Item grain      : aggregated across all locations (loc omitted)
@@ -459,7 +470,7 @@ export function DemandWorkbenchPanel() {
                   className="text-muted-foreground uppercase tracking-wider"
                   title="Each row: total demand · sparkline · month-over-month change (last vs prior month; * = low-base spike)"
                 >
-                  {filteredSeries.length} of {data.series.length} series · last · MoM&nbsp;%
+                  {filteredSeries.length} of {uniqueSeries.length} series · last · MoM&nbsp;%
                 </span>
                 {selectedKeys.length > 0 && (
                   <span className="text-blue-500">

@@ -30,6 +30,15 @@ vi.mock("@/api/queries/demand-history", () => ({
             { month: "2025-02", demand_qty: 800 },
           ],
         },
+        {
+          key: "ITEM_A__LOC_1",
+          label: "Duplicate label for Item A",
+          total_demand: 5000,
+          months: [
+            { month: "2025-01", demand_qty: 400 },
+            { month: "2025-02", demand_qty: 600 },
+          ],
+        },
       ],
       hierarchy_children: "item_loc",
       total: 2,
@@ -53,6 +62,17 @@ describe("DemandWorkbenchPanel (via DemandHistoryTab)", () => {
 
     expect(screen.getByText("Item A (Loc 1)")).toBeInTheDocument();
     expect(screen.getByText("Item B (Loc 2)")).toBeInTheDocument();
+  });
+
+  it("renders only one selectable row for each series key", () => {
+    render(
+      <TestQueryWrapper>
+        <DemandHistoryTab />
+      </TestQueryWrapper>,
+    );
+
+    expect(screen.getAllByText("Item A (Loc 1)")).toHaveLength(1);
+    expect(screen.queryByText("Duplicate label for Item A")).not.toBeInTheDocument();
   });
 
   it("shows total demand for each series", () => {
