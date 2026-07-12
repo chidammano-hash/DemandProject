@@ -342,6 +342,10 @@ Production batch inference preserves the trained feature-column names when calli
 `predict()`. This keeps sklearn/LightGBM schema validation active and prevents per-batch
 feature-name warnings from flooding durable UI job logs.
 
+The Forecast UI treats a staged run as complete only when a non-empty submitted `source_run_id`
+matches a ready staging record. The submission-to-poll transition therefore remains render-safe
+before the API has returned the new run identity.
+
 ## Dependencies
 
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column in the forecast table

@@ -57,6 +57,17 @@ import { AlgorithmSelectionCard } from "./AlgorithmSelectionCard";
 import { GenerateForecastCard } from "./GenerateForecastCard";
 import { RecentJobsCard } from "./RecentJobsCard";
 
+export function isExpectedStagingRunReady(
+  candidate: { source_run_id: string; run_status: string } | undefined,
+  expectedRunId: string | undefined
+): boolean {
+  return Boolean(
+    expectedRunId &&
+    candidate?.source_run_id === expectedRunId &&
+    candidate.run_status === "ready"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -389,15 +400,13 @@ export function ForecastPanel() {
         generatableAlgos.every((a) => {
           const expectedRun = pendingRunIds[a.id];
           const current = stagingData[a.id];
-          return Boolean(
-            expectedRun && current?.source_run_id === expectedRun && current.run_status === "ready"
-          );
+          return isExpectedStagingRunReady(current, expectedRun);
         });
       if (allGenerated) setGeneratingModelId(null);
       return;
     }
     const s = stagingData[generatingModelId];
-    if (s?.source_run_id === pendingRunIds[generatingModelId] && s.run_status === "ready") {
+    if (isExpectedStagingRunReady(s, pendingRunIds[generatingModelId])) {
       setGeneratingModelId(null);
     }
   }, [stagingData, generatingModelId, generatableAlgos, pendingRunIds]);
