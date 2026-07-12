@@ -357,6 +357,9 @@ The promote gate is **not** duplicated here — the sweep reuses `champion.promo
 Winner artifacts serialize ensemble `source_mix` values as JSON. Stage-2 result loading also
 accepts legacy safe Python-literal list values created by earlier pandas CSV exports, validates that
 the decoded value is a list of model-weight objects, and rejects all other shapes.
+Production generation expands a synthetic `ensemble` winner into its `source_mix` constituents,
+generates each constituent forecast, and stages their configured weighted blend for that DFU-month;
+`ensemble` is never treated as a trainable model artifact.
 
 ---
 

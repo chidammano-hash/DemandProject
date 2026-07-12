@@ -22,6 +22,7 @@ from scripts.forecasting.generate_production_forecasts import (
     _required_tree_model_ids,
     build_attrs_index,
     build_cat_encoders,
+    build_ensemble_routing,
     build_inference_grid,
     build_month_routing,
     build_sales_index,
@@ -398,6 +399,7 @@ def test_build_grid_fast_path_missing_dfu_returns_none():
 
 def _make_artifact(pred_val: float = 100.0) -> dict:
     model = MagicMock()
+    model.booster_ = None
     model.predict = MagicMock(side_effect=lambda X: np.full(len(X), pred_val))
     sales = _make_sales(n_months=24)
     attrs = _make_dfu_attrs()
@@ -452,6 +454,28 @@ def test_generate_forecasts_batch_preserves_feature_names_for_prediction():
         assert prediction_input.columns.tolist() == expected_columns
 
 
+def test_generate_forecasts_batch_uses_native_booster_for_encoded_categories():
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
+    artifact = _make_artifact(100.0)
+    artifact["model"].booster_ = MagicMock()
+    artifact["model"].booster_.predict.return_value = np.array([100.0])
+
+    generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
+        horizon=2,
+        forecast_month_generated="2026-03",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=build_cat_encoders(attrs),
+    )
+
+    assert artifact["model"].booster_.predict.call_count == 2
+    artifact["model"].predict.assert_not_called()
+
+
 def test_generate_forecasts_batch_multi_dfu():
     """Batch processes multiple DFUs in one call."""
     sales1 = _make_sales("ITEM001", "LOC1", n_months=24)
@@ -484,6 +508,7 @@ def test_generate_forecasts_batch_nonneg_qty():
     attrs = _make_dfu_attrs()
     grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
     model = MagicMock()
+    model.booster_ = None
     model.predict = MagicMock(side_effect=lambda X: np.full(len(X), -999.0))
     artifact = {"model": model, "feature_cols": [c for c in grid.columns if not c.startswith("_")]}
     enc = build_cat_encoders(attrs)
@@ -1155,10 +1180,39 @@ def test_filter_rows_no_winner_month_kept_from_lowest_model_only():
 def test_filter_rows_passthrough_when_no_routing():
     """A DFU with no per-month routing (cold-start / override) is untouched."""
     rows = [
-        {"item_id": "A", "loc": "L", "forecast_month": pd.Timestamp("2026-01-01"),
+        {"item_id": "A", "loc": "L", "forecast_month": pd.Timestamp("2026-02-01"),
          "model_id": "nbeats"},
     ]
     assert filter_rows_to_champion_months(rows, {}) == rows
+
+
+def test_filter_rows_blends_synthetic_ensemble_members():
+    champion = pd.DataFrame([{
+        "item_id": "A", "loc": "L", "startdate": pd.Timestamp("2026-01-01"),
+        "source_model_id": "ensemble",
+        "source_mix": [
+            {"model": "lgbm_cluster", "weight": 0.25},
+            {"model": "mstl", "weight": 0.75},
+        ],
+    }])
+    rows = [
+        {"item_id": "A", "loc": "L", "forecast_month": pd.Timestamp("2026-02-01"),
+         "model_id": "lgbm_cluster", "forecast_qty": 100.0,
+         "forecast_qty_lower": 80.0, "forecast_qty_upper": 120.0},
+        {"item_id": "A", "loc": "L", "forecast_month": pd.Timestamp("2026-02-01"),
+         "model_id": "mstl", "forecast_qty": 200.0,
+         "forecast_qty_lower": 180.0, "forecast_qty_upper": 220.0},
+    ]
+
+    kept = filter_rows_to_champion_months(
+        rows, build_month_routing(champion), build_ensemble_routing(champion)
+    )
+
+    assert len(kept) == 1
+    assert kept[0]["model_id"] == "ensemble"
+    assert kept[0]["forecast_qty"] == 175.0
+    assert kept[0]["forecast_qty_lower"] == 155.0
+    assert kept[0]["forecast_qty_upper"] == 195.0
 
 
 def test_get_champion_assignments_returns_per_month_rows():

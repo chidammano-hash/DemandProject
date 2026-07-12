@@ -341,6 +341,8 @@ reported as completed.
 Production batch inference preserves the trained feature-column names when calling tree-model
 `predict()`. This keeps sklearn/LightGBM schema validation active and prevents per-batch
 feature-name warnings from flooding durable UI job logs.
+Encoded production matrices use LightGBM's native Booster inference in the recorded feature order,
+so retrained models with pandas categorical metadata do not reject already-encoded category values.
 
 The Forecast UI treats a staged run as complete only when a non-empty submitted `source_run_id`
 matches a ready staging record. The submission-to-poll transition therefore remains render-safe

@@ -27,6 +27,8 @@ Algorithm:
 from __future__ import annotations
 
 import argparse
+import ast
+import json
 import logging
 import os
 import pickle
@@ -315,6 +317,7 @@ def _load_promoted_winners_assignments(
                 "loc",
                 "startdate",
                 "source_model_id",
+                "source_mix",
                 "cluster_id",
                 "customer_group",
             ]
@@ -323,6 +326,10 @@ def _load_promoted_winners_assignments(
     winners = winners.copy()
     winners["startdate"] = pd.to_datetime(winners["startdate"]).dt.to_period("M").dt.to_timestamp()
     winners["source_model_id"] = winners["model_id"].astype(str)
+    if "source_mix" in winners.columns:
+        winners["source_mix"] = winners["source_mix"].apply(_parse_ensemble_mix)
+    else:
+        winners["source_mix"] = None
     sort_cols = ["item_id", "loc", "startdate", "source_model_id"]
     if "customer_group" in winners.columns:
         sort_cols.append("customer_group")
@@ -337,7 +344,7 @@ def _load_promoted_winners_assignments(
             "customer_group", pd.Series(pd.NA, index=winners.index)
         )
         return winners[
-            ["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]
+            ["item_id", "loc", "startdate", "source_model_id", "source_mix", "cluster_id", "customer_group"]
         ]
 
     attrs = attrs.copy()
@@ -372,7 +379,7 @@ def _load_promoted_winners_assignments(
             how="left",
         )
 
-    df = merged[["item_id", "loc", "startdate", "source_model_id", "cluster_id", "customer_group"]]
+    df = merged[["item_id", "loc", "startdate", "source_model_id", "source_mix", "cluster_id", "customer_group"]]
     logger.info(
         "Promoted champion assignments loaded from %s: %s DFU-months across %s DFUs",
         winners_path.name,
@@ -380,6 +387,31 @@ def _load_promoted_winners_assignments(
         f"{df.drop_duplicates(['item_id', 'loc']).shape[0]:,}",
     )
     return df.reset_index(drop=True)
+
+
+def _parse_ensemble_mix(value: Any) -> list[dict[str, Any]] | None:
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = ast.literal_eval(value)
+    return parsed if isinstance(parsed, list) else None
+
+
+def build_ensemble_routing(champion_df: pd.DataFrame) -> dict[tuple[str, str], dict[pd.Timestamp, list[dict[str, Any]]]]:
+    routing: dict[tuple[str, str], dict[pd.Timestamp, list[dict[str, Any]]]] = defaultdict(dict)
+    if "source_mix" not in champion_df.columns:
+        return routing
+    for row in champion_df.itertuples(index=False):
+        mix = getattr(row, "source_mix", None)
+        if not mix:
+            continue
+        month = pd.Timestamp(row.startdate).normalize().replace(day=1)
+        routing[(row.item_id, row.loc)][month] = mix
+    return routing
 
 
 def get_champion_assignments(
@@ -483,6 +515,8 @@ def build_month_routing(
         return routing
     for row in champion_df.itertuples(index=False):
         src = getattr(row, "source_model_id", None)
+        if src == "ensemble":
+            continue
         if src is None or (isinstance(src, float) and pd.isna(src)):
             continue
         month = pd.Timestamp(row.startdate).normalize().replace(day=1)
@@ -510,6 +544,7 @@ def collapse_to_dfu(champion_df: pd.DataFrame) -> pd.DataFrame:
 def filter_rows_to_champion_months(
     rows: list[dict],
     month_routing: dict[tuple[str, str], dict[pd.Timestamp, str]],
+    ensemble_routing: dict[tuple[str, str], dict[pd.Timestamp, list[dict[str, Any]]]] | None = None,
 ) -> list[dict]:
     """Keep only generated rows whose model_id wins that (DFU, forecast_month).
 
@@ -529,23 +564,51 @@ def filter_rows_to_champion_months(
     lexically-lowest enqueued model — the same earliest/lowest tie-break used
     elsewhere.
     """
-    if not month_routing:
+    ensemble_routing = ensemble_routing or {}
+    if not month_routing and not ensemble_routing:
         return rows
     # Deterministic fallback model per DFU for months with no recorded winner.
-    fallback_model = {dfu: min(per_month.values()) for dfu, per_month in month_routing.items()}
+    fallback_model = {dfu: min(per_month.values()) for dfu, per_month in month_routing.items() if per_month}
+    fallback_mix = {
+        dfu: per_month[max(per_month)]
+        for dfu, per_month in ensemble_routing.items()
+        if per_month
+    }
     kept: list[dict] = []
+    ensemble_rows: dict[tuple[str, str, pd.Timestamp], list[dict]] = defaultdict(list)
     for row in rows:
         dfu = (row["item_id"], row["loc"])
+        month = pd.Timestamp(row["forecast_month"]).normalize().replace(day=1)
+        mix = ensemble_routing.get(dfu, {}).get(month)
+        if mix is None and dfu not in month_routing:
+            mix = fallback_mix.get(dfu)
+        if mix:
+            if row["model_id"] in {entry.get("model") for entry in mix}:
+                ensemble_rows[(dfu[0], dfu[1], month)].append(row)
+            continue
         per_month = month_routing.get(dfu)
         if per_month is None:
             kept.append(row)
             continue
-        month = pd.Timestamp(row["forecast_month"]).normalize().replace(day=1)
-        winner = per_month.get(month) or fallback_model[dfu]
+        winner = per_month.get(month) or fallback_model.get(dfu)
         # Keep only the row whose model is this month's (true or fallback)
         # champion; the other enqueued models lost the month.
         if winner == row["model_id"]:
             kept.append(row)
+    for (item_id, loc, month), member_rows in ensemble_rows.items():
+        mix = ensemble_routing[(item_id, loc)].get(month) or fallback_mix[(item_id, loc)]
+        by_model = {row["model_id"]: row for row in member_rows}
+        if any(entry.get("model") not in by_model for entry in mix):
+            continue
+        blended = dict(member_rows[0])
+        blended["model_id"] = "ensemble"
+        for field in ("forecast_qty", "forecast_qty_lower", "forecast_qty_upper"):
+            values = [by_model[entry["model"]].get(field) for entry in mix]
+            blended[field] = (
+                sum(float(value) * float(entry.get("weight", 0)) for value, entry in zip(values, mix, strict=True))
+                if all(value is not None for value in values) else None
+            )
+        kept.append(blended)
     return kept
 
 
@@ -1201,8 +1264,16 @@ def generate_forecasts_batch(
             # Preserve the feature names recorded by sklearn/LightGBM during
             # fitting. Passing the backing ndarray floods managed-job logs with
             # "X does not have valid feature names" for every horizon step.
-            prediction_frame = pd.DataFrame(X_np, columns=avail)
-            step_preds = np.maximum(0.0, model.predict(prediction_frame))
+            booster = getattr(model, "booster_", None)
+            if booster is not None:
+                # The matrix is already ordered and categoricals are encoded.
+                # Native Booster inference avoids sklearn's pandas categorical
+                # metadata check while retaining the trained feature order.
+                raw_preds = booster.predict(X_np)
+            else:
+                prediction_frame = pd.DataFrame(X_np, columns=avail)
+                raw_preds = model.predict(prediction_frame)
+            step_preds = np.maximum(0.0, raw_preds)
         except (ValueError, TypeError, ArithmeticError):
             # Previously this substituted a full column of zeros, which silently
             # corrupts the forecast (an all-zero forecast reads downstream as
@@ -1725,8 +1796,15 @@ def _required_tree_model_ids(
     required = {
         str(model_id)
         for model_id in champion_month_df.get("source_model_id", pd.Series(dtype=object)).dropna()
-        if str(model_id) not in non_tree_models
+        if str(model_id) not in non_tree_models and str(model_id) != "ensemble"
     }
+    if "source_mix" in champion_month_df.columns:
+        required.update(
+            str(entry["model"])
+            for mix in champion_month_df["source_mix"].dropna()
+            for entry in mix
+            if entry.get("model") and str(entry["model"]) not in non_tree_models
+        )
     if (
         "source_model_id" in champion_month_df.columns
         and champion_month_df["source_model_id"].isna().any()
@@ -1907,6 +1985,7 @@ def main() -> None:
             # Per-DFU month → champion model_id routing (applied as a
             # post-generation filter so each month ships its true champion).
             month_routing = build_month_routing(champion_month_df)
+            ensemble_routing = build_ensemble_routing(champion_month_df)
             # One row per DFU for the per-DFU generation loops (cluster_id /
             # customer_group are DFU-level). The kept source_model_id is the
             # earliest month's champion; other months are regenerated under
@@ -1927,7 +2006,18 @@ def main() -> None:
         if args.model_id:
             model_ids_needed = {args.model_id}
         else:
-            src_ids = set(champion_month_df["source_model_id"].dropna().unique())
+            src_ids = {
+                str(model_id)
+                for model_id in champion_month_df["source_model_id"].dropna().unique()
+                if str(model_id) != "ensemble"
+            }
+            src_ids.update(
+                str(entry["model"])
+                for per_month in ensemble_routing.values()
+                for mix in per_month.values()
+                for entry in mix
+                if entry.get("model")
+            )
             model_ids_needed = src_ids | {fallback_model_id, cold_start_model_id}
 
         # Load model artifacts
@@ -2161,6 +2251,13 @@ def main() -> None:
                         dfu_models = sorted(set(per_month.values()))
                     else:
                         dfu_models = [champ["source_model_id"] or fallback_model_id]
+                    ensemble_models = {
+                        str(entry["model"])
+                        for mix in ensemble_routing.get((item_id, loc), {}).values()
+                        for entry in mix
+                        if entry.get("model")
+                    }
+                    dfu_models = sorted((set(dfu_models) - {"ensemble"}) | ensemble_models)
                     enqueued_any = False
                     for model_id in dfu_models:
                         if _enqueue_dfu_model(item_id, loc, cluster_id, model_id, champ):
@@ -2272,9 +2369,11 @@ def main() -> None:
         # model it wins across the horizon; drop the months where a given model
         # is NOT the champion so each (DFU, month) ships its true champion. A
         # no-op for --model-id / cold-start (no per-month routing) runs.
-        if not args.model_id and month_routing:
+        if not args.model_id and (month_routing or ensemble_routing):
             n_before = len(all_rows)
-            all_rows = filter_rows_to_champion_months(all_rows, month_routing)
+            all_rows = filter_rows_to_champion_months(
+                all_rows, month_routing, ensemble_routing
+            )
             logger.info(
                 "Per-month champion filter: kept %s of %s rows",
                 f"{len(all_rows):,}",
