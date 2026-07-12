@@ -55,6 +55,26 @@ async def test_sku_analysis_item_location_200():
 
 
 @pytest.mark.asyncio
+async def test_sku_analysis_does_not_read_removed_dim_sku_ml_cluster():
+    """Promoted cluster labels no longer live on dim_sku."""
+    pool, conn, cursor = make_pool(fetchall_returns=_empty_4())
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/sku/analysis",
+                params={"item": "237375", "location": "1401-BULK", "mode": "item_location"},
+            )
+
+    assert resp.status_code == 200
+    sql_calls = [call.args[0] for call in cursor.execute.call_args_list]
+    dim_sku_query = next(sql for sql in sql_calls if "FROM dim_sku" in sql and "LIMIT 20" in sql)
+    assert "ml_cluster" not in dim_sku_query
+
+
+@pytest.mark.asyncio
 async def test_sku_analysis_response_structure():
     """Response contains expected top-level keys."""
     pool, conn, cursor = make_pool(fetchall_returns=_empty_4())

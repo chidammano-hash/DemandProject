@@ -224,7 +224,7 @@ def sku_analysis(
                 "supplier_desc", "producer_desc", "service_lvl_grp",
                 "execution_lag", "total_lt", "otc_status", "sales_div",
                 "dom_imp_opt", "alcoh_pct", "proof", "grape_vrty_desc",
-                "material", "vintage", "cluster_assignment", "ml_cluster",
+                "material", "vintage", "cluster_assignment",
                 "histstart", "sop_ref",
                 "seasonality_profile", "seasonality_strength",
                 "is_yearly_seasonal", "peak_month", "trough_month",
