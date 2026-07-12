@@ -279,7 +279,12 @@ def run_experiment(experiment_id: int) -> None:
         winners_dir = ROOT / "data" / "champion"
         winners_dir.mkdir(parents=True, exist_ok=True)
         winners_path = winners_dir / f"experiment_{experiment_id}_winners.csv"
-        winners_df.to_csv(winners_path, index=False)
+        cached_winners = winners_df.copy()
+        if "source_mix" in cached_winners.columns:
+            cached_winners["source_mix"] = cached_winners["source_mix"].apply(
+                lambda value: json.dumps(value) if isinstance(value, (list, dict)) else value
+            )
+        cached_winners.to_csv(winners_path, index=False)
         logger.info("  Cached winners to %s", winners_path)
 
         # 5. Compute overall champion accuracy

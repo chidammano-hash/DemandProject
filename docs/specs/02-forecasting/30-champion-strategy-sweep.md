@@ -354,6 +354,10 @@ sweep:
 
 The promote gate is **not** duplicated here — the sweep reuses `champion.promote_gate`.
 
+Winner artifacts serialize ensemble `source_mix` values as JSON. Stage-2 result loading also
+accepts legacy safe Python-literal list values created by earlier pandas CSV exports, validates that
+the decoded value is a list of model-weight objects, and rejects all other shapes.
+
 ---
 
 ## 10. Testing

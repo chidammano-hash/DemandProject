@@ -840,7 +840,12 @@ def _assemble_composite(
         ),
     ).fetchone()
     composite_id = int(row[0])
-    composite_df.to_csv(_winners_csv(composite_id), index=False)
+    cached_composite = composite_df.copy()
+    if "source_mix" in cached_composite.columns:
+        cached_composite["source_mix"] = cached_composite["source_mix"].apply(
+            lambda value: json.dumps(value) if isinstance(value, (list, dict)) else value
+        )
+    cached_composite.to_csv(_winners_csv(composite_id), index=False)
     _link_member(conn, sweep["sweep_id"], composite_id, f"composite_{sweep['sweep_id']}", is_composite=True)
     logger.info("Assembled composite experiment #%d (acc=%s%%)", composite_id, stats["accuracy_pct"])
     return composite_id

@@ -521,6 +521,28 @@ class TestLoadCachedWinners:
         assert len(winners) == 2
         assert is_ensemble is True
 
+    @pytest.mark.parametrize(
+        "serialized",
+        [
+            '[{"model": "lgbm_cluster", "weight": 0.5}]',
+            "[{'model': 'lgbm_cluster', 'weight': 0.5}]",
+        ],
+    )
+    def test_load_source_mix_accepts_json_and_legacy_literal(self, tmp_path, serialized):
+        csv_path = tmp_path / "winners.csv"
+        pd.DataFrame({
+            "item_id": ["I1"], "customer_group": ["G1"], "loc": ["L1"],
+            "startdate": ["2024-03-01"], "model_id": ["ensemble"],
+            "prior_wape": [0.1], "basefcst_pref": [105.0], "tothist_dmd": [100.0],
+            "source_mix": [serialized],
+        }).to_csv(csv_path, index=False)
+
+        winners_df, _, _ = _load_cached_winners(csv_path, ["lgbm_cluster"])
+
+        assert winners_df.loc[0, "source_mix"] == [
+            {"model": "lgbm_cluster", "weight": 0.5}
+        ]
+
     def test_load_winners_tuple_structure(self, tmp_path):
         """Winners tuples have correct 8-element structure."""
         csv_path = tmp_path / "winners.csv"

@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import ast
 import io
 import json
 import logging
@@ -889,9 +890,7 @@ def _load_cached_winners(
             winners_df[col] = pd.to_numeric(winners_df[col], errors="coerce")
     # source_mix round-trips through CSV as a JSON string — parse back to a list.
     if "source_mix" in winners_df.columns:
-        winners_df["source_mix"] = winners_df["source_mix"].apply(
-            lambda x: json.loads(x) if isinstance(x, str) and x.strip() else None
-        )
+        winners_df["source_mix"] = winners_df["source_mix"].apply(_parse_source_mix)
     winners = list(winners_df.itertuples(index=False, name=None))
     # Detect ensemble: if winner model_ids contain values not in the
     # competing model list, the strategy produced blended forecasts.
@@ -899,6 +898,22 @@ def _load_cached_winners(
     is_ensemble = not winner_model_ids.issubset(set(competing_models))
     print(f"  {len(winners):,} cached DFU-month winners loaded")
     return winners_df, winners, is_ensemble
+
+
+def _parse_source_mix(value: Any) -> list[dict[str, Any]] | None:
+    """Parse canonical JSON and legacy pandas/Python literal CSV values safely."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        try:
+            parsed = ast.literal_eval(value)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError("Invalid source_mix in cached champion winners") from exc
+    if not isinstance(parsed, list) or not all(isinstance(entry, dict) for entry in parsed):
+        raise ValueError("source_mix must be a list of model-weight objects")
+    return parsed
 
 
 def main() -> None:
