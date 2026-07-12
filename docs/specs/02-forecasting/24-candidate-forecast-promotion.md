@@ -176,12 +176,19 @@ advisory lock:
    stamped at generation.
 3. For champion, require the sole results-promoted champion experiment, the
    matching sole promoted cluster experiment, current assignments, no stale
-   tuning profiles, an exact SHA-256 match for
+   tuning profiles for cluster labels present in the current assignment
+   generation, an exact SHA-256 match for
    `data/champion/experiment_<id>_winners.csv`, and equality with the checksum
    and row count of the exact experiment-stamped historical champion results.
    Re-evaluate WAPE, baseline lift, incumbent delta, bias, common-cohort
    sufficiency, and actual alignment from those stamped historical rows. For a
    single model, require one source model in the payload.
+   Seasonal-naive baseline forecasts are derived from the matching DFU's sales
+   twelve months earlier, so the release gate does not depend on retaining a
+   deprecated algorithm series in the forecast fact. Sales facts are sparse:
+   an absent prior-year month represents zero demand, so the baseline
+   densifies that gap to zero while preserving a materialized zero sale as
+   zero.
 4. Evaluate the fixed six-month eligible-DFU forward window. Route gaps are hard
    failures; coverage must meet policy; quantities and interval ordering must be
    valid; confidence-interval coverage must meet policy. The gate report stores

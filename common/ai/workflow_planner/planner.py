@@ -156,7 +156,12 @@ def _fetch_state(pool: Any) -> WorkflowState:
                   WHERE status = 'completed' AND job_type = 'compute_sku_features'),
                  (SELECT MAX(promoted_at) FROM cluster_experiment
                   WHERE is_promoted = TRUE),
-                 (SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE),
+                 (SELECT COUNT(*) FROM cluster_tuning_profile_state tuning
+                  WHERE tuning.stale = TRUE
+                    AND EXISTS (
+                        SELECT 1 FROM current_sku_cluster_assignment assignment
+                        WHERE assignment.ml_cluster = tuning.cluster_name
+                    )),
                  (SELECT MAX(completed_at) FROM audit_load_batch
                   WHERE domain = 'sales' AND status = 'completed'),
                  (SELECT MAX(promoted_at) FROM champion_experiment

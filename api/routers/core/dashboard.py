@@ -44,7 +44,7 @@ router = APIRouter(tags=["dashboard"])
 async def get_planning_date_info():
     """Return the current planning date and whether it is frozen (dev mode)."""
     planning = get_planning_date()
-    # noqa: this endpoint intentionally returns the literal OS "today" so the
+    # This endpoint intentionally returns the literal OS "today" so the
     # UI can compare against the (possibly frozen) planning date and surface
     # `is_frozen` / `days_behind`. Substituting get_planning_date() here would
     # collapse the comparison and is_frozen would always be False.
@@ -140,7 +140,12 @@ def get_pipeline_readiness(response: FastAPIResponse):
         # (cluster_tuning_profile_state, sql/148 — absent table just skips)
         try:
             cur.execute(
-                "SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE"
+                """SELECT COUNT(*) FROM cluster_tuning_profile_state tuning
+                   WHERE tuning.stale = TRUE
+                     AND EXISTS (
+                         SELECT 1 FROM current_sku_cluster_assignment assignment
+                         WHERE assignment.ml_cluster = tuning.cluster_name
+                     )"""
             )
             row = cur.fetchone()
             stale_profiles = int(row[0]) if row else 0
@@ -386,7 +391,7 @@ def dashboard_kpis(
     """
 
     with get_read_only_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql_current, [model, window] + filter_params)
+        cur.execute(sql_current, [model, window, *filter_params])
         row = cur.fetchone()
         accuracy = float(row[0]) if row and row[0] is not None else None
         wape = float(row[1]) if row and row[1] is not None else None
@@ -394,7 +399,7 @@ def dashboard_kpis(
         total_fcst = float(row[3]) if row and row[3] is not None else None
         total_act = float(row[4]) if row and row[4] is not None else None
 
-        cur.execute(sql_prior, [model, window * 2, window] + filter_params)
+        cur.execute(sql_prior, [model, window * 2, window, *filter_params])
         prow = cur.fetchone()
         prior_acc = float(prow[0]) if prow and prow[0] is not None else None
         prior_wape = float(prow[1]) if prow and prow[1] is not None else None
@@ -654,7 +659,7 @@ def dashboard_top_movers(
     """
 
     with get_read_only_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, _tm_params + [limit * 2])
+        cur.execute(sql, [*_tm_params, limit * 2])
         rows = cur.fetchall()
 
     movers = []
@@ -781,7 +786,7 @@ def dashboard_heatmap(
     """
 
     with get_read_only_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [model, periods, model, periods, model] + filter_params)
+        cur.execute(sql, [model, periods, model, periods, model, *filter_params])
         rows = cur.fetchall()
 
     label_map: dict[str, dict[str, tuple[float, int]]] = OrderedDict()
@@ -886,7 +891,7 @@ def dashboard_trend(
     """
 
     with get_read_only_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [model, window, model, window, model] + filter_params)
+        cur.execute(sql, [model, window, model, window, model, *filter_params])
         rows = cur.fetchall()
 
     months = []

@@ -203,7 +203,7 @@ async def test_dashboard_kpis_with_filter_params(mock_pool):
 @pytest.mark.asyncio
 async def test_dashboard_alerts_returns_sorted_list(mock_pool):
     """GET /dashboard/alerts returns alerts list sorted by severity."""
-    pool, _, cursor = mock_pool
+    pool, _, _cursor = mock_pool
     # The endpoint makes up to 3 separate DB calls (low accuracy, bias drift, demand spike).
     # Each gets its own with-block. We simulate:
     #   1st query (low accuracy): 25 low-accuracy DFUs  -> severity "high"
@@ -263,7 +263,7 @@ async def test_dashboard_alerts_returns_sorted_list(mock_pool):
 @pytest.mark.asyncio
 async def test_dashboard_alerts_empty_when_no_thresholds_breached(mock_pool):
     """GET /dashboard/alerts returns empty list when no thresholds breached."""
-    pool, _, cursor = mock_pool
+    pool, _, _cursor = mock_pool
 
     def make_conn(fetchall_val, fetchone_val=None):
         conn = MagicMock()
@@ -296,7 +296,7 @@ async def test_dashboard_alerts_empty_when_no_thresholds_breached(mock_pool):
 @pytest.mark.asyncio
 async def test_dashboard_alerts_respects_limit(mock_pool):
     """GET /dashboard/alerts?limit=1 caps the number of returned alerts."""
-    pool, _, cursor = mock_pool
+    pool, _, _cursor = mock_pool
 
     def make_conn(fetchall_val, fetchone_val=None):
         conn = MagicMock()
@@ -936,7 +936,13 @@ _READINESS_HEALTHY_TAIL = [(0,), None, (None, None)]
 
 
 async def _get_readiness(pool):
-    with patch("api.core._get_pool", return_value=pool):
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.core.dashboard.get_read_only_conn",
+            return_value=pool.connection(),
+        ),
+    ):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -995,6 +1001,13 @@ async def test_pipeline_readiness_flags_stale_tuning_profiles(mock_pool):
     assert check["stage"] == "tuning"
     assert check["severity"] == "medium"
     assert "4 tuning profile(s)" in check["title"]
+    stale_sql = next(
+        str(call.args[0])
+        for call in cursor.execute.call_args_list
+        if "cluster_tuning_profile_state" in str(call.args[0])
+    )
+    assert "current_sku_cluster_assignment" in stale_sql
+    assert "assignment.ml_cluster = tuning.cluster_name" in stale_sql
 
 
 @pytest.mark.asyncio

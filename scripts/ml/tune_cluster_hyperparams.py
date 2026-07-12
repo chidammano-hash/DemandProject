@@ -71,6 +71,11 @@ def make_cluster_objective(
     config: dict,
 ) -> Any:
     """Return an Optuna objective function closure for a single cluster's data."""
+    # mask_future_sales may merge recomputed profile features and reset the
+    # frame index. Carry the unmasked target through that transformation rather
+    # than looking it up later with stale source indices.
+    cluster_grid = cluster_grid.copy()
+    cluster_grid["_actual_qty"] = cluster_grid["qty"]
     t_cfg = config["tuning"]
     early_stopping_rounds = t_cfg["early_stopping_rounds"]
     n_estimators_max = t_cfg["n_estimators_max"]
@@ -108,7 +113,7 @@ def make_cluster_objective(
             X_train = train_data[feature_cols]
             y_train = train_data["qty"]
             X_val = val_data[feature_cols]
-            y_val = cluster_grid.loc[val_data.index, "qty"].values
+            y_val = val_data["_actual_qty"].values
 
             try:
                 preds, best_rounds = train_fn(
@@ -156,8 +161,14 @@ def fetch_stale_clusters(db: dict[str, Any]) -> list[str]:
     try:
         with psycopg.connect(**db) as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT cluster_name FROM cluster_tuning_profile_state "
-                "WHERE stale = TRUE ORDER BY cluster_name"
+                """SELECT tuning.cluster_name
+                   FROM cluster_tuning_profile_state tuning
+                   WHERE tuning.stale = TRUE
+                     AND EXISTS (
+                         SELECT 1 FROM current_sku_cluster_assignment assignment
+                         WHERE assignment.ml_cluster = tuning.cluster_name
+                     )
+                   ORDER BY tuning.cluster_name"""
             )
             return [row[0] for row in cur.fetchall()]
     except psycopg.Error as exc:
@@ -392,6 +403,11 @@ def main() -> None:
         logger.info("Stale-only mode: %s", stale_requested)
         if args.clusters:
             stale_requested = [c for c in stale_requested if c in set(args.clusters)]
+            if not stale_requested:
+                logger.info(
+                    "No stale tuning profiles match the requested clusters — nothing to do."
+                )
+                return
 
     # ── Load data ────────────────────────────────────────────────────────────
     with profiled_section("load_data"):

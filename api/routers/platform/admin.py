@@ -51,10 +51,6 @@ def admin_invalidate_stale_tuning(
         description="Submit a tune_stale_clusters job (re-tunes stale clusters and "
                     "clears their flags on success) instead of just clearing flags",
     ),
-    model: str = Query(
-        default="lgbm",
-        description="Tree model to re-tune when retune=true (lgbm/catboost/xgboost)",
-    ),
 ) -> dict[str, Any]:
     """Handle per-cluster tuning profiles flagged stale by a cluster promotion.
 
@@ -95,8 +91,14 @@ def admin_invalidate_stale_tuning(
                 }
 
             cur.execute(
-                "SELECT cluster_name FROM cluster_tuning_profile_state "
-                "WHERE stale = TRUE ORDER BY cluster_name"
+                """SELECT tuning.cluster_name
+                   FROM cluster_tuning_profile_state tuning
+                   WHERE tuning.stale = TRUE
+                     AND EXISTS (
+                         SELECT 1 FROM current_sku_cluster_assignment assignment
+                         WHERE assignment.ml_cluster = tuning.cluster_name
+                     )
+                   ORDER BY tuning.cluster_name"""
             )
             stale_clusters = [row[0] for row in cur.fetchall()]
             if not stale_clusters:
@@ -107,7 +109,7 @@ def admin_invalidate_stale_tuning(
 
                 job_id = JobManager().submit_job(
                     "tune_stale_clusters",
-                    {"model": model},
+                    {"model": "lgbm"},
                     label=f"Re-tune {len(stale_clusters)} stale cluster profile(s)",
                     triggered_by="api",
                 )
@@ -125,7 +127,9 @@ def admin_invalidate_stale_tuning(
             cur.execute(
                 """UPDATE cluster_tuning_profile_state
                    SET stale = FALSE, cleared_at = NOW(), modified_ts = NOW()
-                   WHERE stale = TRUE"""
+                   WHERE stale = TRUE
+                     AND cluster_name = ANY(%s)""",
+                (stale_clusters,),
             )
             cleared = cur.rowcount
             conn.commit()

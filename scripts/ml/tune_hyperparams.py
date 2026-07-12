@@ -111,10 +111,6 @@ def _resolve_tuning_target(
         return model_name, model_id or model_name, {}
 
     resolved_model_id = model_id or _default_model_id(model_name, pipeline_cfg)
-    resolved_model_name = _base_model_name(resolved_model_id)
-    if resolved_model_name != model_name:
-        raise ValueError(f"--model {model_name!r} does not match --model-id {resolved_model_id!r}")
-
     algorithms = pipeline_cfg.get("algorithms", {}) or {}
     entry = algorithms.get(resolved_model_id)
     if entry is None:
@@ -123,6 +119,9 @@ def _resolve_tuning_target(
         )
     if entry.get("type") != "tree":
         raise ValueError(f"Model id {resolved_model_id!r} is not a tree algorithm")
+    resolved_model_name = _base_model_name(resolved_model_id)
+    if resolved_model_name != model_name:
+        raise ValueError(f"--model {model_name!r} does not match --model-id {resolved_model_id!r}")
     return resolved_model_name, resolved_model_id, entry
 
 

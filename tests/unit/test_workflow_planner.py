@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from unittest.mock import MagicMock
 
 from common.ai.workflow_planner import planner
 from common.ai.workflow_planner.planner import (
@@ -11,10 +12,25 @@ from common.ai.workflow_planner.planner import (
     WorkflowState,
     _ai_decision,
     _apply_answer_guardrails,
+    _fetch_state,
     _verification_failure,
     run_workflow_planner,
     system_recommendations,
 )
+
+
+def test_fetch_state_scopes_stale_tuning_to_current_cluster_labels(monkeypatch):
+    pool = MagicMock()
+    cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = []
+    cursor.fetchone.return_value = (0, None, None, 0, None, None, None, None, None, 0, 0, 0)
+    monkeypatch.setattr(planner, "_planning_month", lambda: date(2026, 7, 1))
+
+    _fetch_state(pool)
+
+    state_sql = str(cursor.execute.call_args_list[1].args[0])
+    assert "current_sku_cluster_assignment" in state_sql
+    assert "assignment.ml_cluster = tuning.cluster_name" in state_sql
 
 
 def _state(**overrides) -> WorkflowState:

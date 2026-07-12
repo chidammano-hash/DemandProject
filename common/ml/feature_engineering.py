@@ -1,6 +1,6 @@
 """Shared feature engineering for the LightGBM backtest model.
 
-Builds the full (sku_ck × month) feature matrix with lag, rolling, calendar,
+Builds the full (sku_ck x month) feature matrix with lag, rolling, calendar,
 and attribute features. Used by all tree-based backtest scripts.
 
 Feature groups (in build order):
@@ -78,7 +78,7 @@ def _compute_rolling_numpy(qty_2d: np.ndarray, windows: list[int]) -> dict[str, 
     ~10x faster than pandas groupby rolling for uniform-sized groups.
     Uses shifted-by-1 values (causal: only past data) with min_periods=1.
     """
-    n_skus, n_months = qty_2d.shape
+    _n_skus, n_months = qty_2d.shape
     # Shift by 1 (causal): shifted[:, t] = qty[:, t-1]
     shifted = np.empty_like(qty_2d)
     shifted[:, 0] = np.nan
@@ -124,7 +124,7 @@ def _compute_rolling_numpy(qty_2d: np.ndarray, windows: list[int]) -> dict[str, 
 def _compute_lags_and_rolling(df: pd.DataFrame, group_col: str = "sku_ck") -> None:
     """Compute lag and rolling features in-place on a sorted DataFrame.
 
-    Uses numpy 2D reshape for uniform grids (cross-product of skus × months)
+    Uses numpy 2D reshape for uniform grids (cross-product of skus x months)
     which is ~10x faster than pandas groupby rolling. Falls back to pandas
     for non-uniform group sizes.
     """
@@ -158,118 +158,87 @@ def _compute_lags_and_rolling(df: pd.DataFrame, group_col: str = "sku_ck") -> No
             df[f"rolling_std_{w}m"] = rolling.std().fillna(0).droplevel(0)
 
 
+def compute_ts_profile_from_values(values: object) -> dict[str, float]:
+    """Compute the canonical static demand-profile features for one DFU."""
+    vals = np.asarray(values, dtype=np.float64)
+    n = len(vals)
+    if n == 0:
+        return dict.fromkeys(TS_PROFILE_FEATURES, 0.0)
+
+    mean_d = float(np.mean(vals))
+    std_d = float(np.std(vals)) if n > 1 else 0.0
+    profile = {
+        "mean_demand": mean_d,
+        "cv_demand": std_d / mean_d if mean_d > 0 else 0.0,
+        "zero_demand_pct": float(np.sum(vals == 0)) / n,
+        "trend_slope_norm": 0.0,
+        "recency_ratio": 1.0,
+        "seasonal_amplitude": 0.0,
+        "adi": float(n),
+        "yoy_correlation": 0.0,
+        "periodicity": 0.0,
+    }
+
+    if n > 1:
+        x = np.arange(n, dtype=np.float64)
+        slope = float(np.polyfit(x, vals, 1)[0])
+        profile["trend_slope_norm"] = slope / mean_d if mean_d > 0 else 0.0
+
+    if n >= 12:
+        last_6 = vals[-6:]
+        prior_mean = float(vals[:-6].mean())
+        profile["recency_ratio"] = (
+            float(last_6.mean()) / prior_mean if prior_mean > 0 else 1.0
+        )
+        month_means = np.array(
+            [float(np.mean(vals[index::12])) for index in range(min(12, n))]
+        )
+        if mean_d > 0 and len(month_means) > 1:
+            profile["seasonal_amplitude"] = (
+                float(month_means.max()) - float(month_means.min())
+            ) / mean_d
+
+    nonzero_idx = np.where(vals > 0)[0]
+    if len(nonzero_idx) >= 2:
+        profile["adi"] = float(np.mean(np.diff(nonzero_idx)))
+
+    if n >= 24:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            corr = float(np.corrcoef(vals[:-12], vals[12:])[0, 1])
+        profile["yoy_correlation"] = corr if np.isfinite(corr) else 0.0
+
+    if n >= 6:
+        centered = vals - mean_d
+        variance = float(np.dot(centered, centered))
+        if variance > 0:
+            max_corr = 0.0
+            best_lag = 0
+            for lag in range(2, min(13, n)):
+                autocorrelation = float(np.dot(centered[:-lag], centered[lag:])) / variance
+                if autocorrelation > max_corr:
+                    max_corr = autocorrelation
+                    best_lag = lag
+            profile["periodicity"] = float(best_lag) if max_corr > 0.2 else 0.0
+
+    return profile
+
+
 def _compute_ts_profile_features(
     grid: pd.DataFrame,
     cutoff: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Compute per-DFU time-series profile features.
+    """Compute canonical per-DFU demand profiles, optionally before a cutoff."""
+    source = grid.loc[grid["startdate"] <= cutoff] if cutoff is not None else grid
+    profiles: dict[str, list[float]] = {column: [] for column in TS_PROFILE_FEATURES}
+    sku_cks: list[object] = []
 
-    These are static features (one value per DFU) that summarize the demand
-    pattern: volatility, intermittency, trend, seasonality.
-
-    Args:
-        grid: Feature grid with ``sku_ck``, ``startdate``, and ``qty`` columns.
-        cutoff: If provided, only use data where ``startdate <= cutoff`` to
-            avoid leaking future information into profile features.
-
-    Returns:
-        DataFrame with columns [sku_ck] + TS_PROFILE_FEATURES.
-    """
-    if cutoff is not None:
-        source = grid.loc[grid["startdate"] <= cutoff]
-    else:
-        source = grid
-
-    grouped = source.groupby("sku_ck", sort=False)["qty"]
-
-    profiles: dict[str, list] = {col: [] for col in TS_PROFILE_FEATURES}
-    sku_cks: list = []
-
-    for sku_ck, qty_series in grouped:
-        vals = qty_series.values.astype(np.float64)
-        n = len(vals)
-        mean_d = float(np.mean(vals))
-        std_d = float(np.std(vals)) if n > 1 else 0.0
-
+    for sku_ck, qty_series in source.groupby("sku_ck", sort=False)["qty"]:
+        profile = compute_ts_profile_from_values(qty_series.values)
         sku_cks.append(sku_ck)
-        profiles["mean_demand"].append(mean_d)
-        profiles["cv_demand"].append(std_d / mean_d if mean_d > 0 else 0.0)
-        profiles["zero_demand_pct"].append(float(np.sum(vals == 0)) / n if n > 0 else 0.0)
+        for feature_name in TS_PROFILE_FEATURES:
+            profiles[feature_name].append(profile[feature_name])
 
-        # Trend: scale-invariant slope
-        if n > 1:
-            x = np.arange(n, dtype=np.float64)
-            slope = float(np.polyfit(x, vals, 1)[0])
-            profiles["trend_slope_norm"].append(slope / mean_d if mean_d > 0 else 0.0)
-        else:
-            profiles["trend_slope_norm"].append(0.0)
-
-        # Recency ratio: mean of last 6m vs prior mean
-        if n >= 12:
-            last_6 = vals[-6:]
-            prior = vals[:-6]
-            prior_mean = float(prior.mean())
-            profiles["recency_ratio"].append(
-                float(last_6.mean()) / prior_mean if prior_mean > 0 else 1.0
-            )
-        else:
-            profiles["recency_ratio"].append(1.0)
-
-        # Seasonal amplitude: requires >= 12 months
-        if n >= 12:
-            # Use months from grid (sorted) — group by month-of-year
-            month_means = np.array([
-                float(np.mean(vals[i::12])) for i in range(min(12, n))
-            ])
-            if mean_d > 0 and len(month_means) > 1:
-                profiles["seasonal_amplitude"].append(
-                    (float(month_means.max()) - float(month_means.min())) / mean_d
-                )
-            else:
-                profiles["seasonal_amplitude"].append(0.0)
-        else:
-            profiles["seasonal_amplitude"].append(0.0)
-
-        # ADI (average demand interval)
-        nonzero_idx = np.where(vals > 0)[0]
-        if len(nonzero_idx) >= 2:
-            profiles["adi"].append(float(np.mean(np.diff(nonzero_idx))))
-        else:
-            profiles["adi"].append(float(n))
-
-        # Year-over-year correlation
-        if n >= 24:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                corr = float(np.corrcoef(vals[:-12], vals[12:])[0, 1])
-            profiles["yoy_correlation"].append(corr if np.isfinite(corr) else 0.0)
-        else:
-            profiles["yoy_correlation"].append(0.0)
-
-        # Periodicity: dominant cycle length via autocorrelation
-        # Finds the lag (2-12 months) with the highest autocorrelation,
-        # indicating the strongest repeating pattern. Value is the lag in
-        # months (e.g., 12 = annual, 6 = semi-annual, 3 = quarterly).
-        # Returns 0 if no significant periodicity or insufficient data.
-        if n >= 6:
-            centered = vals - mean_d
-            var = float(np.dot(centered, centered))
-            if var > 0:
-                max_corr = 0.0
-                best_lag = 0
-                for lag in range(2, min(13, n)):
-                    ac = float(np.dot(centered[:-lag], centered[lag:])) / var
-                    if ac > max_corr:
-                        max_corr = ac
-                        best_lag = lag
-                # Only report if autocorrelation is meaningful (> 0.2)
-                profiles["periodicity"].append(float(best_lag) if max_corr > 0.2 else 0.0)
-            else:
-                profiles["periodicity"].append(0.0)
-        else:
-            profiles["periodicity"].append(0.0)
-
-    result = pd.DataFrame({"sku_ck": sku_cks, **profiles})
-    return result
+    return pd.DataFrame({"sku_ck": sku_cks, **profiles})
 
 
 def _compute_fourier_features(df: pd.DataFrame) -> None:
@@ -368,7 +337,7 @@ def _compute_croston_features(df: pd.DataFrame) -> None:
         df["croston_demand_interval"] = np.float32(1)
         df["croston_probability"] = np.float32(0)
 
-        for sku_ck, idx in df.groupby(group_col, sort=False).groups.items():
+        for _sku_ck, idx in df.groupby(group_col, sort=False).groups.items():
             qty_vals = df.loc[idx, "qty"].values.astype(np.float64)
             n = len(qty_vals)
             # Shifted by 1 (causal)
@@ -471,14 +440,18 @@ def build_feature_matrix(
     Args:
         cat_dtype: Dtype for categorical features.
             Pandas ``"category"`` for LightGBM.
-        customer_features: Optional customer-derived features at item×loc×month
+        customer_features: Optional customer-derived features at item x loc x month
             grain from customer_features_monthly table. Left-joined and NaN-filled.
     """
     t0 = time.time()
+    if not all_months:
+        raise ValueError("all_months must contain at least one month")
+    month_bounds = pd.DatetimeIndex(all_months).to_period("M").to_timestamp()
+    all_months = list(pd.date_range(month_bounds.min(), month_bounds.max(), freq="MS"))
     dfu_keys = dfu_attrs[["sku_ck", "item_id", "customer_group", "loc"]].drop_duplicates()
     n_dfus = len(dfu_keys)
     n_months = len(all_months)
-    logger.info("Building grid: %s DFUs × %s months = %s rows", f"{n_dfus:,}", n_months, f"{n_dfus * n_months:,}")
+    logger.info("Building grid: %s DFUs x %s months = %s rows", f"{n_dfus:,}", n_months, f"{n_dfus * n_months:,}")
 
     # Build complete grid via MultiIndex (faster than cross-join merge)
     idx = pd.MultiIndex.from_product(
@@ -544,7 +517,7 @@ def build_feature_matrix(
 
     # DFU attributes
     t1 = time.time()
-    dfu_feat_cols = ["sku_ck", "ml_cluster"] + CAT_FEATURES + NUMERIC_SKU_FEATURES
+    dfu_feat_cols = ["sku_ck", "ml_cluster", *CAT_FEATURES, *NUMERIC_SKU_FEATURES]
     dfu_feat_cols = [c for c in dfu_feat_cols if c in dfu_attrs.columns]
     grid = grid.merge(dfu_attrs[dfu_feat_cols], on="sku_ck", how="left")
 
@@ -656,7 +629,7 @@ def update_grid_with_predictions(
     qty_lag_1 for month T+1 reflects the model's own prediction rather than 0.
 
     Args:
-        grid: Full masked feature grid (all DFUs × all months).
+        grid: Full masked feature grid (all DFUs x all months).
         month: The month whose predictions are being written back.
         predictions: DataFrame with columns ``sku_ck`` and ``basefcst_pref``.
         inplace: If True, mutate ``grid`` directly instead of copying. Use when
@@ -718,7 +691,6 @@ def update_grid_incremental(
         return
 
     n_months = len(sorted_months)
-    max_lag = max(LAG_RANGE)  # 12
     max_window = max(ROLLING_WINDOWS)  # 12
 
     # Determine group structure

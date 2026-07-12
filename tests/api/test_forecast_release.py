@@ -145,9 +145,15 @@ async def test_release_readiness_passes_only_when_every_required_gate_passes() -
     sql_calls = [str(call.args[0]) for call in cursor.execute.call_args_list]
     executed_sql = "\n".join(sql_calls)
     isolation_index = sql_calls.index("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-    quality_index = next(index for index, sql in enumerate(sql_calls) if "WITH scored AS" in sql)
+    quality_index = next(index for index, sql in enumerate(sql_calls) if "model_metrics AS" in sql)
+    quality_call = cursor.execute.call_args_list[quality_index]
     assert isolation_index < quality_index
+    assert str(quality_call.args[0]).count("%s") == len(quality_call.args[1])
     assert "champion.experiment_id = active.champion_experiment_id" in executed_sql
+    assert "FROM fact_sales_monthly" in executed_sql
+    assert "LEFT JOIN sales_by_dfu prior" in executed_sql
+    assert "COALESCE(prior.qty, 0)" in executed_sql
+    assert "'seasonal_naive'" not in executed_sql.split("UNION ALL", maxsplit=1)[0]
     from api.main import app
 
     response_schema = app.openapi()["paths"]["/forecast-release/readiness"]["get"]["responses"][

@@ -2,8 +2,6 @@
 
 import logging
 
-from common.core.utils import load_config
-
 logger = logging.getLogger(__name__)
 
 # The forecast quantity column in fact_external_forecast_monthly and
@@ -147,7 +145,17 @@ ARCHIVE_COLS = [
 ]
 
 # Metadata columns excluded from feature set
-METADATA_COLS = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "qty", "_k", "ml_cluster"}
+METADATA_COLS = {
+    "sku_ck",
+    "item_id",
+    "customer_group",
+    "loc",
+    "startdate",
+    "qty",
+    "_actual_qty",
+    "_k",
+    "ml_cluster",
+}
 
 # Maximum archive lag (0-4)
 MAX_ARCHIVE_LAG = 4

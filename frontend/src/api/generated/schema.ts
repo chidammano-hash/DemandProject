@@ -20932,8 +20932,6 @@ export interface operations {
             query?: {
                 /** @description Submit a tune_stale_clusters job (re-tunes stale clusters and clears their flags on success) instead of just clearing flags */
                 retune?: boolean;
-                /** @description Tree model to re-tune when retune=true (lgbm/catboost/xgboost) */
-                model?: string;
             };
             header?: {
                 "x-api-key"?: string | null;

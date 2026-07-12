@@ -106,10 +106,13 @@ async def test_admin_invalidate_stale_clears_flags(mock_pool, async_client):
     assert body["status"] == "ok"
     assert body["invalidated"] == 3
     assert body["stale_clusters"] == ["L2_1", "L2_3", "L2_7"]
-    update_sql = " ".join(
-        str(c.args[0]) for c in cursor.execute.call_args_list if "UPDATE" in str(c.args[0])
+    update_call = next(
+        call for call in cursor.execute.call_args_list if "UPDATE" in str(call.args[0])
     )
+    update_sql = str(update_call.args[0])
     assert "cluster_tuning_profile_state" in update_sql
+    assert "cluster_name = ANY(%s)" in update_sql
+    assert update_call.args[1] == (["L2_1", "L2_3", "L2_7"],)
 
 
 @pytest.mark.asyncio

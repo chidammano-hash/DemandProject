@@ -215,7 +215,12 @@ def _current_release_evidence(cur: Any) -> tuple[Any, ...]:
                 ORDER BY promoted_at DESC NULLS LAST, experiment_id DESC
                 LIMIT 1),
                (SELECT COUNT(*) FROM current_sku_cluster_assignment),
-               (SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE)"""
+               (SELECT COUNT(*) FROM cluster_tuning_profile_state tuning
+                WHERE tuning.stale = TRUE
+                  AND EXISTS (
+                      SELECT 1 FROM current_sku_cluster_assignment assignment
+                      WHERE assignment.ml_cluster = tuning.cluster_name
+                  ))"""
     )
     row = cur.fetchone()
     if row is None:
@@ -306,7 +311,34 @@ def _candidate_quality_report(
 ) -> list[dict[str, Any]]:
     """Evaluate exact experiment-stamped champion quality on one common cohort."""
     cur.execute(
-        """WITH scored AS (
+        """WITH champion_keys AS (
+                 SELECT f.item_id, f.customer_group, f.loc, f.startdate, f.lag,
+                        f.tothist_dmd::numeric AS actual_qty
+                 FROM fact_external_forecast_monthly f
+                 JOIN dim_sku d
+                   ON d.item_id = f.item_id
+                  AND d.customer_group = f.customer_group
+                  AND d.loc = f.loc
+                 WHERE f.model_id = 'champion'
+                   AND f.champion_experiment_id = %s
+                   AND f.lag = COALESCE(d.execution_lag, 0)
+                   AND f.lag BETWEEN 0 AND 4
+                   AND f.basefcst_pref IS NOT NULL
+                   AND f.tothist_dmd IS NOT NULL
+                   AND f.startdate >= %s::date - (%s * INTERVAL '1 month')
+                   AND f.startdate < %s::date
+             ), required_prior_months AS (
+                 SELECT DISTINCT startdate - INTERVAL '12 months' AS startdate
+                 FROM champion_keys
+             ), sales_by_dfu AS (
+                 SELECT sales.item_id, sales.customer_group, sales.loc,
+                        sales.startdate, SUM(sales.qty)::numeric AS qty
+                 FROM fact_sales_monthly sales
+                 JOIN required_prior_months required
+                   ON required.startdate = sales.startdate
+                 WHERE sales.type = 1
+                 GROUP BY 1, 2, 3, 4
+             ), scored AS (
                  SELECT f.item_id, f.customer_group, f.loc, f.startdate,
                         f.lag, f.model_id,
                         f.basefcst_pref::numeric AS forecast_qty,
@@ -316,7 +348,7 @@ def _candidate_quality_report(
                    ON d.item_id = f.item_id
                   AND d.customer_group = f.customer_group
                   AND d.loc = f.loc
-                 WHERE f.model_id IN ('champion', 'external', 'seasonal_naive')
+                 WHERE f.model_id IN ('champion', 'external')
                    AND (
                        f.model_id <> 'champion'
                        OR f.champion_experiment_id = %s
@@ -327,6 +359,17 @@ def _candidate_quality_report(
                    AND f.tothist_dmd IS NOT NULL
                    AND f.startdate >= %s::date - (%s * INTERVAL '1 month')
                    AND f.startdate < %s::date
+                 UNION ALL
+                 SELECT keys.item_id, keys.customer_group, keys.loc, keys.startdate,
+                        keys.lag, 'seasonal_naive' AS model_id,
+                        COALESCE(prior.qty, 0)::numeric AS forecast_qty,
+                        keys.actual_qty
+                 FROM champion_keys keys
+                 LEFT JOIN sales_by_dfu prior
+                   ON prior.item_id = keys.item_id
+                  AND prior.customer_group = keys.customer_group
+                  AND prior.loc = keys.loc
+                  AND prior.startdate = keys.startdate - INTERVAL '12 months'
              ), key_quality AS (
                  SELECT item_id, customer_group, loc, startdate, lag,
                         COUNT(DISTINCT model_id) AS model_count,
@@ -378,6 +421,10 @@ def _candidate_quality_report(
                  MAX(actual_volume) FILTER (WHERE model_id = 'champion')
              FROM model_metrics""",
         (
+            champion_experiment_id,
+            planning_month,
+            int(policy["quality_lookback_months"]),
+            planning_month,
             champion_experiment_id,
             planning_month,
             int(policy["quality_lookback_months"]),

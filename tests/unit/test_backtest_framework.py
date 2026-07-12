@@ -1,7 +1,7 @@
 """Tests for common/backtest_framework.py — timeframe generation and utilities."""
 
 import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,24 @@ from common.ml.backtest_framework import (
     compute_cluster_demand_stats,
     generate_timeframes,
     resolve_cluster_params,
+    warn_if_profiles_stale,
 )
+
+
+def test_stale_profile_warning_counts_current_cluster_labels_only():
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchone.side_effect = [(0,), (7,)]
+
+    with (
+        patch("common.ml.backtest_framework.load_config", return_value={"enabled": True}),
+        patch("common.ml.backtest_framework.psycopg.connect", return_value=connection),
+    ):
+        warn_if_profiles_stale({})
+
+    stale_sql = str(cursor.execute.call_args_list[0].args[0])
+    assert "current_sku_cluster_assignment" in stale_sql
+    assert "assignment.ml_cluster = tuning.cluster_name" in stale_sql
 
 
 def test_closed_month_cutoff_for_july_planning_date():

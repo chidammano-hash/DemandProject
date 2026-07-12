@@ -22,7 +22,7 @@ The July 2026 `1401-BULK` pilot demonstrates the risk:
 - the published production plan is version `2026-06` while the planning month is
   `2026-07`;
 - the latest sales load occurred after the promoted champion;
-- nine cluster-tuning profiles are stale and the champion has no recorded cluster
+- current cluster-tuning profiles are stale and the champion has no recorded cluster
   experiment lineage;
 - `fact_forecast_snapshot` is empty, so the outgoing plan is not preserved; and
 - on the configured six-month common cohort, champion WAPE is 29.03% versus
@@ -36,7 +36,8 @@ current planning month as a versioned release and returns:
 - forecast skill and bias on one exact common observation cohort;
 - common-cohort coverage relative to the valid champion population;
 - active-promotion champion-results lineage, exactly one promoted cluster
-  generation, promoted cluster assignments, and stale-tuning evidence;
+  generation, promoted cluster assignments, and stale-tuning evidence scoped to
+  cluster labels used by the current assignment generation;
 - latest-sales versus release-generation freshness;
 - complete current-plan coverage plus one-run, quantity, source-model, and
   confidence-interval integrity; and
@@ -52,9 +53,12 @@ while it remains open, including after a green result.
 
 ## Exact common cohort
 
-Quality reads `fact_external_forecast_monthly` directly. It must not use
-`agg_forecast_monthly`, because that view removes `customer_group` and `lag`.
-The operational grain is:
+Quality reads the active champion and external rows from
+`fact_external_forecast_monthly` directly and derives the seasonal-naive
+baseline from `fact_sales_monthly` at the matching DFU's month twelve months
+earlier. It does not require a retained `seasonal_naive` algorithm series and
+must not use `agg_forecast_monthly`, because that view removes
+`customer_group` and `lag`. The operational grain is:
 
 ```text
 item_id + customer_group + loc + startdate + configured execution_lag
@@ -62,11 +66,20 @@ item_id + customer_group + loc + startdate + configured execution_lag
 
 Rows are joined to `dim_sku` on its full three-column key and retained only when:
 
-2. a `champion` row's `champion_experiment_id` equals the active promotion's
+1. a `champion` row's `champion_experiment_id` equals the active promotion's
    explicit champion experiment;
-3. `lag = COALESCE(dim_sku.execution_lag, 0)`;
-4. all three model rows exist for the same key; and
-5. actual demand is identical across the three rows.
+2. `lag = COALESCE(dim_sku.execution_lag, 0)`;
+3. the external row exists for the same key;
+4. the seasonal-naive value is taken from type-1 sales for that DFU exactly
+   twelve months earlier, with an absent sparse-fact month densified to zero;
+   and
+5. champion and external actual demand are identical. The derived baseline
+   inherits that aligned actual.
+
+A genuine prior-year zero and an omitted zero-demand month both produce a zero
+baseline, matching the dense monthly history used by forecasting. The sales
+scan is bounded to the exact prior-year months required by the active champion
+cohort.
 
 Pre-migration champion rows with NULL experiment lineage are therefore excluded
 rather than silently attributed to the active release.
@@ -107,7 +120,7 @@ that every segment is individually representative.
 | Cluster lineage | Exactly one promoted cluster experiment matching the champion experiment | Prevent mixed assignments or routing trained under superseded clusters |
 | Cluster assignments | At least one current promoted assignment | Prevent per-cluster generation from silently collapsing |
 | Generation freshness | Oldest active release row generated at or after latest completed sales load | Prevent an older generated release from looking fresh because it was promoted later |
-| Tuning freshness | Zero stale profiles | Current clusters require current per-cluster tuning |
+| Tuning freshness | Zero stale profiles for labels in the current promoted assignment generation | Current clusters require current per-cluster tuning without historical labels blocking release |
 | Current plan version | Equals the planning month | Make release cadence explicit |
 | Current plan coverage | At least 95% of active DFUs with 3+ history months and all six calendar months | Ensure the plan is operationally usable |
 | Release integrity | One run ID; no negative/invalid quantities; complete source-model lineage; valid confidence intervals on at least 95% of rows | Prevent count-complete but internally inconsistent inventory inputs |

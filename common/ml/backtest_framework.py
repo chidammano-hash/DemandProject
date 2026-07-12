@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 _PROFILE_PRIORITY = [
     "sparse_intermittent",
     "high_volume_stable",  # mean demand >= 50, low zeros — gets deeper trees
-    "medium_volume_periodic",  # mean demand 5–100, low zeros
+    "medium_volume_periodic",  # mean demand 5-100, low zeros
     "low_volume_volatile",
     "volatile_large_cluster",  # large (>300k rows) + high CV + mostly continuous
     "seasonal_dominant",
@@ -235,7 +235,14 @@ def warn_if_profiles_stale(db_params: dict[str, Any]) -> None:
 
     try:
         with psycopg.connect(**db_params) as conn, conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM cluster_tuning_profile_state WHERE stale = TRUE")
+            cur.execute(
+                """SELECT COUNT(*) FROM cluster_tuning_profile_state tuning
+                   WHERE tuning.stale = TRUE
+                     AND EXISTS (
+                         SELECT 1 FROM current_sku_cluster_assignment assignment
+                         WHERE assignment.ml_cluster = tuning.cluster_name
+                     )"""
+            )
             row = cur.fetchone()
             stale_count = int(row[0]) if row else 0
             cur.execute(
@@ -439,7 +446,7 @@ def load_backtest_data(
     cluster_override_path = algo_config.get("cluster_override_path") if algo_config else None
     if cluster_override_path:
         override_df = pd.read_csv(cluster_override_path, usecols=["sku_ck", "cluster_label"])
-        override_map = dict(zip(override_df["sku_ck"], override_df["cluster_label"]))
+        override_map = dict(zip(override_df["sku_ck"], override_df["cluster_label"], strict=True))
         original_clusters = dfu_attrs["ml_cluster"].copy()
         dfu_attrs["ml_cluster"] = (
             dfu_attrs["sku_ck"].map(override_map).fillna(dfu_attrs["ml_cluster"])
@@ -794,7 +801,7 @@ def postprocess_predictions(
     # Ensure startdate is datetime
     combined["startdate"] = pd.to_datetime(combined["startdate"])
 
-    # Build actuals lookup once (small — one row per DFU×month)
+    # Build actuals lookup once (small - one row per DFU x month)
     logger.info("Building actuals lookup...")
     actuals = sales_df.drop_duplicates(subset=["sku_ck", "startdate"])[
         ["sku_ck", "startdate", "qty"]
@@ -945,7 +952,7 @@ def save_backtest_output(
         "model_id": model_id,
         "cluster_strategy": cluster_strategy,
         "n_timeframes": n_timeframes,
-        model_params_key: {k: v for k, v in model_params.items()},
+        model_params_key: dict(model_params),
         **(extra_metadata or {}),
         "n_predictions": len(out),
         "n_dfus": int(output_df["item_id"].nunique()),
@@ -1293,7 +1300,7 @@ def _predict_single_month(
         r[FORECAST_QTY_COL] = preds
         parts.append(r)
     if not parts:
-        return pd.DataFrame(columns=_PREDICT_META_COLS + [FORECAST_QTY_COL])
+        return pd.DataFrame(columns=[*_PREDICT_META_COLS, FORECAST_QTY_COL])
     return pd.concat(parts, ignore_index=True)
 
 
@@ -1774,7 +1781,7 @@ def run_tree_backtest(
                     )
 
                     # Save original state for safety check
-                    original_models = {k: v for k, v in models.items()}
+                    original_models = dict(models)
                     original_preds_first = preds_first.copy() if recursive else None
                     original_preds = preds.copy() if not recursive and len(preds) > 0 else None
 
@@ -2027,7 +2034,7 @@ def run_tree_backtest(
 
     # ── Step 5: Combine, assign execution lag, attach actuals ────────────────
     logger.info("Step 5: Combining predictions...")
-    expanded, archive_expanded, combined = postprocess_predictions(
+    expanded, archive_expanded, _combined = postprocess_predictions(
         all_predictions,
         sales_df,
         exec_lag_map,
@@ -2105,7 +2112,12 @@ def run_tree_backtest(
             "n_dfus": int(expanded["item_id"].nunique()),
         },
         metadata=metadata,
-        artifact_paths=[str(output_path), str(archive_path), str(meta_path)] + extra_artifact_paths,
+        artifact_paths=[
+            str(output_path),
+            str(archive_path),
+            str(meta_path),
+            *extra_artifact_paths,
+        ],
     )
 
     ckpt.cleanup()

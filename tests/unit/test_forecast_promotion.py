@@ -10,6 +10,7 @@ from common.services.forecast_promotion import (
     ForecastGenerationManifest,
     PromotionConflictError,
     _candidate_quality_report,
+    _current_release_evidence,
     promote_forecast_run,
     validate_generation_manifest,
 )
@@ -30,6 +31,17 @@ def _quality_policy() -> dict:
         "min_common_cohort_dfus": 1000,
         "min_common_cohort_actual_volume": 1.0,
     }
+
+
+def test_release_evidence_counts_stale_profiles_for_current_clusters_only():
+    cur = MagicMock()
+    cur.fetchone.return_value = tuple(range(11))
+
+    _current_release_evidence(cur)
+
+    sql = cur.execute.call_args.args[0]
+    assert "current_sku_cluster_assignment" in sql
+    assert "assignment.ml_cluster = tuning.cluster_name" in sql
 
 
 def _manifest(**overrides) -> ForecastGenerationManifest:
@@ -221,6 +233,11 @@ def test_candidate_quality_is_experiment_scoped_and_passes_common_cohort_policy(
 
     sql, params = cur.execute.call_args.args
     assert "f.champion_experiment_id = %s" in sql
+    assert "FROM fact_sales_monthly" in sql
+    assert "keys.startdate - INTERVAL '12 months'" in sql
+    assert "LEFT JOIN sales_by_dfu prior" in sql
+    assert "COALESCE(prior.qty, 0)" in sql
+    assert sql.count("%s") == len(params)
     assert params[0] == 33
     assert all(check["status"] == "pass" for check in checks)
 
