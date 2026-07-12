@@ -39,6 +39,12 @@ def _date_cutoff(months: int | None = None) -> str:
     return cutoff.isoformat()
 
 
+def _last_closed_month() -> str:
+    """Return the first day of the month before the planning month."""
+    planning_month = get_planning_date().replace(day=1)
+    return (planning_month - relativedelta(months=1)).isoformat()
+
+
 def _f(v: Any) -> float | None:
     return float(v) if v is not None else None
 
@@ -348,26 +354,41 @@ def demand_comparison(
 
 _GRAIN_COLUMNS = {
     "item": {
+        "table": "fact_sales_monthly",
         "group": "f.item_id",
         "key_expr": "f.item_id",
+        "quantity_expr": "f.qty",
+        "item_col": "f.item_id",
+        "loc_col": "f.loc",
+        "customer_col": None,
         "label_join": "LEFT JOIN dim_item di ON di.item_id = f.item_id",
         "label_expr": "COALESCE(di.item_desc, f.item_id)",
     },
     "item_loc": {
-        "group": "f.item_id, f.location_id",
-        "key_expr": "f.item_id || '||' || f.location_id",
+        "table": "fact_sales_monthly",
+        "group": "f.item_id, f.loc",
+        "key_expr": "f.item_id || '||' || f.loc",
+        "quantity_expr": "f.qty",
+        "item_col": "f.item_id",
+        "loc_col": "f.loc",
+        "customer_col": None,
         "label_join": (
             "LEFT JOIN dim_item di ON di.item_id = f.item_id "
-            "LEFT JOIN dim_location dl ON dl.location_id = f.location_id"
+            "LEFT JOIN dim_location dl ON dl.location_id = f.loc"
         ),
         "label_expr": (
             "COALESCE(di.item_desc, f.item_id) || ' @ ' || "
-            "COALESCE(dl.site_desc, f.location_id)"
+            "COALESCE(dl.site_desc, f.loc)"
         ),
     },
     "item_loc_customer": {
+        "table": "fact_customer_demand_monthly",
         "group": "f.item_id, f.location_id, f.customer_no",
         "key_expr": "f.item_id || '||' || f.location_id || '||' || f.customer_no",
+        "quantity_expr": "f.demand_qty",
+        "item_col": "f.item_id",
+        "loc_col": "f.location_id",
+        "customer_col": "f.customer_no",
         "label_join": (
             "LEFT JOIN dim_item di ON di.item_id = f.item_id "
             "LEFT JOIN dim_location dl ON dl.location_id = f.location_id "
@@ -398,31 +419,34 @@ def demand_workbench(
     cfg = _cfg()
     set_cache(response, max_age=cfg.get("cache_ttl_seconds", 120))
     cutoff = _date_cutoff(months)
+    closed_month = _last_closed_month()
 
     g = _GRAIN_COLUMNS[grain]
+    table = g["table"]
     group_cols = g["group"]
     key_expr = g["key_expr"]
+    quantity_expr = g["quantity_expr"]
     label_join = g["label_join"]
     label_expr = g["label_expr"]
 
-    where_parts = ["f.startdate >= %s::date"]
-    params: list[Any] = [cutoff]
+    where_parts = ["f.startdate >= %s::date", "f.startdate <= %s::date"]
+    params: list[Any] = [cutoff, closed_month]
 
     if item_id:
-        where_parts.append("f.item_id = %s")
+        where_parts.append(f"{g['item_col']} = %s")
         params.append(item_id)
     if loc:
-        where_parts.append("f.location_id = %s")
+        where_parts.append(f"{g['loc_col']} = %s")
         params.append(loc)
-    if customer_no:
-        where_parts.append("f.customer_no = %s")
+    if customer_no and g["customer_col"]:
+        where_parts.append(f"{g['customer_col']} = %s")
         params.append(customer_no)
 
     where_sql = " AND ".join(where_parts)
 
     count_sql = f"""
         SELECT COUNT(DISTINCT ({key_expr}))
-        FROM fact_customer_demand_monthly f
+        FROM {table} f
         WHERE {where_sql}
     """
 
@@ -431,8 +455,8 @@ def demand_workbench(
         FROM (
             SELECT {key_expr} AS key,
                    {label_expr} AS label,
-                   SUM(f.demand_qty) AS total_demand
-            FROM fact_customer_demand_monthly f
+                   SUM({quantity_expr}) AS total_demand
+            FROM {table} f
             {label_join}
             WHERE {where_sql}
             GROUP BY {group_cols}, {label_expr}
@@ -444,8 +468,8 @@ def demand_workbench(
     detail_sql = f"""
         SELECT {key_expr} AS key,
                TO_CHAR(f.startdate, 'YYYY-MM') AS month,
-               SUM(f.demand_qty) AS demand_qty
-        FROM fact_customer_demand_monthly f
+               SUM({quantity_expr}) AS demand_qty
+        FROM {table} f
         WHERE {where_sql}
           AND ({key_expr}) = ANY(%s)
         GROUP BY {key_expr}, f.startdate

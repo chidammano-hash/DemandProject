@@ -33,7 +33,8 @@ The Demand History Workbench provides 5 API endpoint groups for customer-level d
 
 | Table | Role |
 |---|---|
-| fact_customer_demand_monthly | Primary: customer-level demand history |
+| fact_sales_monthly | Canonical item and item-location actual history through the last closed planning month |
+| fact_customer_demand_monthly | Customer-number history for customer-grain decomposition and matrices |
 | dim_customer | Customer names and attributes for labeling |
 | dim_item | Item descriptions for labeling |
 | dim_location | Location city/state for labeling |
@@ -69,6 +70,12 @@ Returns: Monthly series with actual_qty, bottom_up_qty, top_down_qty, reconciled
 GET /demand-history/workbench?grain=item&item_id=X&loc=Y&limit=50&offset=0
 
 Returns: Hierarchical drill-down at 3 grain levels (item, item_loc, item_loc_customer). Each series includes total_demand and monthly detail.
+
+Item and item-location grains read `fact_sales_monthly.qty`, which is the same closed-month actual
+history used by forecasting. The upper bound is the month immediately before the system planning
+month (for planning date July 2026, June 2026), while the lower bound honors the selected trailing
+period. Customer grain remains on `fact_customer_demand_monthly`; when that source is less current,
+the UI reports its latest genuinely available customer month rather than synthesizing allocations.
 
 ### Feature 5: Cross-Reference Matrix
 

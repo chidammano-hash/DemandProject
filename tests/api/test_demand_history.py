@@ -252,6 +252,36 @@ async def test_workbench_item_grain():
     assert len(data["series"][0]["months"]) == 2
     assert data["hierarchy_children"] == "item_loc"
 
+    executed = [call.args for call in cursor.execute.call_args_list]
+    assert all("fact_sales_monthly" in sql for sql, _params in executed)
+    assert all("f.startdate <= %s::date" in sql for sql, _params in executed)
+    assert executed[0][1][:2] == ["2024-03-01", "2026-02-01"]
+
+
+@pytest.mark.asyncio
+async def test_workbench_customer_grain_keeps_customer_demand_source():
+    pool, _, cursor = _make_pool()
+    cursor.fetchone.return_value = (0,)
+    cursor.fetchall.return_value = []
+    _reset_cfg()
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        _patch_planning_date(date(2026, 7, 11)),
+        _patch_config(),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/demand-history/workbench?grain=item_loc_customer&item_id=I1&loc=L1"
+            )
+
+    assert resp.status_code == 200
+    executed = [call.args for call in cursor.execute.call_args_list]
+    assert all("fact_customer_demand_monthly" in sql for sql, _params in executed)
+    assert executed[0][1][:2] == ["2024-07-01", "2026-06-01"]
+
 
 @pytest.mark.asyncio
 async def test_workbench_empty():
