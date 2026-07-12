@@ -338,6 +338,10 @@ runs install the `statistical` dependency extra and fail when inference or post-
 no rows; an unavailable `statsforecast` installation can therefore never load stale results or be
 reported as completed.
 
+Production batch inference preserves the trained feature-column names when calling tree-model
+`predict()`. This keeps sklearn/LightGBM schema validation active and prevents per-batch
+feature-name warnings from flooding durable UI job logs.
+
 ## Dependencies
 
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column in the forecast table

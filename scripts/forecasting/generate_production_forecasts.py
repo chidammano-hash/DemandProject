@@ -1198,7 +1198,11 @@ def generate_forecasts_batch(
     for h in range(horizon):
         # Batch predict on current feature matrix
         try:
-            step_preds = np.maximum(0.0, model.predict(X_np))
+            # Preserve the feature names recorded by sklearn/LightGBM during
+            # fitting. Passing the backing ndarray floods managed-job logs with
+            # "X does not have valid feature names" for every horizon step.
+            prediction_frame = pd.DataFrame(X_np, columns=avail)
+            step_preds = np.maximum(0.0, model.predict(prediction_frame))
         except (ValueError, TypeError, ArithmeticError):
             # Previously this substituted a full column of zeros, which silently
             # corrupts the forecast (an all-zero forecast reads downstream as

@@ -428,6 +428,30 @@ def test_generate_forecasts_batch_returns_rows():
     assert len(rows) == 3
 
 
+def test_generate_forecasts_batch_preserves_feature_names_for_prediction():
+    """LightGBM receives the named columns used during model fitting."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
+    artifact = _make_artifact(100.0)
+
+    generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
+        horizon=2,
+        forecast_month_generated="2026-03",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=build_cat_encoders(attrs),
+    )
+
+    expected_columns = artifact["feature_cols"]
+    for call in artifact["model"].predict.call_args_list:
+        prediction_input = call.args[0]
+        assert isinstance(prediction_input, pd.DataFrame)
+        assert prediction_input.columns.tolist() == expected_columns
+
+
 def test_generate_forecasts_batch_multi_dfu():
     """Batch processes multiple DFUs in one call."""
     sales1 = _make_sales("ITEM001", "LOC1", n_months=24)
