@@ -280,6 +280,7 @@ async def test_workbench_customer_grain_keeps_customer_demand_source():
     assert resp.status_code == 200
     executed = [call.args for call in cursor.execute.call_args_list]
     assert all("fact_customer_demand_monthly" in sql for sql, _params in executed)
+    assert "dc.site = f.site" in executed[1][0]
     assert executed[0][1][:2] == ["2024-07-01", "2026-06-01"]
 
 

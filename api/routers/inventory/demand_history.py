@@ -87,7 +87,9 @@ def demand_reference(
                c.customer_name,
                SUM(f.demand_qty) AS total_demand
         FROM fact_customer_demand_monthly f
-        LEFT JOIN dim_customer c ON c.customer_no = f.customer_no
+        LEFT JOIN dim_customer c
+          ON c.customer_no = f.customer_no
+         AND c.site = f.site
         WHERE f.item_id = %s AND f.location_id = %s
           AND f.startdate >= %s::date
         GROUP BY f.customer_no, c.customer_name
@@ -183,7 +185,9 @@ def demand_decomposition(
                c.customer_name,
                SUM(f.demand_qty) AS demand_qty
         FROM fact_customer_demand_monthly f
-        LEFT JOIN dim_customer c ON c.customer_no = f.customer_no
+        LEFT JOIN dim_customer c
+          ON c.customer_no = f.customer_no
+         AND c.site = f.site
         WHERE f.item_id = %s AND f.location_id = %s
           AND f.startdate >= %s::date
         GROUP BY f.startdate, f.customer_no, c.customer_name
@@ -195,7 +199,9 @@ def demand_decomposition(
                c.customer_name,
                SUM(f.demand_qty) AS total_demand
         FROM fact_customer_demand_monthly f
-        LEFT JOIN dim_customer c ON c.customer_no = f.customer_no
+        LEFT JOIN dim_customer c
+          ON c.customer_no = f.customer_no
+         AND c.site = f.site
         WHERE f.item_id = %s AND f.location_id = %s
           AND f.startdate >= %s::date
         GROUP BY f.customer_no, c.customer_name
@@ -392,7 +398,8 @@ _GRAIN_COLUMNS = {
         "label_join": (
             "LEFT JOIN dim_item di ON di.item_id = f.item_id "
             "LEFT JOIN dim_location dl ON dl.location_id = f.location_id "
-            "LEFT JOIN dim_customer dc ON dc.customer_no = f.customer_no"
+            "LEFT JOIN dim_customer dc ON dc.customer_no = f.customer_no "
+            "AND dc.site = f.site"
         ),
         "label_expr": "COALESCE(dc.customer_name, f.customer_no)",
     },
@@ -537,7 +544,10 @@ _DIM_CONFIG = {
     },
     "customer": {
         "col": "f.customer_no",
-        "label_join": "LEFT JOIN dim_customer dc ON dc.customer_no = f.customer_no",
+        "label_join": (
+            "LEFT JOIN dim_customer dc ON dc.customer_no = f.customer_no "
+            "AND dc.site = f.site"
+        ),
         "label_expr": "COALESCE(dc.customer_name, f.customer_no)",
     },
 }

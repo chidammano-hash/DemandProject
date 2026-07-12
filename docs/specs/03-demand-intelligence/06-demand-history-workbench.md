@@ -74,8 +74,11 @@ Returns: Hierarchical drill-down at 3 grain levels (item, item_loc, item_loc_cus
 Item and item-location grains read `fact_sales_monthly.qty`, which is the same closed-month actual
 history used by forecasting. The upper bound is the month immediately before the system planning
 month (for planning date July 2026, June 2026), while the lower bound honors the selected trailing
-period. Customer grain remains on `fact_customer_demand_monthly`; when that source is less current,
-the UI reports its latest genuinely available customer month rather than synthesizing allocations.
+period. Customer grain remains on `fact_customer_demand_monthly`, which the standard customer-demand
+pipeline loads through the last available closed month. Customer labels join `dim_customer` at its
+`(site, customer_no)` grain to prevent duplicate UI series. If the source is less current than the
+planning calendar, the UI reports its latest genuinely available customer month rather than
+synthesizing allocations.
 
 ### Feature 5: Cross-Reference Matrix
 
