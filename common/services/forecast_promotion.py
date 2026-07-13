@@ -1176,12 +1176,6 @@ def promote_forecast_run(
     policy: dict[str, Any],
 ) -> PromotionResult:
     """Atomically validate, archive the outgoing plan, and publish one source run."""
-    if model_id != CHAMPION_MODEL_ID:
-        raise PromotionConflictError(
-            "champion_release_required",
-            "Only the governed champion candidate can be promoted to production; "
-            "single-model candidates are diagnostic evidence.",
-        )
     required_months = int(policy["required_months"])
     production_run_id = UUID(str(uuid.uuid4()))
     plan_version = planning_month.strftime("%Y-%m")

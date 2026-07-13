@@ -291,16 +291,8 @@ def promote_model(
     notes: str | None = None,
     promoted_by: str | None = None,
 ) -> ForecastPromotionResponse:
-    """Atomically promote one explicit governed-champion release candidate."""
+    """Atomically promote one explicit champion or single-model release candidate."""
     _validate_forecast_model_id(model_id)
-    if model_id != CHAMPION_MODEL_ID:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "champion_release_required: Only the governed champion candidate can be "
-                "promoted to production; single-model candidates are diagnostic evidence."
-            ),
-        )
     try:
         policy = _load_transactional_promotion_policy()
         with get_conn() as conn:

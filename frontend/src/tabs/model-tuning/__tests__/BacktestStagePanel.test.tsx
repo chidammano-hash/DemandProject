@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { TestQueryWrapper } from "@/tabs/__tests__/test-utils";
 import { BacktestStagePanel } from "../BacktestStagePanel";
@@ -65,7 +65,7 @@ function renderPanel() {
         selectedModelInfo={MODELS[0]}
         onSelectModel={vi.fn()}
       />
-    </TestQueryWrapper>,
+    </TestQueryWrapper>
   );
 }
 
@@ -148,5 +148,19 @@ describe("BacktestStagePanel — grouped table", () => {
     const runBtn = within(row).getByRole("button", { name: /Run/ });
     fireEvent.click(runBtn);
     expect(submitBacktestRun).toHaveBeenCalledWith("lgbm_cluster", false);
+  });
+
+  it("runs only the checked models from the five-model roster", async () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include MSTL" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run selected (4)" }));
+
+    await waitFor(() => expect(submitBacktestRun).toHaveBeenCalledTimes(4));
+    expect(submitBacktestRun).toHaveBeenCalledWith("lgbm_cluster", false);
+    expect(submitBacktestRun).toHaveBeenCalledWith("chronos2_enriched", false);
+    expect(submitBacktestRun).toHaveBeenCalledWith("nhits", false);
+    expect(submitBacktestRun).toHaveBeenCalledWith("nbeats", false);
+    expect(submitBacktestRun).not.toHaveBeenCalledWith("mstl", false);
   });
 });

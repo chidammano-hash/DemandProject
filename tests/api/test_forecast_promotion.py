@@ -56,9 +56,26 @@ async def test_promote_rejects_retired_model_before_database_access():
     "model_id",
     ["lgbm_cluster", "chronos2_enriched", "mstl", "nbeats", "nhits"],
 )
-async def test_promote_rejects_single_model_candidate_before_database_access(model_id: str):
+async def test_promote_accepts_single_model_candidate(model_id: str):
     pool, _, _ = make_pool()
-    with patch("api.core._get_pool", return_value=pool):
+    result = PromotionResult(
+        model_id=model_id,
+        promotion_type="single",
+        plan_version="2026-07",
+        source_run_id=RUN_ID,
+        production_run_id=PRODUCTION_RUN_ID,
+        candidate_checksum="c" * 64,
+        outgoing_archive_checksum=None,
+        rows_promoted=120,
+        dfu_count=10,
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.forecast_promotion.promote_forecast_run",
+            return_value=result,
+        ) as promote,
+    ):
         from api.main import app
 
         async with httpx.AsyncClient(
@@ -68,9 +85,10 @@ async def test_promote_rejects_single_model_candidate_before_database_access(mod
                 f"/backtest-management/{model_id}/promote?source_run_id={RUN_ID}"
             )
 
-    assert response.status_code == 409
-    assert response.json()["detail"].startswith("champion_release_required:")
-    pool.connection.assert_not_called()
+    assert response.status_code == 201
+    assert response.json()["model_id"] == model_id
+    assert response.json()["promotion_type"] == "single"
+    assert promote.call_args.kwargs["model_id"] == model_id
 
 
 @pytest.mark.asyncio

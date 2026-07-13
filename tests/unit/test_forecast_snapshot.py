@@ -134,5 +134,6 @@ def test_transaction_archive_is_run_scoped_and_checksum_reconciled():
     champion_call = next(
         call for call in cur.execute.call_args_list if "source_promotion_id" in call.args[0]
     )
+    assert "p.model_id = 'champion'" not in champion_call.args[0]
     assert champion_call.args[1][0] == 77
     assert champion_call.args[1][1] == str(UUID(int=10))

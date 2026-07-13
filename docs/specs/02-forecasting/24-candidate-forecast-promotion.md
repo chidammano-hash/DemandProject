@@ -227,9 +227,11 @@ advisory lock:
    contender ranks 1-3, with all three contender manifests `ready` under the
    current generator contract. This prevents publishing a plan that cannot be
    archived during the next release cycle (`snapshot_roster_not_ready`).
-6. If a release is active, archive its champion and frozen top-three contender
-   runs for lags 0-5 inside this same transaction. Reconcile the archived
-   champion values to the exact outgoing production checksum. Missing roster,
+6. If a release is active, archive its published plan under the snapshot's
+   historical `champion` role plus the frozen top-three contender runs for lags
+   0-5 inside this same transaction. The published plan may have originated
+   from Champion or one selected model. Reconcile those archived values to the
+   exact outgoing production checksum. Missing roster,
    lag, run, or value evidence aborts replacement. The sole migration exception
    is an active row with `source_run_id IS NULL`: after a savepoint-protected
    normal archive attempt fails, it may be retired without an FVA snapshot only
@@ -254,7 +256,8 @@ contract; the difference is only their lineage validation and
 ### 5.1 Backtest stage table (Model Tuning → Backtest)
 
 Models are grouped by family (Tree / Foundation / Statistical / Deep Learning) in compact
-tables, each with a **Run all** action. The forward release flow is:
+tables. All five start checked; **Run selected (N)** runs any chosen subset, each row can run
+individually, and **Select all** restores the five-model cycle. The forward release flow is:
 
 ```
 [Train when required] → [Generate immutable run] → [Promote that exact run]
@@ -287,15 +290,17 @@ tables, each with a **Run all** action. The forward release flow is:
 - Green check badge: Completed
 - Crown badge: Currently promoted to production
 
-### 5.2 Generate and Promote Champion
+### 5.2 Select, stage, and promote one candidate
 
-The Forecast panel's champion Generate action calls
-`POST /backtest-management/champion/generate` once. The server allocates and
-returns a `source_run_id`; the job generates all per-month routed winners into
-that one coherent run while preserving each row's producing `model_id`. The UI
-polls for that exact run, not merely any older staged rows. Promote is enabled
-only when the same run appears `ready` and `promotion_eligible`, and sends that
-exact id to the promotion endpoint.
+The Forecast panel lets the planner select `lgbm_cluster`, `chronos2_enriched`,
+`mstl`, `nbeats`, `nhits`, or `champion`. **Generate Forecast** creates one
+immutable staging run for that selection and returns its `source_run_id`.
+Champion generation routes the assigned experiment's per-month winners inside
+one coherent run while preserving each row's producing `model_id`; a single
+model run contains only that source model. The UI polls for the exact run, not
+merely any older staged rows. **Promote _selection_ to Production** is enabled
+only when that run is ready and promotion-eligible and the snapshot roster is
+current, and sends that exact id to the promotion endpoint.
 
 Generation preserves the model-training DFU grain
 `(item_id, customer_group, loc)` through sales loading, current-cluster lookup,

@@ -377,10 +377,12 @@ and a winners CSV whose bytes still match the SHA-256 stamped at generation.
    neural artifact/training-cohort lineage. Run **Prepare Forecast Snapshot
    Contenders** when this returns `snapshot_roster_not_ready`; it may replace a
    stale current-month roster only before that month is archived or published.
-6. If an outgoing release exists, archive its exact champion plus the frozen
-   top three `snapshot_contender` runs for lags 0-5. All four series must cover
-   all six lags, and the archived champion checksum must equal the outgoing
-   production checksum. Any failure stops replacement.
+6. If an outgoing release exists, archive its exact published plan under the
+   snapshot's historical `champion` role plus the frozen top three
+   `snapshot_contender` runs for lags 0-5. The published plan may have come from
+   Champion or one selected model. All four series must cover all six lags, and
+   the published-plan checksum must equal the outgoing production checksum.
+   Any failure stops replacement.
 7. Demote the outgoing audit row; insert the incoming audit row with source and
    production run ids, gate report, candidate/production checksums, replacement
    lineage, and outgoing archive checksum; then replace production.
@@ -566,8 +568,8 @@ The production forecast is a **derived** artifact. Anything that invalidates the
 
 | Trigger | Steps |
 |---|---|
-| Monthly planning cycle (default) | Run `model-refresh`, run `champion-refresh`, review, run `forecast-publish`, then promote the exact source run |
-| New backtest + champion cycle | Run all five backtests and load them, rerun champion selection, review on Champion tab, then run `forecast-publish` and promote |
+| Monthly planning cycle (default) | Run the required backtests (one, a selected subset, or all five), assign Champion when its composition should change, generate the chosen single model or Champion, then promote that exact staged source run |
+| New backtest + champion cycle | Use **Run selected** for the desired models (all five for a new Champion comparison); results auto-load. Assign the chosen Champion experiment only when publishing Champion, then generate and promote the selected candidate |
 | Source data refresh (`make pipeline-full` / `pipeline-refresh`) | Run `model-refresh`, `champion-refresh`, review, then `forecast-publish` and promote |
 | Hyperparameter tuning (`make tune-all`) | Run `model-refresh`, `champion-refresh`, review, then `forecast-publish` and promote |
 | Cluster scenario promotion (`cluster-all`) | Run `model-refresh` against the new assignments, then `champion-refresh`, review, `forecast-publish`, and promote |
@@ -618,7 +620,7 @@ Then check thresholds in `config/forecasting/forecast_pipeline_config.yaml`:
 | 409 | `candidate_quality_failed` | The exact experiment-stamped historical champion common cohort fails WAPE lift, required external comparison, bias, sufficiency, or actual-alignment policy. If the external feed is deliberately unavailable, set `champion.release_readiness.require_external_benchmark: false`; this exempts only the external comparison and keeps the champion-versus-naive six-month gate intact. Re-enable it after loading representative external data; no regeneration is required solely for that policy change. |
 | 409 | `candidate_gate_failed` | Six-month coverage, route continuity, quantities, horizon, or confidence intervals do not meet policy; inspect the generation log and manifest before retrying |
 | 409 | `snapshot_roster_not_ready` | The current month lacks one champion plus three checksum-valid, lags-0..5 contenders under current sales/config/artifact lineage; run **Prepare Forecast Snapshot Contenders** to resume empty reservations or replace a stale unpublished current-month roster, then retry promotion |
-| 409 | `outgoing_archive_incomplete` | The current release cannot be replaced until its champion + top-three lags 0-5 archive is complete and the champion checksum reconciles; prepare the frozen contenders/roster and retry |
+| 409 | `outgoing_archive_incomplete` | The current release cannot be replaced until its published-plan + top-three lags 0-5 archive is complete and the published checksum reconciles; prepare the frozen contenders/roster and retry |
 | 409 | `concurrent_release_conflict` | Another release changed state, the same source run was reused, or a second same-planning-month release was attempted; refresh status and generate for the next supported record month |
 | 409 | `production_checksum_mismatch` | Published values did not reproduce the selected run; the transaction rolled back—investigate database triggers/schema and do not retry blindly |
 | 401 | `Missing API key` | Pass `X-API-Key` header |

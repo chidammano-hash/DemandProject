@@ -64,6 +64,9 @@ export function BacktestStagePanel({
 }: Props) {
   const queryClient = useQueryClient();
   const [runningModels, setRunningModels] = useState<Set<string>>(new Set());
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(
+    () => new Set(models.map((model) => model.id))
+  );
   const [parallel, setParallel] = useState(false);
 
   const { data: backtestSummary } = useQuery({
@@ -77,7 +80,7 @@ export function BacktestStagePanel({
       const summary = query.state.data;
       const anyRunInFlight = summary
         ? Object.values(summary).some(
-            (s) => s.latest_run?.status === "queued" || s.latest_run?.status === "running",
+            (s) => s.latest_run?.status === "queued" || s.latest_run?.status === "running"
           )
         : false;
       return runningModels.size > 0 || anyRunInFlight ? 5_000 : false;
@@ -145,11 +148,40 @@ export function BacktestStagePanel({
       return;
     }
     toast.success(
-      `Queued ${targets.length} ${groupLabel} backtest${targets.length === 1 ? "" : "s"} — results auto-load on completion.`,
+      `Queued ${targets.length} ${groupLabel} backtest${targets.length === 1 ? "" : "s"} — results auto-load on completion.`
     );
     for (const m of targets) {
       await runOne(m.id, { silent: true });
     }
+  };
+
+  const handleRunSelected = async () => {
+    const targets = models.filter(
+      (model) => selectedModels.has(model.id) && !isModelActive(model.id)
+    );
+    if (selectedModels.size === 0) {
+      toast.info("Select at least one model to backtest.");
+      return;
+    }
+    if (targets.length === 0) {
+      toast.info("All selected backtests are already running or queued.");
+      return;
+    }
+    toast.success(
+      `Queued ${targets.length} selected backtest${targets.length === 1 ? "" : "s"} — results auto-load on completion.`
+    );
+    for (const model of targets) {
+      await runOne(model.id, { silent: true });
+    }
+  };
+
+  const toggleSelectedModel = (modelId: string) => {
+    setSelectedModels((current) => {
+      const next = new Set(current);
+      if (next.has(modelId)) next.delete(modelId);
+      else next.add(modelId);
+      return next;
+    });
   };
 
   // Status cell: No backtest → Running/Queued → Completed → Loaded. With
@@ -194,20 +226,51 @@ export function BacktestStagePanel({
     <>
       {/* ---- Grouped model tables ---- */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium text-muted-foreground">All Models</h3>
-          <label
-            className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground"
-            title="When on, different model types run at the same time. When off, backtests run one at a time — extra runs queue automatically. Re-running a model that's already in progress is skipped."
-          >
-            <input
-              type="checkbox"
-              checked={parallel}
-              onChange={(e) => setParallel(e.target.checked)}
-              className="h-3.5 w-3.5"
-            />
-            Run in parallel
-          </label>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-muted-foreground">Backtest Models</h3>
+            <p className="text-[11px] text-muted-foreground">
+              Select any subset; completed results load automatically.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => setSelectedModels(new Set(models.map((model) => model.id)))}
+            >
+              Select all
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => setSelectedModels(new Set())}
+            >
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 gap-1 px-2 text-[11px]"
+              onClick={handleRunSelected}
+              disabled={selectedModels.size === 0}
+            >
+              <Play className="h-3 w-3" /> Run selected ({selectedModels.size})
+            </Button>
+            <label
+              className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground"
+              title="When on, different model types run at the same time. When off, backtests run one at a time — extra runs queue automatically. Re-running a model that's already in progress is skipped."
+            >
+              <input
+                type="checkbox"
+                checked={parallel}
+                onChange={(e) => setParallel(e.target.checked)}
+                className="h-3.5 w-3.5"
+              />
+              Run in parallel
+            </label>
+          </div>
         </div>
 
         {groups.map((g) => (
@@ -239,6 +302,7 @@ export function BacktestStagePanel({
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="h-8 w-10 text-xs">Run</TableHead>
                   <TableHead className="h-8 text-xs">Model</TableHead>
                   <TableHead className="h-8 text-xs">Accuracy by forecast lag</TableHead>
                   <TableHead className="h-8 text-xs">Status</TableHead>
@@ -253,9 +317,22 @@ export function BacktestStagePanel({
                   return (
                     <TableRow
                       key={m.id}
-                      className={cn("cursor-pointer", isSelected && "bg-primary/5 hover:bg-primary/10")}
+                      className={cn(
+                        "cursor-pointer",
+                        isSelected && "bg-primary/5 hover:bg-primary/10"
+                      )}
                       onClick={() => onSelectModel(m.id)}
                     >
+                      <TableCell className="py-1.5">
+                        <input
+                          type="checkbox"
+                          aria-label={`Include ${m.label}`}
+                          checked={selectedModels.has(m.id)}
+                          onChange={() => toggleSelectedModel(m.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          className="h-3.5 w-3.5"
+                        />
+                      </TableCell>
                       <TableCell className="py-1.5 text-sm font-medium">{m.label}</TableCell>
                       <TableCell className="py-1.5 tabular-nums">
                         <div
@@ -266,7 +343,10 @@ export function BacktestStagePanel({
                             className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary"
                             title="Execution lag: each DFU measured at its own production-relevant lag"
                           >
-                            Exec {bt?.current_accuracy != null ? `${bt.current_accuracy.toFixed(1)}%` : "—"}
+                            Exec{" "}
+                            {bt?.current_accuracy != null
+                              ? `${bt.current_accuracy.toFixed(1)}%`
+                              : "—"}
                           </span>
                           {[0, 1, 2, 3, 4].map((lag) => {
                             const accuracy = lagAccuracy.get(lag);

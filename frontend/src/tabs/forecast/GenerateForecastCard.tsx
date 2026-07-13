@@ -25,8 +25,14 @@ interface GenerateForecastCardProps {
   onIncludeCIChange: (checked: boolean) => void;
   isSubmitting: boolean;
   isForecastRunning: boolean;
+  candidateReady: boolean;
+  candidateDfuCount?: number;
+  isPromoting: boolean;
+  isSelectedPromoted: boolean;
   blockedReason?: string;
+  promotionBlockedReason?: string;
   onGenerateForecast: () => void;
+  onPromote: () => void;
   latestVersion: ProductionForecastVersion | null;
 }
 
@@ -38,15 +44,22 @@ export function GenerateForecastCard({
   onIncludeCIChange,
   isSubmitting,
   isForecastRunning,
+  candidateReady,
+  candidateDfuCount,
+  isPromoting,
+  isSelectedPromoted,
   blockedReason,
+  promotionBlockedReason,
   onGenerateForecast,
+  onPromote,
   latestVersion,
 }: GenerateForecastCardProps) {
+  const selectedLabel = selectedModel === "champion" ? "Champion" : modelLabel(selectedModel);
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Step 3: Generate Forecast</CardTitle>
+          <CardTitle className="text-sm font-semibold">Step 3: Stage &amp; Promote</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Horizon input */}
@@ -116,6 +129,37 @@ export function GenerateForecastCard({
           {blockedReason && !isForecastRunning && (
             <p className="text-xs text-amber-600 dark:text-amber-400">{blockedReason}</p>
           )}
+
+          <div className="border-t pt-4">
+            <p className="mb-2 text-xs text-muted-foreground">
+              {candidateReady
+                ? `${candidateDfuCount?.toLocaleString() ?? 0} DFUs staged and ready for review.`
+                : "Generate this model to create its staging candidate."}
+            </p>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={onPromote}
+              disabled={
+                !candidateReady ||
+                isPromoting ||
+                isSelectedPromoted ||
+                Boolean(promotionBlockedReason)
+              }
+            >
+              {isPromoting
+                ? "Promoting..."
+                : isSelectedPromoted
+                  ? `${selectedLabel} Is in Production`
+                  : `Promote ${selectedLabel} to Production`}
+            </Button>
+            {promotionBlockedReason && !isSelectedPromoted ? (
+              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                {promotionBlockedReason}
+              </p>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 

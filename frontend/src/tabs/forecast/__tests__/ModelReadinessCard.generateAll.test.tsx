@@ -81,13 +81,12 @@ function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCar
     trainingModelId: null,
     generatingModelId: null,
     isGenerating: false,
-    promotingModelId: null,
     promotedExperiment: null,
     championConstituents: [],
-    championMissingModels: [],
     championReady: false,
     championDfuCount: 0,
     isChampionPromoted: false,
+    activeProductionModelId: null,
     snapshotReadiness: readySnapshotRoster,
     isPreparingPublish: false,
     onTrain: () => {},
@@ -95,7 +94,6 @@ function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCar
     onGenerate: () => {},
     onGenerateAll,
     generatableCount: 1,
-    onPromote: () => {},
     onPreparePublish,
   };
   render(<ModelReadinessCard {...base} {...props} />);
@@ -157,13 +155,13 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
   });
 
-  it("keeps individual model candidates diagnostic-only", () => {
+  it("marks individual model output as a selectable staged candidate", () => {
     renderCard({
       staging: { lgbm_cluster: readyCandidate },
     });
 
-    expect(screen.getByText("Diagnostic only")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    expect(screen.getByText("Candidate staged")).toBeInTheDocument();
+    expect(screen.queryByText("Diagnostic only")).not.toBeInTheDocument();
   });
 
   it("disables promotion and offers one canonical preparation action when the roster is stale", () => {
@@ -215,6 +213,7 @@ describe("ModelReadinessCard — Generate All", () => {
   it("does not report cleaned contender staging as a failure after publication", () => {
     renderCard({
       isChampionPromoted: true,
+      activeProductionModelId: "champion",
       championDfuCount: 12_476,
       generatableCount: 5,
       snapshotReadiness: {
@@ -228,7 +227,7 @@ describe("ModelReadinessCard — Generate All", () => {
 
     expect(screen.getByText("Production release published")).toBeInTheDocument();
     expect(
-      screen.getByText(/Generate All creates 5 diagnostic comparison forecasts/)
+      screen.getByText(/Generate All creates 5 staged comparison forecasts/)
     ).toBeInTheDocument();
     expect(screen.queryByText("Champion + 0/3 contenders ready")).not.toBeInTheDocument();
     expect(screen.queryByText(/failed an integrity check/)).not.toBeInTheDocument();

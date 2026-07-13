@@ -178,8 +178,7 @@ def archive_snapshot_in_transaction(
                   p.run_id, p.generated_at, p.is_recursive, p.lag_source, %s
            FROM forecast_snapshot_roster r
            JOIN fact_production_forecast p
-             ON p.model_id = 'champion'
-            AND p.plan_version = TO_CHAR(r.record_month, 'YYYY-MM')
+             ON p.plan_version = TO_CHAR(r.record_month, 'YYYY-MM')
             AND p.run_id = %s::uuid
            WHERE r.record_month = %s
              AND r.snapshot_role = 'champion'

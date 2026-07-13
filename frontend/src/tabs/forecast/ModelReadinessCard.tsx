@@ -1,9 +1,9 @@
 /**
  * ModelReadinessCard -- Step 1 of the ForecastPanel.
  *
- * Per-model readiness table: train and generate diagnostic candidates, then
- * publish only the governed champion ensemble. Pure presentation; all state
- * and handlers are lifted in from ForecastPanel.
+ * Per-model readiness table for training and staging generation. Production
+ * selection and promotion live in Steps 2-3 so every candidate follows the
+ * same explicit workflow.
  */
 import {
   Loader2,
@@ -52,13 +52,12 @@ interface ModelReadinessCardProps {
   trainingModelId: string | null;
   generatingModelId: string | null;
   isGenerating: boolean;
-  promotingModelId: string | null;
   promotedExperiment: ChampionExperiment | null;
   championConstituents: string[];
-  championMissingModels: string[];
   championReady: boolean;
   championDfuCount: number;
   isChampionPromoted: boolean;
+  activeProductionModelId: string | null;
   snapshotReadiness: SnapshotRosterReadiness | undefined;
   isPreparingPublish: boolean;
   onTrain: (modelId: string) => void;
@@ -66,7 +65,6 @@ interface ModelReadinessCardProps {
   onGenerate: (modelId: string) => void;
   onGenerateAll: () => void;
   generatableCount: number;
-  onPromote: (modelId: string) => void;
   onPreparePublish: (pipeline: "model-refresh" | "champion-refresh" | "forecast-publish") => void;
 }
 
@@ -81,13 +79,12 @@ export function ModelReadinessCard({
   trainingModelId,
   generatingModelId,
   isGenerating,
-  promotingModelId,
   promotedExperiment,
   championConstituents,
-  championMissingModels,
   championReady,
   championDfuCount,
   isChampionPromoted,
+  activeProductionModelId,
   snapshotReadiness,
   isPreparingPublish,
   onTrain,
@@ -95,17 +92,14 @@ export function ModelReadinessCard({
   onGenerate,
   onGenerateAll,
   generatableCount,
-  onPromote,
   onPreparePublish,
 }: ModelReadinessCardProps) {
   const isGeneratingAll = generatingModelId === "__all__";
   const snapshotEvidenceReady = snapshotReadiness?.ready === true;
-  const releasePublished = isChampionPromoted;
-  const championPublishReady = releasePublished || (championReady && snapshotEvidenceReady);
+  const releasePublished = activeProductionModelId !== null;
+  const publishEvidenceReady = releasePublished || snapshotEvidenceReady;
   const shouldPrepareRelease =
-    !releasePublished &&
-    snapshotReadiness?.action_pipeline != null &&
-    (!snapshotEvidenceReady || !championReady);
+    !releasePublished && snapshotReadiness?.action_pipeline != null && !snapshotEvidenceReady;
   const readinessPipeline = snapshotReadiness?.action_pipeline ?? "forecast-publish";
   const championSelectionRequired = readinessPipeline === "champion-refresh";
   const canLaunchPreparation = shouldPrepareRelease && !championSelectionRequired;
@@ -178,7 +172,7 @@ export function ModelReadinessCard({
         <div
           className={cn(
             "mx-4 mb-3 flex min-h-14 items-center justify-between gap-4 rounded-lg border px-3 py-2",
-            championPublishReady
+            publishEvidenceReady
               ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20"
               : "border-amber-200 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20"
           )}
@@ -186,7 +180,7 @@ export function ModelReadinessCard({
           aria-live="polite"
         >
           <div className="flex min-w-0 items-start gap-2">
-            {championPublishReady ? (
+            {publishEvidenceReady ? (
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
             ) : (
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
@@ -201,9 +195,9 @@ export function ModelReadinessCard({
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
                 {releasePublished
-                  ? `The champion is active in production. Generate All creates ${generatableCount} diagnostic comparison forecast${generatableCount === 1 ? "" : "s"} without changing production.`
-                  : championPublishReady
-                    ? "The current champion candidate and exact snapshot roster can be published."
+                  ? `${modelLabel(activeProductionModelId ?? "champion")} is active in production. Generate All creates ${generatableCount} staged comparison forecast${generatableCount === 1 ? "" : "s"} without changing production.`
+                  : publishEvidenceReady
+                    ? "The exact snapshot roster is ready; select any staged candidate in Step 2 to publish."
                     : (snapshotReadiness?.stale_reason ??
                       "Waiting for current release evidence before promotion is enabled.")}
               </p>
@@ -301,44 +295,19 @@ export function ModelReadinessCard({
                     >
                       <CheckCircle2 className="h-3 w-3" /> N/A
                     </Badge>
-                    {promotingModelId === "champion" ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px] gap-1"
-                        disabled
-                      >
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Promoting...
-                      </Button>
-                    ) : isChampionPromoted ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px] gap-1 text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100"
-                        disabled
-                        title="This release is currently published"
-                      >
-                        <Crown className="h-3 w-3" /> Promoted
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px] gap-1"
-                        onClick={() => onPromote("champion")}
-                        disabled={!championPublishReady || promotingModelId !== null}
-                        title={
-                          championPublishReady
-                            ? "Promote champion forecasts to production"
-                            : (snapshotReadiness?.stale_reason ??
-                              `Prepare release first: ${championMissingModels.join(", ")}`)
-                        }
-                      >
-                        <Crown className="h-3 w-3" />
-                        Promote
-                      </Button>
-                    )}
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px]",
+                        isChampionPromoted && "border-emerald-200 text-emerald-700"
+                      )}
+                    >
+                      {isChampionPromoted
+                        ? "In production"
+                        : championReady
+                          ? "Candidate staged"
+                          : "Select in Step 2"}
+                    </Badge>
                   </div>
                 </TableCell>
               </TableRow>
@@ -393,7 +362,7 @@ export function ModelReadinessCard({
                     )}
                   </TableCell>
 
-                  {/* Actions column - 3 buttons: Train, Generate, Promote */}
+                  {/* Actions column: prepare artifacts and generate staging candidates. */}
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       {/* Persisted-artifact models can be trained or retrained here. */}
@@ -488,13 +457,11 @@ export function ModelReadinessCard({
                         </Button>
                       )}
 
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] text-muted-foreground"
-                        title="Individual candidates are diagnostic; only the governed champion can be published"
-                      >
-                        Diagnostic only
-                      </Badge>
+                      {hasStagedForecast ? (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                          Candidate staged
+                        </Badge>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>

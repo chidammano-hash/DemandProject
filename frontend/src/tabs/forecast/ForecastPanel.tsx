@@ -277,20 +277,34 @@ export function ForecastPanel() {
   const championConstituents: string[] = (promotedExperiment?.models ?? []).filter(
     isForecastModelId
   );
-  const championMissingModels = championConstituents.filter((id) => {
-    const algorithm = pipelineConfig?.algorithms?.[id];
-    if (!algorithm || !requiresTraining(algorithm.type)) return false;
-    const status = trainingStatus?.[id];
-    return status?.ready !== true;
-  });
   const championCandidate = staging.champion;
   const championReady =
     championCandidate?.run_status === "ready" && championCandidate.promotion_eligible;
   const championDfuCount = championCandidate?.dfu_count ?? 0;
   const isChampionPromoted = Boolean(
     championCandidate?.source_run_id &&
+    promotedModel?.model_id === "champion" &&
     promotedModel?.source_run_id === championCandidate.source_run_id
   );
+  const selectedCandidate = staging[selectedModel];
+  const selectedCandidateReady = Boolean(
+    selectedCandidate?.source_run_id &&
+    selectedCandidate.run_status === "ready" &&
+    selectedCandidate.promotion_eligible
+  );
+  const isSelectedPromoted = Boolean(
+    selectedCandidate?.source_run_id &&
+    promotedModel?.model_id === selectedModel &&
+    promotedModel.source_run_id === selectedCandidate.source_run_id
+  );
+  const promotionBlockedReason = isForecastRunning
+    ? "Wait for the active forecast generation job to finish before promoting."
+    : snapshotReadiness?.ready !== true
+      ? (snapshotReadiness?.stale_reason ??
+        "Prepare the current champion plus exact top-three evidence before promoting.")
+      : !selectedCandidateReady
+        ? "Generate the selected model to staging first."
+        : undefined;
 
   // -- Handlers ------------------------------------------------------------
 
@@ -520,13 +534,12 @@ export function ForecastPanel() {
         trainingModelId={trainingModelId}
         generatingModelId={generatingModelId}
         isGenerating={isGenerating}
-        promotingModelId={promotingModelId}
         promotedExperiment={promotedExperiment}
         championConstituents={championConstituents}
-        championMissingModels={championMissingModels}
         championReady={championReady}
         championDfuCount={championDfuCount}
         isChampionPromoted={isChampionPromoted}
+        activeProductionModelId={promotedModel?.model_id ?? null}
         snapshotReadiness={snapshotReadiness}
         isPreparingPublish={isPreparingPublish}
         onTrain={train}
@@ -534,7 +547,6 @@ export function ForecastPanel() {
         onGenerate={handleGenerate}
         onGenerateAll={handleGenerateAll}
         generatableCount={generatableAlgos.length}
-        onPromote={handlePromote}
         onPreparePublish={preparePublish}
       />
 
@@ -562,12 +574,18 @@ export function ForecastPanel() {
           onIncludeCIChange={setConfidenceIntervalsOverride}
           isSubmitting={isSubmitting}
           isForecastRunning={isForecastRunning}
+          candidateReady={selectedCandidateReady}
+          candidateDfuCount={selectedCandidate?.dfu_count}
+          isPromoting={promotingModelId === selectedModel}
+          isSelectedPromoted={isSelectedPromoted}
           blockedReason={
             selectedModel === "champion" && !promotedExperiment
               ? "Select and assign a completed experiment in Champion first."
               : undefined
           }
+          promotionBlockedReason={promotionBlockedReason}
           onGenerateForecast={handleGenerateForecast}
+          onPromote={() => handlePromote(selectedModel)}
           latestVersion={latestVersion}
         />
       </div>

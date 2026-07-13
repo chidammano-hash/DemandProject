@@ -1928,11 +1928,14 @@ published only when every active customer group satisfies the applicable
 history floor. Generation
 uses latest-as-of routing, fills uncovered eligible DFUs with an explicit
 LightGBM route, and rejects MSTL routes below its 25-month history contract. The
-UI polls for that exact run and enables Promote only when it is ready and eligible.
-Promotion requires the same id—there is no ambiguous "latest staging" or bypass
-path. Pre-contract ready candidates are invalidated by `sql/206`; new champion
-experiments are constrained to the canonical five by `sql/205`. Run all five
-backtests and champion selection before every publish. Frontend
+UI polls for that exact run. A planner selects one staged candidate—any of the
+five retained models or Champion—and Promote is enabled only when that exact
+candidate is ready and eligible. Promotion copies only its `source_run_id`;
+selection never reruns the five-model or champion lifecycle. Pre-contract ready
+candidates are invalidated by `sql/206`; new champion experiments are
+constrained to the canonical five by `sql/205`. Run all five backtests before
+assigning a new Champion composition; an individual release may use its own
+current backtest and staged candidate. Frontend
 `src/tabs/forecast/`; specs 24 and 34.
 
 Forecast artifact lineage rejects an empty/stale mirror and any latest sales
@@ -1946,8 +1949,9 @@ Before generation, `forecast-publish` final-refits the three persisted families:
 LightGBM uses the atomic all-cluster `production_tree` bundle, while N-HiTS and
 N-BEATS use immutable global neural artifacts. MSTL and Chronos 2E infer
 directly. The same publish workflow freezes exactly three WAPE-ranked snapshot
-contenders; promotion archives the outgoing champion plus those three series at
-lags 0 through 5 before replacing production.
+contenders; promotion archives the exact outgoing published plan under the
+snapshot's historical champion role plus those three series at lags 0 through 5
+before replacing production.
 
 **Forecast Release Readiness and Transactional Promotion:** the Command Center
 verifies the active planning-month release across one fixed, full-grain

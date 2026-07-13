@@ -58,9 +58,11 @@ families run concurrently — same family stays serial).
 > `No predictions produced` — nothing loads, so the UI correctly shows "No backtest". Fix:
 > `uv pip install statsforecast` (or `uv sync --extra statistical`), then re-run.
 
-**Running the whole roster from the UI:** use each model-family section's **Run all** action, or
-build a workflow with `backtest_lgbm`, `backtest_chronos2_enriched`, `backtest_mstl`,
-`backtest_nhits`, and `backtest_nbeats`. Monitor the multi-hour foundation/DL work in Active Jobs.
+**Choosing the roster from the UI:** all five models start checked. Clear any model that should be
+skipped, then click **Run selected (N)**; **Select all** restores the full roster. Each row also keeps
+its own **Run** action. Build a workflow with `backtest_lgbm`, `backtest_chronos2_enriched`,
+`backtest_mstl`, `backtest_nhits`, and `backtest_nbeats` when the selection must be scheduled.
+Monitor multi-hour foundation/DL work in Active Jobs.
 
 ---
 
@@ -77,8 +79,9 @@ build a workflow with `backtest_lgbm`, `backtest_chronos2_enriched`, `backtest_m
   of **"Loaded"**), a manual **Load to DB** button appears on that model's detail panel →
   `POST /backtest-management/{model_id}/load` (job `backtest_load_model`). Re-running the
   backtest also re-loads.
-- **Run all per group:** each family section (Tree / Foundation / Statistical / Deep Learning)
-  has a **Run all** action that queues a backtest for every model in that group.
+- **Run selected:** check any subset of the five retained models and queue only those backtests.
+  Per-row **Run** remains available for a one-model rerun. Completed results auto-load independently,
+  so skipping one model never submits or reloads it.
 - **Accuracy** is shown per row (`GET /backtest-management/summary`); run history via
   `GET /backtest-management/{model_id}/runs`.
 - The **accuracy-MV refresh** has no dedicated model-panel button — run
@@ -140,7 +143,7 @@ governed assignment and never writes production config or champion facts directl
 
 ## 12.4 Phase 8 — Production forecast + promote (Model Tuning → Forecast stage)
 
-The Forecast stage (`ForecastPanel`) is a guided Train → Generate → Promote flow.
+The Forecast stage (`ForecastPanel`) is a guided Train → Select → Stage → Promote flow.
 Champion generation is disabled until an assigned experiment is active. If readiness reports a stale
 champion, Forecast directs the user to the Champion stage rather than launching automatic selection.
 
@@ -148,7 +151,7 @@ champion, Forecast directs the user to the Champion stage rather than launching 
 |---|---|---|---|
 | **Train** production models | Train one persisted model (or all persisted models) → `POST /backtest-management/{model_id}/train` (or `/all/train`) | `train_production_model` (`{model_id, all_models}`) | LightGBM, N-HiTS, and N-BEATS require immutable production final-fit artifacts. MSTL fits from history and Chronos 2E uses pinned pretrained weights with covariates. |
 | **Generate** forecast | Generate (per model) **or Generate All ready** → `POST /backtest-management/{model_id}/generate?horizon=&confidence_intervals=` | `generate_production_forecast` (`{horizon, model_id, confidence_intervals}`) | writes `fact_production_forecast_staging`; check counts via `GET /backtest-management/staging-summary`. The panel's **Horizon** input + **Include Confidence Intervals** toggle now thread through to every generate path (single / champion / Generate All) |
-| **Promote** to production | Promote → `POST /backtest-management/{model_id}/promote` (single) or `POST /backtest-management/champion/promote` (per-DFU champion) | — (direct call) | Both paths are fail-closed. Single-model promotion validates its candidate; champion promotion also validates promoted experiment, routing, cluster/tuning lineage, historical quality, forward structure, and the outgoing snapshot archive. `X-API-Key` is required. Gate rejections and missing staging rows surface as toasts. |
+| **Select + Promote** to production | Select one of the five models or **Champion**, then **Promote _selection_ to Production** → `POST /backtest-management/{model_id}/promote?source_run_id=...` | — (direct call) | Promotion always copies the exact selected staged run. Single-model promotion validates one-source lineage and forward structure; champion promotion additionally validates assigned experiment, routing, cluster/tuning lineage, and historical quality. Both validate the snapshot roster, archive the outgoing release, and reconcile checksums. `X-API-Key` is required. |
 
 The Forecast stage does not infer readiness from an artifact's own metadata.
 `GET /backtest-management/training-status` revalidates LightGBM, N-HiTS, and
@@ -156,8 +159,8 @@ N-BEATS against the current completed sales batch and checksum, latest closed
 month, generator contract, fitted cohort, and (for LightGBM) the promoted
 cluster assignment generation. `GET /backtest-management/snapshot-roster-readiness`
 then validates the current champion plus exact rank-1 through rank-3 contender
-evidence. Until both the champion candidate and this roster are current, every
-**Promote** control stays disabled. Use the single **Prepare Release** action to
+evidence. A selected model becomes promotable only after its own staging run is
+ready and this roster is current. Use the single **Prepare Release** action to
 launch the canonical `forecast-publish` workflow; the panel polls that exact
 pipeline and revalidates readiness once its final step completes. Payload
 integrity failures require operator review and intentionally do not offer an
@@ -244,11 +247,10 @@ service-level, lead-time, echelon) beyond `compute_replenishment_plan`, and the 
 
 | Need | Why | Do this instead |
 |---|---|---|
-| "Run all backtests" single button | not implemented | Pipeline Builder with one step per `backtest_*` job type, or per-model Run |
 | Accuracy-MV refresh after backtest load | no dedicated button | `refresh_forecast_views` job, or `make refresh-accuracy-mvs` |
 | Full demand-planning suite (projection/consensus/planned orders/…) | only `compute_replenishment_plan` exposed | `make setup-demand-planning` |
 | Full ops suite (S&OP/events/financial/scenarios) | only storyboard/AI/DQ exposed | `make setup-ops` |
-| Auto-promote champion | deliberate manual gate | review, then click **Promote** on the Forecast stage |
+| Auto-promote a forecast | deliberate manual gate | select the staged model or Champion, review, then click **Promote … to Production** |
 
 ---
 

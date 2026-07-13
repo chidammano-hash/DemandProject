@@ -490,10 +490,19 @@ def test_promotion_rejects_current_neural_cohort_drift(tmp_path) -> None:
     "model_id",
     ["lgbm_cluster", "chronos2_enriched", "mstl", "nbeats", "nhits"],
 )
-def test_single_model_candidates_cannot_replace_the_production_release(model_id: str) -> None:
+def test_single_model_candidates_enter_transactional_promotion(model_id: str) -> None:
     conn = MagicMock()
 
-    with pytest.raises(PromotionConflictError) as exc_info:
+    with (
+        patch(
+            "common.services.forecast_promotion._load_manifest",
+            side_effect=PromotionConflictError(
+                "candidate_run_not_found",
+                "The selected forecast generation run does not exist.",
+            ),
+        ),
+        pytest.raises(PromotionConflictError) as exc_info,
+    ):
         promote_forecast_run(
             conn,
             model_id=model_id,
@@ -501,14 +510,22 @@ def test_single_model_candidates_cannot_replace_the_production_release(model_id:
             planning_month=date(2026, 7, 1),
             promoted_by="tester",
             notes=None,
-            policy={},
+            policy={"required_months": 6},
         )
 
-    assert exc_info.value.code == "champion_release_required"
-    conn.transaction.assert_not_called()
+    assert exc_info.value.code == "candidate_run_not_found"
+    conn.transaction.assert_called_once()
 
 
-def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run():
+@pytest.mark.parametrize(
+    ("model_id", "source_model_count", "promotion_type"),
+    [("champion", 3, "champion"), ("mstl", 1, "single")],
+)
+def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run(
+    model_id: str,
+    source_model_count: int,
+    promotion_type: str,
+):
     conn = MagicMock()
     tx = conn.transaction.return_value
     tx.__enter__.return_value = tx
@@ -525,7 +542,13 @@ def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run():
     cur.execute.side_effect = capture
 
     with (
-        patch("common.services.forecast_promotion._load_manifest", return_value=_manifest()),
+        patch(
+            "common.services.forecast_promotion._load_manifest",
+            return_value=_manifest(
+                requested_model_id=model_id,
+                source_model_count=source_model_count,
+            ),
+        ),
         patch("common.services.forecast_promotion._validate_candidate_evidence") as validate,
         patch(
             "common.services.forecast_promotion._validate_incoming_snapshot_roster",
@@ -541,12 +564,17 @@ def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run():
         ) as production_stats,
         patch("common.services.forecast_promotion.uuid.uuid4", return_value=PRODUCTION_RUN_ID),
     ):
-        stats = MagicMock(checksum="c" * 64, row_count=120, dfu_count=10, source_model_count=3)
+        stats = MagicMock(
+            checksum="c" * 64,
+            row_count=120,
+            dfu_count=10,
+            source_model_count=source_model_count,
+        )
         staging_stats.return_value = stats
         production_stats.return_value = stats
         result = promote_forecast_run(
             conn,
-            model_id="champion",
+            model_id=model_id,
             source_run_id=RUN_ID,
             planning_month=date(2026, 7, 1),
             promoted_by="api",
@@ -574,6 +602,7 @@ def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run():
     assert result.source_run_id == RUN_ID
     assert result.production_run_id == PRODUCTION_RUN_ID
     assert result.candidate_checksum == "c" * 64
+    assert result.promotion_type == promotion_type
 
 
 def test_post_copy_checksum_mismatch_rolls_back_transaction():

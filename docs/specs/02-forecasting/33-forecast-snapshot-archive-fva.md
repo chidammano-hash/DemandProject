@@ -8,7 +8,7 @@
 
 ## 1. Problem
 
-Every month the platform publishes a champion-routed plan from `fact_production_forecast_staging` to `fact_production_forecast`. Staging can hold many generated models, but the archive is intentionally bounded: it retains the promoted champion and exactly three non-champion contenders for each record month.
+Every month the platform publishes one planner-selected plan from `fact_production_forecast_staging` to `fact_production_forecast`. The selection can be one retained model or the champion-routed composition. Staging can hold many generated models, but the archive is intentionally bounded: it retains the exact published plan under the historical `champion` snapshot role and exactly three non-champion contenders for each record month.
 Neither live table preserves history:
 
 - A release replacement executes `DELETE FROM fact_production_forecast`, so the
