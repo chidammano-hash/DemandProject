@@ -113,7 +113,7 @@ function SelectContent({ children }: { children?: React.ReactNode }) {
   return (
     <div
       role="listbox"
-      className="absolute left-0 top-full z-[200] mt-1 min-w-full rounded-md border bg-popover py-1 shadow-elevated animate-scale-in origin-top"
+      className="absolute left-0 top-full z-[200] mt-1 max-h-60 min-w-full overflow-y-auto rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-elevated animate-scale-in origin-top"
     >
       {children}
     </div>
