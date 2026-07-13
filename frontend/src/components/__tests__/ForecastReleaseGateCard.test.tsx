@@ -166,6 +166,32 @@ describe("ForecastReleaseGateCard", () => {
     );
   });
 
+  it("labels a deliberately deferred external benchmark as exempt", async () => {
+    fetchForecastReleaseReadiness.mockResolvedValue({
+      ...blockedPayload,
+      ready: true,
+      quality: {
+        ...blockedPayload.quality,
+        external_wape_pct: null,
+        accuracy_delta_vs_external_pct_points: null,
+      },
+      checks: blockedPayload.checks.map((check) =>
+        check.id === "delta_vs_external"
+          ? { ...check, status: "pass", value: null, threshold: "not required" }
+          : { ...check, status: "pass" },
+      ),
+      next_action: null,
+    });
+
+    render(<ForecastReleaseGateCard onNavigate={vi.fn()} />, {
+      wrapper: TestQueryWrapper,
+    });
+
+    await screen.findByText("Release 2026-07 planner-ready");
+    expect(screen.getByText("Exempt")).toBeInTheDocument();
+    expect(screen.getByText("External feed deferred by policy")).toBeInTheDocument();
+  });
+
   it("discloses every blocker without overwhelming the initial view", async () => {
     const blockerIds = [
       "common_cohort_coverage",

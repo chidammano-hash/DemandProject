@@ -111,6 +111,7 @@ def _passing_rows() -> list[tuple]:
             21,
             "2026-06",
             outgoing_promoted_at,
+            None,
         ),
         (
             10_000,
@@ -215,6 +216,7 @@ async def test_release_readiness_explains_every_live_blocker() -> None:
                 21,
                 "2026-06",
                 datetime(2026, 6, 10, tzinfo=UTC),
+                None,
             ),
             (13_968, 0, 0, 0, None, None, 0, 0, 0, 0, 0),
             (0, 0, 0, 0, 0, 0, 0, 0),
@@ -374,6 +376,25 @@ async def test_outgoing_archive_requires_roster_run_and_plan_lineage() -> None:
     assert archive_check["status"] == "block"
     assert payload["archive"]["lineage_mismatches"] == 12
     assert payload["next_action"]["tab"] == "fva"
+
+
+@pytest.mark.asyncio
+async def test_audited_legacy_retirement_satisfies_outgoing_archive_gate() -> None:
+    rows = _passing_rows()
+    state = list(rows[1])
+    state[20] = "legacy_retired_unarchived"
+    rows[1] = tuple(state)
+    rows[3] = (0, 0, 0, 0, 0, 0, 0, 0)
+    pool, _, _ = make_pool(fetchone_returns=rows)
+
+    response = await _get_release(pool)
+
+    payload = response.json()
+    archive_check = next(check for check in payload["checks"] if check["id"] == "outgoing_archive")
+    assert archive_check["status"] == "pass"
+    assert archive_check["value"]["legacy_retirement_status"] == "legacy_retired_unarchived"
+    assert "audited legacy" in archive_check["message"].lower()
+    assert payload["ready"] is True
 
 
 @pytest.mark.asyncio

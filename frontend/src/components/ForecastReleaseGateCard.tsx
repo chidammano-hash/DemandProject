@@ -96,6 +96,12 @@ export function ForecastReleaseGateCard({
   const externalBlocked = blockers.some(
     (check) => check.id === "delta_vs_external",
   );
+  const externalExempt = data.checks.some(
+    (check) =>
+      check.id === "delta_vs_external" &&
+      check.status === "pass" &&
+      check.threshold === "not required",
+  );
   const coverageBlocked = blockers.some(
     (check) => check.id === "current_plan_coverage",
   );
@@ -160,11 +166,17 @@ export function ForecastReleaseGateCard({
         <Metric
           label="Delta vs external"
           value={
-            q.accuracy_delta_vs_external_pct_points == null
+            externalExempt
+              ? "Exempt"
+              : q.accuracy_delta_vs_external_pct_points == null
               ? "—"
               : `${formatFixed(q.accuracy_delta_vs_external_pct_points)} pts`
           }
-          detail="Accuracy points on same cohort"
+          detail={
+            externalExempt
+              ? "External feed deferred by policy"
+              : "Accuracy points on same cohort"
+          }
           blocked={externalBlocked}
         />
         <Metric

@@ -216,7 +216,8 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                          FROM model_promotion_log
                          WHERE is_active = TRUE
                      ), active_promotion AS (
-                         SELECT id, plan_version, promoted_at, champion_experiment_id
+                         SELECT id, plan_version, promoted_at, champion_experiment_id,
+                                gate_report, replaces_promotion_id
                          FROM model_promotion_log
                          WHERE is_active = TRUE
                          ORDER BY promoted_at DESC, id DESC
@@ -224,11 +225,8 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                      ), outgoing_promotion AS (
                          SELECT previous.id, previous.plan_version, previous.promoted_at
                          FROM model_promotion_log previous
-                         CROSS JOIN active_promotion active
-                         WHERE (previous.promoted_at, previous.id)
-                               < (active.promoted_at, active.id)
-                         ORDER BY previous.promoted_at DESC, previous.id DESC
-                         LIMIT 1
+                         JOIN active_promotion active
+                           ON active.replaces_promotion_id = previous.id
                      )
                      SELECT active.id,
                             state.active_count,
@@ -265,7 +263,8 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                                AND metadata ->> %s = %s),
                             outgoing.id,
                             outgoing.plan_version,
-                            outgoing.promoted_at
+                            outgoing.promoted_at,
+                            active.gate_report #>> '{outgoing_release,status}'
                      FROM promotion_state state
                      LEFT JOIN active_promotion active ON TRUE
                      LEFT JOIN outgoing_promotion outgoing ON TRUE
@@ -471,7 +470,7 @@ def get_forecast_release_readiness() -> dict[str, Any]:
             value=actual_mismatches,
             threshold=0,
             message=(
-                "Actual demand is identical for all three common-cohort series."
+                "Actual demand is aligned across all required common-cohort series."
                 if actuals_aligned
                 else "Actual demand differs across model rows for otherwise matching keys."
             ),
@@ -498,6 +497,7 @@ def get_forecast_release_readiness() -> dict[str, Any]:
     outgoing_promotion_id = state_row[17] if state_row else None
     outgoing_plan_version = state_row[18] if state_row else None
     outgoing_promoted_at = state_row[19] if state_row else None
+    legacy_retirement_status = state_row[20] if state_row else None
 
     checks.append(
         build_active_promotion_check(
@@ -679,7 +679,11 @@ def get_forecast_release_readiness() -> dict[str, Any]:
     archive_version_valid = outgoing_promotion_id is None or is_calendar_plan_version(
         outgoing_plan_version
     )
-    archive_complete = outgoing_promotion_id is None or (
+    audited_legacy_retirement = (
+        outgoing_promotion_id is not None
+        and legacy_retirement_status == "legacy_retired_unarchived"
+    )
+    archive_complete = outgoing_promotion_id is None or audited_legacy_retirement or (
         archive_version_valid
         and archive_roster_rows == archive_model_count
         and archive_champion_rows == 1
@@ -710,6 +714,7 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                 "minimum_rows": archive_min_rows,
                 "champion_run_ids": archive_champion_run_ids,
                 "lineage_mismatches": archive_lineage_mismatches,
+                "legacy_retirement_status": legacy_retirement_status,
             },
             threshold=f"{archive_model_count} models x {lag_count} lags",
             message=(
@@ -722,9 +727,13 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                         "The outgoing plan version is not a valid YYYY-MM archive key."
                         if not archive_version_valid
                         else (
-                            "The outgoing plan has a complete, lineage-consistent bounded archive."
-                            if archive_complete
-                            else "The outgoing plan was not completely archived before replacement."
+                            "The pre-manifest outgoing plan has an audited legacy retirement record."
+                            if audited_legacy_retirement
+                            else (
+                                "The outgoing plan has a complete, lineage-consistent bounded archive."
+                                if archive_complete
+                                else "The outgoing plan was not completely archived before replacement."
+                            )
                         )
                     )
                 )

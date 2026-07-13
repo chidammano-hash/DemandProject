@@ -202,12 +202,19 @@ The UI action navigates to the surface that can safely resolve the blocker. It
 does not claim to preselect or execute the named pipeline: refresh actions open
 Jobs, while archive recovery opens the FVA evidence surface.
 Archive readiness follows Spec 33's outgoing-before-replacement invariant. It
-checks the promotion immediately preceding the active promotion and only
+checks the exact promotion referenced by the active promotion's
+`replaces_promotion_id` and only
 accepts snapshot rows archived from that outgoing promotion timestamp through
 the replacement timestamp. Champion `plan_version`/run and contender
 frozen-roster run IDs must match. A first-ever release has no outgoing plan to
 archive; a newly active release is not blocked merely because its own future-FVA
-snapshot is not due until the next replacement cycle.
+snapshot is not due until the next replacement cycle. The one migration bridge
+is a pre-manifest release whose production rows and promotion lineage were
+transactionally checksum-verified but for which a historical contender roster
+never existed. Its replacement gate report records
+`legacy_retired_unarchived`; readiness reports that audited legacy retirement as
+complete instead of requesting evidence that cannot be reconstructed. Modern
+releases cannot use this bridge.
 
 ## Transactional promotion boundary
 

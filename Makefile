@@ -784,10 +784,10 @@ forecast-snapshot-contenders:  ## Freeze and generate the three live-FVA contend
 	$(UV) python scripts/forecasting/prepare_forecast_snapshot_contenders.py $(ARGS)
 
 forecast-archive:  ## Archive champion + three frozen contenders at lags 0..5
-	$(UV) python scripts/forecasting/archive_forecast_snapshot.py $(ARGS)
+	$(UV) python -m scripts.forecasting.archive_forecast_snapshot $(ARGS)
 
 forecast-staging-clean:  ## Delete staging only after bounded archive reconciliation
-	$(UV) python scripts/forecasting/cleanup_forecast_staging.py $(ARGS)
+	$(UV) python -m scripts.forecasting.cleanup_forecast_staging $(ARGS)
 
 accuracy-slice-refresh:                ## Alias of refresh-accuracy-mvs (kept for operator muscle memory)
 	$(UV) python -m scripts.db.refresh_mvs --tables fact_external_forecast_monthly,backtest_lag_archive
