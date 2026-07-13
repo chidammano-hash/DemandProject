@@ -15,11 +15,6 @@ from psycopg.types.json import Jsonb
 from common.core.constants import CHAMPION_MODEL_ID
 from common.core.paths import PROJECT_ROOT
 from common.core.utils import load_forecast_pipeline_config
-from common.services.champion_lineage import (
-    GOVERNED_CHAMPION_LINEAGE_METADATA_KEY,
-    GovernedChampionLineageError,
-    load_governed_champion_lineage,
-)
 from common.ml.direct_model_lineage import (
     DIRECT_MODEL_CONFIG_METADATA_KEY,
     SOURCE_MODEL_ROSTER_METADATA_KEY,
@@ -41,6 +36,11 @@ from common.ml.tree_artifact_lineage import (
     TreeArtifactLineageError,
 )
 from common.ml.tree_artifacts import read_active_tree_artifact_ref
+from common.services.champion_lineage import (
+    GOVERNED_CHAMPION_LINEAGE_METADATA_KEY,
+    GovernedChampionLineageError,
+    load_governed_champion_lineage,
+)
 from common.services.cluster_lineage import load_promoted_cluster_population
 from common.services.forecast_generation import (
     GENERATOR_CONTRACT_METADATA_KEY,
@@ -627,6 +627,8 @@ def _candidate_quality_report(
     policy: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Evaluate exact experiment-stamped champion quality on one common cohort."""
+    require_external_benchmark = bool(policy["require_external_benchmark"])
+    required_model_count = 3 if require_external_benchmark else 2
     cur.execute(
         """WITH champion_keys AS (
                  SELECT f.item_id, f.customer_group, f.loc, f.startdate, f.lag,
@@ -666,6 +668,7 @@ def _candidate_quality_report(
                   AND d.customer_group = f.customer_group
                   AND d.loc = f.loc
                  WHERE f.model_id IN ('champion', 'external')
+                   AND (%s OR f.model_id <> 'external')
                    AND (
                        f.model_id <> 'champion'
                        OR f.champion_experiment_id = %s
@@ -694,7 +697,7 @@ def _candidate_quality_report(
                         MAX(actual_qty) AS max_actual
                  FROM scored
                  GROUP BY item_id, customer_group, loc, startdate, lag
-                 HAVING COUNT(*) = 3 AND COUNT(DISTINCT model_id) = 3
+                 HAVING COUNT(*) = %s AND COUNT(DISTINCT model_id) = %s
              ), common_keys AS (
                  SELECT item_id, customer_group, loc, startdate, lag
                  FROM key_quality
@@ -742,10 +745,13 @@ def _candidate_quality_report(
             planning_month,
             int(policy["quality_lookback_months"]),
             planning_month,
+            require_external_benchmark,
             champion_experiment_id,
             planning_month,
             int(policy["quality_lookback_months"]),
             planning_month,
+            required_model_count,
+            required_model_count,
         ),
     )
     row = cur.fetchone()
@@ -767,6 +773,7 @@ def _candidate_quality_report(
         external_wape_pct=float(row[5]) if row[5] is not None else None,
     )
     thresholds = ReleaseReadinessThresholds(
+        require_external_benchmark=require_external_benchmark,
         min_relative_wape_lift_vs_naive_pct=float(policy["min_relative_wape_lift_vs_naive_pct"]),
         min_accuracy_delta_vs_external_pct_points=float(
             policy["min_accuracy_delta_vs_external_pct_points"]

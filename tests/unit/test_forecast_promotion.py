@@ -58,6 +58,7 @@ def _pipeline_config(algorithms: dict) -> dict:
 
 def _quality_policy() -> dict:
     return {
+        "require_external_benchmark": True,
         "quality_lookback_months": 6,
         "min_relative_wape_lift_vs_naive_pct": 10.0,
         "min_accuracy_delta_vs_external_pct_points": 0.0,
@@ -116,14 +117,13 @@ def _manifest(**overrides) -> ForecastGenerationManifest:
     governed_lineage = {
         "experiment_id": 33,
         "models": list(CANONICAL_CHAMPION_MODELS),
-        "backtest_run_ids": {
-            model_id: run_id
-            for model_id, run_id in zip(
+        "backtest_run_ids": dict(
+            zip(
                 CANONICAL_CHAMPION_MODELS,
                 range(201, 206),
                 strict=True,
             )
-        },
+        ),
         "source_sales_batch_id": 101,
         "data_checksum": "f" * 64,
         "cluster_experiment_id": 7,
@@ -834,3 +834,36 @@ def test_candidate_quality_blocks_incumbent_regression():
         )
 
     assert exc_info.value.code == "candidate_quality_failed"
+
+
+def test_candidate_quality_excludes_external_when_policy_exempts_it():
+    cur = MagicMock()
+    cur.fetchone.return_value = (
+        6200,
+        1250,
+        20.0,
+        1.0,
+        25.0,
+        None,
+        0,
+        6200,
+        1250,
+        6,
+        100000.0,
+    )
+    policy = {**_quality_policy(), "require_external_benchmark": False}
+
+    checks = _candidate_quality_report(
+        cur,
+        champion_experiment_id=33,
+        planning_month=date(2026, 7, 1),
+        policy=policy,
+    )
+
+    sql, params = cur.execute.call_args.args
+    assert "(%s OR f.model_id <> 'external')" in sql
+    assert "HAVING COUNT(*) = %s AND COUNT(DISTINCT model_id) = %s" in sql
+    assert False in params
+    by_id = {check["id"]: check for check in checks}
+    assert by_id["delta_vs_external"]["status"] == "pass"
+    assert by_id["delta_vs_external"]["threshold"] == "not required"

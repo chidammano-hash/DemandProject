@@ -18,6 +18,7 @@ def _config(**readiness_overrides) -> dict:
         "champion": {
             "release_readiness": {
                 "enabled": True,
+                "require_external_benchmark": True,
                 "lookback_months": 6,
                 "min_relative_wape_lift_vs_naive_pct": 10.0,
                 "min_accuracy_delta_vs_external_pct_points": 0.0,
@@ -276,6 +277,30 @@ async def test_disabled_policy_fails_closed_and_optional_checks_are_honest() -> 
     assert "not required" in by_id["sales_freshness"]["message"]
     assert "not required" in by_id["outgoing_archive"]["message"]
     assert payload["next_action"] is None
+
+
+@pytest.mark.asyncio
+async def test_external_benchmark_exemption_uses_champion_naive_cohort() -> None:
+    rows = _passing_rows()
+    quality = list(rows[0])
+    quality[5] = None
+    rows[0] = tuple(quality)
+    pool, _, cursor = make_pool(fetchone_returns=rows)
+    config = _config(require_external_benchmark=False)
+
+    response = await _get_release(pool, config=config)
+
+    assert response.status_code == 200
+    payload = response.json()
+    by_id = {check["id"]: check for check in payload["checks"]}
+    assert by_id["delta_vs_external"]["status"] == "pass"
+    assert by_id["delta_vs_external"]["threshold"] == "not required"
+    quality_call = next(
+        call
+        for call in cursor.execute.call_args_list
+        if "model_metrics AS" in str(call.args[0])
+    )
+    assert False in quality_call.args[1]
 
 
 @pytest.mark.asyncio

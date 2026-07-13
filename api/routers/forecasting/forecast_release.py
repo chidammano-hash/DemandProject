@@ -59,6 +59,7 @@ def get_forecast_release_readiness() -> dict[str, Any]:
     active_window_months = int(config["forecast_snapshot"]["active_window_months"])
     cold_start_min_months = int(config["production_forecast"]["cold_start_min_months"])
     thresholds = ReleaseReadinessThresholds(
+        require_external_benchmark=bool(gate_config["require_external_benchmark"]),
         min_relative_wape_lift_vs_naive_pct=float(
             gate_config["min_relative_wape_lift_vs_naive_pct"]
         ),
@@ -73,6 +74,8 @@ def get_forecast_release_readiness() -> dict[str, Any]:
         min_common_cohort_actual_volume=float(gate_config["min_common_cohort_actual_volume"]),
     )
     min_ci_coverage_frac = float(gate_config["min_confidence_interval_coverage_frac"])
+    require_external_benchmark = thresholds.require_external_benchmark
+    required_quality_model_count = 3 if require_external_benchmark else 2
 
     planning_month = get_planning_date().replace(day=1)
     release_version = planning_month.strftime("%Y-%m")
@@ -124,6 +127,7 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                           AND d.customer_group = f.customer_group
                           AND d.loc = f.loc
                          WHERE f.model_id IN ('champion', 'external')
+                           AND (%s OR f.model_id <> 'external')
                            AND (
                                f.model_id <> 'champion'
                                OR f.champion_experiment_id =
@@ -153,7 +157,7 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                                 MAX(actual_qty) AS max_actual
                          FROM scored
                          GROUP BY item_id, customer_group, loc, startdate, lag
-                         HAVING COUNT(*) = 3 AND COUNT(DISTINCT model_id) = 3
+                         HAVING COUNT(*) = %s AND COUNT(DISTINCT model_id) = %s
                      ), common_keys AS (
                          SELECT item_id, customer_group, loc, startdate, lag
                          FROM key_quality
@@ -378,9 +382,12 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                     planning_month,
                     lookback_months,
                     planning_month,
+                    require_external_benchmark,
                     planning_month,
                     lookback_months,
                     planning_month,
+                    required_quality_model_count,
+                    required_quality_model_count,
                 ),
             )
             quality_row = cur.fetchone()

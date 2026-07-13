@@ -7,8 +7,9 @@ from common.services.forecast_release import (
 )
 
 
-def _thresholds() -> ReleaseReadinessThresholds:
+def _thresholds(*, require_external_benchmark: bool = True) -> ReleaseReadinessThresholds:
     return ReleaseReadinessThresholds(
+        require_external_benchmark=require_external_benchmark,
         min_relative_wape_lift_vs_naive_pct=10.0,
         min_accuracy_delta_vs_external_pct_points=0.0,
         max_abs_bias_pct=5.0,
@@ -93,6 +94,35 @@ def test_quality_checks_block_when_common_cohort_is_empty() -> None:
 
     assert all(check["status"] == "block" for check in checks)
     assert checks[0]["id"] == "common_cohort"
+
+
+def test_quality_checks_exempt_external_without_weakening_champion_naive_cohort() -> None:
+    metrics = ReleaseQualityMetrics(
+        dfu_months=60_000,
+        dfus=10_000,
+        champion_observations=60_000,
+        champion_dfus=10_000,
+        closed_months=6,
+        actual_volume=8_800_000.0,
+        champion_wape_pct=25.62,
+        champion_bias_pct=-2.28,
+        naive_wape_pct=32.76,
+        external_wape_pct=None,
+    )
+
+    checks = evaluate_quality_checks(
+        metrics,
+        _thresholds(require_external_benchmark=False),
+    )
+
+    by_id = {check["id"]: check for check in checks}
+    assert all(check["status"] == "pass" for check in checks)
+    assert by_id["common_cohort"]["value"] == 60_000
+    assert by_id["common_cohort_months"]["value"] == 6
+    assert by_id["common_cohort_coverage"]["value"] == 1.0
+    assert by_id["delta_vs_external"]["value"] is None
+    assert by_id["delta_vs_external"]["threshold"] == "not required"
+    assert "exempt" in by_id["delta_vs_external"]["message"].lower()
 
 
 def test_quality_checks_block_an_unrepresentative_sample() -> None:

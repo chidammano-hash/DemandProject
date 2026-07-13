@@ -53,8 +53,8 @@ while it remains open, including after a green result.
 
 ## Exact common cohort
 
-Quality reads the active champion and external rows from
-`fact_external_forecast_monthly` directly and derives the seasonal-naive
+Quality reads the active champion and, when required by policy, external rows
+from `fact_external_forecast_monthly` directly and derives the seasonal-naive
 baseline from `fact_sales_monthly` at the matching DFU's month twelve months
 earlier. It does not require a retained `seasonal_naive` algorithm series and
 must not use `agg_forecast_monthly`, because that view removes
@@ -69,12 +69,21 @@ Rows are joined to `dim_sku` on its full three-column key and retained only when
 1. a `champion` row's `champion_experiment_id` equals the active promotion's
    explicit champion experiment;
 2. `lag = COALESCE(dim_sku.execution_lag, 0)`;
-3. the external row exists for the same key;
+3. the external row exists for the same key when
+   `champion.release_readiness.require_external_benchmark` is `true`;
 4. the seasonal-naive value is taken from type-1 sales for that DFU exactly
    twelve months earlier, with an absent sparse-fact month densified to zero;
    and
-5. champion and external actual demand are identical. The derived baseline
-   inherits that aligned actual.
+5. champion and external actual demand are identical when the external benchmark
+   is required. The derived baseline always inherits the champion actual.
+
+When `require_external_benchmark` is `false`, the exact cohort contains champion
+and seasonal-naive rows only. The external accuracy-delta check reports `pass`
+with threshold `not required`; all six-month, coverage, DFU-count, actual-volume,
+naive-lift, bias, lineage, confidence-interval, and archive checks remain enforced.
+The `1401-BULK` laptop pilot uses this explicit exemption until its external feed
+contains the current closed month and representative DFU coverage. Re-enable the
+flag after that feed is loaded; do not synthesize or forward-fill external rows.
 
 A genuine prior-year zero and an omitted zero-demand month both produce a zero
 baseline, matching the dense monthly history used by forecasting. The sales
@@ -112,7 +121,7 @@ that every segment is individually representative.
 | Closed months | All six configured months | Prevent a favorable one-month slice from approving a release |
 | Cohort DFUs | At least 1,000 | Prevent a tiny favorable population from approving a portfolio release |
 | Actual volume | Greater than zero | Avoid unstable/null WAPE and bias evidence |
-| Delta vs external | At least 0 accuracy points | Do not replace a better incumbent forecast |
+| Delta vs external | At least 0 accuracy points when `require_external_benchmark: true`; otherwise explicitly `not required` | Do not replace a better incumbent forecast when comparable external evidence is available |
 | Champion bias | Absolute bias at most 5% | Avoid service/inventory distortion hidden by aggregate accuracy |
 | Actual alignment | Zero mismatched actuals | All model comparisons must use the same truth |
 | Active promotion state | Exactly one active promotion with a non-null plan version | Fail closed on missing, ambiguous, or unaudited production ownership |

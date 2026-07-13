@@ -258,6 +258,7 @@ def _load_transactional_promotion_policy() -> dict[str, Any]:
             "Forecast release policy is disabled; promotion fails closed.",
         )
     return {
+        "require_external_benchmark": bool(release["require_external_benchmark"]),
         "required_months": int(snapshot["lag_count"]),
         "min_coverage_frac": float(release["min_current_plan_coverage_frac"]),
         "min_ci_coverage_frac": float(release["min_confidence_interval_coverage_frac"]),

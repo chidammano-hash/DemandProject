@@ -15,6 +15,7 @@ from typing import Any
 class ReleaseReadinessThresholds:
     """Provisional thresholds configured under ``champion.release_readiness``."""
 
+    require_external_benchmark: bool
     min_relative_wape_lift_vs_naive_pct: float
     min_accuracy_delta_vs_external_pct_points: float
     max_abs_bias_pct: float
@@ -96,8 +97,11 @@ def evaluate_quality_checks(
         metrics.dfu_months > 0
         and metrics.champion_wape_pct is not None
         and metrics.naive_wape_pct is not None
-        and metrics.external_wape_pct is not None
         and metrics.champion_bias_pct is not None
+        and (
+            not thresholds.require_external_benchmark
+            or metrics.external_wape_pct is not None
+        )
     )
     lift = metrics.relative_wape_lift_vs_naive_pct
     external_delta = metrics.accuracy_delta_vs_external_pct_points
@@ -114,7 +118,7 @@ def evaluate_quality_checks(
         and lift is not None
         and lift >= thresholds.min_relative_wape_lift_vs_naive_pct
     )
-    external_delta_passed = (
+    external_delta_passed = not thresholds.require_external_benchmark or (
         has_common_cohort
         and external_delta is not None
         and external_delta >= thresholds.min_accuracy_delta_vs_external_pct_points
@@ -137,10 +141,19 @@ def evaluate_quality_checks(
             value=metrics.dfu_months,
             threshold="> 0 DFU-months",
             message=(
-                "Champion, seasonal naive, and external forecasts are measured on "
-                "the same DFU-months."
+                (
+                    "Champion, seasonal naive, and external forecasts are measured on "
+                    "the same DFU-months."
+                    if thresholds.require_external_benchmark
+                    else "Champion and seasonal naive forecasts are measured on the same "
+                    "DFU-months; the external benchmark is exempt by policy."
+                )
                 if has_common_cohort
-                else "No measurable champion, seasonal-naive, and external common cohort exists."
+                else (
+                    "No measurable champion, seasonal-naive, and external common cohort exists."
+                    if thresholds.require_external_benchmark
+                    else "No measurable champion and seasonal-naive common cohort exists."
+                )
             ),
         ),
         _check(
@@ -202,9 +215,15 @@ def evaluate_quality_checks(
             "delta_vs_external",
             passed=external_delta_passed,
             value=external_delta,
-            threshold=thresholds.min_accuracy_delta_vs_external_pct_points,
+            threshold=(
+                thresholds.min_accuracy_delta_vs_external_pct_points
+                if thresholds.require_external_benchmark
+                else "not required"
+            ),
             message=(
-                "Champion accuracy meets or exceeds the external forecast on the common cohort."
+                "External forecast comparison is exempt by policy."
+                if not thresholds.require_external_benchmark
+                else "Champion accuracy meets or exceeds the external forecast on the common cohort."
                 if external_delta_passed
                 else "Champion accuracy trails the external forecast on the common cohort."
             ),
