@@ -14,7 +14,7 @@ export interface TuningRun {
   model_id: string;
   started_at: string;
   completed_at: string | null;
-  status: "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   accuracy_pct: number | null;
   wape: number | null;
   bias: number | null;

@@ -61,6 +61,12 @@ interface Props {
   onOpenBuilder: () => void;
 }
 
+const ACTIVE_RUN_REFRESH_MS = 5_000;
+
+function isActiveRun(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
 export function TuneStagePanel({
   models,
   selectedModelId,
@@ -92,6 +98,9 @@ export function TuneStagePanel({
     queryKey: modelTuningKeys.summary("lgbm"),
     queryFn: () => fetchModelSummary("lgbm"),
     staleTime: STALE.TWO_MIN,
+    refetchOnMount: "always",
+    refetchInterval: (query) =>
+      (query.state.data?.active ?? 0) > 0 ? ACTIVE_RUN_REFRESH_MS : false,
   });
 
   const emptySummary: ModelSummaryCardData = { best: null, runs: 0, active: 0, promoted: null };
@@ -116,6 +125,11 @@ export function TuneStagePanel({
         exec_lag: execLag,
       }),
     staleTime: STALE.TWO_MIN,
+    refetchOnMount: "always",
+    refetchInterval: (query) =>
+      query.state.data?.experiments.some((run) => isActiveRun(run.status))
+        ? ACTIVE_RUN_REFRESH_MS
+        : false,
     enabled: isTunable,
   });
 
@@ -166,7 +180,7 @@ export function TuneStagePanel({
   // KPIs
   const kpis = useMemo(() => {
     const completed = allRuns.filter((r) => r.status === "completed" && r.accuracy_pct != null);
-    const running = allRuns.filter((r) => r.status === "running");
+    const active = allRuns.filter((r) => isActiveRun(r.status));
     const best = completed.reduce<TuningRun | null>(
       (acc, r) => (!acc || (r.accuracy_pct ?? 0) > (acc.accuracy_pct ?? 0) ? r : acc),
       null
@@ -176,7 +190,7 @@ export function TuneStagePanel({
       bestAccuracy: best?.accuracy_pct ?? null,
       productionAccuracy: promoted?.accuracy_pct ?? null,
       totalRuns: allRuns.length,
-      activeRuns: running.length,
+      activeRuns: active.length,
     };
   }, [allRuns]);
 

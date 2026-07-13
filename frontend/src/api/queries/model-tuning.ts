@@ -71,7 +71,7 @@ export async function fetchModelSummary(model: ModelType): Promise<ModelSummary>
     return {
       best,
       runs: exps.length,
-      active: exps.filter((e) => e.status === "running").length,
+      active: exps.filter((e) => e.status === "queued" || e.status === "running").length,
       promoted,
     };
   } catch {
