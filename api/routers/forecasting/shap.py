@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
+from psycopg import Error as PsycopgError
 from psycopg import sql
 
 from api.core import get_conn
@@ -511,7 +512,7 @@ def _resolve_dfu_context(
             )
             SELECT *
             FROM item_location_dfus
-            WHERE (%s IS NULL OR customer_group = %s)
+            WHERE (%s::TEXT IS NULL OR customer_group = %s)
             ORDER BY customer_group, sku_ck
             """,
             (item_id, loc, customer_group, customer_group),
@@ -710,12 +711,19 @@ async def shap_dfu(
     _validate_shap_model_id(model_id)
 
     with get_conn() as conn:
-        dfu_row = _resolve_dfu_context(
-            conn,
-            item_id=item_id,
-            loc=loc,
-            customer_group=customer_group,
-        )
+        try:
+            dfu_row = _resolve_dfu_context(
+                conn,
+                item_id=item_id,
+                loc=loc,
+                customer_group=customer_group,
+            )
+        except PsycopgError:
+            logger.exception("Resolving the requested DFU for SHAP failed")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to resolve the requested DFU",
+            ) from None
         (
             _sku_ck,
             ml_cluster,

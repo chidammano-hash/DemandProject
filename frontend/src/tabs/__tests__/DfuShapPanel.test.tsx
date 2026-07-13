@@ -201,4 +201,26 @@ describe("SkuShapPanel", () => {
       await screen.findByText(/Showing cluster-level SHAP/i)
     ).toBeDefined();
   });
+
+  it("shows accurate recovery guidance for an on-demand SHAP failure", async () => {
+    mockFetchSkuShap.mockRejectedValue(new Error("Internal Server Error"));
+
+    render(
+      <TestQueryWrapper>
+        <SkuShapPanel
+          selectedModel="lgbm_cluster"
+          itemNo="100320"
+          loc="1401-BULK"
+          customerGroup="ALL"
+          skuMode="item_location"
+          visibleMonths={[]}
+        />
+      </TestQueryWrapper>,
+    );
+
+    expect(await screen.findByText(/Unable to load SHAP contributions/i)).toBeDefined();
+    expect(screen.getByText(/active trained LightGBM artifact/i)).toBeDefined();
+    expect(screen.queryByText(/forecast-generate/i)).toBeNull();
+    expect(screen.queryByText(/shap library/i)).toBeNull();
+  });
 });

@@ -13,6 +13,38 @@ from common.services.sales_lineage import SalesSourceLineage
 from tests.api.conftest import make_pool
 
 
+def test_dfu_context_types_nullable_customer_group_parameter() -> None:
+    _pool, conn, cursor = make_pool()
+    cursor.fetchall.return_value = [
+        (
+            1,
+            "high_volume_periodic",
+            0,
+            14,
+            "brand",
+            "region",
+            "A",
+            "ALL",
+            12,
+            80,
+            24,
+            1,
+        )
+    ]
+
+    result = shap._resolve_dfu_context(
+        conn,
+        item_id="100320",
+        loc="1401-BULK",
+        customer_group="ALL",
+    )
+
+    query, params = cursor.execute.call_args.args
+    assert "%s::TEXT IS NULL" in query
+    assert params == ("100320", "1401-BULK", "ALL", "ALL")
+    assert result == cursor.fetchall.return_value[0]
+
+
 def test_active_shap_loader_builds_current_production_spec(tmp_path) -> None:
     _pool, conn, _cursor = make_pool()
     config = {

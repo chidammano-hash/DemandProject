@@ -9,6 +9,7 @@ import httpx
 import pandas as pd
 import pytest
 from httpx import ASGITransport
+from psycopg import OperationalError
 
 from tests.api.conftest import make_pool
 
@@ -64,6 +65,25 @@ def _make_pool():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_shap_dfu_database_failure_is_opaque(async_client):
+    """Unexpected DB failures are logged and returned as a safe API error."""
+    with patch(
+        "api.routers.forecasting.shap._resolve_dfu_context",
+        side_effect=OperationalError("database detail must not escape"),
+    ):
+        response = await async_client.get(
+            "/forecast/shap/lgbm_cluster/dfu",
+            params={
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "ALL",
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to resolve the requested DFU"}
 
 
 @pytest.mark.asyncio

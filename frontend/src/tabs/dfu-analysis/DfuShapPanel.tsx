@@ -241,14 +241,15 @@ export function SkuShapPanel({
           </div>
         )}
         {error && !loading && (
-          <div className="py-4 text-center space-y-1">
-            <p className="text-sm text-destructive">SHAP computation failed: {error}</p>
+          <div className="space-y-1 py-4 text-center">
+            <p className="text-sm font-medium text-destructive">
+              Unable to load SHAP contributions
+            </p>
+            <p className="text-xs text-destructive">{error}</p>
             <p className="text-xs text-muted-foreground">
-              Ensure model artifacts exist at{" "}
-              <code className="bg-muted px-1 rounded">data/models/{selectedModel}/</code>. Run{" "}
-              <code className="bg-muted px-1 rounded">make forecast-generate</code> to persist model
-              weights. Verify the <code className="bg-muted px-1 rounded">shap</code> library is
-              installed for LightGBM analysis.
+              Per-DFU SHAP uses the active trained LightGBM artifact and canonical sales history. If
+              either is reported stale or missing, prepare the LightGBM model in Forecasting, then
+              retry this DFU.
             </p>
           </div>
         )}
