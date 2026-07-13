@@ -17,7 +17,6 @@ import { fetchPipelineConfig, pipelineConfigKeys } from "@/api/queries/unified-m
 import {
   fetchBacktestSummary,
   fetchTrainingStatus,
-  fetchSnapshotRosterReadiness,
   fetchStagingSummary,
   submitGenerateForecast,
   fetchPromotionStatus,
@@ -57,7 +56,6 @@ import { ModelReadinessCard } from "./ModelReadinessCard";
 import { AlgorithmSelectionCard } from "./AlgorithmSelectionCard";
 import { GenerateForecastCard } from "./GenerateForecastCard";
 import { RecentJobsCard } from "./RecentJobsCard";
-import { useForecastPublishPreparation } from "./useForecastPublishPreparation";
 import { useForecastTraining } from "./useForecastTraining";
 
 const EMPTY_JOBS: Job[] = [];
@@ -108,6 +106,19 @@ export function generationFailureMessage(modelId: string): string {
   return `${modelLabel(modelId)} generation failed. Open Jobs for details.`;
 }
 
+export function productionPromotionBlockedReason(
+  isForecastRunning: boolean,
+  candidateStaged: boolean
+): string | undefined {
+  if (isForecastRunning) {
+    return "Wait for the active forecast generation job to finish before promoting.";
+  }
+  if (!candidateStaged) {
+    return "Promote the selected generated candidate to staging first.";
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -128,7 +139,6 @@ export function ForecastPanel() {
   const [promotingModelId, setPromotingModelId] = useState<string | null>(null);
   const [stagingModelId, setStagingModelId] = useState<string | null>(null);
   const { isTraining, trainingModelId, train, trainAll } = useForecastTraining();
-  const { isPreparingPublish, preparePublish } = useForecastPublishPreparation();
 
   const isGenerating = generatingModelId !== null;
 
@@ -154,12 +164,6 @@ export function ForecastPanel() {
     queryFn: fetchTrainingStatus,
     staleTime: 30_000,
     refetchInterval: isTraining ? 5_000 : false,
-  });
-
-  const { data: snapshotReadiness } = useQuery({
-    queryKey: backtestMgmtKeys.snapshotRosterReadiness,
-    queryFn: fetchSnapshotRosterReadiness,
-    staleTime: 60_000,
   });
 
   // Staging summary (generated forecast staging data per model)
@@ -302,14 +306,10 @@ export function ForecastPanel() {
   const selectedCandidateStaged = Boolean(
     selectedCandidateGenerated && (selectedCandidate?.promotion_eligible || isSelectedPromoted)
   );
-  const promotionBlockedReason = isForecastRunning
-    ? "Wait for the active forecast generation job to finish before promoting."
-    : snapshotReadiness?.ready !== true
-      ? (snapshotReadiness?.stale_reason ??
-        "Prepare the current champion plus exact top-three evidence before promoting.")
-      : !selectedCandidateStaged
-        ? "Promote the selected generated candidate to staging first."
-        : undefined;
+  const promotionBlockedReason = productionPromotionBlockedReason(
+    isForecastRunning,
+    selectedCandidateStaged
+  );
 
   // -- Handlers ------------------------------------------------------------
 
@@ -361,13 +361,6 @@ export function ForecastPanel() {
   }
 
   async function handlePromote(modelId: string) {
-    if (snapshotReadiness?.ready !== true) {
-      toast.error(
-        snapshotReadiness?.stale_reason ??
-          "Prepare the current champion plus exact top-three evidence before promoting."
-      );
-      return;
-    }
     const candidate = staging[modelId];
     if (
       !candidate?.source_run_id ||
@@ -563,14 +556,11 @@ export function ForecastPanel() {
         championDfuCount={championDfuCount}
         isChampionPromoted={isChampionPromoted}
         activeProductionModelId={promotedModel?.model_id ?? null}
-        snapshotReadiness={snapshotReadiness}
-        isPreparingPublish={isPreparingPublish}
         onTrain={train}
         onTrainAll={trainAll}
         onGenerate={handleGenerate}
         onGenerateAll={handleGenerateAll}
         generatableCount={generatableAlgos.length}
-        onPreparePublish={preparePublish}
       />
 
       {/* ══════ STEP 2: Algorithm Selection ══════ */}

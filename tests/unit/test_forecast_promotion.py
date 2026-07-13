@@ -29,20 +29,18 @@ from common.services.forecast_promotion import (
     ForecastGenerationManifest,
     ForecastStagingResult,
     PromotionConflictError,
-    _archive_outgoing_release,
     _candidate_coverage,
     _candidate_quality_report,
     _current_release_evidence,
+    _lock_active_release_for_replacement,
     _validate_active_model_artifacts,
     _validate_direct_model_lineage,
     _validate_governed_champion_source,
-    _validate_incoming_snapshot_roster,
     _validate_tree_model_lineage,
     promote_forecast_run,
     stage_forecast_run,
     validate_generation_manifest,
 )
-from common.services.forecast_snapshot_validation import SnapshotContenderStaleError
 
 RUN_ID = UUID("00000000-0000-0000-0000-000000000111")
 PRODUCTION_RUN_ID = UUID("00000000-0000-0000-0000-000000000222")
@@ -598,7 +596,11 @@ def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run(
         executed.append((" ".join(sql.split()), params))
         if "INSERT INTO model_promotion_log" in sql:
             cur.fetchone.return_value = (44,)
-        cur.rowcount = 1 if "UPDATE forecast_generation_run" in sql else 120
+        cur.rowcount = (
+            1
+            if "UPDATE forecast_generation_run" in sql or "UPDATE model_promotion_log" in sql
+            else 120
+        )
 
     cur.execute.side_effect = capture
 
@@ -612,12 +614,16 @@ def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run(
         ),
         patch("common.services.forecast_promotion._validate_candidate_evidence") as validate,
         patch(
-            "common.services.forecast_promotion._validate_incoming_snapshot_roster",
-            return_value={"roster_models": 4, "ready_contenders": 3},
-        ),
-        patch(
-            "common.services.forecast_promotion._archive_outgoing_release",
-            return_value=(None, None, None),
+            "common.services.forecast_promotion._lock_active_release_for_replacement",
+            return_value=(
+                23,
+                {
+                    "promotion_id": 23,
+                    "plan_version": "2026-07",
+                    "model_id": "champion",
+                    "status": "replaced",
+                },
+            ),
         ),
         patch("common.services.forecast_promotion.compute_staging_payload_stats") as staging_stats,
         patch(
@@ -655,6 +661,10 @@ def test_promotion_preflights_before_mutation_and_scopes_copy_to_source_run(
         i for i, sql in enumerate(sqls) if sql.startswith("INSERT INTO model_promotion_log")
     )
     assert audit_index < delete_index < insert_index
+    assert any(
+        sql.startswith("UPDATE model_promotion_log SET is_active = FALSE") and params == (23,)
+        for sql, params in executed
+    )
     insert_sql, insert_params = executed[insert_index]
     assert "s.run_id = %s::uuid" in insert_sql
     assert "s.generation_purpose = 'release_candidate'" in insert_sql
@@ -687,12 +697,8 @@ def test_post_copy_checksum_mismatch_rolls_back_transaction():
         ),
         patch("common.services.forecast_promotion._validate_candidate_evidence"),
         patch(
-            "common.services.forecast_promotion._validate_incoming_snapshot_roster",
-            return_value={"roster_models": 4, "ready_contenders": 3},
-        ),
-        patch(
-            "common.services.forecast_promotion._archive_outgoing_release",
-            return_value=(None, None, None),
+            "common.services.forecast_promotion._lock_active_release_for_replacement",
+            return_value=(None, None),
         ),
         patch("common.services.forecast_promotion.compute_staging_payload_stats") as staging_stats,
         patch(
@@ -725,144 +731,22 @@ def test_post_copy_checksum_mismatch_rolls_back_transaction():
     assert tx.__exit__.call_args.args[0] is PromotionConflictError
 
 
-def test_pre_manifest_outgoing_release_is_retired_with_checksum_audit():
+def test_active_release_lock_allows_same_month_replacement():
     cur = MagicMock()
-    production_run_id = UUID("00000000-0000-0000-0000-000000000333")
-    cur.fetchone.side_effect = [
-        (22, "2026-06", production_run_id, None, 120, 10),
-        (120, 10, 120),
-    ]
-    legacy_stats = MagicMock(
-        checksum="d" * 64,
-        row_count=120,
-        dfu_count=10,
-        source_model_count=3,
-    )
+    cur.fetchone.return_value = (23, "2026-07", "champion", RUN_ID, PRODUCTION_RUN_ID)
 
-    with (
-        patch(
-            "common.services.forecast_promotion.archive_snapshot_in_transaction",
-            side_effect=ValueError("missing roster"),
-        ),
-        patch(
-            "common.services.forecast_promotion.compute_production_payload_stats",
-            return_value=legacy_stats,
-        ),
-    ):
-        outgoing_id, archive_checksum, report = _archive_outgoing_release(
-            cur,
-            incoming_planning_month=date(2026, 7, 1),
-        )
+    outgoing_id, report = _lock_active_release_for_replacement(cur)
 
-    assert outgoing_id == 22
-    assert archive_checksum is None
+    assert outgoing_id == 23
     assert report == {
-        "promotion_id": 22,
-        "plan_version": "2026-06",
-        "status": "legacy_retired_unarchived",
-        "reason": "pre_manifest_release_without_complete_snapshot_roster",
-        "production_run_id": str(production_run_id),
-        "row_count": 120,
-        "dfu_count": 10,
-        "production_checksum": "d" * 64,
+        "promotion_id": 23,
+        "plan_version": "2026-07",
+        "model_id": "champion",
+        "source_run_id": str(RUN_ID),
+        "production_run_id": str(PRODUCTION_RUN_ID),
+        "status": "replaced",
     }
-    sql_statements = [call.args[0] for call in cur.execute.call_args_list]
-    assert any("SAVEPOINT outgoing_forecast_archive" in sql for sql in sql_statements)
-    assert any("ROLLBACK TO SAVEPOINT outgoing_forecast_archive" in sql for sql in sql_statements)
-
-
-def test_modern_outgoing_release_cannot_use_legacy_retirement_path():
-    cur = MagicMock()
-    cur.fetchone.return_value = (
-        23,
-        "2026-06",
-        PRODUCTION_RUN_ID,
-        RUN_ID,
-        120,
-        10,
-    )
-
-    with (
-        patch(
-            "common.services.forecast_promotion.archive_snapshot_in_transaction",
-            side_effect=ValueError("missing roster"),
-        ),
-        pytest.raises(PromotionConflictError) as exc_info,
-    ):
-        _archive_outgoing_release(
-            cur,
-            incoming_planning_month=date(2026, 7, 1),
-        )
-
-    assert exc_info.value.code == "outgoing_archive_incomplete"
-
-
-def test_incoming_release_requires_complete_current_contract_snapshot_roster():
-    cur = MagicMock()
-    cur.fetchall.return_value = [
-        ("champion", "champion", None, None, None),
-        ("nhits", "contender", 1, 102, UUID("00000000-0000-0000-0000-000000000121")),
-        ("nbeats", "contender", 2, 103, UUID("00000000-0000-0000-0000-000000000122")),
-        ("mstl", "contender", 3, 104, UUID("00000000-0000-0000-0000-000000000123")),
-    ]
-
-    with patch(
-        "common.services.forecast_promotion.validate_ready_snapshot_contender"
-    ) as validate:
-        _validate_incoming_snapshot_roster(cur, planning_month=date(2026, 7, 1))
-
-    sql, params = cur.execute.call_args.args
-    assert "forecast_snapshot_roster" in sql
-    assert params == (date(2026, 7, 1),)
-    assert validate.call_count == 3
-
-
-@pytest.mark.parametrize(
-    "roster_rows",
-    [
-        [],
-        [
-            ("champion", "champion", None, None, None),
-            ("nhits", "contender", 1, 102, RUN_ID),
-            ("nbeats", "contender", 2, 103, PRODUCTION_RUN_ID),
-        ],
-        [
-            ("champion", "champion", None, None, None),
-            ("nhits", "contender", 1, 102, RUN_ID),
-            ("nbeats", "contender", 3, 103, PRODUCTION_RUN_ID),
-            ("mstl", "contender", 3, 104, UUID("00000000-0000-0000-0000-000000000333")),
-        ],
-    ],
-)
-def test_incomplete_or_old_contract_incoming_roster_blocks_publish(roster_rows):
-    cur = MagicMock()
-    cur.fetchall.return_value = roster_rows
-
-    with pytest.raises(PromotionConflictError) as exc_info:
-        _validate_incoming_snapshot_roster(cur, planning_month=date(2026, 7, 1))
-
-    assert exc_info.value.code == "snapshot_roster_not_ready"
-
-
-def test_stale_ready_contender_blocks_publish():
-    cur = MagicMock()
-    cur.fetchall.return_value = [
-        ("champion", "champion", None, None, None),
-        ("nhits", "contender", 1, 102, RUN_ID),
-        ("nbeats", "contender", 2, 103, PRODUCTION_RUN_ID),
-        ("mstl", "contender", 3, 104, UUID("00000000-0000-0000-0000-000000000333")),
-    ]
-
-    with (
-        patch(
-            "common.services.forecast_promotion.validate_ready_snapshot_contender",
-            side_effect=SnapshotContenderStaleError("sales lineage is stale"),
-        ),
-        pytest.raises(PromotionConflictError) as exc_info,
-    ):
-        _validate_incoming_snapshot_roster(cur, planning_month=date(2026, 7, 1))
-
-    assert exc_info.value.code == "snapshot_roster_not_ready"
+    assert "FOR UPDATE" in cur.execute.call_args.args[0]
 
 
 def test_candidate_quality_is_experiment_scoped_and_passes_common_cohort_policy():

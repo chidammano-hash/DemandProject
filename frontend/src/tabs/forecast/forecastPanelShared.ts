@@ -12,8 +12,6 @@ import { isForecastModelId } from "@/lib/model-labels";
 export const forecastPanelKeys = {
   versions: ["forecast-panel", "versions"] as const,
   jobs: (offset: number) => ["forecast-panel", "jobs", offset] as const,
-  publishPipeline: (pipelineId: string) =>
-    ["forecast-panel", "publish-pipeline", pipelineId] as const,
 };
 
 export const STALE = {

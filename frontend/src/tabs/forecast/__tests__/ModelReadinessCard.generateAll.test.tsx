@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ModelReadinessCard } from "../ModelReadinessCard";
 import type { ForecastAlgorithm } from "../forecastPanelShared";
-import type { SnapshotRosterReadiness, StagingSummary } from "@/api/queries/backtest-management";
+import type { StagingSummary } from "@/api/queries/backtest-management";
 
 const treeAlgo: ForecastAlgorithm = {
   id: "lgbm_cluster",
@@ -39,26 +39,9 @@ const readyCandidate: StagingSummary = {
   max_forecast_month: "2026-12-01",
 };
 
-const readySnapshotRoster: SnapshotRosterReadiness = {
-  planning_month: "2026-07-01",
-  ready: true,
-  champion_ready: true,
-  roster_model_count: 4,
-  ready_contender_count: 3,
-  required_contender_count: 3,
-  contenders: [
-    { model_id: "lgbm_cluster", rank: 1, ready: true, stale_reason: null },
-    { model_id: "nhits", rank: 2, ready: true, stale_reason: null },
-    { model_id: "mstl", rank: 3, ready: true, stale_reason: null },
-  ],
-  stale_reason: null,
-  action_pipeline: "forecast-publish",
-};
-
 function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCard>> = {}) {
   const onGenerateAll = vi.fn();
   const onTrainAll = vi.fn();
-  const onPreparePublish = vi.fn();
   const base: React.ComponentProps<typeof ModelReadinessCard> = {
     forecastAlgos: [treeAlgo],
     trainingStatus: {
@@ -87,17 +70,14 @@ function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCar
     championDfuCount: 0,
     isChampionPromoted: false,
     activeProductionModelId: null,
-    snapshotReadiness: readySnapshotRoster,
-    isPreparingPublish: false,
     onTrain: () => {},
     onTrainAll,
     onGenerate: () => {},
     onGenerateAll,
     generatableCount: 1,
-    onPreparePublish,
   };
   render(<ModelReadinessCard {...base} {...props} />);
-  return { onGenerateAll, onTrainAll, onPreparePublish };
+  return { onGenerateAll, onTrainAll };
 }
 
 describe("ModelReadinessCard — Generate All", () => {
@@ -164,50 +144,13 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.queryByText("Diagnostic only")).not.toBeInTheDocument();
   });
 
-  it("disables promotion and offers one canonical preparation action when the roster is stale", () => {
-    const { onPreparePublish } = renderCard({
-      staging: { lgbm_cluster: readyCandidate },
-      snapshotReadiness: {
-        ...readySnapshotRoster,
-        ready: false,
-        ready_contender_count: 2,
-        stale_reason: "One contender is stale.",
-      },
-    });
+  it("states that Period Roll does not block the first production release", () => {
+    renderCard({ staging: { lgbm_cluster: readyCandidate } });
 
-    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
-    expect(screen.getByText("Champion + 2/3 contenders ready")).toBeInTheDocument();
-    const action = screen.getByRole("button", { name: "Prepare Release" });
-    fireEvent.click(action);
-    expect(onPreparePublish).toHaveBeenCalledWith("forecast-publish");
-    expect(screen.getAllByRole("button", { name: "Prepare Release" })).toHaveLength(1);
-  });
-
-  it("directs the user to select a Champion experiment instead of auto-assigning", () => {
-    const { onPreparePublish } = renderCard({
-      snapshotReadiness: {
-        ...readySnapshotRoster,
-        ready: false,
-        champion_ready: false,
-        stale_reason: "Run the named Champion Refresh pipeline.",
-        action_pipeline: "champion-refresh",
-      },
-    });
-
+    expect(screen.getByText("Ready for first production release")).toBeInTheDocument();
     expect(
-      screen.getByText(/go to champion and select a completed experiment to assign/i)
+      screen.getByText(/Period Roll is independent and never blocks this action/i)
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Assign Champion" })).not.toBeInTheDocument();
-    expect(onPreparePublish).not.toHaveBeenCalled();
-  });
-
-  it("shows pipeline progress without allowing duplicate preparation", () => {
-    renderCard({
-      snapshotReadiness: { ...readySnapshotRoster, ready: false },
-      isPreparingPublish: true,
-    });
-
-    expect(screen.getByRole("button", { name: "Preparing Release..." })).toBeDisabled();
   });
 
   it("does not report cleaned contender staging as a failure after publication", () => {
@@ -216,20 +159,11 @@ describe("ModelReadinessCard — Generate All", () => {
       activeProductionModelId: "champion",
       championDfuCount: 12_476,
       generatableCount: 5,
-      snapshotReadiness: {
-        ...readySnapshotRoster,
-        ready: false,
-        ready_contender_count: 0,
-        stale_reason: "Snapshot contender evidence failed an integrity check.",
-        action_pipeline: null,
-      },
     });
 
     expect(screen.getByText("Production release published")).toBeInTheDocument();
     expect(
       screen.getByText(/Generate All creates 5 staged comparison forecasts/)
     ).toBeInTheDocument();
-    expect(screen.queryByText("Champion + 0/3 contenders ready")).not.toBeInTheDocument();
-    expect(screen.queryByText(/failed an integrity check/)).not.toBeInTheDocument();
   });
 });

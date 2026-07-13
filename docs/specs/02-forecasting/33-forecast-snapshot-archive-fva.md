@@ -41,10 +41,10 @@ Without an archive, the moment the July cycle regenerates staging and re-promote
    On the live June generation, 22.6% of series (48,233 of 213,578) have a first forecast month *before* June because their history ends early, so a June-dated row can be true horizon 1 for one DFU and horizon 9 for another.
    The archive therefore carries `horizon_months` verbatim so the two are never conflated, and snapshot lag curves must not be presented as equivalent to the backtest natural-lag curves of `agg_accuracy_lag_archive` (see 6.4).
 4. **Archive and cleanup are separate workflows.**
-   Archiving is a non-destructive monthly snapshot and is also a mandatory step
-   inside release replacement. Cleanup remains an independently triggered purge,
-   gated on verifying the archive exists and reconciles, so promotion never
-   implies staging deletion.
+   Archiving is a non-destructive monthly Period Roll control. Cleanup remains
+   an independently triggered purge, gated on verifying the archive exists and
+   reconciles. Production replacement neither requires the archive nor implies
+   staging deletion.
 5. **Real accuracy, not simulated, and honestly labeled.**
    Snapshot accuracy joins archived forward forecasts to actuals as they land at DFU grain. Each contender-versus-champion comparison is recomputed on its common DFU set, because the selected models can have different coverage.
 6. **Reuse the platform rails.**
@@ -263,24 +263,23 @@ intersection rather than fabricating forecasts for uncovered DFUs.
 - `--dry-run` reports counts for exactly the four roster models. `--overwrite`
   is rejected and never replaces archive values.
 
-### 4.3 Job, scheduling, and the archive-before-replacement invariant
+### 4.3 Job, scheduling, and independent release/archive controls
 
 - Register JobTypeDef `prepare_forecast_snapshot_contenders` (group `forecast`, subprocess style) and `archive_forecast_snapshot` (params `{record_month: None, dry_run: False, overwrite: False}`).
-- **The hard boundary is promotion:** `promote_forecast_run()` archives and
-  reconciles the outgoing champion plus three frozen contenders in the same
-  `SERIALIZABLE` transaction, before demotion or production delete. An archive
-  failure rolls back the entire replacement. `forecast-publish` therefore no
-  longer carries a leading archive step; it generates the new release candidate
-  and its three snapshot contenders, while transactional promotion—not job or
-  calendar timing—enforces the archive invariant. The standalone archive job,
-  snapshot bundle, and disabled monthly schedule remain available for explicit
-  preflight.
+- **Promotion and Period Roll are separate controls.** `promote_forecast_run()`
+  validates one exact staged candidate and atomically replaces the sole active
+  production release; it neither reads nor writes snapshot tables. The
+  `forecast-publish` pipeline final-refits persisted models and generates the
+  candidate only. Period Roll owns contender preparation, immutable monthly
+  archival, KPI scoring, and reconciliation-gated cleanup. Snapshot failures
+  therefore cannot disable production replacement, and promotion failures cannot
+  partially mutate the monthly archive.
 - Generation no longer destroys older staging runs. Normal champion generation
   creates one coherent `release_candidate`; contender preparation creates three
   separate `snapshot_contender` runs. Their purposes prevent either workflow
   from selecting or deleting the other's rows.
-- Promotion requires the incoming current-month roster to contain `champion`
-  plus contender ranks 1-3. It independently recomputes each ready contender's
+- Period Roll requires the current-month roster to contain `champion` plus
+  contender ranks 1-3. It independently recomputes each ready contender's
   payload checksum/counts and exact lag set, then revalidates the current sales,
   generation-config, direct/tree/neural artifact, and training-cohort lineage
   described in 4.1. An interrupted legacy partial roster or a stale complete
@@ -453,9 +452,8 @@ forecast_snapshot:
    on both supported sales sources for non-null type-1 population/history reads.
 6. Add `forecast_snapshot_roster` and `fact_forecast_snapshot` to the `db-truncate-data` Makefile transaction and to the verbatim SQL block in `docs/operations-manual/11-maintenance-troubleshooting.md`; document `forecast-snapshot-contenders`, `forecast-archive`, and `forecast-staging-clean` in that doc's Data Cleanup section.
 7. Register the contender-preparation and archive job types; add Make targets;
-   append contender preparation to `forecast-publish`; keep archive in the
-   explicit snapshot bundle/optional disabled schedule because promotion now
-   owns the mandatory archive boundary.
+   keep contender preparation, archive, and reconciliation cleanup in the
+   explicit snapshot bundle and Period Roll pipeline, separate from promotion.
 8. Docs: `docs/ARCHITECTURE.md` fact-table catalog and this implemented spec in
    `docs/specs/README.md`.
 

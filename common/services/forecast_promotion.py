@@ -62,12 +62,6 @@ from common.services.forecast_release import (
     ReleaseReadinessThresholds,
     evaluate_quality_checks,
 )
-from common.services.forecast_snapshot import archive_snapshot_in_transaction
-from common.services.forecast_snapshot_validation import (
-    SnapshotContenderIntegrityError,
-    SnapshotContenderStaleError,
-    validate_ready_snapshot_contender,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -1028,204 +1022,27 @@ def _validate_candidate_evidence(
     return checks
 
 
-def _validate_incoming_snapshot_roster(
-    cur: Any,
-    *,
-    planning_month: date,
-) -> dict[str, Any]:
-    """Require archive-ready contender evidence before publishing a new plan."""
+def _lock_active_release_for_replacement(cur: Any) -> tuple[int | None, dict[str, Any] | None]:
+    """Lock and describe the active release without coupling replacement to Period Roll."""
     cur.execute(
-        """SELECT model_id, snapshot_role, contender_rank,
-                  source_backtest_run_id, generation_run_id
-           FROM forecast_snapshot_roster
-           WHERE record_month = %s
-           ORDER BY CASE WHEN snapshot_role = 'champion' THEN 0 ELSE 1 END,
-                    contender_rank NULLS FIRST""",
-        (planning_month,),
-    )
-    rows = cur.fetchall()
-    champion_rows = [
-        row
-        for row in rows
-        if row[0] == "champion"
-        and row[1] == "champion"
-        and row[2] is None
-        and row[3] is None
-        and row[4] is None
-    ]
-    contenders = [row for row in rows if row[1] == "contender"]
-    if (
-        len(rows) != 4
-        or len(champion_rows) != 1
-        or [int(row[2] or 0) for row in contenders] != [1, 2, 3]
-        or any(
-            row[0] == "champion" or row[3] is None or row[4] is None
-            for row in contenders
-        )
-    ):
-        raise PromotionConflictError(
-            "snapshot_roster_not_ready",
-            "Prepare the current champion plus three canonical snapshot contenders "
-            "before publishing this release.",
-        )
-    try:
-        for model_id, _, _, backtest_run_id, run_id in contenders:
-            validate_ready_snapshot_contender(
-                cur,
-                run_id=run_id,
-                model_id=str(model_id),
-                record_month=planning_month,
-                source_backtest_run_id=int(backtest_run_id),
-            )
-    except (SnapshotContenderIntegrityError, SnapshotContenderStaleError) as exc:
-        raise PromotionConflictError(
-            "snapshot_roster_not_ready",
-            "A snapshot contender is incomplete or stale; prepare the current "
-            "champion plus three contenders again before publishing.",
-        ) from exc
-    return {
-        "record_month": planning_month.isoformat(),
-        "roster_models": len(rows),
-        "ready_contenders": len(contenders),
-        "generator_contract_version": GENERATOR_CONTRACT_VERSION,
-    }
-
-
-def _archive_outgoing_release(
-    cur: Any,
-    *,
-    incoming_planning_month: date,
-) -> tuple[int | None, str | None, dict[str, Any] | None]:
-    cur.execute(
-        """SELECT id, plan_version, production_run_id, source_run_id,
-                  total_rows, dfu_count
+        """SELECT id, plan_version, model_id, source_run_id, production_run_id
            FROM model_promotion_log
            WHERE is_active = TRUE
            ORDER BY promoted_at DESC, id DESC
            LIMIT 1
            FOR UPDATE"""
     )
-    active = cur.fetchone()
-    if active is None:
-        return None, None, None
-    (
-        promotion_id,
-        plan_version,
-        production_run_id,
-        source_run_id,
-        expected_rows,
-        expected_dfus,
-    ) = active
-    try:
-        record_month = date.fromisoformat(f"{plan_version}-01")
-    except (TypeError, ValueError) as exc:
-        raise PromotionConflictError(
-            "outgoing_archive_incomplete",
-            "The outgoing release has no archive-compatible calendar version.",
-        ) from exc
-    if record_month == incoming_planning_month:
-        raise PromotionConflictError(
-            "concurrent_release_conflict",
-            "A second release in the same planning month requires a new snapshot grain.",
-        )
-    if production_run_id is None:
-        raise PromotionConflictError(
-            "outgoing_archive_incomplete",
-            "The outgoing release has no verifiable production run lineage.",
-        )
-    production_run_uuid = UUID(str(production_run_id))
-    if source_run_id is None:
-        # Migration 203 can identify one pre-manifest active production run,
-        # but a historical contender roster may never have existed. Try the
-        # normal archive inside a savepoint; only that proven legacy shape may
-        # fall back to an audited, checksum-stamped retirement.
-        cur.execute("SAVEPOINT outgoing_forecast_archive")
-        try:
-            archive_checksum = archive_snapshot_in_transaction(
-                cur,
-                record_month=record_month,
-                production_run_id=production_run_uuid,
-                source_promotion_id=int(promotion_id),
-            )
-        except ValueError as exc:
-            cur.execute("ROLLBACK TO SAVEPOINT outgoing_forecast_archive")
-            cur.execute("RELEASE SAVEPOINT outgoing_forecast_archive")
-            legacy_stats = compute_production_payload_stats(cur, production_run_uuid)
-            cur.execute(
-                """SELECT COUNT(*)::integer,
-                          COUNT(DISTINCT (item_id, loc))::integer,
-                          COUNT(*) FILTER (
-                              WHERE promotion_log_id = %s
-                                AND lineage_status = 'legacy_unverified'
-                                AND source_run_id IS NULL
-                          )::integer
-                   FROM fact_production_forecast
-                   WHERE run_id = %s::uuid""",
-                (int(promotion_id), str(production_run_uuid)),
-            )
-            linkage = cur.fetchone()
-            if linkage is None:
-                linkage = (0, 0, 0)
-            actual_rows, actual_dfus, linked_rows = (int(value or 0) for value in linkage)
-            if (
-                legacy_stats.row_count <= 0
-                or legacy_stats.row_count != int(expected_rows or 0)
-                or legacy_stats.dfu_count != int(expected_dfus or 0)
-                or actual_rows != legacy_stats.row_count
-                or actual_dfus != legacy_stats.dfu_count
-                or linked_rows != legacy_stats.row_count
-            ):
-                raise PromotionConflictError(
-                    "outgoing_archive_incomplete",
-                    "The pre-manifest outgoing release does not have verifiable legacy lineage.",
-                ) from exc
-            report = {
-                "promotion_id": int(promotion_id),
-                "plan_version": str(plan_version),
-                "status": "legacy_retired_unarchived",
-                "reason": "pre_manifest_release_without_complete_snapshot_roster",
-                "production_run_id": str(production_run_uuid),
-                "row_count": legacy_stats.row_count,
-                "dfu_count": legacy_stats.dfu_count,
-                "production_checksum": legacy_stats.checksum,
-            }
-            logger.warning(
-                "Retiring pre-manifest release %s without an FVA archive; "
-                "checksum evidence is recorded on the replacement",
-                promotion_id,
-            )
-            return int(promotion_id), None, report
-        else:
-            cur.execute("RELEASE SAVEPOINT outgoing_forecast_archive")
-    else:
-        try:
-            archive_checksum = archive_snapshot_in_transaction(
-                cur,
-                record_month=record_month,
-                production_run_id=production_run_uuid,
-                source_promotion_id=int(promotion_id),
-            )
-        except ValueError as exc:
-            raise PromotionConflictError(
-                "outgoing_archive_incomplete",
-                "The outgoing champion-plus-three archive is incomplete or does not reconcile.",
-            ) from exc
-    cur.execute(
-        """UPDATE model_promotion_log
-           SET archive_checksum = %s, archived_at = NOW()
-           WHERE id = %s""",
-        (archive_checksum, promotion_id),
-    )
-    return (
-        int(promotion_id),
-        archive_checksum,
-        {
-            "promotion_id": int(promotion_id),
-            "plan_version": str(plan_version),
-            "status": "archived",
-            "archive_checksum": archive_checksum,
-        },
-    )
+    row = cur.fetchone()
+    if row is None:
+        return None, None
+    return int(row[0]), {
+        "promotion_id": int(row[0]),
+        "plan_version": str(row[1]),
+        "model_id": str(row[2]),
+        "source_run_id": str(row[3]) if row[3] is not None else None,
+        "production_run_id": str(row[4]) if row[4] is not None else None,
+        "status": "replaced",
+    }
 
 
 def promote_forecast_run(
@@ -1238,7 +1055,7 @@ def promote_forecast_run(
     notes: str | None,
     policy: dict[str, Any],
 ) -> PromotionResult:
-    """Atomically validate, archive the outgoing plan, and publish one source run."""
+    """Atomically validate and publish one source run as the sole active release."""
     required_months = int(policy["required_months"])
     production_run_id = UUID(str(uuid.uuid4()))
     plan_version = planning_month.strftime("%Y-%m")
@@ -1276,14 +1093,7 @@ def promote_forecast_run(
                 policy=policy,
                 release_stats=release_stats,
             )
-            gate_report["incoming_snapshot_roster"] = _validate_incoming_snapshot_roster(
-                cur,
-                planning_month=planning_month,
-            )
-            outgoing_id, archive_checksum, outgoing_report = _archive_outgoing_release(
-                cur,
-                incoming_planning_month=planning_month,
-            )
+            outgoing_id, outgoing_report = _lock_active_release_for_replacement(cur)
             if outgoing_report is not None:
                 gate_report["outgoing_release"] = outgoing_report
 
@@ -1402,7 +1212,7 @@ def promote_forecast_run(
         source_run_id=source_run_id,
         production_run_id=production_run_id,
         candidate_checksum=release_stats.checksum,
-        outgoing_archive_checksum=archive_checksum,
+        outgoing_archive_checksum=None,
         rows_promoted=rows_promoted,
         dfu_count=release_stats.dfu_count,
     )

@@ -70,14 +70,13 @@ pipelines:
   forecast-publish:
     description: >-
       Final-refit LightGBM, N-HiTS, and N-BEATS on full history, then generate
-      one immutable champion release candidate and its top-three snapshot
-      contenders. Review the returned source_run_id, then promote that exact
-      run; promotion archives the outgoing release before replacement.
+      one immutable champion release candidate. Review the returned source_run_id,
+      stage that exact run, then promote it to replace the sole active production
+      release. Snapshot preparation and archival run independently in period-roll.
     steps:
       - job_type: train_production_model
         params: {all_models: true}
       - job_type: generate_production_forecast
-      - job_type: prepare_forecast_snapshot_contenders
 
   forecast-snapshot-bundle:
     description: >-
@@ -148,6 +147,5 @@ pipelines:
       - job_type: train_production_model
         params: {all_models: true}
       - job_type: generate_production_forecast
-      - job_type: prepare_forecast_snapshot_contenders
       - job_type: refresh_all_mvs
         params: {skip_heavy: true}

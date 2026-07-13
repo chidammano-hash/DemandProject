@@ -51,10 +51,13 @@ class TestPresetConfig:
         ]
         assert steps[-1]["params"] == {"dry_run": False}
 
-    def test_generation_pipelines_do_not_archive_outside_promotion(self):
+    def test_generation_pipelines_leave_snapshot_work_to_period_roll(self):
         for name in ("forecast-publish", "full-refresh"):
             steps = preset_steps(get_pipeline_preset(name))
-            assert steps[0]["job_type"] != "archive_forecast_snapshot"
+            job_types = [step["job_type"] for step in steps]
+            assert "prepare_forecast_snapshot_contenders" not in job_types
+            assert "archive_forecast_snapshot" not in job_types
+            assert "cleanup_forecast_staging" not in job_types
 
     def test_model_refresh_stops_after_five_governed_backtests(self):
         steps = preset_steps(get_pipeline_preset("model-refresh"))

@@ -4,8 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { submitTraining } from "@/api/queries/backtest-management";
-import { fetchJobDetail, fetchJobs, runNamedPipeline } from "@/api/queries/jobs";
-import { useForecastPublishPreparation } from "../useForecastPublishPreparation";
+import { fetchJobDetail } from "@/api/queries/jobs";
 import { useForecastTraining } from "../useForecastTraining";
 
 vi.mock("@/api/queries/backtest-management", async (importOriginal) => {
@@ -18,8 +17,6 @@ vi.mock("@/api/queries/jobs", async (importOriginal) => {
   return {
     ...original,
     fetchJobDetail: vi.fn(),
-    fetchJobs: vi.fn(),
-    runNamedPipeline: vi.fn(),
   };
 });
 
@@ -47,7 +44,6 @@ describe("forecast readiness workflow hooks", () => {
       removeItem: (key: string) => values.delete(key),
     });
     vi.clearAllMocks();
-    vi.mocked(fetchJobs).mockResolvedValue({ jobs: [], total: 0, limit: 100, offset: 0 });
     vi.mocked(fetchJobDetail).mockResolvedValue({
       job_id: "job-train",
       job_type: "train_production_model",
@@ -63,40 +59,6 @@ describe("forecast readiness workflow hooks", () => {
       progress_msg: "Training",
       pid: null,
     });
-  });
-
-  it("launches the canonical publish pipeline once and enters polling state", async () => {
-    vi.mocked(runNamedPipeline).mockResolvedValue({
-      pipeline_id: "pipe-1",
-      name: "forecast-publish",
-      status: "running",
-      steps: 3,
-    });
-    const { result } = renderHook(() => useForecastPublishPreparation(), {
-      wrapper: createWrapper(),
-    });
-
-    await act(async () => result.current.preparePublish());
-
-    expect(runNamedPipeline).toHaveBeenCalledWith("forecast-publish");
-    expect(result.current.isPreparingPublish).toBe(true);
-  });
-
-  it("launches champion-refresh when champion lineage is the readiness blocker", async () => {
-    vi.mocked(runNamedPipeline).mockResolvedValue({
-      pipeline_id: "pipe-champion",
-      name: "champion-refresh",
-      status: "running",
-      steps: 1,
-    });
-    const { result } = renderHook(() => useForecastPublishPreparation(), {
-      wrapper: createWrapper(),
-    });
-
-    await act(async () => result.current.preparePublish("champion-refresh"));
-
-    expect(runNamedPipeline).toHaveBeenCalledWith("champion-refresh");
-    expect(result.current.isPreparingPublish).toBe(true);
   });
 
   it("tracks the exact bulk training job instead of trusting old metadata", async () => {

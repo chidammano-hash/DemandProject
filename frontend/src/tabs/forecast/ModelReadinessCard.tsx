@@ -5,23 +5,10 @@
  * selection and promotion live in Steps 2-3 so every candidate follows the
  * same explicit workflow.
  */
-import {
-  Loader2,
-  CheckCircle2,
-  Dumbbell,
-  BarChart3,
-  Crown,
-  RotateCcw,
-  ShieldCheck,
-  AlertTriangle,
-} from "lucide-react";
+import { Loader2, CheckCircle2, Dumbbell, BarChart3, Crown, RotateCcw } from "lucide-react";
 
 import type { ChampionExperiment } from "@/api/queries/champion-experiments";
-import type {
-  TrainingStatusMap,
-  StagingSummaryMap,
-  SnapshotRosterReadiness,
-} from "@/api/queries/backtest-management";
+import type { TrainingStatusMap, StagingSummaryMap } from "@/api/queries/backtest-management";
 import { modelLabel, MODEL_TYPE_COLORS } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
@@ -58,14 +45,11 @@ interface ModelReadinessCardProps {
   championDfuCount: number;
   isChampionPromoted: boolean;
   activeProductionModelId: string | null;
-  snapshotReadiness: SnapshotRosterReadiness | undefined;
-  isPreparingPublish: boolean;
   onTrain: (modelId: string) => void;
   onTrainAll: () => void;
   onGenerate: (modelId: string) => void;
   onGenerateAll: () => void;
   generatableCount: number;
-  onPreparePublish: (pipeline: "model-refresh" | "champion-refresh" | "forecast-publish") => void;
 }
 
 export function ModelReadinessCard({
@@ -85,28 +69,14 @@ export function ModelReadinessCard({
   championDfuCount,
   isChampionPromoted,
   activeProductionModelId,
-  snapshotReadiness,
-  isPreparingPublish,
   onTrain,
   onTrainAll,
   onGenerate,
   onGenerateAll,
   generatableCount,
-  onPreparePublish,
 }: ModelReadinessCardProps) {
   const isGeneratingAll = generatingModelId === "__all__";
-  const snapshotEvidenceReady = snapshotReadiness?.ready === true;
   const releasePublished = activeProductionModelId !== null;
-  const publishEvidenceReady = releasePublished || snapshotEvidenceReady;
-  const shouldPrepareRelease =
-    !releasePublished && snapshotReadiness?.action_pipeline != null && !snapshotEvidenceReady;
-  const readinessPipeline = snapshotReadiness?.action_pipeline ?? "forecast-publish";
-  const championSelectionRequired = readinessPipeline === "champion-refresh";
-  const canLaunchPreparation = shouldPrepareRelease && !championSelectionRequired;
-  const preparationLabel =
-    readinessPipeline === "model-refresh" ? "Refresh Models" : "Prepare Release";
-  const preparationProgressLabel =
-    readinessPipeline === "model-refresh" ? "Refreshing Models..." : "Preparing Release...";
   const championGenerated = (staging.champion?.row_count ?? 0) > 0;
   return (
     <Card>
@@ -173,62 +143,33 @@ export function ModelReadinessCard({
         <div
           className={cn(
             "mx-4 mb-3 flex min-h-14 items-center justify-between gap-4 rounded-lg border px-3 py-2",
-            publishEvidenceReady
+            releasePublished
               ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20"
-              : "border-amber-200 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20"
+              : "border-blue-200 bg-blue-50/70 dark:border-blue-800 dark:bg-blue-950/20"
           )}
           role="status"
           aria-live="polite"
         >
           <div className="flex min-w-0 items-start gap-2">
-            {publishEvidenceReady ? (
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-            ) : (
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-            )}
+            <CheckCircle2
+              className={cn(
+                "mt-0.5 h-4 w-4 shrink-0",
+                releasePublished ? "text-emerald-600" : "text-blue-600"
+              )}
+            />
             <div className="min-w-0">
               <p className="text-xs font-semibold">
                 {releasePublished
                   ? "Production release published"
-                  : snapshotReadiness
-                    ? `Champion + ${snapshotReadiness.ready_contender_count}/${snapshotReadiness.required_contender_count} contenders ready`
-                    : "Checking champion + top-three publish evidence..."}
+                  : "Ready for first production release"}
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
                 {releasePublished
                   ? `${modelLabel(activeProductionModelId ?? "champion")} is active in production. Generate All creates ${generatableCount} staged comparison forecast${generatableCount === 1 ? "" : "s"} without changing production.`
-                  : publishEvidenceReady
-                    ? "The exact snapshot roster is ready; select any staged candidate in Step 2 to publish."
-                    : (snapshotReadiness?.stale_reason ??
-                      "Waiting for current release evidence before promotion is enabled.")}
+                  : "Generate any model, promote it to Staging, then promote it to Production. Period Roll is independent and never blocks this action."}
               </p>
             </div>
           </div>
-          {championSelectionRequired ? (
-            <p className="max-w-64 text-right text-xs font-medium text-amber-700 dark:text-amber-300">
-              Go to Champion and select a completed experiment to assign.
-            </p>
-          ) : canLaunchPreparation ? (
-            <Button
-              size="sm"
-              onClick={() => onPreparePublish(readinessPipeline)}
-              disabled={isPreparingPublish}
-              className="h-9 shrink-0"
-              title="Run the canonical Forecast Publish workflow and monitor each job"
-            >
-              {isPreparingPublish ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  {preparationProgressLabel}
-                </>
-              ) : (
-                <>
-                  <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
-                  {preparationLabel}
-                </>
-              )}
-            </Button>
-          ) : null}
         </div>
         <Table>
           <TableHeader>

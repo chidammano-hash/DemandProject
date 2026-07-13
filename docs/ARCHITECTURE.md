@@ -609,15 +609,15 @@ erDiagram
   experiment-stamped historical-results checksums.
 - **`model_promotion_log`** — audit trail for every promotion/demotion event,
   including exact source and production run ids, transactional gate report,
-  candidate/production SHA-256 checksums, replacement lineage, and outgoing
-  archive checksum. A partial unique index enforces one active promotion.
+  candidate/production SHA-256 checksums, and replacement lineage. A partial
+  unique index enforces one active promotion. Promotion does not depend on the
+  monthly snapshot archive.
 - **`backtest_run`** extended with `is_loaded_to_candidate` and `candidate_loaded_at` columns to track candidate loading state.
 - **`forecast_snapshot_roster` / `fact_forecast_snapshot`** — immutable monthly
   live-forward archive: one exact promoted champion plus exactly three
   WAPE-ranked `snapshot_contender` runs, with database-enforced lags 0 through
-  5. Promotion writes and reconciles the outgoing archive inside the same
-  transaction before replacing production. `agg_accuracy_snapshot` joins those
-  rows to closed actuals for common-DFU live FVA.
+  5. The separate Period Roll workflow writes and reconciles this archive.
+  `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
 
 ### AI & Exception Tables
 
@@ -1948,15 +1948,14 @@ fresh model refresh/publish cycle.
 Before generation, `forecast-publish` final-refits the three persisted families:
 LightGBM uses the atomic all-cluster `production_tree` bundle, while N-HiTS and
 N-BEATS use immutable global neural artifacts. MSTL and Chronos 2E infer
-directly. The same publish workflow freezes exactly three WAPE-ranked snapshot
-contenders; promotion archives the exact outgoing published plan under the
-snapshot's historical champion role plus those three series at lags 0 through 5
-before replacing production.
+directly. It then generates one immutable release candidate. Period Roll
+separately freezes exactly three WAPE-ranked snapshot contenders and archives
+them with the active production release at lags 0 through 5.
 
 **Forecast Release Readiness and Transactional Promotion:** the Command Center
 verifies the active planning-month release across one fixed, full-grain
 execution-lag common cohort plus promotion, champion/cluster, freshness,
-coverage, interval, and outgoing-archive evidence under one repeatable-read,
+coverage, interval, and replacement evidence under one repeatable-read,
 read-only snapshot. Before release, `promote_forecast_run()` separately executes
 under `SERIALIZABLE` plus an advisory lock: it selects one immutable candidate,
 revalidates structural/lineage/freshness/coverage/CI evidence, archives the exact
@@ -2014,7 +2013,7 @@ Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBA
 
 APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Persisted `job_schedule` rows are **re-registered into APScheduler at API boot** (`restore_schedules()`), and config-declared defaults (`config/platform/jobs_config.yaml`) are guaranteed via `ensure_default_schedules()` — the nightly `refresh_all_mvs` staleness safety net ships enabled. Workflows → Workflow Library provides live progress, kill controls, schedules, logs, and cross-tab completion alerts.
 
-**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `champion-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `period-roll`, `inventory-refresh`, and `full-refresh`. `model-refresh` stops after loading the five governed backtests. The separate `champion-refresh` binds those five runs to identical sales/cluster lineage, creates a champion experiment, and atomically swaps audited champion facts plus both promotion flags only after the experiment succeeds. The publish pipeline has no leading archive step because the required outgoing archive is inside the promotion transaction. `period-roll` first scores newly closed live-snapshot lags, then prepares/archives the current planning month and performs reconciliation-gated cleanup; the schedulable `period_roll` job and separate **Forecasting → Period Roll** tab read this same preset. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
+**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `champion-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `period-roll`, `inventory-refresh`, and `full-refresh`. `model-refresh` stops after loading the five governed backtests. The separate `champion-refresh` binds those five runs to identical sales/cluster lineage, creates a champion experiment, and atomically swaps audited champion facts plus both promotion flags only after the experiment succeeds. `forecast-publish` final-refits persisted models and generates a reviewable candidate; promoting any staged Champion or retained individual algorithm atomically replaces the sole active production release without consulting snapshot state. `period-roll` independently scores newly closed live-snapshot lags, then prepares/archives the current planning month and performs reconciliation-gated cleanup; the schedulable `period_roll` job and separate **Forecasting → Period Roll** tab read this same preset. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
 
 **AI-verified operational planning:** `common/ai/workflow_planner/` evaluates
 input changes and database readiness, then asks GPT to verify and explain the

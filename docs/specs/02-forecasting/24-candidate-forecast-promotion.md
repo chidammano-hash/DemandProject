@@ -233,33 +233,22 @@ advisory lock:
    gate report stores the historical quality checks, but does not stamp a
    "candidate WAPE" on the future release rows because they do not yet have
    actuals.
-5. Require the incoming planning month to have one champion roster row and
-   contender ranks 1-3, with all three contender manifests `ready` under the
-   current generator contract. This prevents publishing a plan that cannot be
-   archived during the next release cycle (`snapshot_roster_not_ready`).
-6. If a release is active, archive its published plan under the snapshot's
-   historical `champion` role plus the frozen top-three contender runs for lags
-   0-5 inside this same transaction. The published plan may have originated
-   from Champion or one selected model. Reconcile those archived values to the
-   exact outgoing production checksum. Missing roster,
-   lag, run, or value evidence aborts replacement. The sole migration exception
-   is an active row with `source_run_id IS NULL`: after a savepoint-protected
-   normal archive attempt fails, it may be retired without an FVA snapshot only
-   when every live row is linked to that one `legacy_unverified` promotion and
-   production run and its audited row/DFU counts match. The incoming gate report
-   records the exact outgoing checksum and `legacy_retired_unarchived`; no API
-   parameter can request this path, and it is impossible for modern releases.
-7. Demote the outgoing audit row, insert the incoming audit record, replace
+5. Lock the currently active promotion, if one exists, without restricting its
+   model or planning month. Record its exact source and production lineage in
+   the incoming gate report as the release being replaced.
+6. Demote the outgoing audit row, insert the incoming audit record, replace
    `fact_production_forecast`, and stamp every row with the source run, new
    production run, promotion id, and `lineage_status='verified'`.
-8. Recompute the published payload checksum and require it to equal the
+7. Recompute the published payload checksum and require it to equal the
    candidate checksum. Mark the generation manifest `promoted` and commit.
 
-Any failure rolls back archive, demotion, delete, insert, and manifest changes.
+Any failure rolls back demotion, delete, insert, and manifest changes.
 The database unique indexes also prevent concurrent active releases and reuse of
 one candidate run. `model_id='champion'` and single algorithm ids share this
 contract; the difference is only their lineage validation and
-`promotion_type` audit value.
+`promotion_type` audit value. Snapshot preparation and archival are deliberately
+outside this transaction in the separate Period Roll workflow, so snapshot state
+never blocks an otherwise valid production replacement.
 
 ## 5. Frontend UI
 
@@ -346,8 +335,9 @@ the separate `champion-refresh` pipeline atomically promotes the new
 experiment/results only after exact five-run
 sales/cluster lineage and winner checksums pass; the
 subsequent `forecast-publish` pipeline final-refits the persisted LightGBM,
-N-HiTS, and N-BEATS families, generates the release candidate, and prepares its
-three snapshot contenders. MSTL and Chronos 2E remain direct adapters.
+N-HiTS, and N-BEATS families and generates the release candidate. MSTL and
+Chronos 2E remain direct adapters. Period Roll separately prepares and archives
+the top-three snapshot contenders.
 
 ### 5.3 Candidates Column
 

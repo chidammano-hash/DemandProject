@@ -84,15 +84,10 @@ experiment/results are promoted atomically. The retired manual
 `/champion-experiments/{id}/promote` and `/promote-results` routes return 410 and
 cannot be used for cutover. Then run a fresh full Generate action and promote
 only the returned `source_run_id`. Existing production
-remains readable, but replacement can proceed only when the outgoing release has
-verifiable run lineage. Modern releases require a reconciled champion-plus-three
-archive. The single pre-manifest active release may transition once without
-inventing historical contenders: promotion first attempts the normal archive,
-then permits an unarchived retirement only when migration 203 linked every live
-row to one `legacy_unverified` promotion/run and the stored row/DFU counts match.
-The replacement's `gate_report.outgoing_release` records the old run id, exact
-payload checksum, counts, and `legacy_retired_unarchived` status. There is no
-operator flag that can invoke this path for a modern release.
+remains readable until the new candidate passes every gate. Promotion locks and
+audits the active row, then replaces it atomically; a monthly snapshot is not a
+precondition. Run Period Roll separately to create the Champion-plus-three FVA
+archive.
 
 Migration 205 makes the five canonical model ids the default champion roster
 and rejects new or updated rosters with retired or duplicate ids while leaving
@@ -131,9 +126,9 @@ promoted experiment: it can contain routes produced before the canonical
 adapters or population rules changed, including MSTL routes for DFUs with too
 little history. Only after the five backtests and governed champion refresh complete
 should `forecast-publish` final-refit the three persisted model families
-(LightGBM, N-HiTS, and N-BEATS), generate the immutable champion run, and
-prepare the top three snapshot contenders. Promotion remains a separate
-reviewed action.
+(LightGBM, N-HiTS, and N-BEATS) and generate the immutable champion run.
+Promotion remains a separate reviewed action. Top-three snapshot preparation,
+archival, and cleanup belong only to the separate **Period Roll** workflow.
 
 ### What it does
 
@@ -380,26 +375,20 @@ and a winners CSV whose bytes still match the SHA-256 stamped at generation.
    coverage. The transaction stores the historical quality checks in the gate
    report; it does not stamp a "candidate WAPE" on future rows that have no
    actuals.
-5. Require the incoming planning month to have one champion roster row plus
-   contender ranks 1-3. For each ready contender, recompute its manifest payload
-   checksum/counts and exact lags 0-5, then require the current synchronized
-   sales batch/hash/latest-closed month, complete generation configuration, and
-   applicable direct-adapter, LightGBM artifact-set/promoted-assignment, or
-   neural artifact/training-cohort lineage. Run **Prepare Forecast Snapshot
-   Contenders** when this returns `snapshot_roster_not_ready`; it may replace a
-   stale current-month roster only before that month is archived or published.
-6. If an outgoing release exists, archive its exact published plan under the
-   snapshot's historical `champion` role plus the frozen top three
-   `snapshot_contender` runs for lags 0-5. The published plan may have come from
-   Champion or one selected model. All four series must cover all six lags, and
-   the published-plan checksum must equal the outgoing production checksum.
-   Any failure stops replacement.
-7. Demote the outgoing audit row; insert the incoming audit row with source and
+5. Lock the currently active promotion, if one exists. This lock has no model or
+   planning-month restriction: Champion or any retained individual algorithm may
+   replace production at any time using a newly staged immutable run.
+6. Demote the outgoing audit row; insert the incoming audit row with source and
    production run ids, gate report, candidate/production checksums, replacement
-   lineage, and outgoing archive checksum; then replace production.
-8. Hash production and require exact equality with the selected candidate,
+   lineage, and an audit description of the replaced release; then replace production.
+7. Hash production and require exact equality with the selected candidate,
    mark the source manifest `promoted`, and commit. Any error rolls back the
-   archive, demotion, delete, insert, audit, and manifest transition together.
+   demotion, delete, insert, audit, and manifest transition together.
+
+Production replacement never creates, rewrites, or requires a forecast snapshot.
+The database partial unique index still enforces exactly one active production
+release. Run **Period Roll** independently when the monthly Champion-plus-three
+snapshot is due.
 
 Response payload:
 
@@ -631,19 +620,15 @@ Then check thresholds in `config/forecasting/forecast_pipeline_config.yaml`:
 | 409 | `candidate_lineage_mismatch` | Generator contract, manifest hash/cardinality, champion/cluster lineage, assignments, tuning, source-model count, or winners-file hash changed; repair lineage and generate again |
 | 409 | `candidate_quality_failed` | The exact experiment-stamped historical champion common cohort fails WAPE lift, required external comparison, bias, sufficiency, or actual-alignment policy. If the external feed is deliberately unavailable, set `champion.release_readiness.require_external_benchmark: false`; this exempts only the external comparison and keeps the champion-versus-naive six-month gate intact. Re-enable it after loading representative external data; no regeneration is required solely for that policy change. |
 | 409 | `candidate_gate_failed` | Six-month coverage, route continuity, quantities, horizon, or confidence intervals do not meet policy; inspect the generation log and manifest before retrying |
-| 409 | `snapshot_roster_not_ready` | The current month lacks one champion plus three checksum-valid, lags-0..5 contenders under current sales/config/artifact lineage; run **Prepare Forecast Snapshot Contenders** to resume empty reservations or replace a stale unpublished current-month roster, then retry promotion |
-| 409 | `outgoing_archive_incomplete` | The current release cannot be replaced until its published-plan + top-three lags 0-5 archive is complete and the published checksum reconciles; prepare the frozen contenders/roster and retry |
-| 409 | `concurrent_release_conflict` | Another release changed state, the same source run was reused, or a second same-planning-month release was attempted; refresh status and generate for the next supported record month |
+| 409 | `concurrent_release_conflict` | Another release changed state or the same source run was reused; refresh status and generate a new immutable candidate if needed |
 | 409 | `production_checksum_mismatch` | Published values did not reproduce the selected run; the transaction rolled back—investigate database triggers/schema and do not retry blindly |
 | 401 | `Missing API key` | Pass `X-API-Key` header |
 | 500 | opaque server detail | Inspect API/Postgres logs. The transaction is atomic, so the outgoing active row and production payload should remain unchanged |
 
-There is no force/bypass parameter. The only archive exception is the automatic,
-one-way migration bridge for a database-proven pre-manifest active release
-described in §2; its checksum evidence is persisted on the replacement. Every
-modern release still requires the complete champion-plus-three archive. A
-rejection leaves the current release unchanged and is represented by the stable
-error code returned to the caller.
+There is no force/bypass parameter. Snapshot state is not a promotion gate;
+candidate lineage, structural quality, coverage, confidence intervals, and
+checksums remain mandatory. A rejection leaves the current release unchanged
+and is represented by the stable error code returned to the caller.
 
 ### 9.3 Candidate vs Production discrepancy
 

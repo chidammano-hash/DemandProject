@@ -41,8 +41,9 @@ current planning month as a versioned release and returns:
 - latest-sales versus release-generation freshness;
 - complete current-plan coverage plus one-run, quantity, source-model, and
   confidence-interval integrity; and
-- bounded structural evidence that the outgoing champion-plus-three release was
-  archived for lags 0 through 5 during its active lifetime and before replacement.
+- bounded structural evidence that Period Roll archived the monthly
+  champion-plus-three release for lags 0 through 5. This operational evidence is
+  reported independently and is not a production-promotion gate.
 
 The Command Center renders the result as a persistent readiness card. It shows
 the release version, four headline metrics, evidence population, explicit
@@ -134,7 +135,7 @@ that every segment is individually representative.
 | Current plan version | Equals the planning month | Make release cadence explicit |
 | Current plan coverage | At least 95% of active DFUs with 3+ history months and all six calendar months | Ensure the plan is operationally usable |
 | Release integrity | One run ID; no negative/invalid quantities; complete source-model lineage; valid confidence intervals on at least 95% of rows | Prevent count-complete but internally inconsistent inventory inputs |
-| Outgoing archive | Previous plan has four models by six lags, one champion run, and roster/run/plan lineage archived after its promotion and before replacement | Preserve the plan before replacement without accepting an older same-version snapshot |
+| Replacement ownership | The current active promotion is locked and recorded as `replaces_promotion_id` before it is demoted | Preserve a complete replacement audit while allowing any staged model to become the sole active release at any time |
 
 Thresholds live under `champion.release_readiness` in
 `config/forecasting/forecast_pipeline_config.yaml`. They are provisional pilot
@@ -256,16 +257,14 @@ safely replace it.
    re-runs the structural, lineage, freshness, coverage, route-gap, quantity,
    and confidence-interval checks. It performs no production delete until those
    checks pass.
-4. If an active outgoing release exists, the transaction archives its exact
-   champion plus the frozen top-three `snapshot_contender` runs for lags 0
-   through 5 before demotion or delete. It reconciles the champion archive to
-   the outgoing production payload checksum. Any incomplete roster, lag, run
-   lineage, or checksum aborts the entire promotion.
+4. If an active release exists, the transaction locks and records it as the
+   release being replaced, then demotes it. This works across models and within
+   the same planning month; Period Roll snapshot state is not consulted.
 5. The new production payload is hashed in stable business-key order and must
    equal the selected candidate checksum. `model_promotion_log` persists
    `source_run_id`, a distinct `production_run_id`, the gate report, candidate
-   and production checksums, replacement lineage, and the outgoing champion
-   archive checksum. Database indexes enforce one active promotion and prevent
+   and production checksums, and replacement lineage. Database indexes enforce
+   one active promotion and prevent
    the same source run from being promoted twice.
 
 The transaction re-evaluates WAPE/lift/incumbent/bias thresholds against the

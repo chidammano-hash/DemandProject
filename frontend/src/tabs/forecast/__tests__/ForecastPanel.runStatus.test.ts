@@ -6,10 +6,10 @@ import {
   findFailedGenerationModels,
   generationFailureMessage,
   isExpectedStagingRunReady,
+  productionPromotionBlockedReason,
   resolveConfidenceIntervals,
 } from "../ForecastPanel";
 import { requiresTraining } from "../forecastPanelShared";
-import { resolvePublishPipelineOutcome } from "../useForecastPublishPreparation";
 
 function generationJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -69,6 +69,17 @@ describe("production artifact requirements", () => {
   });
 });
 
+describe("production promotion availability", () => {
+  it("allows any staged candidate regardless of Period Roll snapshot state", () => {
+    expect(productionPromotionBlockedReason(false, true)).toBeUndefined();
+  });
+
+  it("blocks only while generation is active or the candidate is not staged", () => {
+    expect(productionPromotionBlockedReason(true, true)).toMatch(/active forecast generation/i);
+    expect(productionPromotionBlockedReason(false, false)).toMatch(/staging first/i);
+  });
+});
+
 describe("findFailedGenerationModels", () => {
   it("matches only terminal failures for the exact submitted run", () => {
     const jobs = [
@@ -91,33 +102,5 @@ describe("findFailedGenerationModels", () => {
     const message = generationFailureMessage("lgbm_cluster");
     expect(message).toBe("LightGBM generation failed. Open Jobs for details.");
     expect(message).not.toContain("secret");
-  });
-});
-
-describe("resolvePublishPipelineOutcome", () => {
-  it("waits through intermediate steps and completes only on the final step", () => {
-    const first = generationJob({
-      job_id: "step-1",
-      status: "completed",
-      pipeline_id: "pipe-1",
-      pipeline_step: 1,
-      params: { __pipeline_total_steps: 3 },
-    });
-    expect(resolvePublishPipelineOutcome([first], "pipe-1")).toBeNull();
-
-    const final = generationJob({
-      job_id: "step-3",
-      status: "completed",
-      pipeline_id: "pipe-1",
-      pipeline_step: 3,
-      params: { __pipeline_total_steps: 3 },
-    });
-    expect(resolvePublishPipelineOutcome([first, final], "pipe-1")).toBe("completed");
-  });
-
-  it("surfaces a failed or cancelled pipeline step", () => {
-    const failed = generationJob({ pipeline_id: "pipe-1", pipeline_step: 2 });
-    expect(resolvePublishPipelineOutcome([failed], "pipe-1")).toBe("failed");
-    expect(resolvePublishPipelineOutcome([failed], "other-pipe")).toBeNull();
   });
 });
