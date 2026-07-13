@@ -81,7 +81,7 @@ Predict future demand using ML models, then select the best forecast per item.
 | 32 | [Lag-Decomposed Accuracy Leaderboard](02-forecasting/32-lag-decomposed-accuracy-leaderboard.md) | Per-lag model rankings from `agg_accuracy_lag_archive` |
 | 33 | [Forecast Snapshot Archive & Live FVA](02-forecasting/33-forecast-snapshot-archive-fva.md) | Monthly as-of archive of the exact outgoing champion plus three frozen `snapshot_contender` runs (lags 0-5), atomic release replacement, selected-run-only cleanup, and live FVA |
 | 34 | [Forecast Release Readiness](02-forecasting/34-forecast-release-readiness.md) | Post-release common-cohort readiness plus pre-release exact experiment-stamped quality, structural/lineage/freshness/coverage/CI controls, and payload checksums |
-| 35 | [Customer-Level Forecasting](02-forecasting/35-customer-level-forecasting.md) | **Proposed** — generation-only Chronos 2E customer forecasts using the latest 18 closed months for an 18-month horizon |
+| 35 | [Customer-Level Forecasting](02-forecasting/35-customer-level-forecasting.md) | **Implemented** — generation-only Chronos 2E customer forecasts using the latest 18 closed months for an 18-month horizon |
 
 **Reading order:** 01-03 (foundations) → 04-05 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 18 (foundation model) → 19 (pipeline config) → 23 (LGBM accuracy tuning) → 26 (operational reference)
 

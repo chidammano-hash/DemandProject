@@ -31,6 +31,7 @@ export * from "./cluster-experiments";
 export * from "./champion-experiments";
 export * from "./champion-sweeps";
 export * from "./customer-analytics";
+export * from "./customerForecast";
 export * from "./sku-features";
 export * from "./sku-chat";
 export * from "./backtest-management";

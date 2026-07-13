@@ -79,6 +79,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | Forecast Pipeline Config (YAML-driven algorithm roster) | [../02-forecasting/19-forecast-pipeline-config.md](../02-forecasting/19-forecast-pipeline-config.md) | Forecasting |
 | Forecast Release Control (immutable run manifests, transactional archive/promotion checksums, plus post-release common-cohort readiness) | [../02-forecasting/34-forecast-release-readiness.md](../02-forecasting/34-forecast-release-readiness.md) | Forecasting / Operations |
 | Production Forecast Pipeline | [../02-forecasting/08-production-forecast.md](../02-forecasting/08-production-forecast.md) | Forecasting |
+| Customer-Level Forecasting (generation-only, 18 closed months → 18 future months) | [../02-forecasting/35-customer-level-forecasting.md](../02-forecasting/35-customer-level-forecasting.md) | Forecasting |
 | Bias Correction Engine | [../02-forecasting/09-bias-correction.md](../02-forecasting/09-bias-correction.md) | Forecasting |
 | SKU Clustering + What-If Scenarios | [../03-demand-intelligence/01-sku-clustering.md](../03-demand-intelligence/01-sku-clustering.md) | Demand Intelligence |
 | SKU Feature Engineering (Seasonality + Variability) | [../03-demand-intelligence/02-sku-feature-engineering.md](../03-demand-intelligence/02-sku-feature-engineering.md) | Demand Intelligence |

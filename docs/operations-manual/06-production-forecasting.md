@@ -429,14 +429,30 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 | `scripts/forecasting/generate_production_forecasts.py` | `forecast-generate` | Build an immutable champion release candidate; promotion is a separate API action | `forecast_generation_run` + `fact_production_forecast_staging` |
 | `scripts/forecasting/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/forecasting/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Applies approved planner overrides to an existing saved P50 demand plan, honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
+| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Independently generates 18 customer-level months from the latest 18 closed demand months | `customer_forecast_run` + `fact_customer_forecast` |
 
 **When to run each:**
 
 - **Blended** — short horizon (4 weeks). Run weekly once near-real-time demand-sensing signals are refreshed.
 - **Consensus** — only when the selected `plan_version` already exists in `fact_demand_plan`; it remains a historical/imported-plan consumer and is not a producer of quantile forecasts.
+- **Customer Forecast** — run on demand after customer-demand ETL is current.
+  It neither consumes nor changes the item-location production release.
 
 The production, blended, and consensus workflows share the same planning-date semantics so the cycle "as-of" date is consistent. Production uncertainty bands come from the residual-based CI path in `forecast-generate`; the retired standalone synthetic quantile generator is not part of the production cycle.
 The `fact_demand_plan` and `fact_demand_plan_weekly` schemas and read APIs remain available for previously loaded or externally sourced versions.
+
+### 5a. Independent Customer Forecast Generation
+
+Use **Forecasting → Customer Forecast** to check source readiness, launch the
+durable `generate_customer_forecast` job, inspect one customer series, and
+export a completed run. The configured contract is fixed at the latest 18
+fully closed months as context and 18 future monthly outputs. For a system date
+in July 2026, that means January 2025–June 2026 history and July 2026–December
+2027 forecast output.
+
+This is intentionally not a release layer: it has no backtest, customer
+champion, planner/AI adjustment, reconciliation, staging, or production
+promotion. See spec 35 for its eligibility and failure rules.
 
 ---
 
@@ -689,12 +705,14 @@ ORDER BY src, forecast_month;
 | Replenishment plan dry-run | `make replplan-compute-dry` |
 | Blended forecast | `make blended-all` |
 | Consensus plan | `make consensus-generate VERSION=$(date +%Y-%m)` |
+| Customer-level forecast | Open **Forecasting → Customer Forecast**, confirm readiness, then click **Generate Customer Forecasts** |
 
 Source-of-truth files referenced in this section:
 
 - `Makefile` (production-forecast targets)
 - `config/forecasting/forecast_pipeline_config.yaml` (`production_forecast:` and `forecast_snapshot:` blocks)
 - `scripts/forecasting/generate_production_forecasts.py`
+- `scripts/forecasting/generate_customer_forecasts.py`
 - `scripts/ml/train_production_models.py`
 - `common/ml/tree_artifacts.py`
 - `common/ml/neural_artifacts.py`

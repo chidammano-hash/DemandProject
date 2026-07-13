@@ -249,6 +249,11 @@ production_forecast:
   scheduler:
     job_type: generate_production_forecast
     cron: 0 6 2 * *
+customer_forecast:
+  enabled: true                    # Enable generation-only customer forecasts
+  model_id: chronos2_enriched      # Reuse the governed Chronos 2E adapter
+  history_months: 18               # Fully closed monthly periods supplied as context
+  horizon_months: 18               # Future monthly periods generated from the planning month
 forecast_snapshot:
   lag_count: 6
   contender_count: 3

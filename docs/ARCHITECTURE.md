@@ -589,14 +589,15 @@ erDiagram
 
 `mv_inventory_forecast_monthly`, `mv_inventory_health_score`, `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout`, `mv_network_balance`, `mv_control_tower_kpis`, `mv_supplier_po_performance`, `mv_po_lead_time_analysis`
 
-### Forecasting & Champion (14)
+### Forecasting & Champion (16)
 
 `fact_candidate_forecast`, `forecast_generation_run`,
 `fact_production_forecast_staging`, `fact_production_forecast`,
 `model_promotion_log`, `fact_replenishment_plan`, `champion_experiment`,
 `champion_experiment_lag`, `champion_experiment_month`,
 `champion_experiment_comparison`, `champion_promotion_log`,
-`forecast_snapshot_roster`, `fact_forecast_snapshot`, `agg_accuracy_snapshot`
+`forecast_snapshot_roster`, `fact_forecast_snapshot`, `agg_accuracy_snapshot`,
+`customer_forecast_run`, `fact_customer_forecast`
 
 - **`fact_candidate_forecast`** — legacy candidate table with no active writer;
   it is not a forward-release source. Historical backtests load to
@@ -618,6 +619,12 @@ erDiagram
   WAPE-ranked `snapshot_contender` runs, with database-enforced lags 0 through
   5. The separate Period Roll workflow writes and reconciles this archive.
   `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
+- **`customer_forecast_run` / `fact_customer_forecast`** — an independent,
+  generation-only customer forecast manifest and payload. Each eligible
+  item-location-customer series uses the latest 18 closed demand months to
+  generate 18 future months with Chronos 2E. These rows are read-only results;
+  they never reconcile to, stage, promote, or replace the item-location
+  production forecast. DDL: `sql/210_create_customer_forecast.sql`.
 
 ### AI & Exception Tables
 
@@ -754,6 +761,11 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 68.  `model_promotion_log` — exact promotion/demotion audit; grain: `(id)` SERIAL PK; includes model/type/version/cardinalities plus `source_run_id`, `production_run_id`, gate report, candidate/production/archive checksums, archive time, and replacement id. Database indexes enforce one active release and one promotion per source run; DDL: `sql/121`, extended by `sql/203_create_forecast_generation_run.sql`
 - `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, generator-contract metadata, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`. Migration `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready release candidates invalid and non-promotable without deleting their evidence.
 - Newly promoted `fact_production_forecast` rows carry `source_run_id`, `promotion_log_id`, a distinct production `run_id`, and `lineage_status='verified'`. The promotion transaction hashes candidate and production in the same stable order and requires equality before commit.
+- `customer_forecast_run` records the resolved 18-month closed-history window,
+  18-month output window, durable job, cardinalities, model/config versions, and
+  payload lineage. `fact_customer_forecast` is immutable and unique by run,
+  item, location, customer, and forecast month; DDL:
+  `sql/210_create_customer_forecast.sql`.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 - Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
 
@@ -1004,12 +1016,13 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions` |
 | **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/stage`, `/{model_id}/promote`, `/{model_id}/train` | `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
 | **Forecast Release Readiness** | `/forecast-release/readiness` | `fact_external_forecast_monthly`, `dim_sku`, `champion_experiment`, `cluster_experiment`, `fact_production_forecast`, `fact_forecast_snapshot` |
+| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/series`, `/export` | `fact_customer_demand_monthly`, `customer_forecast_run`, `fact_customer_forecast`, `job` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
 All API prefixes proxied to FastAPI at `http://127.0.0.1:8000`:
 
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`, `/forecast-release`
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/customer-forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`, `/forecast-release`
 
 > **CRITICAL:** When adding a new API path prefix, add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON.
 
@@ -1972,6 +1985,15 @@ review surfaces. API
 `docs/specs/02-forecasting/34-forecast-release-readiness.md`.
 
 **Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
+
+**Customer-Level Forecasting:** the separate **Forecasting → Customer
+Forecast** stage generates read-only Chronos 2E forecasts at
+item-location-customer-month grain. A run uses the latest 18 fully closed
+months from `fact_customer_demand_monthly` and emits exactly 18 future months
+into immutable run-versioned rows. It deliberately has no customer champion,
+backtest, adjustment, reconciliation, staging, or production-promotion path.
+API `/customer-forecast`; DDL `sql/210`; spec
+`docs/specs/02-forecasting/35-customer-level-forecasting.md`.
 
 ### 2. SKU Clustering & Segmentation
 

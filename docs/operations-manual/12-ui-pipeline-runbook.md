@@ -19,7 +19,7 @@ Everything is triggered from one of two tabs:
 
 | Surface | Sidebar tab | What it drives |
 |---|---|---|
-| **Guided modeling flow** | **Forecasting** (**Clustering → Backtest → Tune → Champion → Forecast → Period Roll**) | Phases 5–8: run selectable backtests, assign a champion, train, generate drafts, promote to staging, publish one production forecast, and execute the monthly roll |
+| **Guided modeling flow** | **Forecasting** (**Clustering → Backtest → Tune → Champion → Forecast → Period Roll → Customer Forecast**) | Phases 5–8: run selectable item-location backtests, control the item-location release, execute the monthly roll, and independently generate customer-level forecasts |
 | **AI-guided operations + generic runner** | **Workflows** (**Plan & Run**, **Workflow Library**, **Manual Load**) | Input readiness through clustering, forecasting, archive, and inventory; plus monitoring, chaining, scheduling, and advanced loading |
 
 **Key facts that apply to everything below:**
@@ -184,6 +184,27 @@ ordered status of **Calculate Snapshot KPIs**, **Prepare Forecast Snapshot
 Contenders**, **Archive Forecast Snapshot**, and **Clean Forecast Staging**.
 The same workflow remains available in Workflows; retries are safe for an
 already archived planning month.
+
+### Customer Forecast (separate Forecasting stage)
+
+Open **Forecasting → Customer Forecast** to generate read-only forecasts at
+item-location-customer-month grain. This stage is independent of Backtest,
+Champion, Forecast release, and Period Roll:
+
+1. Confirm the readiness card shows the latest 18 fully closed months and no
+   source blocker. For a July 2026 system month, the input window is January
+   2025 through June 2026.
+2. Click **Generate Customer Forecasts**. The
+   `generate_customer_forecast` durable job runs Chronos 2E for every eligible
+   customer series and writes July 2026 through December 2027 in that example.
+3. Monitor the latest run in the same panel. Active runs can be cancelled;
+   failed runs retain their error and expose a retry action.
+4. Choose item, location, and customer to compare actual history with the
+   generated result, or export the completed run.
+
+This stage has no edit, AI adjustment, reconciliation, staging, champion, or
+production-promotion action. Its item-location totals are simple sums of the
+customer rows and do not change `fact_production_forecast`.
 
 > **Visualizing the result (Item Analysis tab).** Once generated/promoted, open **Item Analysis**
 > for a DFU to see each model's **future** forecast (`staging_<model>` lines + the promoted

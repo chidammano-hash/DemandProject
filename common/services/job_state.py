@@ -1804,6 +1804,67 @@ def _run_generate_production_forecast(
     }
 
 
+def _set_customer_forecast_job_status(
+    run_id: str,
+    status: str,
+    error_summary: str,
+) -> None:
+    """Reconcile a managed-job terminal state to its customer forecast run."""
+    import psycopg
+
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE customer_forecast_run SET run_status = %s, error_summary = %s, "
+                "completed_at = NOW() WHERE run_id = %s::uuid "
+                "AND run_status IN ('queued', 'generating', 'failed')",
+                (status, error_summary[:500], run_id),
+            )
+    except (OSError, RuntimeError, ValueError, psycopg.Error):
+        logger.exception("Reconciling customer forecast job status failed")
+
+
+def _run_generate_customer_forecast(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run generation-only customer Chronos inference as a durable subprocess."""
+    run_id = str(params.get("run_id") or "")
+    if not run_id:
+        raise ValueError("Customer forecast generation requires run_id")
+    if progress_cb:
+        progress_cb(pct=5, msg="Starting customer forecast generation")
+    cmd = [
+        _UV,
+        "run",
+        "python",
+        "scripts/forecasting/generate_customer_forecasts.py",
+        "--run-id",
+        run_id,
+    ]
+    try:
+        output = _run_subprocess(
+            cmd,
+            progress_cb,
+            "Generating customer forecasts",
+            cancel_event=cancel_event,
+            job_id=job_id,
+            timeout_seconds=_subprocess_timeout_seconds("customer_forecast"),
+            env_overrides={"OMP_NUM_THREADS": "1"},
+        )
+    except JobCancelledError:
+        _set_customer_forecast_job_status(run_id, "cancelled", "job cancelled")
+        raise
+    except (OSError, RuntimeError, ValueError):
+        _set_customer_forecast_job_status(run_id, "failed", "managed job failed")
+        raise
+    if progress_cb:
+        progress_cb(pct=100, msg="Customer forecast generation complete")
+    return {"run_id": run_id, "output_log": output or "Customer forecast generation completed"}
+
+
 def _run_prepare_forecast_snapshot_contenders(
     params: dict[str, Any],
     progress_cb: Callable | None = None,

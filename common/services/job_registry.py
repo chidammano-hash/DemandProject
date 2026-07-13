@@ -69,6 +69,7 @@ from common.services.job_state import (
     _run_data_quality,
     _run_etl_pipeline,
     _run_generate_ai_insights,
+    _run_generate_customer_forecast,
     _run_generate_exceptions,
     _run_generate_production_forecast,
     _run_generate_storyboard,
@@ -284,6 +285,15 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
             "generation_purpose": "release_candidate",
             "confidence_intervals": None,
         },
+    ),
+    "generate_customer_forecast": JobTypeDef(
+        type_id="generate_customer_forecast",
+        label="Customer Forecast",
+        description="Generate an immutable 18-month Chronos forecast at customer grain",
+        group="forecast",
+        callable=_run_generate_customer_forecast,
+        params_schema={"run_id": None},
+        default_max_retries=1,
     ),
     "prepare_forecast_snapshot_contenders": JobTypeDef(
         type_id="prepare_forecast_snapshot_contenders",
@@ -2400,6 +2410,24 @@ class JobManager:
             status, row_count, artifact_checksum = row
             if status != "ready" or int(row_count or 0) <= 0 or not artifact_checksum:
                 raise RuntimeError("Recovered generation manifest is not a complete ready run")
+            return
+
+        if type_def.type_id == "generate_customer_forecast":
+            run_id = params.get("run_id")
+            if not run_id:
+                raise RuntimeError("Recovered customer forecast is missing run_id")
+            with _get_conn() as conn:
+                row = conn.execute(
+                    "SELECT run_status, row_count, eligible_series, horizon_months "
+                    "FROM customer_forecast_run WHERE run_id = %s::uuid",
+                    (str(run_id),),
+                ).fetchone()
+            if row is None:
+                raise RuntimeError("Recovered customer forecast has no durable run")
+            status, row_count, eligible_series, horizon_months = row
+            expected_rows = int(eligible_series or 0) * int(horizon_months or 0)
+            if status != "completed" or expected_rows <= 0 or int(row_count or 0) != expected_rows:
+                raise RuntimeError("Recovered customer forecast run is incomplete")
             return
 
         if type_def.type_id == "champion_results_load":

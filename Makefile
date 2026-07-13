@@ -576,6 +576,7 @@ check-db:
 	  ('dim_item'),('dim_location'),('dim_customer'),('dim_time'),('dim_sku'), \
 	  ('fact_sales_monthly'),('fact_external_forecast_monthly'),('fact_customer_demand_monthly'), \
 	  ('fact_inventory_snapshot'),('fact_production_forecast'),('fact_purchase_orders'), \
+	  ('customer_forecast_run'),('fact_customer_forecast'), \
 	  ('backtest_lag_archive'),('champion_experiment'),('cluster_experiment'), \
 	  ('lgbm_tuning_run'),('job_history') \
 	) AS t(tbl) ORDER BY tbl;"
@@ -1436,6 +1437,8 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
 	  'TRUNCATE TABLE model_promotion_log CASCADE;' \
 	  'TRUNCATE TABLE forecast_generation_run CASCADE;' \
+	  'TRUNCATE TABLE fact_customer_forecast CASCADE;' \
+	  'TRUNCATE TABLE customer_forecast_run CASCADE;' \
 	  'TRUNCATE TABLE fact_ai_champion_forecast CASCADE;' \
 	  'TRUNCATE TABLE ai_champion_run CASCADE;' \
 	  'TRUNCATE TABLE fact_blended_demand_plan CASCADE;' \

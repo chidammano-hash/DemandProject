@@ -2,7 +2,7 @@
 
 ## Supply Chain Command Center
 
-**TOGAF ADM Framework | Version 1.1 | 2026-07-10**
+**TOGAF ADM Framework | Version 1.2 | 2026-07-13**
 
 | Attribute | Value |
 |---|---|
@@ -10,7 +10,7 @@
 | Classification | Internal |
 | TOGAF Version | 10 |
 | Status | Baselined |
-| Last Updated | 2026-07-10 |
+| Last Updated | 2026-07-13 |
 
 ---
 
@@ -560,7 +560,7 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 | Category | Table Count | Examples |
 |---|---|---|
 | Inventory Planning | 12 | `demand_variability`, `safety_stock`, `eoq_cycle_stock`, `replenishment_policy`, `replenishment_exceptions` |
-| Forecasting & Champion | 12+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot` |
+| Forecasting & Champion | 14+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot`, `customer_forecast_run`, `fact_customer_forecast` |
 | AI & Exception | 5 | `ai_insights`, `ai_call_log`, `ai_recommendation_outcomes`, `storyboard_cards` |
 | Operations | 12 | `fact_sop_cycles`, `fact_financial_plan`, `fact_events`, `fact_scenarios` |
 | Platform | 8 | `dim_user`, `dim_role`, `fact_audit_log`, `notification_log`, `webhook_registrations` |
@@ -580,6 +580,12 @@ Migration 209 advances the active contract to
 `canonical-five-artifact-lineage-v2` and invalidates older ready release or
 snapshot candidates so artifact, source-roster, and snapshot lineage is never
 inferred from a legacy status flag.
+
+Customer-level forecasting is a separate generation-only bounded context.
+`customer_forecast_run` and `fact_customer_forecast` persist immutable Chronos
+2E results derived from the latest 18 closed customer-demand months for an
+18-month horizon. There is deliberately no dependency on the item-location
+champion, release promotion, planner adjustment, or reconciliation workflows.
 
 ### 4.3 Data Flow Architecture
 

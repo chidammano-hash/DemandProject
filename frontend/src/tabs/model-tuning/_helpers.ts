@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
   TrendingUp,
   CalendarRange,
+  Users,
 } from "lucide-react";
 
 import type { ModelType } from "@/api/queries";
@@ -68,6 +69,7 @@ export const STAGE_TABS: { key: PipelineStage; label: string; icon: typeof Flask
   { key: "champion", label: "Champion", icon: Crown },
   { key: "forecast", label: "Forecast", icon: TrendingUp },
   { key: "period-roll", label: "Period Roll", icon: CalendarRange },
+  { key: "customer-forecast", label: "Customer Forecast", icon: Users },
 ];
 
 // Sub-tabs shown when a tunable model is selected on the Tune stage

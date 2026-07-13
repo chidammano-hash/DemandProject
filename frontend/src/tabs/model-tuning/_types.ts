@@ -17,6 +17,7 @@ export type PipelineStage =
   | "tune"
   | "champion"
   | "forecast"
+  | "customer-forecast"
   | "period-roll";
 
 export type ModelDetailTab = "experiments" | "feature-lab" | "cluster-eda";

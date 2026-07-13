@@ -171,6 +171,11 @@ vi.mock("../champion/ChampionExperimentsPanel", () => ({
 vi.mock("../forecast/PeriodRollPanel", () => ({
   PeriodRollPanel: () => <div data-testid="period-roll-panel">PeriodRollPanel</div>,
 }));
+vi.mock("../forecast/CustomerForecastPanel", () => ({
+  CustomerForecastPanel: () => (
+    <div data-testid="customer-forecast-panel">CustomerForecastPanel</div>
+  ),
+}));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -196,7 +201,19 @@ describe("ModelTuningTab", () => {
     expect(screen.getByText("Tune")).toBeInTheDocument();
     expect(screen.getByText("Champion")).toBeInTheDocument();
     expect(screen.getByText("Forecast")).toBeInTheDocument();
+    expect(screen.getByText("Customer Forecast")).toBeInTheDocument();
     expect(screen.getByText("Period Roll")).toBeInTheDocument();
+  });
+
+  it("opens Customer Forecast as its own generation-only stage", async () => {
+    const ModelTuningTab = (await import("../ModelTuningTab")).default;
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
+    fireEvent.click(screen.getByText("Customer Forecast"));
+    await waitFor(() => expect(screen.getByTestId("customer-forecast-panel")).toBeInTheDocument());
   });
 
   it("opens Period Roll as its own forecasting stage", async () => {

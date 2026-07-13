@@ -2,7 +2,8 @@
  * ModelTuningTab -- Model Experimentation Studio.
  *
  * Pipeline-aligned layout:
- *   Clustering -> Backtest -> Tune -> Champion -> Forecast
+ *   Clustering -> Backtest -> Tune -> Champion -> Forecast -> Period Roll
+ *   Customer Forecast is an independent generation-only stage.
  *
  * The "Backtest" stage shows ALL models with run/load actions.
  * The "Tune" stage shows only tunable models with experiment UI.
@@ -37,6 +38,9 @@ const ForecastPanel = lazy(() =>
 );
 const PeriodRollPanel = lazy(() =>
   import("./forecast/PeriodRollPanel").then((m) => ({ default: m.PeriodRollPanel }))
+);
+const CustomerForecastPanel = lazy(() =>
+  import("./forecast/CustomerForecastPanel").then((m) => ({ default: m.CustomerForecastPanel }))
 );
 const BacktestStagePanel = lazy(() =>
   import("./model-tuning/BacktestStagePanel").then((m) => ({ default: m.BacktestStagePanel }))
@@ -136,8 +140,8 @@ export default function ModelTuningTab() {
             Forecasting
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Cluster demand, backtest and tune models, assign a champion, generate candidates, and
-            control releases.
+            Run the item-location lifecycle and monthly roll, or independently generate
+            customer-level forecasts.
           </p>
         </div>
       </div>
@@ -175,6 +179,9 @@ export default function ModelTuningTab() {
 
         {/* Forecast stage */}
         {stage === "forecast" && <ForecastPanel />}
+
+        {/* Generation-only customer forecast stage */}
+        {stage === "customer-forecast" && <CustomerForecastPanel />}
 
         {/* Period Roll stage */}
         {stage === "period-roll" && <PeriodRollPanel />}

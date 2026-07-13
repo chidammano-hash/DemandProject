@@ -63,6 +63,7 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/accuracy-budget",
   "/model-tuning",
   "/customer-analytics",
+  "/customer-forecast",
   "/backtest-management",
   "/forecast-release",
   "/integration",

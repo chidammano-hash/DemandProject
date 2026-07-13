@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed — specification only |
+| **Status** | Implemented |
 | **Model** | Chronos 2 Enriched (`chronos2_enriched`) |
 | **History window** | Latest 18 fully closed months |
 | **Forecast horizon** | 18 monthly periods beginning with the current system month |
@@ -80,7 +80,7 @@ files directly.
 | `customer_no` | Customer key within the source location/site |
 | `startdate` | Historical month |
 | `demand_qty` | Forecast target |
-| `oos_cases` | Optional historical covariate when present; never the target |
+| `oos_qty` | Historical diagnostic retained by the source fact; not a v1 model input |
 
 The unique output grain is:
 
@@ -112,15 +112,17 @@ The run-level readiness response reports:
 - the resolved system month and exact history/forecast windows;
 - source freshness through the latest closed month;
 - eligible and skipped series counts;
-- unresolved key and duplicate counts; and
+- unresolved key and duplicate counts;
+- negative-demand row counts; and
 - a clear corrective action when generation cannot start.
 
 ## 6. Forecast generation
 
-Chronos 2E receives one causal 18-month demand sequence per eligible
-item-location-customer series. The generator may include historical covariates
-already supported by the Chronos adapter and known-future calendar features,
-but it must not use future demand or future out-of-stock values.
+Chronos 2E receives one causal 18-month `demand_qty` sequence per eligible
+item-location-customer series. The shared adapter derives its causal calendar
+and Fourier features from those timestamps. V1 does not pass customer PII,
+out-of-stock quantities, future demand, or any other future operational value
+to the model.
 
 Generation rules:
 
@@ -149,7 +151,8 @@ One immutable record per generation request containing:
 - resolved history start/end and forecast start/end;
 - model and configuration version;
 - source-data checksum or equivalent lineage marker;
-- eligible, completed, and skipped series counts; and
+- eligible, completed, and skipped series counts;
+- skipped-series reason counts; and
 - terminal error summary when the run fails.
 
 ### `fact_customer_forecast`
@@ -171,6 +174,7 @@ cancelled, or incomplete run never replaces the latest completed result.
 |---|---|---|
 | GET | `/customer-forecast/readiness` | Return the resolved windows, source freshness, eligibility, and blockers |
 | POST | `/customer-forecast/generate` | Launch one durable 18-month generation run |
+| GET | `/customer-forecast/runs/latest` | Return the latest run for progress and retry guidance; `completed_only=true` preserves access to the last successful result |
 | GET | `/customer-forecast/runs/{run_id}` | Return status, counts, dates, and errors for one run |
 | POST | `/customer-forecast/runs/{run_id}/cancel` | Request cancellation of an active run |
 | GET | `/customer-forecast/series` | Return history and generated forecast for one item-location-customer selection |
@@ -197,9 +201,22 @@ The view shows:
 - the selected run ID and generation timestamp.
 
 The view is read-only after generation. It has no adjustment, approval,
-promotion, champion, reconciliation, or AI controls.
+promotion, champion, reconciliation, or AI controls. The current Chronos
+adapter returns a point forecast; the persisted interval columns remain null
+until that adapter exposes calibrated bounds.
 
-## 10. Acceptance criteria
+## 10. Implementation
+
+- DDL: `sql/210_create_customer_forecast.sql`
+- Generation service: `common/services/customer_forecast.py`
+- Durable runner: `scripts/forecasting/generate_customer_forecasts.py`
+- API: `api/routers/forecasting/customer_forecast.py`
+- UI: **Forecasting → Customer Forecast**
+- Tests: `tests/unit/test_customer_forecast.py`,
+  `tests/api/test_customer_forecast.py`, and
+  `frontend/src/tabs/forecast/__tests__/CustomerForecastPanel.test.tsx`
+
+## 11. Acceptance criteria
 
 - A July 2026 run reads January 2025 through June 2026 and forecasts July 2026
   through December 2027.
