@@ -12,7 +12,6 @@ from httpx import ASGITransport
 
 from tests.api.conftest import make_pool
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -197,6 +196,31 @@ async def test_shap_timeframe_detail_success(tmp_path):
     assert data["label"] == "D"
     assert len(data["features"]) == 2
     assert data["features"][0]["feature"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_shap_timeframe_all_clusters_aggregates_each_feature_once(tmp_path):
+    """The pooled cluster view must not repeat feature labels for every cluster."""
+    shap_dir = tmp_path / "lgbm_cluster" / "shap"
+    _write_shap_csv(shap_dir, 0, ["mean_demand", "qty_lag_1"], cluster="c1")
+    _write_shap_csv(shap_dir, 0, ["mean_demand", "qty_lag_1"], cluster="c2")
+
+    with patch("api.core._get_pool", return_value=_make_pool()), \
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/forecast/shap/lgbm_cluster/timeframe/0?cluster=all&top_n=15"
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    features = [row["feature"] for row in data["features"]]
+    assert data["cluster"] == "all"
+    assert data["total_features"] == 2
+    assert features == ["mean_demand", "qty_lag_1"]
+    assert len(features) == len(set(features))
 
 
 # ---------------------------------------------------------------------------

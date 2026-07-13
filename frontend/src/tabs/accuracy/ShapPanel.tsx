@@ -154,7 +154,7 @@ export function ShapPanel({
                     >
                       {shapClusters.map((c) => (
                         <option key={c} value={c}>
-                          {c === "all" ? "All clusters (pooled)" : `Cluster ${c}`}
+                          {c === "all" ? "All clusters (average importance)" : `Cluster ${c}`}
                         </option>
                       ))}
                     </select>

@@ -345,14 +345,26 @@ async def shap_timeframe_detail(
     if filter_clusters is not None and "cluster" in df.columns:
         df = _aggregate_cluster_shap(df, filter_clusters)
     elif "cluster" in df.columns:
-        # Manual cluster selection (existing behavior)
-        filtered = df[df["cluster"] == cluster]
-        if filtered.empty and cluster != "all":
-            raise HTTPException(
-                status_code=404,
-                detail=f"No SHAP data for cluster '{cluster}' in model '{model_id}' timeframe {idx}.",
-            )
-        if not filtered.empty:
+        if cluster == "all":
+            # Prefer a saved pooled view when present. Per-cluster backtests do
+            # not currently write one, so aggregate their repeated feature rows
+            # before ranking to keep one meaningful bar per feature.
+            pooled = df[df["cluster"] == "all"]
+            if not pooled.empty:
+                df = pooled
+            else:
+                cluster_labels = [str(value) for value in df["cluster"].dropna().unique()]
+                df = _aggregate_cluster_shap(df, cluster_labels)
+        else:
+            filtered = df[df["cluster"] == cluster]
+            if filtered.empty:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"No SHAP data for cluster '{cluster}' in model "
+                        f"'{model_id}' timeframe {idx}."
+                    ),
+                )
             df = filtered
 
     df = df.sort_values("rank").reset_index(drop=True)

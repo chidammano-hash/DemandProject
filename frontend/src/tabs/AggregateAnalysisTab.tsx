@@ -51,6 +51,7 @@ import type { AccuracySliceRow, LagPoint } from "@/types";
 import { SliceTablePanel } from "./accuracy/SliceTablePanel";
 import { TrendChartPanel } from "./accuracy/TrendChartPanel";
 import { LagLeaderboardPanel } from "./aggregate-analysis/LagLeaderboardPanel";
+import { detailShapFeatureRows } from "./accuracy/shapFeatureRows";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
@@ -260,7 +261,11 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     staleTime: STALE.TEN_MIN,
     enabled: shapOpen && !!activeShapModel && shapTimeframeIdx === null && visible.shap,
   });
-  const { data: shapDetailData, isLoading: loadingShapDetail } = useQuery({
+  const {
+    data: shapDetailData,
+    isLoading: loadingShapDetail,
+    isFetching: fetchingShapDetail,
+  } = useQuery({
     queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15, shapCluster),
     queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15, shapCluster),
     staleTime: STALE.TEN_MIN,
@@ -282,8 +287,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const shapFeatures = useMemo(() => {
     if (shapTimeframeIdx === null)
       return (shapSummaryData?.features ?? []).map((f) => ({ feature: f.feature, value: f.mean_abs_shap_across_timeframes, selected: f.selected_count === f.n_timeframes }));
-    return (shapDetailData?.features ?? []).map((f) => ({ feature: f.feature, value: f.mean_abs_shap, selected: f.selected }));
-  }, [shapTimeframeIdx, shapSummaryData, shapDetailData]);
+    return detailShapFeatureRows(shapDetailData, shapCluster);
+  }, [shapTimeframeIdx, shapSummaryData, shapDetailData, shapCluster]);
 
   // --------------- Derived dashboard data ---------------
   const kpi = kpiQ.data;
@@ -492,7 +497,11 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
           shapOpen={shapOpen} shapModels={shapModels} activeShapModel={activeShapModel}
           shapTimeframes={shapTimeframesData?.timeframes ?? []}
           shapTimeframeIdx={shapTimeframeIdx} shapFeatures={shapFeatures}
-          loadingShap={shapTimeframeIdx === null ? loadingShapSummary : loadingShapDetail}
+          loadingShap={
+            shapTimeframeIdx === null
+              ? loadingShapSummary
+              : loadingShapDetail || fetchingShapDetail
+          }
           shapClusters={shapClustersData?.clusters ?? []}
           shapCluster={shapCluster}
           onToggleOpen={() => setShapOpen((v) => !v)}
