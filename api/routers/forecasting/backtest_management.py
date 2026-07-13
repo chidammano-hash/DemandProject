@@ -33,8 +33,8 @@ from common.ml.production_non_tree import direct_model_runtime_contract
 from common.ml.tree_artifact_lineage import ProductionTreeArtifactLineage
 from common.ml.tree_artifacts import (
     TreeArtifactLineageMismatchError,
+    build_production_tree_model_config_payload,
     build_tree_artifact_spec,
-    build_tree_model_config_payload,
     read_active_tree_artifact_ref,
 )
 from common.services.cluster_lineage import load_promoted_cluster_population
@@ -286,7 +286,7 @@ def get_training_status():
                 )
                 expected_spec = build_tree_artifact_spec(
                     model_id=model_id,
-                    model_config=build_tree_model_config_payload(
+                    model_config=build_production_tree_model_config_payload(
                         config,
                         model_id=model_id,
                         project_root=_PROJECT_ROOT,

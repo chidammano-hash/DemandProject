@@ -757,6 +757,7 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         with (
             patch(f"{_MOD}._run_subprocess", return_value="ok") as run,
             patch(f"{_MOD}._reserve_backtest_run", return_value=72),
+            patch(f"{_MOD}._get_conn"),
             patch(f"{_MOD}.record_backtest_artifact_identity"),
             patch(f"{_MOD}.verify_backtest_artifact_identity"),
             patch(f"{_MOD}._auto_load_backtest"),

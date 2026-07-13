@@ -12,11 +12,6 @@ from psycopg import sql
 
 from common.core.paths import PROJECT_ROOT
 from common.core.utils import load_forecast_pipeline_config
-from common.services.champion_lineage import (
-    GOVERNED_CHAMPION_LINEAGE_METADATA_KEY,
-    GovernedChampionLineageError,
-    load_active_governed_champion_lineage,
-)
 from common.ml.direct_model_lineage import (
     DIRECT_MODEL_CONFIG_METADATA_KEY,
     SOURCE_MODEL_ROSTER_METADATA_KEY,
@@ -35,9 +30,14 @@ from common.ml.neural_artifacts import (
 from common.ml.neural_forecast import SUPPORTED_NEURAL_MODELS
 from common.ml.tree_artifact_lineage import ProductionTreeArtifactLineage
 from common.ml.tree_artifacts import (
+    build_production_tree_model_config_payload,
     build_tree_artifact_spec,
-    build_tree_model_config_payload,
     read_active_tree_artifact_ref,
+)
+from common.services.champion_lineage import (
+    GOVERNED_CHAMPION_LINEAGE_METADATA_KEY,
+    GovernedChampionLineageError,
+    load_active_governed_champion_lineage,
 )
 from common.services.cluster_lineage import load_promoted_cluster_population
 from common.services.forecast_generation import (
@@ -287,7 +287,7 @@ def _validate_current_tree_artifact(
         )
         spec = build_tree_artifact_spec(
             model_id=model_id,
-            model_config=build_tree_model_config_payload(
+            model_config=build_production_tree_model_config_payload(
                 config,
                 model_id=model_id,
                 project_root=project_root,

@@ -378,7 +378,7 @@ def test_tree_contender_requires_the_current_active_artifact_set(tmp_path):
             return_value=config,
         ),
         patch(
-            "common.services.forecast_snapshot_validation.build_tree_model_config_payload",
+            "common.services.forecast_snapshot_validation.build_production_tree_model_config_payload",
             return_value={"model": "current"},
         ),
         patch(

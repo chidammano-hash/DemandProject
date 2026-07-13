@@ -44,7 +44,7 @@ def test_active_shap_loader_builds_current_production_spec(tmp_path) -> None:
         patch.object(shap, "get_planning_date", return_value=date(2024, 6, 18)),
         patch.object(
             shap,
-            "build_tree_model_config_payload",
+            "build_production_tree_model_config_payload",
             return_value={"contract": "production"},
         ),
         patch.object(

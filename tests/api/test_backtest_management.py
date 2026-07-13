@@ -323,7 +323,7 @@ async def test_training_status_reads_validated_lightgbm_bundle_metadata(tmp_path
         ) as load_clusters,
         patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
         patch(
-            f"{_ROUTER_MOD}.build_tree_model_config_payload",
+            f"{_ROUTER_MOD}.build_production_tree_model_config_payload",
             return_value=expected_config,
         ) as build_config,
         patch(
@@ -402,7 +402,7 @@ async def test_training_status_rejects_invalid_lightgbm_bundle_even_with_loose_p
         ),
         patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
         patch(
-            f"{_ROUTER_MOD}.build_tree_model_config_payload",
+            f"{_ROUTER_MOD}.build_production_tree_model_config_payload",
             return_value={"algorithm": "lgbm"},
         ),
         patch(
@@ -509,7 +509,7 @@ async def test_training_status_marks_stale_lightgbm_bundle_with_retrain_reason(t
         ),
         patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
         patch(
-            f"{_ROUTER_MOD}.build_tree_model_config_payload",
+            f"{_ROUTER_MOD}.build_production_tree_model_config_payload",
             return_value={"algorithm": "lgbm"},
         ),
         patch(

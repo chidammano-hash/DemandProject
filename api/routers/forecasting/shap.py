@@ -36,8 +36,8 @@ from common.ml.feature_engineering import compute_ts_profile_from_values
 from common.ml.tree_artifact_lineage import ProductionTreeArtifactLineage
 from common.ml.tree_artifacts import (
     LoadedTreeArtifactSet,
+    build_production_tree_model_config_payload,
     build_tree_artifact_spec,
-    build_tree_model_config_payload,
     load_active_tree_artifact_set,
 )
 from common.services.cluster_lineage import load_promoted_cluster_population
@@ -456,7 +456,7 @@ def _load_active_lgbm_artifact_set(conn) -> LoadedTreeArtifactSet:
     cluster_labels = (
         promoted_clusters.cluster_labels if promoted_clusters else frozenset({"global"})
     )
-    model_config = build_tree_model_config_payload(
+    model_config = build_production_tree_model_config_payload(
         config,
         model_id=_SHAP_MODEL_ID,
         project_root=PROJECT_ROOT,
