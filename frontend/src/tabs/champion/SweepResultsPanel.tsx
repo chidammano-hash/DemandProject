@@ -25,7 +25,13 @@ import {
 const fmtPct = (v: number | null | undefined) => (v == null ? "--" : `${Number(v).toFixed(2)}%`);
 const fmtScore = (v: number | null | undefined) => (v == null ? "--" : Number(v).toFixed(2));
 
-export function SweepResultsPanel({ sweepId }: { sweepId: number }) {
+export function SweepResultsPanel({
+  sweepId,
+  execLag,
+}: {
+  sweepId: number;
+  execLag?: number;
+}) {
   const running = (s?: ChampionSweep) => s?.status === "queued" || s?.status === "running";
 
   const { data: sweep } = useQuery({
@@ -58,25 +64,37 @@ export function SweepResultsPanel({ sweepId }: { sweepId: number }) {
     <div className="space-y-4">
       {/* Progress / recommendation header */}
       <Card>
-        <CardContent className="flex items-center justify-between py-3">
-          <div className="text-sm">
-            <span className="font-medium">{sweep.label}</span>{" "}
-            <Badge variant="outline" className="ml-1 text-xs">{sweep.status}</Badge>
-            {running(sweep) ? (
-              <span className="ml-2 text-xs text-muted-foreground">
-                {sweep.completed_count}/{sweep.candidate_count ?? "?"} candidates
-              </span>
+        <CardContent className="space-y-2 py-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm">
+              <span className="font-medium">{sweep.label}</span>{" "}
+              <Badge variant="outline" className="ml-1 text-xs">{sweep.status}</Badge>
+              {running(sweep) ? (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {sweep.completed_count}/{sweep.candidate_count ?? "?"} candidates
+                </span>
+              ) : null}
+            </div>
+            {sweep.status === "completed" && recommendedId != null ? (
+              <div className="text-right">
+                <span className="text-xs text-muted-foreground">
+                  Recommended #{recommendedId} · score {fmtScore(sweep.recommended_score)}
+                  {sweep.recommended_gate_eligible ? "" : " · gate ✗"}
+                </span>
+                <div className="text-[11px] text-muted-foreground">
+                  Analysis only · production promotion runs through champion-refresh
+                </div>
+              </div>
             ) : null}
           </div>
-          {sweep.status === "completed" && recommendedId != null ? (
-            <div className="text-right">
-              <span className="text-xs text-muted-foreground">
-                Recommended #{recommendedId} · score {fmtScore(sweep.recommended_score)}
-                {sweep.recommended_gate_eligible ? "" : " · gate ✗"}
-              </span>
-              <div className="text-[11px] text-muted-foreground">
-                Analysis only · production promotion runs through champion-refresh
-              </div>
+
+          {execLag !== undefined ? (
+            <div
+              role="note"
+              className="rounded-md border border-blue-500/25 bg-blue-500/5 px-3 py-2 text-xs text-muted-foreground"
+            >
+              Tournament snapshot stays portfolio-wide; Lag {execLag} applies to the KPI cards,
+              ranking, comparison, and experiment table.
             </div>
           ) : null}
         </CardContent>

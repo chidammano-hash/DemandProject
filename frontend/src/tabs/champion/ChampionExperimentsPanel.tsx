@@ -314,7 +314,7 @@ export function ChampionExperimentsPanel() {
 
       {/* Sweep results (tournament) — shows the latest/selected sweep */}
       {activeSweepId != null ? (
-        <SweepResultsPanel sweepId={activeSweepId} />
+        <SweepResultsPanel sweepId={activeSweepId} execLag={execLag} />
       ) : null}
 
       {showSweepBuilder ? <SweepBuilder onClose={() => setShowSweepBuilder(false)} /> : null}

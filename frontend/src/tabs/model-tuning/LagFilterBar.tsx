@@ -1,5 +1,5 @@
 /**
- * LagFilterBar -- Segmented control for execution-lag filtering (All | Lag 0-4).
+ * LagFilterBar -- Segmented control for evaluation-horizon filtering.
  *
  * Execution lag is the number of months between when the forecast was generated
  * and the target month. Lag 0 = 1-month ahead (most accurate), Lag 4 = 5 months
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 // Types
 // ---------------------------------------------------------------------------
 export interface LagFilterBarProps {
-  /** undefined = "All" (portfolio-level, no lag filter) */
+  /** undefined = portfolio evaluation at each DFU's assigned execution lag */
   value: number | undefined;
   onChange: (lag: number | undefined) => void;
 }
@@ -27,7 +27,7 @@ interface LagOption {
 }
 
 const LAG_OPTIONS: LagOption[] = [
-  { label: "Exec Lag", subLabel: "Portfolio", value: undefined },
+  { label: "Portfolio", subLabel: "assigned", value: undefined },
   { label: "Lag 0", subLabel: "1mo", value: 0 },
   { label: "Lag 1", subLabel: "2mo", value: 1 },
   { label: "Lag 2", subLabel: "3mo", value: 2 },
@@ -44,9 +44,28 @@ const TOOLTIP_TEXT =
 // Component
 // ---------------------------------------------------------------------------
 export function LagFilterBar({ value, onChange }: LagFilterBarProps) {
+  const scopeDescription =
+    value === undefined
+      ? "Showing each DFU at its assigned production planning lead time."
+      : `Showing every experiment at a fixed ${value + 1}-month-ahead horizon.`;
+
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5">
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-medium text-foreground">Evaluation horizon</span>
+        <span title={TOOLTIP_TEXT} className="cursor-help">
+          <HelpCircle
+            className="h-3.5 w-3.5 text-muted-foreground/60"
+            strokeWidth={1.5}
+          />
+        </span>
+      </div>
+
+      <div
+        role="group"
+        aria-label="Evaluation horizon"
+        className="flex gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5"
+      >
         {LAG_OPTIONS.map((opt) => {
           const isActive =
             opt.value === value ||
@@ -54,8 +73,11 @@ export function LagFilterBar({ value, onChange }: LagFilterBarProps) {
 
           return (
             <button
+              type="button"
               key={opt.label}
               onClick={() => onChange(opt.value)}
+              aria-label={`${opt.label} (${opt.subLabel})`}
+              aria-pressed={isActive}
               className={cn(
                 "flex flex-col items-center px-3 py-1 text-xs rounded-md transition-colors min-w-[52px]",
                 isActive
@@ -77,9 +99,9 @@ export function LagFilterBar({ value, onChange }: LagFilterBarProps) {
         })}
       </div>
 
-      <span title={TOOLTIP_TEXT} className="cursor-help">
-        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50" strokeWidth={1.5} />
-      </span>
+      <p aria-live="polite" className="text-[11px] text-muted-foreground">
+        {scopeDescription}
+      </p>
     </div>
   );
 }

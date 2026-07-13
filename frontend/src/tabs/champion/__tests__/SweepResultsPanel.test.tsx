@@ -39,10 +39,10 @@ vi.mock("@/api/queries", () => ({
   promoteSweepWinner: (...a: unknown[]) => promoteSweepWinner(...a),
 }));
 
-function renderPanel() {
+function renderPanel(execLag?: number) {
   return render(
     <TestQueryWrapper>
-      <SweepResultsPanel sweepId={1} />
+      <SweepResultsPanel sweepId={1} execLag={execLag} />
     </TestQueryWrapper>,
   );
 }
@@ -69,5 +69,16 @@ describe("SweepResultsPanel", () => {
     await waitFor(() => expect(screen.getByText(/Recommended #7/)).toBeDefined());
     expect(screen.queryByRole("button", { name: /Promote winner/ })).toBeNull();
     expect(promoteSweepWinner).not.toHaveBeenCalled();
+  });
+
+  it("makes the portfolio-only tournament scope explicit when a fixed lag is selected", async () => {
+    renderPanel(2);
+
+    expect(await screen.findByText("June tournament")).toBeDefined();
+    expect(
+      screen.getByText(
+        "Tournament snapshot stays portfolio-wide; Lag 2 applies to the KPI cards, ranking, comparison, and experiment table.",
+      ),
+    ).toBeInTheDocument();
   });
 });
