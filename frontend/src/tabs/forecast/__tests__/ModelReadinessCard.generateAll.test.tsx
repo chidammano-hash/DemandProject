@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ModelReadinessCard } from "../ModelReadinessCard";
 import type { ForecastAlgorithm } from "../forecastPanelShared";
 import type { StagingSummary } from "@/api/queries/backtest-management";
+import type { ChampionExperiment } from "@/api/queries/champion-experiments";
 
 const treeAlgo: ForecastAlgorithm = {
   id: "lgbm_cluster",
@@ -37,6 +38,37 @@ const readyCandidate: StagingSummary = {
   last_generated_at: "2026-07-10T12:00:00Z",
   min_forecast_month: "2026-07-01",
   max_forecast_month: "2026-12-01",
+};
+
+const perClusterChampion: ChampionExperiment = {
+  experiment_id: 84,
+  label: "Current champion",
+  notes: null,
+  template_id: null,
+  status: "completed",
+  created_at: "2026-07-10T12:00:00Z",
+  started_at: "2026-07-10T12:00:00Z",
+  completed_at: "2026-07-10T12:02:00Z",
+  runtime_seconds: 120,
+  job_id: "champion-job",
+  strategy: "per_cluster",
+  strategy_params: { min_prior_months: 3 },
+  meta_learner_params: null,
+  models: ["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"],
+  metric: "accuracy_pct",
+  lag_mode: "execution",
+  min_sku_rows: 3,
+  champion_accuracy: 75.4,
+  ceiling_accuracy: 84.6,
+  gap_bps: 919,
+  n_champions: 9_353,
+  n_dfu_months: 42_329,
+  model_distribution: null,
+  is_promoted: true,
+  promoted_at: "2026-07-10T12:03:00Z",
+  is_results_promoted: true,
+  results_promoted_at: "2026-07-10T12:03:00Z",
+  results_promote_job_id: "champion-job",
 };
 
 function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCard>> = {}) {
@@ -165,5 +197,15 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(
       screen.getByText(/Generate All creates 5 staged comparison forecasts/)
     ).toBeInTheDocument();
+  });
+
+  it("labels a per-cluster champion as routed instead of an ensemble", () => {
+    renderCard({
+      promotedExperiment: perClusterChampion,
+      championConstituents: perClusterChampion.models,
+    });
+
+    expect(screen.getByText("Per-cluster routing")).toBeInTheDocument();
+    expect(screen.queryByText("ensemble")).not.toBeInTheDocument();
   });
 });

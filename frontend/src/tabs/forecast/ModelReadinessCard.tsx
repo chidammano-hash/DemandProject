@@ -52,6 +52,15 @@ interface ModelReadinessCardProps {
   generatableCount: number;
 }
 
+function championStrategyLabel(strategy: string): string {
+  if (strategy === "per_cluster") return "Per-cluster routing";
+  return strategy
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export function ModelReadinessCard({
   forecastAlgos,
   trainingStatus,
@@ -198,7 +207,7 @@ export function ModelReadinessCard({
                 </TableCell>
                 <TableCell>
                   <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 text-[10px] px-1.5 py-0">
-                    ensemble
+                    {championStrategyLabel(promotedExperiment.strategy)}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-sm tabular-nums">
