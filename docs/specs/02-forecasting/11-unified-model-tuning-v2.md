@@ -5,7 +5,7 @@
 |---|---|
 | **Status** | Implemented |
 | **Replaces** | Feature 45 (Model Tuning) — full rewrite of UI, API, and job integration |
-| **UI Tab** | Model Tuning (sidebar: Demand section) |
+| **UI Tab** | Forecasting (sidebar: Demand section; internal API paths retain `model-tuning`) |
 | **Router** | `api/routers/forecasting/tuning/` (15-module package; `__init__.py` re-exports the unified router for `api/main.py` to mount) |
 | **Frontend** | `frontend/src/api/queries/unified-model-tuning.ts`, `frontend/src/tabs/ModelTuningTab.tsx`, `frontend/src/tabs/model-tuning/` |
 | **Tests** | `tests/api/test_unified_model_tuning.py` (40 tests), `frontend/src/tabs/__tests__/ModelTuningTab.test.tsx` |
@@ -157,7 +157,11 @@ The current production LGBM parameters (from `forecast_pipeline_config.yaml`) ar
 
 ### 4.1 Tab Structure
 
-The Model Tuning tab is a single sidebar entry under the **Demand** section. It contains:
+The user-facing **Forecasting** tab is a single sidebar entry under the
+**Demand** section. It now contains lifecycle stages for Clustering, Backtest,
+Tune, Champion, Forecast, and a separate Period Roll tab. The original tuning
+studio below remains the Tune-stage design; internal component and API names
+retain `ModelTuning`/`model-tuning` to avoid an unrelated route migration.
 
 ```
 Model Tuning Tab

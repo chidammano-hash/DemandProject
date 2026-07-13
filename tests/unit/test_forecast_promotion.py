@@ -27,6 +27,7 @@ from common.services.forecast_generation import (
 )
 from common.services.forecast_promotion import (
     ForecastGenerationManifest,
+    ForecastStagingResult,
     PromotionConflictError,
     _archive_outgoing_release,
     _candidate_coverage,
@@ -38,6 +39,7 @@ from common.services.forecast_promotion import (
     _validate_incoming_snapshot_roster,
     _validate_tree_model_lineage,
     promote_forecast_run,
+    stage_forecast_run,
     validate_generation_manifest,
 )
 from common.services.forecast_snapshot_validation import SnapshotContenderStaleError
@@ -198,7 +200,7 @@ def test_champion_promotion_rejects_refresh_from_different_sales_batch():
     [
         ({"generation_purpose": "snapshot_contender"}, "candidate_run_not_promotable"),
         ({"run_status": "generating"}, "candidate_run_not_promotable"),
-        ({"promotion_eligible": False}, "candidate_run_not_promotable"),
+        ({"promotion_eligible": False}, "candidate_not_staged"),
         ({"requested_model_id": "lgbm_cluster"}, "candidate_lineage_mismatch"),
         ({"forecast_month_generated": date(2026, 6, 1)}, "stale_candidate_evidence"),
         ({"horizon_months": 5}, "candidate_gate_failed"),
@@ -515,6 +517,65 @@ def test_single_model_candidates_enter_transactional_promotion(model_id: str) ->
 
     assert exc_info.value.code == "candidate_run_not_found"
     conn.transaction.assert_called_once()
+
+
+def test_generated_candidate_must_be_staged_before_production_promotion() -> None:
+    manifest = _manifest(promotion_eligible=False)
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        validate_generation_manifest(
+            manifest,
+            model_id="champion",
+            planning_month=date(2026, 7, 1),
+            required_months=6,
+        )
+
+    assert exc_info.value.code == "candidate_not_staged"
+
+
+def test_stage_forecast_run_approves_exact_generated_candidate() -> None:
+    conn = MagicMock()
+    tx = conn.transaction.return_value
+    tx.__enter__.return_value = tx
+    tx.__exit__.return_value = False
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.rowcount = 1
+    stats = MagicMock(checksum="c" * 64, row_count=120, dfu_count=10, source_model_count=1)
+
+    with (
+        patch(
+            "common.services.forecast_promotion._load_manifest",
+            return_value=_manifest(
+                requested_model_id="mstl",
+                source_model_count=1,
+                promotion_eligible=False,
+            ),
+        ),
+        patch(
+            "common.services.forecast_promotion.compute_staging_payload_stats",
+            return_value=stats,
+        ),
+    ):
+        result = stage_forecast_run(
+            conn,
+            model_id="mstl",
+            source_run_id=RUN_ID,
+            planning_month=date(2026, 7, 1),
+        )
+
+    assert result == ForecastStagingResult(
+        model_id="mstl",
+        source_run_id=RUN_ID,
+        status="staged",
+        rows_staged=120,
+        dfu_count=10,
+        candidate_checksum="c" * 64,
+    )
+    stage_update = next(
+        call for call in cur.execute.call_args_list if "SET promotion_eligible = TRUE" in call.args[0]
+    )
+    assert "promotion_eligible = FALSE" in stage_update.args[0]
+    assert stage_update.args[1] == (str(RUN_ID),)
 
 
 @pytest.mark.parametrize(

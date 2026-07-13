@@ -106,6 +106,16 @@ class PromotionResult:
     dfu_count: int
 
 
+@dataclass(frozen=True)
+class ForecastStagingResult:
+    model_id: str
+    source_run_id: UUID
+    status: str
+    rows_staged: int
+    dfu_count: int
+    candidate_checksum: str
+
+
 class PromotionConflictError(ValueError):
     """Expected fail-closed release rejection with a stable public code."""
 
@@ -127,16 +137,21 @@ def validate_generation_manifest(
     model_id: str,
     planning_month: date,
     required_months: int,
+    require_staged: bool = True,
 ) -> None:
     """Reject a source manifest that cannot identify one safe release candidate."""
     if (
         manifest.generation_purpose != "release_candidate"
         or manifest.run_status != "ready"
-        or not manifest.promotion_eligible
     ):
         raise PromotionConflictError(
             "candidate_run_not_promotable",
             "The selected generation run is not eligible for release.",
+        )
+    if require_staged and not manifest.promotion_eligible:
+        raise PromotionConflictError(
+            "candidate_not_staged",
+            "Promote the selected generated candidate to staging first.",
         )
     if manifest.metadata.get(GENERATOR_CONTRACT_METADATA_KEY) != GENERATOR_CONTRACT_VERSION:
         raise PromotionConflictError(
@@ -226,6 +241,54 @@ def _validate_manifest_payload(
             "candidate_lineage_mismatch",
             "The staged forecast payload no longer matches its generation manifest.",
         )
+
+
+def stage_forecast_run(
+    conn: Any,
+    *,
+    model_id: str,
+    source_run_id: UUID,
+    planning_month: date,
+) -> ForecastStagingResult:
+    """Approve one immutable generated candidate for later production promotion."""
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('forecast_release_staging'))"
+            )
+            manifest = _load_manifest(cur, source_run_id)
+            validate_generation_manifest(
+                manifest,
+                model_id=model_id,
+                planning_month=planning_month,
+                required_months=1,
+                require_staged=False,
+            )
+            stats = compute_staging_payload_stats(cur, source_run_id)
+            _validate_manifest_payload(manifest, stats)
+            status = "already_staged" if manifest.promotion_eligible else "staged"
+            if not manifest.promotion_eligible:
+                cur.execute(
+                    """UPDATE forecast_generation_run
+                       SET promotion_eligible = TRUE
+                       WHERE run_id = %s::uuid
+                         AND run_status = 'ready'
+                         AND promotion_eligible = FALSE""",
+                    (str(source_run_id),),
+                )
+                if cur.rowcount != 1:
+                    raise PromotionConflictError(
+                        "concurrent_staging_conflict",
+                        "The generated candidate changed while it was being staged.",
+                    )
+            return ForecastStagingResult(
+                model_id=model_id,
+                source_run_id=source_run_id,
+                status=status,
+                rows_staged=stats.row_count,
+                dfu_count=stats.dfu_count,
+                candidate_checksum=stats.checksum,
+            )
 
 
 def _validate_direct_model_lineage(

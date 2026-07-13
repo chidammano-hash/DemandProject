@@ -61,7 +61,7 @@ export const SIDEBAR_LABELS = [
   "Portfolio",
   "Item Analysis",
   "FVA & ROI",
-  "Model Tuning",
+  "Forecasting",
   "Customer Analytics",
   "Demand History",
   "SKU Features",

@@ -37,9 +37,30 @@ interface PaletteItem {
 // Quick actions beyond navigation
 // ---------------------------------------------------------------------------
 const QUICK_ACTIONS: PaletteItem[] = [
-  { id: "toggle-dark", label: "Toggle dark mode", section: "Actions", icon: MoonStar, keywords: "dark light theme mode", type: "action" },
-  { id: "toggle-sidebar", label: "Toggle sidebar", section: "Actions", icon: PanelLeft, keywords: "sidebar collapse expand navigation nav", type: "action" },
-  { id: "keyboard-help", label: "Keyboard shortcuts", section: "Actions", icon: Keyboard, keywords: "shortcuts keys help hotkeys", type: "action" },
+  {
+    id: "toggle-dark",
+    label: "Toggle dark mode",
+    section: "Actions",
+    icon: MoonStar,
+    keywords: "dark light theme mode",
+    type: "action",
+  },
+  {
+    id: "toggle-sidebar",
+    label: "Toggle sidebar",
+    section: "Actions",
+    icon: PanelLeft,
+    keywords: "sidebar collapse expand navigation nav",
+    type: "action",
+  },
+  {
+    id: "keyboard-help",
+    label: "Keyboard shortcuts",
+    section: "Actions",
+    icon: Keyboard,
+    keywords: "shortcuts keys help hotkeys",
+    type: "action",
+  },
 ];
 
 const SECTION_ORDER: Record<string, number> = {
@@ -68,7 +89,7 @@ const NAV_KEYWORDS: Record<string, string> = {
   aggregateAnalysis: "portfolio demand forecast accuracy aggregate dashboard",
   itemAnalysis: "sku item dfu forecast actual overlay detail",
   fva: "forecast value added roi accuracy contribution",
-  lgbmTuning: "model tuning champion backtest ml parameters",
+  lgbmTuning: "forecasting model tuning champion backtest period roll ml parameters",
   customerAnalytics: "customer geography market channel account map",
   demandHistory: "history sales demand time series actuals",
   skuFeatures: "features feature lab clustering attributes",
@@ -76,7 +97,8 @@ const NAV_KEYWORDS: Record<string, string> = {
   invPlanning: "inventory replenishment policy orders safety stock eoq rop supply",
   invBacktest: "inventory backtest simulation service level",
   sop: "sop s&op consensus planning override collaboration",
-  integration: "workflows jobs runs active scheduler queue ai etl pipeline load normalize refresh clustering forecast inventory archive",
+  integration:
+    "workflows jobs runs active scheduler queue ai etl pipeline load normalize refresh clustering forecast inventory archive",
   dataQuality: "quality lineage validation exceptions rules checks",
   explorer: "database table records dimensions facts browse",
   sqlRunner: "sql query runner console database",
@@ -122,7 +144,7 @@ export function CommandPalette({
       (item) =>
         item.label.toLowerCase().includes(q) ||
         item.section.toLowerCase().includes(q) ||
-        (item.keywords && item.keywords.toLowerCase().includes(q)),
+        (item.keywords && item.keywords.toLowerCase().includes(q))
     );
   }, [allItems, query]);
 
@@ -132,7 +154,7 @@ export function CommandPalette({
     const seen = new Set<string>();
     // Sort by section order
     const sorted = [...filtered].sort(
-      (a, b) => (SECTION_ORDER[a.section] ?? 99) - (SECTION_ORDER[b.section] ?? 99),
+      (a, b) => (SECTION_ORDER[a.section] ?? 99) - (SECTION_ORDER[b.section] ?? 99)
     );
     for (const item of sorted) {
       if (!seen.has(item.section)) {
@@ -186,7 +208,7 @@ export function CommandPalette({
       }
       onClose();
     },
-    [onNavigate, onToggleDarkMode, onToggleSidebar, onShowKeyboardHelp, onClose],
+    [onNavigate, onToggleDarkMode, onToggleSidebar, onShowKeyboardHelp, onClose]
   );
 
   // Keyboard handler
@@ -206,7 +228,7 @@ export function CommandPalette({
         onClose();
       }
     },
-    [flatItems, selectedIndex, executeItem, onClose],
+    [flatItems, selectedIndex, executeItem, onClose]
   );
 
   if (!open) return null;
@@ -274,10 +296,17 @@ export function CommandPalette({
                     onClick={() => executeItem(item)}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                      isSelected ? "bg-primary/10 text-foreground" : "text-foreground/80 hover:bg-muted",
+                      isSelected
+                        ? "bg-primary/10 text-foreground"
+                        : "text-foreground/80 hover:bg-muted"
                     )}
                   >
-                    {Icon && <Icon className="h-[18px] w-[18px] shrink-0 text-muted-foreground" strokeWidth={1.5} />}
+                    {Icon && (
+                      <Icon
+                        className="h-[18px] w-[18px] shrink-0 text-muted-foreground"
+                        strokeWidth={1.5}
+                      />
+                    )}
                     <span className="flex-1 truncate text-left">
                       {item.label}
                       {isActive && (
@@ -298,7 +327,9 @@ export function CommandPalette({
 
         {/* Footer hints */}
         <div className="flex items-center gap-3 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-          <span>{flatItems.length} result{flatItems.length === 1 ? "" : "s"}</span>
+          <span>
+            {flatItems.length} result{flatItems.length === 1 ? "" : "s"}
+          </span>
           <span className="h-3 w-px bg-border" aria-hidden="true" />
           <span className="flex items-center gap-1">
             <CornerDownLeft className="h-3 w-3" /> to select

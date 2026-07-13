@@ -48,7 +48,7 @@ export function AlgorithmSelectionCard({
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <Play className="h-4 w-4" />
-            Step 2: Algorithm Selection
+            Step 2: Select Release Candidate
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -98,19 +98,19 @@ export function AlgorithmSelectionCard({
                   </p>
                   <div className="flex flex-wrap gap-x-3 gap-y-1">
                     {championCompetingAlgos.map((algo) => {
-                      // Green = forecast generated in staging; Red = not yet generated
-                      const hasStaged = (staging[algo.id]?.row_count ?? 0) > 0;
+                      // Green = a draft has been generated; red = no current draft.
+                      const hasGenerated = (staging[algo.id]?.row_count ?? 0) > 0;
                       return (
                         <span
                           key={algo.id}
                           className={cn(
                             "inline-flex items-center gap-1 text-xs",
-                            hasStaged
+                            hasGenerated
                               ? "text-emerald-600 dark:text-emerald-400"
                               : "text-red-600 dark:text-red-400"
                           )}
                         >
-                          {hasStaged ? (
+                          {hasGenerated ? (
                             <CheckCircle2 className="h-3 w-3" />
                           ) : (
                             <XCircle className="h-3 w-3" />

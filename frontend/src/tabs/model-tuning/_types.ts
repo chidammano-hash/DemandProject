@@ -11,7 +11,13 @@ export interface ModelInfo {
   modelType?: ModelType;
 }
 
-export type PipelineStage = "clustering" | "backtest" | "tune" | "champion" | "forecast";
+export type PipelineStage =
+  | "clustering"
+  | "backtest"
+  | "tune"
+  | "champion"
+  | "forecast"
+  | "period-roll";
 
 export type ModelDetailTab = "experiments" | "feature-lab" | "cluster-eda";
 

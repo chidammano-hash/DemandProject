@@ -28,7 +28,7 @@ const readyCandidate: StagingSummary = {
   model_id: "lgbm_cluster",
   source_run_id: "new-run",
   run_status: "ready",
-  promotion_eligible: true,
+  promotion_eligible: false,
   generation_purpose: "release_candidate",
   row_count: 6,
   dfu_count: 1,
@@ -101,16 +101,16 @@ function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCar
 }
 
 describe("ModelReadinessCard — Generate All", () => {
-  it("renders the Generate All button with the ready count and fires onGenerateAll", () => {
+  it("renders the Generate All Drafts button with the ready count and fires onGenerateAll", () => {
     const { onGenerateAll } = renderCard();
-    const btn = screen.getByText(/Generate All \(1\)/);
+    const btn = screen.getByText(/Generate All Drafts \(1\)/);
     fireEvent.click(btn);
     expect(onGenerateAll).toHaveBeenCalledTimes(1);
   });
 
   it("disables Generate All when no models are ready", () => {
     const { onGenerateAll } = renderCard({ generatableCount: 0 });
-    const btn = screen.getByText(/Generate All \(0\)/).closest("button");
+    const btn = screen.getByText(/Generate All Drafts \(0\)/).closest("button");
     expect(btn).not.toBeNull();
     expect(btn).toBeDisabled();
     fireEvent.click(btn!);
@@ -155,12 +155,12 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
   });
 
-  it("marks individual model output as a selectable staged candidate", () => {
+  it("marks new individual model output as a generated draft", () => {
     renderCard({
       staging: { lgbm_cluster: readyCandidate },
     });
 
-    expect(screen.getByText("Candidate staged")).toBeInTheDocument();
+    expect(screen.getByText("Generated draft")).toBeInTheDocument();
     expect(screen.queryByText("Diagnostic only")).not.toBeInTheDocument();
   });
 

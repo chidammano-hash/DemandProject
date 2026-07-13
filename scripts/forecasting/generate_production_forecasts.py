@@ -2547,7 +2547,7 @@ def write_forecast_staging(
     generation_purpose: str = "release_candidate",
     generation_evidence: dict[str, object | None] | None = None,
     generation_metadata: dict[str, Any] | None = None,
-    promotion_eligible: bool = True,
+    promotion_eligible: bool = False,
     requested_horizon: int | None = None,
 ) -> int:
     """Persist one immutable generation run and its exact staging payload."""
@@ -3547,7 +3547,7 @@ def main() -> None:
                 generation_purpose=args.generation_purpose,
                 generation_evidence=generation_evidence,
                 generation_metadata=generation_metadata,
-                promotion_eligible=not bool(args.dfu or args.max_dfus),
+                promotion_eligible=False,
                 requested_horizon=horizon,
             )
         logger.info("Written: %s rows", f"{written:,}")

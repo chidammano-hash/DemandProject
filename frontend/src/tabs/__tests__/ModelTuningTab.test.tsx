@@ -168,6 +168,9 @@ vi.mock("../clusters/ClusterExperimentsPanel", () => ({
 vi.mock("../champion/ChampionExperimentsPanel", () => ({
   ChampionExperimentsPanel: () => <div data-testid="champion-panel">ChampionExperimentsPanel</div>,
 }));
+vi.mock("../forecast/PeriodRollPanel", () => ({
+  PeriodRollPanel: () => <div data-testid="period-roll-panel">PeriodRollPanel</div>,
+}));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -186,12 +189,25 @@ describe("ModelTuningTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("Model Experimentation Studio")).toBeInTheDocument();
+      expect(screen.getByText("Forecasting")).toBeInTheDocument();
     });
     expect(screen.getByText("Clustering")).toBeInTheDocument();
     expect(screen.getByText("Backtest")).toBeInTheDocument();
     expect(screen.getByText("Tune")).toBeInTheDocument();
     expect(screen.getByText("Champion")).toBeInTheDocument();
+    expect(screen.getByText("Forecast")).toBeInTheDocument();
+    expect(screen.getByText("Period Roll")).toBeInTheDocument();
+  });
+
+  it("opens Period Roll as its own forecasting stage", async () => {
+    const ModelTuningTab = (await import("../ModelTuningTab")).default;
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
+    fireEvent.click(screen.getByText("Period Roll"));
+    await waitFor(() => expect(screen.getByTestId("period-roll-panel")).toBeInTheDocument());
   });
 
   it("renders all model cards on backtest stage", async () => {
@@ -370,7 +386,7 @@ describe("ModelTuningTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("Model Experimentation Studio")).toBeInTheDocument();
+      expect(screen.getByText("Forecasting")).toBeInTheDocument();
     });
     expect(screen.getByTitle("AI Tuning Advisor")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("AI Tuning Advisor"));

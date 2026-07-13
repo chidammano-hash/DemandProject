@@ -1281,6 +1281,13 @@ def test_staging_write_is_run_scoped_and_records_ready_manifest():
         "UPDATE forecast_generation_run" in sql and "run_status = 'ready'" in sql
         for sql in statements
     )
+    ready_update = next(
+        call
+        for call in cur.execute.call_args_list
+        if "UPDATE forecast_generation_run" in call.args[0]
+        and "run_status = 'ready'" in call.args[0]
+    )
+    assert ready_update.args[1][0] is False
     lineage_update = next(
         call
         for call in cur.execute.call_args_list

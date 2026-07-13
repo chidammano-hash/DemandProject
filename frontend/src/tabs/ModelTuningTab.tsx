@@ -25,29 +25,34 @@ import {
 
 // Lazy: heavy stage panels — only the active stage's chunk is fetched.
 const ClusterExperimentsPanel = lazy(() =>
-  import("./clusters/ClusterExperimentsPanel").then((m) => ({ default: m.ClusterExperimentsPanel })),
+  import("./clusters/ClusterExperimentsPanel").then((m) => ({ default: m.ClusterExperimentsPanel }))
 );
 const ChampionExperimentsPanel = lazy(() =>
-  import("./champion/ChampionExperimentsPanel").then((m) => ({ default: m.ChampionExperimentsPanel })),
+  import("./champion/ChampionExperimentsPanel").then((m) => ({
+    default: m.ChampionExperimentsPanel,
+  }))
 );
 const ForecastPanel = lazy(() =>
-  import("./forecast/ForecastPanel").then((m) => ({ default: m.ForecastPanel })),
+  import("./forecast/ForecastPanel").then((m) => ({ default: m.ForecastPanel }))
+);
+const PeriodRollPanel = lazy(() =>
+  import("./forecast/PeriodRollPanel").then((m) => ({ default: m.PeriodRollPanel }))
 );
 const BacktestStagePanel = lazy(() =>
-  import("./model-tuning/BacktestStagePanel").then((m) => ({ default: m.BacktestStagePanel })),
+  import("./model-tuning/BacktestStagePanel").then((m) => ({ default: m.BacktestStagePanel }))
 );
 const TuneStagePanel = lazy(() =>
-  import("./model-tuning/TuneStagePanel").then((m) => ({ default: m.TuneStagePanel })),
+  import("./model-tuning/TuneStagePanel").then((m) => ({ default: m.TuneStagePanel }))
 );
 // Lazy: modal/slide-over overlays — chunk only fetched once user opens them.
 const ExperimentBuilder = lazy(() =>
-  import("./model-tuning/ExperimentBuilder").then((m) => ({ default: m.ExperimentBuilder })),
+  import("./model-tuning/ExperimentBuilder").then((m) => ({ default: m.ExperimentBuilder }))
 );
 const LogViewer = lazy(() =>
-  import("./model-tuning/LogViewer").then((m) => ({ default: m.LogViewer })),
+  import("./model-tuning/LogViewer").then((m) => ({ default: m.LogViewer }))
 );
 const EnhancedPromoteModal = lazy(() =>
-  import("./model-tuning/EnhancedPromoteModal").then((m) => ({ default: m.EnhancedPromoteModal })),
+  import("./model-tuning/EnhancedPromoteModal").then((m) => ({ default: m.EnhancedPromoteModal }))
 );
 // Eager: small floating button always visible.
 import { AIAdvisorFAB } from "./model-tuning/AIAdvisorFAB";
@@ -128,10 +133,11 @@ export default function ModelTuningTab() {
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold">
             <Layers className="h-5 w-5 text-muted-foreground" />
-            Model Experimentation Studio
+            Forecasting
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Run experiments, compare results, and promote to production.
+            Cluster demand, backtest and tune models, assign a champion, generate candidates, and
+            control releases.
           </p>
         </div>
       </div>
@@ -140,7 +146,7 @@ export default function ModelTuningTab() {
       <PipelineReadinessBanner />
 
       {/* ---- Pipeline Stage Tabs ---- */}
-      <div className="flex gap-1 border-b border-border pb-1">
+      <div className="flex flex-wrap gap-1 border-b border-border pb-1">
         {STAGE_TABS.map(({ key, label, icon: Icon }) => (
           <button
             type="button"
@@ -150,7 +156,7 @@ export default function ModelTuningTab() {
               "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors",
               stage === key
                 ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-muted",
+                : "text-muted-foreground hover:bg-muted"
             )}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -169,6 +175,9 @@ export default function ModelTuningTab() {
 
         {/* Forecast stage */}
         {stage === "forecast" && <ForecastPanel />}
+
+        {/* Period Roll stage */}
+        {stage === "period-roll" && <PeriodRollPanel />}
 
         {/* Backtest stage -- ALL models with run/load actions */}
         {stage === "backtest" && (

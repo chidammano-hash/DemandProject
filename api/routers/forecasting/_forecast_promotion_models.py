@@ -30,3 +30,14 @@ class ForecastGenerationSubmittedResponse(BaseModel):
     job_id: str
     model_id: str
     source_run_id: UUID
+
+
+class ForecastStagingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_id: str
+    source_run_id: UUID
+    status: str
+    rows_staged: int = Field(ge=1)
+    dfu_count: int = Field(ge=1)
+    candidate_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")

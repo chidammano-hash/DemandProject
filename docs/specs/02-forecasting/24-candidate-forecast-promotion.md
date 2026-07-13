@@ -1,7 +1,7 @@
 # 24 — Candidate Forecast & Model Promotion Workflow
 
 **Status:** Implemented
-**Last updated:** 2026-07-12
+**Last updated:** 2026-07-13
 **Related:** 08-production-forecast.md, 07-champion-selection.md, 12-dual-promotion.md
 
 ---
@@ -12,12 +12,14 @@ This feature implements a **run-scoped staged promotion workflow** for forward
 forecasts:
 
 ```
-Train → Generate immutable release candidate → Promote exact source run
+Train → Generate immutable draft → Promote exact run to staging → Promote staged run to production
 ```
 
 Forward predictions land in an immutable, purpose-scoped
-`fact_production_forecast_staging` run. Only one explicitly selected
-`release_candidate` `source_run_id` can be copied to
+`fact_production_forecast_staging` run with `promotion_eligible=FALSE`. The
+explicit staging action reviews and marks that exact run eligible without
+changing its payload. Only one explicitly selected staged `release_candidate`
+`source_run_id` can be copied to
 `fact_production_forecast`. Historical backtest predictions use the separate
 `fact_external_forecast_monthly`/`backtest_lag_archive` flow; the legacy
 `fact_candidate_forecast` table remains inert and is not a release source.
@@ -31,7 +33,8 @@ side-by-side before committing one to production. This workflow adds:
 - **Immutable candidate staging** — generations coexist by run and purpose
 - **Coherent champion generation** — one candidate run preserves every routed
   source model without combining separately generated rows
-- **Explicit promotion** — the request must name the exact source run
+- **Two explicit promotions** — the request must name the exact source run when
+  moving a generated draft to staging and again when publishing it
 - **Transactional release control** — validate, archive the outgoing release,
   publish, and audit as one all-or-nothing operation
 - **Exact audit trail** — source/production run ids, gate report, and canonical
@@ -97,8 +100,9 @@ Added columns:
 `forecast_generation_run` is the manifest for one immutable forward-generation
 payload. Its `generation_purpose` is one of:
 
-- `release_candidate` — eligible for promotion only when status is `ready` and
-  `promotion_eligible=TRUE`;
+- `release_candidate` — generation finishes `ready` and non-eligible; `POST
+  /backtest-management/{model_id}/stage` verifies the immutable manifest and
+  payload before setting `promotion_eligible=TRUE`;
 - `snapshot_contender` — one of the three bounded live-FVA alternatives, never
   promotable; or
 - `legacy_invalid` — pre-migration staging retained for inspection/cleanup but
@@ -183,7 +187,13 @@ forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
 | POST | `/{model_id}/generate` | Submit a new `release_candidate`; returns its allocated `source_run_id` immediately |
 | POST | `/{model_id}/promote?source_run_id=<uuid>` | Promote exactly one ready, eligible release-candidate run |
 
-### 4.3 Transactional promotion contract
+### 4.3 Staging approval and transactional production promotion
+
+`stage_forecast_run()` locks one exact current-month generated run, validates
+its model, generator contract, horizon, counts, and checksum, then changes only
+`promotion_eligible` from false to true. It is safe to retry and returns
+`already_staged` when the run was previously approved. Multiple models may have
+staged runs at the same time.
 
 `promote_model()` does not read `fact_candidate_forecast` and has no bypass
 token. It passes the explicit `source_run_id` to
@@ -192,7 +202,7 @@ primary database in one `SERIALIZABLE` transaction under a transaction-scoped
 advisory lock:
 
 1. Lock the `forecast_generation_run` manifest and require purpose
-   `release_candidate`, status `ready`, promotion eligibility, requested model
+   `release_candidate`, status `ready`, explicit staging eligibility, requested model
    equality, current planning month, sufficient horizon, and a non-empty
    checksummed payload produced by the current canonical-five generator
    contract.
@@ -253,7 +263,7 @@ contract; the difference is only their lineage validation and
 
 ## 5. Frontend UI
 
-### 5.1 Backtest stage table (Model Tuning → Backtest)
+### 5.1 Backtest stage table (Forecasting → Backtest)
 
 Models are grouped by family (Tree / Foundation / Statistical / Deep Learning) in compact
 tables. All five start checked; **Run selected (N)** runs any chosen subset, each row can run

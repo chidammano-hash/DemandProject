@@ -24,11 +24,9 @@ const PAGE_CHAT_CONFIG: Record<string, PageChatConfig> = {
   },
   aggregateAnalysis: {
     title: "Portfolio Analysis",
-    focus: "the Portfolio / Aggregate Analysis page — forecast accuracy (WAPE, bias) across segments.",
-    suggestions: [
-      "Which segments own the most forecast error?",
-      "Is bias trending up anywhere?",
-    ],
+    focus:
+      "the Portfolio / Aggregate Analysis page — forecast accuracy (WAPE, bias) across segments.",
+    suggestions: ["Which segments own the most forecast error?", "Is bias trending up anywhere?"],
   },
   itemAnalysis: {
     title: "Item Analysis",
@@ -46,8 +44,9 @@ const PAGE_CHAT_CONFIG: Record<string, PageChatConfig> = {
     suggestions: ["Is the champion beating the baseline here?", "Where is FVA negative?"],
   },
   lgbmTuning: {
-    title: "Model Tuning",
-    focus: "the Model Tuning page — hyperparameter experiments and their effect on accuracy.",
+    title: "Forecasting",
+    focus:
+      "the Forecasting page — clustering, backtests, tuning, champion assignment, forecast release, and period roll.",
     suggestions: ["Why didn't the last tune improve WAPE?", "Summarize the best run."],
   },
   customerAnalytics: {

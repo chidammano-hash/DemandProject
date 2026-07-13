@@ -19,7 +19,7 @@ Everything is triggered from one of two tabs:
 
 | Surface | Sidebar tab | What it drives |
 |---|---|---|
-| **Guided modeling flow** | **Model Tuning** (3 stages: **Backtest → Champion → Forecast**) | Phases 5–8: run backtests, load results, select/promote champion, train + generate + promote production forecasts |
+| **Guided modeling flow** | **Forecasting** (**Clustering → Backtest → Tune → Champion → Forecast → Period Roll**) | Phases 5–8: run selectable backtests, assign a champion, train, generate drafts, promote to staging, publish one production forecast, and execute the monthly roll |
 | **AI-guided operations + generic runner** | **Workflows** (**Plan & Run**, **Workflow Library**, **Manual Load**) | Input readiness through clustering, forecasting, archive, and inventory; plus monitoring, chaining, scheduling, and advanced loading |
 
 **Key facts that apply to everything below:**
@@ -39,7 +39,7 @@ Everything is triggered from one of two tabs:
 
 ---
 
-## 12.1 Phase 5 — Backtests (Model Tuning → Backtest stage)
+## 12.1 Phase 5 — Backtests (Forecasting → Backtest stage)
 
 The Backtest stage lists every model in the roster. Each model has a **Run** control →
 `POST /backtest-management/{model_id}/run` (writes; `?parallel=true` to let different model
@@ -66,7 +66,7 @@ Monitor multi-hour foundation/DL work in Active Jobs.
 
 ---
 
-## 12.2 Phase 6 — Results auto-load + accuracy (Model Tuning → Backtest stage)
+## 12.2 Phase 6 — Results auto-load + accuracy (Forecasting → Backtest stage)
 
 - **Auto-load (no Load button):** a backtest's predictions are loaded into the DB
   **automatically when the run completes** (server-side, inside the same job) — there is no
@@ -90,7 +90,7 @@ Monitor multi-hour foundation/DL work in Active Jobs.
 
 ---
 
-## 12.3 Phase 7 — Champion (Model Tuning → Champion stage)
+## 12.3 Phase 7 — Champion (Forecasting → Champion stage)
 
 The Champion stage (`ChampionExperimentsPanel`) creates, compares, and explicitly assigns selection
 experiments.
@@ -141,17 +141,19 @@ governed assignment and never writes production config or champion facts directl
 
 ---
 
-## 12.4 Phase 8 — Production forecast + promote (Model Tuning → Forecast stage)
+## 12.4 Phase 8 — Forecast release (Forecasting → Forecast stage)
 
-The Forecast stage (`ForecastPanel`) is a guided Train → Select → Stage → Promote flow.
+The Forecast stage (`ForecastPanel`) is a guided Train → Generate Draft → Select →
+Promote to Staging → Promote to Production flow.
 Champion generation is disabled until an assigned experiment is active. If readiness reports a stale
 champion, Forecast directs the user to the Champion stage rather than launching automatic selection.
 
 | Step | UI control → endpoint | Job type | Notes |
 |---|---|---|---|
 | **Train** production models | Train one persisted model (or all persisted models) → `POST /backtest-management/{model_id}/train` (or `/all/train`) | `train_production_model` (`{model_id, all_models}`) | LightGBM, N-HiTS, and N-BEATS require immutable production final-fit artifacts. MSTL fits from history and Chronos 2E uses pinned pretrained weights with covariates. |
-| **Generate** forecast | Generate (per model) **or Generate All ready** → `POST /backtest-management/{model_id}/generate?horizon=&confidence_intervals=` | `generate_production_forecast` (`{horizon, model_id, confidence_intervals}`) | writes `fact_production_forecast_staging`; check counts via `GET /backtest-management/staging-summary`. The panel's **Horizon** input + **Include Confidence Intervals** toggle now thread through to every generate path (single / champion / Generate All) |
-| **Select + Promote** to production | Select one of the five models or **Champion**, then **Promote _selection_ to Production** → `POST /backtest-management/{model_id}/promote?source_run_id=...` | — (direct call) | Promotion always copies the exact selected staged run. Single-model promotion validates one-source lineage and forward structure; champion promotion additionally validates assigned experiment, routing, cluster/tuning lineage, and historical quality. Both validate the snapshot roster, archive the outgoing release, and reconcile checksums. `X-API-Key` is required. |
+| **Generate** draft | **Generate Candidate** per model or **Generate All Drafts** → `POST /backtest-management/{model_id}/generate?horizon=&confidence_intervals=` | `generate_production_forecast` (`{horizon, model_id, confidence_intervals}`) | writes an immutable non-eligible draft to `fact_production_forecast_staging`; the horizon and confidence controls apply to every path |
+| **Promote to staging** | Select one of the five models or **Champion**, then **Promote _selection_ to Staging** → `POST /backtest-management/{model_id}/stage?source_run_id=...` | — (direct call) | validates the exact generated run and marks only that run eligible. Multiple staged candidates may coexist. |
+| **Promote to production** | **Promote _selection_ to Production** → `POST /backtest-management/{model_id}/promote?source_run_id=...` | — (direct call) | requires prior staging, validates release evidence, archives the outgoing release, copies the exact selected run, reconciles checksums, and atomically leaves only one active production promotion. `X-API-Key` is required. |
 
 The Forecast stage does not infer readiness from an artifact's own metadata.
 `GET /backtest-management/training-status` revalidates LightGBM, N-HiTS, and
@@ -166,13 +168,22 @@ pipeline and revalidates readiness once its final step completes. Payload
 integrity failures require operator review and intentionally do not offer an
 automatic rebuild action.
 
-**Generate All** (Step 1 header button) fires a generate job for every ready model —
+**Generate All Drafts** (Step 1 header button) fires a generate job for every ready model —
 the three artifact-backed models plus direct MSTL and Chronos 2E — in one click, carrying the same
 horizon + CI settings.
 
 Promotion status is shown on the panel (`GET /backtest-management/promotion-status`). Keep the
 system date aligned with the planning month so staging and promote `plan_version` match
 (`2026-06`).
+
+### Period Roll (separate Forecasting tab)
+
+Open **Forecasting → Period Roll** for the beginning-of-month control. **Run
+Period Roll** launches the durable `period-roll` named pipeline and shows the
+ordered status of **Calculate Snapshot KPIs**, **Prepare Forecast Snapshot
+Contenders**, **Archive Forecast Snapshot**, and **Clean Forecast Staging**.
+The same workflow remains available in Workflows; retries are safe for an
+already archived planning month.
 
 > **Visualizing the result (Item Analysis tab).** Once generated/promoted, open **Item Analysis**
 > for a DFU to see each model's **future** forecast (`staging_<model>` lines + the promoted

@@ -21,6 +21,7 @@ import {
   fetchStagingSummary,
   submitGenerateForecast,
   fetchPromotionStatus,
+  submitStageForecast,
   submitPromote,
   backtestMgmtKeys,
   BACKTEST_MGMT_STALE,
@@ -125,6 +126,7 @@ export function ForecastPanel() {
   const [pendingRunIds, setPendingRunIds] = useState<Record<string, string>>({});
   const [pendingBatchModelIds, setPendingBatchModelIds] = useState<string[]>([]);
   const [promotingModelId, setPromotingModelId] = useState<string | null>(null);
+  const [stagingModelId, setStagingModelId] = useState<string | null>(null);
   const { isTraining, trainingModelId, train, trainAll } = useForecastTraining();
   const { isPreparingPublish, preparePublish } = useForecastPublishPreparation();
 
@@ -278,8 +280,9 @@ export function ForecastPanel() {
     isForecastModelId
   );
   const championCandidate = staging.champion;
-  const championReady =
-    championCandidate?.run_status === "ready" && championCandidate.promotion_eligible;
+  const championReady = Boolean(
+    championCandidate?.run_status === "ready" && championCandidate.promotion_eligible
+  );
   const championDfuCount = championCandidate?.dfu_count ?? 0;
   const isChampionPromoted = Boolean(
     championCandidate?.source_run_id &&
@@ -287,23 +290,25 @@ export function ForecastPanel() {
     promotedModel?.source_run_id === championCandidate.source_run_id
   );
   const selectedCandidate = staging[selectedModel];
-  const selectedCandidateReady = Boolean(
-    selectedCandidate?.source_run_id &&
-    selectedCandidate.run_status === "ready" &&
-    selectedCandidate.promotion_eligible
-  );
   const isSelectedPromoted = Boolean(
     selectedCandidate?.source_run_id &&
     promotedModel?.model_id === selectedModel &&
     promotedModel.source_run_id === selectedCandidate.source_run_id
+  );
+  const selectedCandidateGenerated = Boolean(
+    selectedCandidate?.source_run_id &&
+    (selectedCandidate.run_status === "ready" || selectedCandidate.run_status === "promoted")
+  );
+  const selectedCandidateStaged = Boolean(
+    selectedCandidateGenerated && (selectedCandidate?.promotion_eligible || isSelectedPromoted)
   );
   const promotionBlockedReason = isForecastRunning
     ? "Wait for the active forecast generation job to finish before promoting."
     : snapshotReadiness?.ready !== true
       ? (snapshotReadiness?.stale_reason ??
         "Prepare the current champion plus exact top-three evidence before promoting.")
-      : !selectedCandidateReady
-        ? "Generate the selected model to staging first."
+      : !selectedCandidateStaged
+        ? "Promote the selected generated candidate to staging first."
         : undefined;
 
   // -- Handlers ------------------------------------------------------------
@@ -389,6 +394,24 @@ export function ForecastPanel() {
       toast.error(formatApiError(err));
     } finally {
       setPromotingModelId(null);
+    }
+  }
+
+  async function handleStage(modelId: string) {
+    const candidate = staging[modelId];
+    if (!candidate?.source_run_id || candidate.run_status !== "ready") {
+      toast.error("Generate a draft candidate before promoting it to staging.");
+      return;
+    }
+    setStagingModelId(modelId);
+    try {
+      await submitStageForecast(modelId, candidate.source_run_id);
+      toast.success(`${modelLabel(modelId)} promoted to staging.`);
+      queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      setStagingModelId(null);
     }
   }
 
@@ -574,8 +597,10 @@ export function ForecastPanel() {
           onIncludeCIChange={setConfidenceIntervalsOverride}
           isSubmitting={isSubmitting}
           isForecastRunning={isForecastRunning}
-          candidateReady={selectedCandidateReady}
+          candidateGenerated={selectedCandidateGenerated}
+          candidateStaged={selectedCandidateStaged}
           candidateDfuCount={selectedCandidate?.dfu_count}
+          isStaging={stagingModelId === selectedModel}
           isPromoting={promotingModelId === selectedModel}
           isSelectedPromoted={isSelectedPromoted}
           blockedReason={
@@ -585,6 +610,7 @@ export function ForecastPanel() {
           }
           promotionBlockedReason={promotionBlockedReason}
           onGenerateForecast={handleGenerateForecast}
+          onStage={() => handleStage(selectedModel)}
           onPromote={() => handlePromote(selectedModel)}
           latestVersion={latestVersion}
         />

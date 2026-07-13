@@ -25,13 +25,16 @@ interface GenerateForecastCardProps {
   onIncludeCIChange: (checked: boolean) => void;
   isSubmitting: boolean;
   isForecastRunning: boolean;
-  candidateReady: boolean;
+  candidateGenerated: boolean;
+  candidateStaged: boolean;
   candidateDfuCount?: number;
+  isStaging: boolean;
   isPromoting: boolean;
   isSelectedPromoted: boolean;
   blockedReason?: string;
   promotionBlockedReason?: string;
   onGenerateForecast: () => void;
+  onStage: () => void;
   onPromote: () => void;
   latestVersion: ProductionForecastVersion | null;
 }
@@ -44,13 +47,16 @@ export function GenerateForecastCard({
   onIncludeCIChange,
   isSubmitting,
   isForecastRunning,
-  candidateReady,
+  candidateGenerated,
+  candidateStaged,
   candidateDfuCount,
+  isStaging,
   isPromoting,
   isSelectedPromoted,
   blockedReason,
   promotionBlockedReason,
   onGenerateForecast,
+  onStage,
   onPromote,
   latestVersion,
 }: GenerateForecastCardProps) {
@@ -115,7 +121,7 @@ export function GenerateForecastCard({
             ) : (
               <>
                 <Play className="mr-2 h-4 w-4" />
-                Generate Forecast
+                Generate Candidate
               </>
             )}
           </Button>
@@ -132,17 +138,32 @@ export function GenerateForecastCard({
 
           <div className="border-t pt-4">
             <p className="mb-2 text-xs text-muted-foreground">
-              {candidateReady
-                ? `${candidateDfuCount?.toLocaleString() ?? 0} DFUs staged and ready for review.`
-                : "Generate this model to create its staging candidate."}
+              {candidateStaged
+                ? `${candidateDfuCount?.toLocaleString() ?? 0} DFUs staged and eligible for production review.`
+                : candidateGenerated
+                  ? `${candidateDfuCount?.toLocaleString() ?? 0} DFUs generated as a draft.`
+                  : "Generate this model to create a draft candidate."}
             </p>
+            <Button
+              className="mb-2 w-full"
+              size="lg"
+              variant="outline"
+              onClick={onStage}
+              disabled={!candidateGenerated || candidateStaged || isStaging || isSelectedPromoted}
+            >
+              {isStaging
+                ? "Promoting to Staging..."
+                : candidateStaged
+                  ? `${selectedLabel} Is Staged`
+                  : `Promote ${selectedLabel} to Staging`}
+            </Button>
             <Button
               className="w-full"
               size="lg"
               variant="outline"
               onClick={onPromote}
               disabled={
-                !candidateReady ||
+                !candidateStaged ||
                 isPromoting ||
                 isSelectedPromoted ||
                 Boolean(promotionBlockedReason)

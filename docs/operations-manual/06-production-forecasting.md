@@ -322,14 +322,20 @@ backtest and champion selection, not to replace or relabel the MSTL forecast.
 
 ---
 
-## 4. Promotion Workflow
+## 4. Staging and Production Promotion Workflow
 
-Promotion is the deliberate operator action that publishes one exact immutable
-run. The endpoint is auth-guarded, fail-closed, and audited.
+Generation creates an immutable draft. Staging approval and production
+publication are separate operator actions. Multiple exact runs may be staged;
+production publication remains auth-guarded, fail-closed, audited, and limited
+to one active release.
 
-### Endpoint
+### Endpoints
 
 ```
+POST /backtest-management/{model_id}/stage
+Headers: X-API-Key: <key>
+Query  : ?source_run_id=<uuid>        # generated draft to approve
+
 POST /backtest-management/{model_id}/promote
 Headers: X-API-Key: <key>             # require_api_key dependency
 Query  : ?source_run_id=<uuid>        # required; returned by Generate/staging-summary
@@ -338,6 +344,11 @@ Query  : ?source_run_id=<uuid>        # required; returned by Generate/staging-s
 ```
 
 Defined in `api/routers/forecasting/forecast_promotion.py`.
+
+The staging action rechecks the exact manifest and payload checksum before
+setting `promotion_eligible=TRUE`; it does not copy or rewrite forecast rows.
+The production action rejects a generated-but-not-staged run with
+`candidate_not_staged`.
 
 ### Single mode vs Champion mode
 
@@ -355,7 +366,7 @@ and a winners CSV whose bytes still match the SHA-256 stamped at generation.
 1. Begin a `SERIALIZABLE` primary-database transaction and obtain the
    transaction-scoped `forecast_release_promotion` advisory lock.
 2. Lock and validate the exact generation manifest: purpose
-   `release_candidate`, status `ready`, eligible, requested model/current month,
+   `release_candidate`, status `ready`, explicitly staged/eligible, requested model/current month,
    at least six months, non-empty, and checksummed. Pre-migration
    `legacy_invalid` and `snapshot_contender` runs cannot pass.
 3. Recompute the payload hash/cardinalities and require current sales lineage.
@@ -413,6 +424,7 @@ Response payload:
 | `GET /backtest-management/promotion-status` | The single active promotion plus source/production/checksum/archive lineage (or `{"promoted": null}`) |
 | `GET /backtest-management/candidate-summary` | Per-model row/DFU/avg-accuracy in `fact_candidate_forecast` |
 | `GET /backtest-management/staging-summary` | Latest immutable release-candidate manifest per requested model, including exact `source_run_id`, status, eligibility, row/DFU/source-model counts, and horizon dates |
+| `POST /backtest-management/{model_id}/stage` | Validate and approve one exact generated draft for staging; safe to retry |
 
 There is no bypass token. Fix the failed evidence, generate a new candidate when
 inputs changed, and retry with its new run id.

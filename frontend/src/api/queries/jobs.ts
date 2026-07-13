@@ -92,6 +92,10 @@ export interface NamedPipelinesPayload {
   pipelines: NamedPipelinePreset[];
 }
 
+export const jobKeys = {
+  periodRoll: (pipelineId: string) => ["jobs", "period-roll", pipelineId] as const,
+};
+
 // ---------------------------------------------------------------------------
 // Job scheduler queries (Feature 39)
 // ---------------------------------------------------------------------------

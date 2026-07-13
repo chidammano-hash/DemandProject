@@ -107,6 +107,7 @@ export function ModelReadinessCard({
     readinessPipeline === "model-refresh" ? "Refresh Models" : "Prepare Release";
   const preparationProgressLabel =
     readinessPipeline === "model-refresh" ? "Refreshing Models..." : "Preparing Release...";
+  const championGenerated = (staging.champion?.row_count ?? 0) > 0;
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -150,7 +151,7 @@ export function ModelReadinessCard({
               title={
                 generatableCount === 0
                   ? "No retained model is ready; check model configuration and artifacts."
-                  : `Generate staging forecasts for ${generatableCount} ready model(s)`
+                  : `Generate draft forecasts for ${generatableCount} ready model(s)`
               }
             >
               {isGeneratingAll ? (
@@ -161,7 +162,7 @@ export function ModelReadinessCard({
               ) : (
                 <>
                   <BarChart3 className="mr-1.5 h-3 w-3" />
-                  Generate All ({generatableCount})
+                  Generate All Drafts ({generatableCount})
                 </>
               )}
             </Button>
@@ -275,13 +276,17 @@ export function ModelReadinessCard({
                   </Badge>
                 </TableCell>
                 <TableCell className="text-xs tabular-nums">
-                  {releasePublished ? (
+                  {isChampionPromoted ? (
                     <span className="text-emerald-600 dark:text-emerald-400">
                       {championDfuCount.toLocaleString()} DFUs in production
                     </span>
                   ) : championReady ? (
                     <span className="text-emerald-600 dark:text-emerald-400">
-                      {championDfuCount.toLocaleString()} DFUs ready
+                      {championDfuCount.toLocaleString()} DFUs staged
+                    </span>
+                  ) : championGenerated ? (
+                    <span className="text-blue-600 dark:text-blue-400">
+                      {championDfuCount.toLocaleString()} DFUs generated as draft
                     </span>
                   ) : (
                     <span className="text-amber-600">Generate a release candidate</span>
@@ -306,7 +311,9 @@ export function ModelReadinessCard({
                         ? "In production"
                         : championReady
                           ? "Candidate staged"
-                          : "Select in Step 2"}
+                          : championGenerated
+                            ? "Generated draft"
+                            : "Select in Step 2"}
                     </Badge>
                   </div>
                 </TableCell>
@@ -320,7 +327,8 @@ export function ModelReadinessCard({
                 isTraining && (trainingModelId === algo.id || trainingModelId === "__all__");
 
               const staged = staging[algo.id];
-              const hasStagedForecast = staged != null && staged.row_count > 0;
+              const hasGeneratedForecast = staged != null && staged.row_count > 0;
+              const hasStagedForecast = hasGeneratedForecast && staged.promotion_eligible;
 
               return (
                 <TableRow key={algo.id}>
@@ -353,7 +361,7 @@ export function ModelReadinessCard({
                   </TableCell>
                   {/* Staging column - shows staged forecast DFU count */}
                   <TableCell className="text-xs tabular-nums">
-                    {hasStagedForecast ? (
+                    {hasGeneratedForecast ? (
                       <span className="text-emerald-600 dark:text-emerald-400">
                         {staged.dfu_count.toLocaleString()} DFUs
                       </span>
@@ -421,7 +429,7 @@ export function ModelReadinessCard({
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Generating...
                         </Button>
-                      ) : hasStagedForecast ? (
+                      ) : hasGeneratedForecast ? (
                         <Button
                           size="sm"
                           variant="outline"
@@ -457,9 +465,9 @@ export function ModelReadinessCard({
                         </Button>
                       )}
 
-                      {hasStagedForecast ? (
+                      {hasGeneratedForecast ? (
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                          Candidate staged
+                          {hasStagedForecast ? "Candidate staged" : "Generated draft"}
                         </Badge>
                       ) : null}
                     </div>

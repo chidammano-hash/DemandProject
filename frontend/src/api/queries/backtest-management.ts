@@ -143,6 +143,15 @@ export interface BacktestPromotionResponse {
   dfu_count: number;
 }
 
+export interface ForecastStagingResponse {
+  model_id: string;
+  source_run_id: string;
+  status: "staged" | "already_staged";
+  rows_staged: number;
+  dfu_count: number;
+  candidate_checksum: string;
+}
+
 // ---------------------------------------------------------------------------
 // Query key factory
 // ---------------------------------------------------------------------------
@@ -306,6 +315,18 @@ export async function submitPromote(
 ): Promise<BacktestPromotionResponse> {
   const qs = new URLSearchParams({ source_run_id: sourceRunId });
   return fetchJson<BacktestPromotionResponse>(`/backtest-management/${modelId}/promote?${qs}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Approve one exact generated draft for possible production promotion. */
+export async function submitStageForecast(
+  modelId: string,
+  sourceRunId: string
+): Promise<ForecastStagingResponse> {
+  const qs = new URLSearchParams({ source_run_id: sourceRunId });
+  return fetchJson<ForecastStagingResponse>(`/backtest-management/${modelId}/stage?${qs}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

@@ -293,9 +293,10 @@ intersection rather than fabricating forecasts for uncovered DFUs.
   refresh closed snapshot KPIs, prepare the current roster, archive it, then
   clean only reconciled staging. This keeps recurring and manual ordering from
   drifting.
-- Manual trigger: Workflows -> Workflow Library -> **Period Roll**, the
-  schedulable `period_roll` job type, or the standalone Make targets for
-  remediation.
+- Manual trigger: **Forecasting -> Period Roll** (the dedicated guided tab) or
+  Workflows -> Workflow Library -> **Period Roll**. Both launch the same durable
+  named pipeline. The schedulable `period_roll` job type and standalone Make
+  targets remain available for automation and remediation.
 - Named bundle: `forecast-snapshot-bundle` runs contender selection, archive, and
   reconciliation-gated cleanup in that order. Its cleanup step targets generations
   older than the planning month; use the standalone cleanup job for an explicit

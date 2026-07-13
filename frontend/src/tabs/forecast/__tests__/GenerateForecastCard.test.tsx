@@ -19,10 +19,13 @@ describe("GenerateForecastCard", () => {
         onIncludeCIChange={vi.fn()}
         isSubmitting={false}
         isForecastRunning={false}
-        candidateReady={false}
+        candidateGenerated={false}
+        candidateStaged={false}
+        isStaging={false}
         isPromoting={false}
         isSelectedPromoted={false}
         onGenerateForecast={vi.fn()}
+        onStage={vi.fn()}
         onPromote={vi.fn()}
         latestVersion={null}
       />
@@ -42,21 +45,54 @@ describe("GenerateForecastCard", () => {
         onIncludeCIChange={vi.fn()}
         isSubmitting={false}
         isForecastRunning={false}
-        candidateReady={false}
+        candidateGenerated={false}
+        candidateStaged={false}
+        isStaging={false}
         isPromoting={false}
         isSelectedPromoted={false}
         blockedReason="Select and assign a completed experiment in Champion first."
         onGenerateForecast={vi.fn()}
+        onStage={vi.fn()}
         onPromote={vi.fn()}
         latestVersion={null}
       />
     );
 
-    expect(screen.getByRole("button", { name: /generate forecast/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /generate candidate/i })).toBeDisabled();
     expect(screen.getByText(/select and assign a completed experiment/i)).toBeDefined();
   });
 
-  it("promotes the selected ready single-model candidate", () => {
+  it("stages the selected generated single-model candidate before production", () => {
+    const onStage = vi.fn();
+    render(
+      <GenerateForecastCard
+        selectedModel="mstl"
+        effectiveHorizon={24}
+        onHorizonChange={vi.fn()}
+        includeCI
+        onIncludeCIChange={vi.fn()}
+        isSubmitting={false}
+        isForecastRunning={false}
+        candidateGenerated
+        candidateStaged={false}
+        candidateDfuCount={321}
+        isStaging={false}
+        isPromoting={false}
+        isSelectedPromoted={false}
+        onGenerateForecast={vi.fn()}
+        onStage={onStage}
+        onPromote={vi.fn()}
+        latestVersion={null}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /promote mstl to staging/i }));
+    expect(onStage).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: /promote mstl to production/i })).toBeDisabled();
+    expect(screen.getByText(/321 dfus generated as a draft/i)).toBeDefined();
+  });
+
+  it("promotes the selected staged single-model candidate to production", () => {
     const onPromote = vi.fn();
     render(
       <GenerateForecastCard
@@ -67,11 +103,14 @@ describe("GenerateForecastCard", () => {
         onIncludeCIChange={vi.fn()}
         isSubmitting={false}
         isForecastRunning={false}
-        candidateReady
+        candidateGenerated
+        candidateStaged
         candidateDfuCount={321}
+        isStaging={false}
         isPromoting={false}
         isSelectedPromoted={false}
         onGenerateForecast={vi.fn()}
+        onStage={vi.fn()}
         onPromote={onPromote}
         latestVersion={null}
       />
@@ -93,17 +132,22 @@ describe("GenerateForecastCard", () => {
         onIncludeCIChange={vi.fn()}
         isSubmitting={false}
         isForecastRunning={false}
-        candidateReady={false}
+        candidateGenerated={false}
+        candidateStaged={false}
+        isStaging={false}
         isPromoting={false}
         isSelectedPromoted={false}
-        promotionBlockedReason="Generate the selected model to staging first."
+        promotionBlockedReason="Promote the selected generated candidate to staging first."
         onGenerateForecast={vi.fn()}
+        onStage={vi.fn()}
         onPromote={vi.fn()}
         latestVersion={null}
       />
     );
 
     expect(screen.getByRole("button", { name: /promote champion to production/i })).toBeDisabled();
-    expect(screen.getByText(/generate the selected model to staging first/i)).toBeDefined();
+    expect(
+      screen.getByText(/promote the selected generated candidate to staging first/i)
+    ).toBeDefined();
   });
 });

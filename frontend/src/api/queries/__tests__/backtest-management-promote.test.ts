@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { submitPromote } from "@/api/queries/backtest-management";
+import { submitPromote, submitStageForecast } from "@/api/queries/backtest-management";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,6 +31,33 @@ describe("submitPromote", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(
       "/backtest-management/champion/promote?source_run_id=00000000-0000-0000-0000-000000000111"
+    );
+    expect(init).toMatchObject({ method: "POST" });
+  });
+});
+
+describe("submitStageForecast", () => {
+  it("stages one explicit immutable source run", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          model_id: "mstl",
+          source_run_id: "00000000-0000-0000-0000-000000000111",
+          status: "staged",
+          rows_staged: 120,
+          dfu_count: 10,
+          candidate_checksum: "c".repeat(64),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await submitStageForecast("mstl", "00000000-0000-0000-0000-000000000111");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "/backtest-management/mstl/stage?source_run_id=00000000-0000-0000-0000-000000000111"
     );
     expect(init).toMatchObject({ method: "POST" });
   });

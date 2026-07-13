@@ -21,11 +21,13 @@ from common.services.forecast_generation import (
 from common.services.forecast_promotion import (
     PromotionConflictError,
     promote_forecast_run,
+    stage_forecast_run,
 )
 
 from ._forecast_promotion_models import (
     ForecastGenerationSubmittedResponse,
     ForecastPromotionResponse,
+    ForecastStagingResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -277,6 +279,36 @@ def _load_transactional_promotion_policy() -> dict[str, Any]:
         "min_common_cohort_dfus": int(release["min_common_cohort_dfus"]),
         "min_common_cohort_actual_volume": float(release["min_common_cohort_actual_volume"]),
     }
+
+
+@router.post(
+    "/{model_id}/stage",
+    response_model=ForecastStagingResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def stage_model(model_id: str, source_run_id: UUID) -> ForecastStagingResponse:
+    """Approve one exact generated candidate for possible production promotion."""
+    _validate_forecast_model_id(model_id)
+    try:
+        with get_conn() as conn:
+            result = stage_forecast_run(
+                conn,
+                model_id=model_id,
+                source_run_id=source_run_id,
+                planning_month=get_planning_date().replace(day=1),
+            )
+    except PromotionConflictError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=f"{exc.code}: {exc.public_message}",
+        ) from None
+    except psycopg.Error:
+        logger.exception("Forecast staging transaction failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Forecast staging failed",
+        ) from None
+    return ForecastStagingResponse(**result.__dict__)
 
 
 @router.post(

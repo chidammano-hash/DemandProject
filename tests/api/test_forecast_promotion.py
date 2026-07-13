@@ -12,7 +12,11 @@ from common.services.forecast_generation import (
     GENERATOR_CONTRACT_METADATA_KEY,
     GENERATOR_CONTRACT_VERSION,
 )
-from common.services.forecast_promotion import PromotionConflictError, PromotionResult
+from common.services.forecast_promotion import (
+    ForecastStagingResult,
+    PromotionConflictError,
+    PromotionResult,
+)
 from tests.api.conftest import make_pool
 
 RUN_ID = UUID("00000000-0000-0000-0000-000000000111")
@@ -32,6 +36,39 @@ async def test_promote_requires_source_run_id_before_database_access():
 
     assert response.status_code == 422
     pool.connection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stage_approves_one_exact_generated_candidate():
+    pool, _, _ = make_pool()
+    result = ForecastStagingResult(
+        model_id="mstl",
+        source_run_id=RUN_ID,
+        status="staged",
+        rows_staged=120,
+        dfu_count=10,
+        candidate_checksum="c" * 64,
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.forecast_promotion.stage_forecast_run",
+            return_value=result,
+        ) as stage,
+    ):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/backtest-management/mstl/stage?source_run_id={RUN_ID}"
+            )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "staged"
+    assert response.json()["source_run_id"] == str(RUN_ID)
+    assert stage.call_args.kwargs["model_id"] == "mstl"
 
 
 @pytest.mark.asyncio

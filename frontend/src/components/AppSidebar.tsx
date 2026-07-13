@@ -6,9 +6,13 @@ import {
   TrendingUp,
   Activity,
   PlayCircle,
-  Brain, Monitor,
+  Brain,
+  Monitor,
   CalendarDays,
-  Shield, BarChart3, MapPin, FlaskConical,
+  Shield,
+  BarChart3,
+  MapPin,
+  FlaskConical,
   MessageSquare,
   Settings2,
   TerminalSquare,
@@ -38,27 +42,45 @@ interface NavItem {
 // (Tower), drill to root cause in Demand, plan in Supply, execute in Ops.
 const NAV_ITEMS: NavItem[] = [
   // Tower — control tower triage (no section header)
-  { key: "commandCenter",     label: "Command Center", icon: Monitor,         section: "tower",       shortcut: "1" },
+  { key: "commandCenter", label: "Command Center", icon: Monitor, section: "tower", shortcut: "1" },
   // Demand — analysis & forecasting
-  { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "2" },
-  { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "3" },
-  { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
-  { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
-  { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
-  { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },
-  { key: "skuFeatures",       label: "SKU Features",       icon: FlaskConical, section: "demand" },
-  { key: "skuChat",           label: "SKU Chat",           icon: MessageSquare, section: "demand" },
+  {
+    key: "aggregateAnalysis",
+    label: "Portfolio",
+    icon: LayoutDashboard,
+    section: "demand",
+    shortcut: "2",
+  },
+  {
+    key: "itemAnalysis",
+    label: "Item Analysis",
+    icon: TrendingUp,
+    section: "demand",
+    shortcut: "3",
+  },
+  { key: "fva", label: "FVA & ROI", icon: BarChart3, section: "demand" },
+  { key: "lgbmTuning", label: "Forecasting", icon: Activity, section: "demand" },
+  { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin, section: "demand" },
+  { key: "demandHistory", label: "Demand History", icon: History, section: "demand" },
+  { key: "skuFeatures", label: "SKU Features", icon: FlaskConical, section: "demand" },
+  { key: "skuChat", label: "SKU Chat", icon: MessageSquare, section: "demand" },
   // Supply — inventory & replenishment
-  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,        section: "supply",  shortcut: "4" },
-  { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },
+  { key: "invPlanning", label: "Inv. Planning", icon: Brain, section: "supply", shortcut: "4" },
+  { key: "invBacktest", label: "Inv. Backtest", icon: Activity, section: "supply" },
   // Operations — planning processes & admin
-  { key: "sop",               label: "S&OP",           icon: CalendarDays,    section: "operations",  shortcut: "5" },
-  { key: "integration",       label: "Workflows",      icon: PlayCircle,      section: "operations",  shortcut: "6" },
-  { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
+  { key: "sop", label: "S&OP", icon: CalendarDays, section: "operations", shortcut: "5" },
+  {
+    key: "integration",
+    label: "Workflows",
+    icon: PlayCircle,
+    section: "operations",
+    shortcut: "6",
+  },
+  { key: "dataQuality", label: "Data Quality", icon: Shield, section: "operations" },
   // System — data tools
-  { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
-  { key: "sqlRunner",    label: "SQL Runner",    icon: TerminalSquare, section: "system" },
-  { key: "settings",     label: "Settings",      icon: Settings2,    section: "system" },
+  { key: "explorer", label: "Explorer", icon: Database, section: "system" },
+  { key: "sqlRunner", label: "SQL Runner", icon: TerminalSquare, section: "system" },
+  { key: "settings", label: "Settings", icon: Settings2, section: "system" },
 ];
 
 const SECTION_LABELS: Record<string, string> = {
@@ -88,13 +110,23 @@ export interface AppSidebarProps {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName: _appName, themeFooter }: AppSidebarProps) {
+export function AppSidebar({
+  activeTab,
+  onNavigate,
+  collapsed,
+  onToggle,
+  appName: _appName,
+  themeFooter,
+}: AppSidebarProps) {
   let lastSection: SidebarSection | null = null;
   const { activeJobCount } = useJobNotification();
 
-  const handleNav = useCallback((key: string) => {
-    onNavigate(key);
-  }, [onNavigate]);
+  const handleNav = useCallback(
+    (key: string) => {
+      onNavigate(key);
+    },
+    [onNavigate]
+  );
 
   return (
     <>
@@ -116,7 +148,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
           "fixed left-0 top-0 z-40 md:relative md:z-auto",
           collapsed ? "w-16" : "w-60",
           // Mobile: hidden by default, shown via hamburger
-          "max-md:-translate-x-full max-md:data-[open=true]:translate-x-0",
+          "max-md:-translate-x-full max-md:data-[open=true]:translate-x-0"
         )}
         data-open={!collapsed ? "true" : undefined}
       >
@@ -139,7 +171,10 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto px-2 py-2">
           {NAV_ITEMS.map((item) => {
-            const showDivider = item.section !== lastSection && lastSection !== null && SECTION_LABELS[item.section] !== "";
+            const showDivider =
+              item.section !== lastSection &&
+              lastSection !== null &&
+              SECTION_LABELS[item.section] !== "";
             lastSection = item.section;
             const isActive = activeTab === item.key;
             const Icon = item.icon;
@@ -165,7 +200,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                     collapsed && "justify-center px-0",
                     isActive
                       ? "bg-sidebar-active/15 font-medium text-sidebar-active"
-                      : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground",
+                      : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground"
                   )}
                 >
                   {/* Active indicator bar */}
@@ -173,24 +208,29 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                     <span className="absolute left-0 top-1/2 h-7 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-active" />
                   )}
                   <Icon
-                    className={cn("h-[18px] w-[18px] flex-shrink-0", isActive ? "text-sidebar-active" : "")}
+                    className={cn(
+                      "h-[18px] w-[18px] flex-shrink-0",
+                      isActive ? "text-sidebar-active" : ""
+                    )}
                     strokeWidth={1.5}
                   />
-                  {!collapsed && (
-                    <span className="flex-1 truncate text-left">{item.label}</span>
-                  )}
+                  {!collapsed && <span className="flex-1 truncate text-left">{item.label}</span>}
                   {/* Active job count badge */}
                   {item.key === "integration" && activeJobCount > 0 && (
-                    <span className={cn(
-                      "flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white",
-                      !collapsed && "ml-auto mr-1",
-                      collapsed && "absolute -right-0.5 -top-0.5",
-                    )}>
+                    <span
+                      className={cn(
+                        "flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white",
+                        !collapsed && "ml-auto mr-1",
+                        collapsed && "absolute -right-0.5 -top-0.5"
+                      )}
+                    >
                       {activeJobCount}
                     </span>
                   )}
                   {!collapsed && item.shortcut && (
-                    <kbd className="hidden text-[10px] text-sidebar-foreground/40 lg:inline">{item.shortcut}</kbd>
+                    <kbd className="hidden text-[10px] text-sidebar-foreground/40 lg:inline">
+                      {item.shortcut}
+                    </kbd>
                   )}
                 </button>
               </div>
@@ -203,7 +243,9 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
           {themeFooter}
           {!collapsed && (
             <p className="px-2 py-1 text-[10px] text-sidebar-foreground/40 flex items-center gap-1">
-              <kbd className="rounded border border-border/50 bg-muted px-1 py-0.5 font-mono text-[9px]">⌘K</kbd>
+              <kbd className="rounded border border-border/50 bg-muted px-1 py-0.5 font-mono text-[9px]">
+                ⌘K
+              </kbd>
               <span>command palette</span>
             </p>
           )}
@@ -235,9 +277,9 @@ export interface NumericShortcut {
   label: string;
 }
 
-export const NUMERIC_SHORTCUTS: NumericShortcut[] = NAV_ITEMS
-  .filter((i): i is NavItem & { shortcut: string } => Boolean(i.shortcut))
-  .map((i) => ({ digit: i.shortcut, key: i.key, label: i.label }));
+export const NUMERIC_SHORTCUTS: NumericShortcut[] = NAV_ITEMS.filter(
+  (i): i is NavItem & { shortcut: string } => Boolean(i.shortcut)
+).map((i) => ({ digit: i.shortcut, key: i.key, label: i.label }));
 
 export { NAV_ITEMS };
 export type { NavItem };
