@@ -55,6 +55,7 @@ just don't add them:
   `sku_cluster_assignment`; `dim_sku.ml_cluster` does not exist.
 
 ### Workflow (applies to every change)
+- **Bug reports default to fix mode.** If the user reports a bug or broken behavior, don't stop at explaining the cause unless they explicitly ask for diagnosis only. Reproduce or inspect it, implement the fix, verify it with the relevant tests/checks, and report any remaining blocker only if a safe in-scope fix cannot be completed.
 - **Self-review + refactor at each step** before reporting done (also a global habit). In
   multi-step plans, each step ends with this self-pass — don't defer to the end.
 - **Docs updated in the same commit as the code.** Architecture/API/schema/convention/infra

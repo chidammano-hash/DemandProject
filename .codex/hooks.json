@@ -1,0 +1,58 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/manoharchidambaram/projects/DemandProject/.codex/hooks/pre-commit-gate.sh'",
+            "timeout": 120000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/manoharchidambaram/projects/DemandProject/.codex/hooks/post-edit-python.sh'",
+            "timeout": 15000
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/manoharchidambaram/projects/DemandProject/.codex/hooks/post-edit-sql.sh'",
+            "timeout": 10000
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/manoharchidambaram/projects/DemandProject/.codex/hooks/post-edit-test.sh'",
+            "timeout": 60000
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/manoharchidambaram/projects/DemandProject/.codex/hooks/post-edit-typescript.sh'",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  }
+}
