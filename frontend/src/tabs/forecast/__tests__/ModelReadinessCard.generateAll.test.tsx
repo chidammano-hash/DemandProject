@@ -212,4 +212,26 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.getByRole("button", { name: "Preparing Release..." })).toBeDisabled();
   });
 
+  it("does not report cleaned contender staging as a failure after publication", () => {
+    renderCard({
+      isChampionPromoted: true,
+      championDfuCount: 12_476,
+      generatableCount: 5,
+      snapshotReadiness: {
+        ...readySnapshotRoster,
+        ready: false,
+        ready_contender_count: 0,
+        stale_reason: "Snapshot contender evidence failed an integrity check.",
+        action_pipeline: null,
+      },
+    });
+
+    expect(screen.getByText("Production release published")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Generate All creates 5 diagnostic comparison forecasts/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Champion + 0/3 contenders ready")).not.toBeInTheDocument();
+    expect(screen.queryByText(/failed an integrity check/)).not.toBeInTheDocument();
+  });
+
 });

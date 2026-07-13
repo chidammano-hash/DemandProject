@@ -100,8 +100,10 @@ export function ModelReadinessCard({
 }: ModelReadinessCardProps) {
   const isGeneratingAll = generatingModelId === "__all__";
   const snapshotEvidenceReady = snapshotReadiness?.ready === true;
-  const championPublishReady = championReady && snapshotEvidenceReady;
+  const releasePublished = isChampionPromoted;
+  const championPublishReady = releasePublished || (championReady && snapshotEvidenceReady);
   const shouldPrepareRelease =
+    !releasePublished &&
     snapshotReadiness?.action_pipeline != null &&
     (!snapshotEvidenceReady || !championReady);
   const readinessPipeline = snapshotReadiness?.action_pipeline ?? "forecast-publish";
@@ -189,12 +191,16 @@ export function ModelReadinessCard({
             )}
             <div className="min-w-0">
               <p className="text-xs font-semibold">
-                {snapshotReadiness
+                {releasePublished
+                  ? "Production release published"
+                  : snapshotReadiness
                   ? `Champion + ${snapshotReadiness.ready_contender_count}/${snapshotReadiness.required_contender_count} contenders ready`
                   : "Checking champion + top-three publish evidence..."}
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {championPublishReady
+                {releasePublished
+                  ? `The champion is active in production. Generate All creates ${generatableCount} diagnostic comparison forecast${generatableCount === 1 ? "" : "s"} without changing production.`
+                  : championPublishReady
                   ? "The current champion candidate and exact snapshot roster can be published."
                   : (snapshotReadiness?.stale_reason ??
                     "Waiting for current release evidence before promotion is enabled.")}
@@ -269,7 +275,11 @@ export function ModelReadinessCard({
                   </Badge>
                 </TableCell>
                 <TableCell className="text-xs tabular-nums">
-                  {championReady ? (
+                  {releasePublished ? (
+                    <span className="text-emerald-600 dark:text-emerald-400">
+                      {championDfuCount.toLocaleString()} DFUs in production
+                    </span>
+                  ) : championReady ? (
                     <span className="text-emerald-600 dark:text-emerald-400">
                       {championDfuCount.toLocaleString()} DFUs ready
                     </span>
