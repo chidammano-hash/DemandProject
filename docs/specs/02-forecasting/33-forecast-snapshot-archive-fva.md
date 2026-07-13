@@ -212,14 +212,16 @@ snapshot generation. Its config snapshot must name exactly the canonical five
 models and one exact backtest run for each, plus the synchronized sales batch
 and promoted cluster-assignment identity. Generation, roster preparation,
 deep snapshot validation, and promotion independently compare those values to
-current database state. Any mismatch routes the operator back to
-`model-refresh`; a newer unrelated backtest is ignored rather than substituted.
+current database state. A model-evidence mismatch routes the operator to
+`model-refresh`, followed by `champion-refresh`; a newer unrelated backtest is
+ignored rather than substituted.
 
 Before preparing the roster, operators must run and load all five canonical
 backtests and rerun champion selection. This ensures the frozen WAPE ranking and
 the champion route both reflect LightGBM, N-HiTS, N-BEATS, MSTL, and Chronos 2E
-under their current adapters. The named `model-refresh` pipeline supplies that
-sequence, and `forecast-publish` then generates the champion release and its
+under their current adapters. The named `model-refresh` pipeline supplies the
+five runs, `champion-refresh` assigns the champion, and `forecast-publish` then
+generates the champion release and its
 three contenders after final-refitting LightGBM, N-HiTS, and N-BEATS. MSTL and
 Chronos 2E remain direct adapters.
 

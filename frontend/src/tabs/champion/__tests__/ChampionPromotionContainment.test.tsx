@@ -92,7 +92,7 @@ describe("legacy champion promotion containment", () => {
       </TestQueryWrapper>,
     );
 
-    expect(screen.getByText(/named model-refresh pipeline/i)).toBeDefined();
+    expect(screen.getByText(/named champion-refresh pipeline/i)).toBeDefined();
     expect(screen.queryByRole("button", { name: /promote config/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /load results/i })).toBeNull();
   });

@@ -60,7 +60,7 @@ cannot invent executable work.
 |---|---|---|
 | One or more input domains changed | `data-refresh` | ETL refresh → SKU features → materialized views |
 | No promoted SKU cluster assignments, or SKU features newer than the promoted cluster | `clustering-refresh` | SKU features → cluster pipeline with promotion |
-| Stale tuning profile or sales newer than champion | `model-refresh` | stale tuning → five backtests → atomic governed champion experiment/results promotion |
+| Stale tuning profile or sales newer than champion | `model-refresh`, then `champion-refresh` | stale tuning → five backtests → atomic governed champion experiment/results assignment |
 | No complete champion release for the planning month | `forecast-publish` | production training → immutable candidate generation → snapshot contenders |
 | Champion + three contender roster ready, archive absent | `forecast-snapshot-bundle` | freeze contenders → archive lags 0–5 → reconciled cleanup |
 | Inventory outputs predate the current champion forecast | `inventory-refresh` | safety stock → EOQ → replenishment → policies → health → exceptions |

@@ -295,7 +295,7 @@ def _validate_governed_champion_source(
     *,
     manifest: ForecastGenerationManifest,
 ) -> None:
-    """Bind a champion candidate to the exact governed model-refresh inputs."""
+    """Bind a champion candidate to the exact governed champion-refresh inputs."""
     recorded = manifest.metadata.get(GOVERNED_CHAMPION_LINEAGE_METADATA_KEY)
     source = manifest.metadata.get("source_sales")
     if manifest.champion_experiment_id is None:
@@ -311,7 +311,7 @@ def _validate_governed_champion_source(
     except GovernedChampionLineageError as exc:
         raise PromotionConflictError(
             "candidate_lineage_mismatch",
-            "The active champion lacks governed source evidence; run model-refresh.",
+            "The active champion lacks governed source evidence; run champion-refresh.",
         ) from exc
     if (
         not isinstance(recorded, dict)
@@ -324,8 +324,9 @@ def _validate_governed_champion_source(
     ):
         raise PromotionConflictError(
             "candidate_lineage_mismatch",
-            "The champion candidate and governed model-refresh use different sales, "
-            "cluster, or backtest lineage; run model-refresh then prepare a new release.",
+            "The champion candidate and governed champion-refresh use different sales, "
+            "cluster, or backtest lineage; run model-refresh, champion-refresh, then "
+            "prepare a new release.",
         )
 
 

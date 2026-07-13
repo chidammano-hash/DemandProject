@@ -40,6 +40,11 @@ vi.mock("@/api/queries", () => ({
         description: "Run the retained five-model roster.",
         steps: ["backtest_lgbm"],
       },
+      {
+        name: "champion-refresh",
+        description: "Select and atomically assign the governed champion.",
+        steps: ["governed_champion_refresh"],
+      },
     ],
   }),
   fetchPipelineReadiness: vi.fn().mockResolvedValue({ ready: true, checks: [] }),
@@ -173,6 +178,8 @@ describe("JobsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("2. Refresh Five-Model Roster")).toBeDefined();
       expect(screen.getByText("Run the retained five-model roster.")).toBeDefined();
+      expect(screen.getByText("3. Select & Assign Champion")).toBeDefined();
+      expect(screen.getByText("Select and atomically assign the governed champion.")).toBeDefined();
     });
   });
 

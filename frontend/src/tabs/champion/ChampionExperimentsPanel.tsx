@@ -2,7 +2,7 @@
  * ChampionExperimentsPanel — Main panel for the Champion sub-tab.
  *
  * KPI cards, experiment list table, comparison panel, and log viewer.
- * Production champion mutation is reserved for the governed model-refresh flow.
+ * Production champion mutation is reserved for the governed champion-refresh flow.
  */
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";

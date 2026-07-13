@@ -269,7 +269,8 @@ def system_recommendations(
             or state.latest_sales_load > state.latest_champion_promotion
         )
     )
-    if state.stale_tuning_profiles or champion_is_stale:
+    model_refresh_required = bool(state.stale_tuning_profiles or champion_is_stale)
+    if model_refresh_required:
         reasons = []
         if state.stale_tuning_profiles:
             reasons.append(f"{state.stale_tuning_profiles} tuning profile(s) are stale")
@@ -283,6 +284,14 @@ def system_recommendations(
                 ("Complete data refresh first.",) if changed_domains else (),
             )
         )
+        recommendations.append(
+            SystemRecommendation(
+                "champion-refresh",
+                "high",
+                "Assign a champion from the refreshed five-model evidence.",
+                ("Complete model refresh first.",),
+            )
+        )
 
     production_is_current = (
         state.active_production_month == state.planning_month
@@ -294,7 +303,9 @@ def system_recommendations(
                 "forecast-publish",
                 "high",
                 f"No promoted champion production release exists for {state.planning_month:%Y-%m}.",
-                ("Refresh models first.",) if champion_is_stale else (),
+                ("Refresh models and assign the champion first.",)
+                if model_refresh_required
+                else (),
             )
         )
     elif state.planning_month_roster_models == 4 and state.planning_month_snapshot_rows == 0:

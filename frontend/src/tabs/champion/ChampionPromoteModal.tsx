@@ -60,7 +60,7 @@ export function ChampionPromoteModal({ experiment, open, onClose }: Props) {
             <div className="space-y-1 text-sm">
               <p className="font-medium">This experiment is analysis-only.</p>
               <p className="text-xs">
-                Use the named model-refresh pipeline to validate the current five-model
+                Use the named champion-refresh pipeline to validate the current five-model
                 lineage and atomically promote a governed champion. Manual config writes
                 and results-load jobs are disabled.
               </p>

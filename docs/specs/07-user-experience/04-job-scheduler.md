@@ -195,7 +195,8 @@ Route ordering note: literal paths (`/jobs/schedules`, `/jobs/pipeline*`, `/jobs
 
 `config/forecasting/pipelines.yaml` (loaded by `common/services/pipeline_presets.py`)
 defines the forecasting lifecycle as sequential JobManager pipelines:
-`data-refresh`, `model-refresh`, `forecast-publish`, `full-refresh`. Each step
+`data-refresh`, `model-refresh`, `champion-refresh`, `forecast-publish`,
+`full-refresh`. Each step
 is a registered job type; `tests/unit/test_pipeline_presets.py` fails if a
 preset references an unregistered type. Launch via
 `POST /jobs/pipelines/named/{name}`; a failed step stops the pipeline.

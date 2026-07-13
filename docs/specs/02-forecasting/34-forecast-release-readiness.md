@@ -282,7 +282,8 @@ silently attributed to an experiment. A new results-promotion job loads the
 cached winners with `champion_experiment_id`, hashes the resulting historical
 rows, and only then marks the experiment results promoted. The post-release
 scorecard also retains its `modified_ts <= results_promoted_at` freshness fence.
-The final `model-refresh` step is a governed champion refresh. Before creating
+The separate `champion-refresh` pipeline is the governed champion assignment.
+Before creating
 an experiment it requires the latest completed-and-loaded backtest for each of
 the five models to share the current sales batch/hash and promoted cluster
 experiment/assignment checksum. It evaluates the current production strategy

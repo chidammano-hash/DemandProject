@@ -326,8 +326,9 @@ Every publish must run and load all five backtests, then complete a governed
 champion refresh before production generation. This is especially important after an
 adapter, population, data, or clustering change, because an older champion
 artifact can be structurally valid but no longer serve the current eligible
-population. The named `model-refresh` pipeline provides that sequence and
-atomically promotes the new experiment/results only after exact five-run
+population. The named `model-refresh` pipeline loads the five governed runs;
+the separate `champion-refresh` pipeline atomically promotes the new
+experiment/results only after exact five-run
 sales/cluster lineage and winner checksums pass; the
 subsequent `forecast-publish` pipeline final-refits the persisted LightGBM,
 N-HiTS, and N-BEATS families, generates the release candidate, and prepares its

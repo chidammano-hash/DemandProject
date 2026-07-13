@@ -126,9 +126,9 @@ For a step-by-step approach, run these in order:
 | 9 | `make forecast-generate` | ~15-30 min | Generate one immutable champion `release_candidate` in staging |
 | 10 | `make forecast-snapshot-contenders` | Model-dependent | Freeze and generate exactly the top three live-FVA contenders |
 
-For a recurring publish, prefer the named `model-refresh` pipeline (all five
-backtests, loads, and an atomic governed champion experiment/results promotion),
-then `forecast-publish` (three final
+For a recurring publish, run the named `model-refresh` pipeline (all five
+backtests and loads), then `champion-refresh` (atomic governed champion
+experiment/results assignment), then `forecast-publish` (three final
 fits, champion generation, top-three preparation). Review the returned exact
 `source_run_id` and promote it from the Forecast UI; generation alone never
 writes the consumer-facing production table.
@@ -794,8 +794,9 @@ make champion-train-meta     # Train meta-learner classifier
 - "New Experiment" -> select from 36 templates, toggle competing models, configure params
 - Compare 2 experiments -> per-lag, per-month, model distribution comparison
 - Completed experiments and sweep recommendations are analysis-only; no Promote/Load control is shown
-- Jobs → `model-refresh`: fixed five-model governed refresh; the experiment id and lineage checksums
-  are returned with the final job result and config/results promotion is atomic
+- Jobs → `model-refresh`: fixed five-model governed backtest and load refresh
+- Jobs → `champion-refresh`: the experiment id and lineage checksums are returned
+  with the final job result and results assignment is atomic
 
 API endpoints (prefix `/champion-experiments`):
 - `POST /` -- create + launch experiment (combined, returns 202)
@@ -808,8 +809,8 @@ API endpoints (prefix `/champion-experiments`):
 - `GET /{id}/lags` -- per-lag breakdown
 - `GET /{id}/months` -- per-month breakdown
 - `GET /{id}/logs` -- stream logs
-- `POST /{id}/promote` -- retired; stable 410 with `model-refresh` guidance, no mutation
-- `POST /{id}/promote-results` -- retired; stable 410 with `model-refresh` guidance, no job submission
+- `POST /{id}/promote` -- retired; stable 410 with `champion-refresh` guidance, no mutation
+- `POST /{id}/promote-results` -- retired; stable 410 with `champion-refresh` guidance, no job submission
 - `GET /{id}/promote-results/status` -- check promotion status
 - `POST /{id}/cancel` -- cancel running experiment
 - `DELETE /{id}` -- delete experiment
@@ -950,7 +951,7 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 7. View results: champion accuracy, ceiling, gap to oracle (bps), model distribution
 8. **Compare** two experiments -> per-lag delta, model distribution diff
 9. Review the experiment or sweep recommendation as analysis evidence
-10. For production, apply any reviewed config change and run named `model-refresh`
+10. For production, apply any reviewed config change and run named `champion-refresh`
 
 ### 3.4 Promotion Workflow (Experiment to Production)
 
@@ -964,7 +965,7 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 3. Downstream: re-run backtest for that algorithm, reload, re-run champion
 
 **Champion promotion (governed refresh):**
-1. Run `POST /jobs/pipelines/named/model-refresh`; manual experiment/sweep promotion routes return 410.
+1. Run `POST /jobs/pipelines/named/champion-refresh`; manual experiment/sweep promotion routes return 410.
 2. `governed_champion_refresh` verifies current sales, cluster, roster, and backtest lineage, then
    atomically swaps champion facts and promotion flags. Failure leaves the incumbent untouched.
 

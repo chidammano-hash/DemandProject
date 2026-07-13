@@ -67,7 +67,9 @@ interface ModelReadinessCardProps {
   onGenerateAll: () => void;
   generatableCount: number;
   onPromote: (modelId: string) => void;
-  onPreparePublish: (pipeline: "model-refresh" | "forecast-publish") => void;
+  onPreparePublish: (
+    pipeline: "model-refresh" | "champion-refresh" | "forecast-publish"
+  ) => void;
 }
 
 export function ModelReadinessCard({
@@ -108,9 +110,17 @@ export function ModelReadinessCard({
     (!snapshotEvidenceReady || !championReady);
   const readinessPipeline = snapshotReadiness?.action_pipeline ?? "forecast-publish";
   const preparationLabel =
-    readinessPipeline === "model-refresh" ? "Refresh Models" : "Prepare Release";
+    readinessPipeline === "model-refresh"
+      ? "Refresh Models"
+      : readinessPipeline === "champion-refresh"
+        ? "Assign Champion"
+        : "Prepare Release";
   const preparationProgressLabel =
-    readinessPipeline === "model-refresh" ? "Refreshing Models..." : "Preparing Release...";
+    readinessPipeline === "model-refresh"
+      ? "Refreshing Models..."
+      : readinessPipeline === "champion-refresh"
+        ? "Assigning Champion..."
+        : "Preparing Release...";
   return (
     <Card>
       <CardHeader className="pb-3">

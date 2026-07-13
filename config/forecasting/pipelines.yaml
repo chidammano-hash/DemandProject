@@ -42,8 +42,7 @@ pipelines:
   model-refresh:
     description: >-
       Re-tune stale LightGBM cluster profiles, run the complete five-model
-      backtest roster, then create and atomically promote a governed champion
-      experiment using the current production strategy.
+      backtest roster, and load current governed evidence for each model.
       Run after data-refresh or after promoting a new clustering scenario.
     steps:
       - job_type: tune_stale_clusters
@@ -58,6 +57,14 @@ pipelines:
         params: {governed: true}
       - job_type: backtest_chronos2_enriched
         params: {governed: true}
+
+  champion-refresh:
+    description: >-
+      Select the champion from the current governed five-model evidence, then
+      atomically assign the completed champion experiment using the current
+      production strategy. The incumbent remains active unless the entire
+      assignment succeeds.
+    steps:
       - job_type: governed_champion_refresh
 
   forecast-publish:

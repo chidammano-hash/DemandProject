@@ -17,6 +17,7 @@ import { GROUP_CONFIG } from "@/types/jobs";
 const FORECAST_PIPELINE_ORDER = [
   "clustering-refresh",
   "model-refresh",
+  "champion-refresh",
   "forecast-publish",
   "forecast-snapshot-bundle",
   "period-roll",
@@ -25,8 +26,9 @@ const FORECAST_PIPELINE_ORDER = [
 const PIPELINE_LABELS: Record<(typeof FORECAST_PIPELINE_ORDER)[number], string> = {
   "clustering-refresh": "1. Prepare Features & Clusters",
   "model-refresh": "2. Refresh Five-Model Roster",
-  "forecast-publish": "3. Build Release Candidate",
-  "forecast-snapshot-bundle": "4. Archive Forecast Snapshot",
+  "champion-refresh": "3. Select & Assign Champion",
+  "forecast-publish": "4. Build Release Candidate",
+  "forecast-snapshot-bundle": "5. Archive Forecast Snapshot",
   "period-roll": "Period Roll · Score Prior + Archive Current",
 };
 
@@ -95,7 +97,7 @@ export function derivePipelineGuidance(
         message: "Run step 1: Prepare Features & Clusters before refreshing the model roster.",
       };
     }
-    const resolvedStage = ["tuning", "champion", "forecast"].find((stage) =>
+    const resolvedStage = ["tuning", "forecast"].find((stage) =>
       staleStages.has(stage)
     );
     if (resolvedStage) {
@@ -106,17 +108,46 @@ export function derivePipelineGuidance(
     }
   }
 
+  if (name === "champion-refresh") {
+    if (staleStages.has("clustering")) {
+      return {
+        blocked: true,
+        message: "Run step 1: Prepare Features & Clusters before assigning a champion.",
+      };
+    }
+    if (staleStages.has("tuning") || staleStages.has("forecast")) {
+      return {
+        blocked: true,
+        message: "Run step 2: Refresh Five-Model Roster before assigning a champion.",
+      };
+    }
+    if (staleStages.has("champion")) {
+      return {
+        blocked: false,
+        message: "This workflow resolves the current champion readiness issue.",
+      };
+    }
+  }
+
   if (name === "forecast-publish") {
-    return staleStages.has("clustering")
-      ? {
-          blocked: true,
-          message:
-            "Run step 1: Prepare Features & Clusters, then step 2: Refresh Five-Model Roster.",
-        }
-      : {
-          blocked: true,
-          message: "Run step 2: Refresh Five-Model Roster before building a release candidate.",
-        };
+    if (staleStages.has("clustering")) {
+      return {
+        blocked: true,
+        message: "Run steps 1–3 before building a release candidate.",
+      };
+    }
+    if (staleStages.has("tuning") || staleStages.has("forecast")) {
+      return {
+        blocked: true,
+        message: "Run step 2: Refresh Five-Model Roster, then step 3: Select & Assign Champion.",
+      };
+    }
+    if (staleStages.has("champion")) {
+      return {
+        blocked: true,
+        message: "Run step 3: Select & Assign Champion before building a release candidate.",
+      };
+    }
   }
 
   return null;
@@ -319,7 +350,9 @@ export function PipelineBuilderPanel({
                 const state = derivePipelineRunState(pipeline.name, jobs, launch);
                 const guidance = derivePipelineGuidance(pipeline.name, readiness);
                 const requiresReadiness =
-                  pipeline.name === "model-refresh" || pipeline.name === "forecast-publish";
+                  pipeline.name === "model-refresh" ||
+                  pipeline.name === "champion-refresh" ||
+                  pipeline.name === "forecast-publish";
                 const checkingPrerequisites = readinessLoading && requiresReadiness;
                 const readinessUnverified = Boolean(readinessError) && requiresReadiness;
                 const idleReadinessLabel = guidance?.blocked

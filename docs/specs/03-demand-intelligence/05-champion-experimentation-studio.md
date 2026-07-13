@@ -174,7 +174,7 @@ routes remain authenticated compatibility boundaries but always return
 `410 manual_champion_promotion_retired` before any config/DB mutation or job
 submission. Their UI controls have been removed.
 
-Production changes use `POST /jobs/pipelines/named/model-refresh`. Its governed
+Production changes use `POST /jobs/pipelines/named/champion-refresh`. Its governed
 champion refresh validates current sales, cluster, five-model roster, and loaded
 backtest lineage, evaluates a new experiment without touching the incumbent,
 then swaps champion facts and both promotion flags atomically. A reviewed change
@@ -213,7 +213,7 @@ The registry retains these two job types:
 `champion_results_load` is retained only for historical job-state compatibility.
 It is hidden from the launch catalog and rejected by generic single-job,
 recurring-schedule, and ad-hoc-pipeline APIs. New production work uses
-`governed_champion_refresh` through the named `model-refresh` pipeline.
+`governed_champion_refresh` through the named `champion-refresh` pipeline.
 
 The experiment runner (`scripts/ml/run_champion_experiment.py`) reuses:
 - `STRATEGY_REGISTRY`, `compute_strategy_accuracy()`, `compute_ceiling()` re-exported from

@@ -999,8 +999,9 @@ The migration:
 
 **A governed champion refresh and fresh full generation are mandatory after this
 migration.** Run `POST /jobs/pipelines/named/model-refresh` so all five current
-backtests are lineage-checked and a newly evaluated experiment plus results are
-promoted atomically. The retired manual experiment promotion endpoints return
+backtests are loaded and lineage-checked, then run
+`POST /jobs/pipelines/named/champion-refresh` so a newly evaluated experiment
+plus results are promoted atomically. The retired manual experiment promotion endpoints return
 410 and cannot perform this cutover. Never relabel a
 `legacy_invalid` run or manually set `promotion_eligible`. Generate from the UI
 or forecast job, capture its returned `source_run_id`, and promote that exact

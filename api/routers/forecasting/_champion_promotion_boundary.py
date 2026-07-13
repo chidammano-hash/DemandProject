@@ -10,7 +10,7 @@ MANUAL_CHAMPION_PROMOTION_RETIRED_DETAIL: Final = {
     "code": "manual_champion_promotion_retired",
     "message": (
         "Manual champion promotion is retired. Run "
-        "POST /jobs/pipelines/named/model-refresh to create and atomically promote "
+        "POST /jobs/pipelines/named/champion-refresh to create and atomically promote "
         "a governed champion."
     ),
 }

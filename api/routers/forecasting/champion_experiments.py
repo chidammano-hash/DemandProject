@@ -2,7 +2,7 @@
 
 Provides CRUD and analysis for champion selection strategy experiments. Legacy
 manual promotion routes remain as fail-closed compatibility boundaries; only
-the governed model-refresh lifecycle may mutate the production champion.
+the governed champion-refresh lifecycle may mutate the production champion.
 
 All endpoints live under the /champion-experiments prefix.
 """

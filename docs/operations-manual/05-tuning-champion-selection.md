@@ -228,7 +228,8 @@ lookback is configured under `champion.release_readiness`; query parameters
 cannot shorten it. The card shows all blockers through its disclosure and polls
 every 60 seconds while open, including after a green result.
 
-`model-refresh` ends with the governed `governed_champion_refresh` job. It
+`model-refresh` stops after the five governed backtests are loaded. Run the
+separate `champion-refresh` pipeline to launch `governed_champion_refresh`. It
 requires the latest completed-and-loaded run for every canonical model to carry
 one identical, current sales-batch/hash and promoted-cluster assignment
 lineage. The job creates a new `champion_experiment` from the current production

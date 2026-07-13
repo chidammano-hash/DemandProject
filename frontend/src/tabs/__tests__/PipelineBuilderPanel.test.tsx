@@ -149,7 +149,7 @@ const PIPELINES: NamedPipelinePreset[] = [
   },
   {
     name: "model-refresh",
-    description: "Run the complete retained model roster and promote a governed champion.",
+    description: "Run and load the complete retained model roster.",
     steps: [
       "tune_stale_clusters",
       "backtest_lgbm",
@@ -157,8 +157,12 @@ const PIPELINES: NamedPipelinePreset[] = [
       "backtest_nbeats",
       "backtest_mstl",
       "backtest_chronos2_enriched",
-      "governed_champion_refresh",
     ],
+  },
+  {
+    name: "champion-refresh",
+    description: "Select and atomically assign the champion from the governed roster.",
+    steps: ["governed_champion_refresh"],
   },
   {
     name: "forecast-publish",
@@ -211,12 +215,12 @@ function pipelineJob(overrides: Partial<Job> = {}): Job {
   return {
     job_id: "job-1",
     job_type: "backtest_lgbm",
-    job_label: "[model-refresh 2/7] LightGBM",
+    job_label: "[model-refresh 2/6] LightGBM",
     status: "running",
     params: {
       __pipeline_label: "model-refresh",
       __pipeline_step: 2,
-      __pipeline_total_steps: 7,
+      __pipeline_total_steps: 6,
     },
     result: null,
     error: null,
@@ -248,11 +252,12 @@ describe("PipelineBuilderPanel", () => {
     renderPanel();
 
     expect(screen.getByText("Forecast Pipelines")).toBeDefined();
-    expect(screen.getByText("5 workflows")).toBeDefined();
+    expect(screen.getByText("6 workflows")).toBeDefined();
     expect(screen.getByText("1. Prepare Features & Clusters")).toBeDefined();
     expect(screen.getByText("2. Refresh Five-Model Roster")).toBeDefined();
-    expect(screen.getByText("3. Build Release Candidate")).toBeDefined();
-    expect(screen.getByText("4. Archive Forecast Snapshot")).toBeDefined();
+    expect(screen.getByText("3. Select & Assign Champion")).toBeDefined();
+    expect(screen.getByText("4. Build Release Candidate")).toBeDefined();
+    expect(screen.getByText("5. Archive Forecast Snapshot")).toBeDefined();
     expect(screen.getByText("Period Roll · Score Prior + Archive Current")).toBeDefined();
     expect(screen.queryByText("General ETL.")).toBeNull();
     expect(screen.queryByText("Inventory calculations.")).toBeNull();
@@ -273,7 +278,7 @@ describe("PipelineBuilderPanel", () => {
 
   it("launches the canonical server preset by name", () => {
     const { onRun } = renderPanel();
-    const card = screen.getByText("3. Build Release Candidate").closest("article");
+    const card = screen.getByText("4. Build Release Candidate").closest("article");
     fireEvent.click(within(card!).getByRole("button", { name: "Run" }));
     expect(onRun).toHaveBeenCalledWith("forecast-publish");
   });
@@ -283,7 +288,7 @@ describe("PipelineBuilderPanel", () => {
     const card = screen.getByText("2. Refresh Five-Model Roster").closest("article");
     const scoped = within(card!);
     expect(scoped.getAllByText("Running")).toHaveLength(2);
-    expect(scoped.getByText("Step 2 of 7")).toBeDefined();
+    expect(scoped.getByText("Step 2 of 6")).toBeDefined();
     expect(scoped.getByText("Backtesting LightGBM")).toBeDefined();
     expect((scoped.getByRole("button", { name: "Running" }) as HTMLButtonElement).disabled).toBe(
       true
@@ -303,7 +308,7 @@ describe("PipelineBuilderPanel", () => {
         pipelineJob({
           job_id: "target-run",
           pipeline_id: "pipe_target",
-          pipeline_step: 7,
+          pipeline_step: 6,
           status: "completed",
           completed_at: "2026-07-12T11:00:00Z",
         }),
@@ -312,14 +317,14 @@ describe("PipelineBuilderPanel", () => {
     );
 
     expect(state.status).toBe("completed");
-    expect(state.step).toBe(7);
+    expect(state.step).toBe(6);
   });
 
   it("shows the returned pipeline reference while the first step is queued", () => {
     renderPanel({
       launch: { name: "forecast-publish", pipelineId: "pipe_abc123", submitting: false },
     });
-    const card = screen.getByText("3. Build Release Candidate").closest("article");
+    const card = screen.getByText("4. Build Release Candidate").closest("article");
     const scoped = within(card!);
     expect(scoped.getAllByText("Queued")).toHaveLength(2);
     expect(scoped.getByText("pipe_abc123")).toBeDefined();
@@ -329,12 +334,12 @@ describe("PipelineBuilderPanel", () => {
     renderPanel({
       jobs: [
         pipelineJob({
-          job_label: "[model-refresh 7/7] Governed Champion Refresh",
+          job_label: "[model-refresh 6/6] Chronos 2E",
           status: "completed",
           params: {
             __pipeline_label: "model-refresh",
-            __pipeline_step: 7,
-            __pipeline_total_steps: 7,
+            __pipeline_step: 6,
+            __pipeline_total_steps: 6,
           },
           completed_at: "2026-07-12T11:00:00Z",
           progress_msg: "Done",
@@ -357,19 +362,25 @@ describe("PipelineBuilderPanel", () => {
     expect(scoped.getByText(/creates a new workflow from step 1/i)).toBeDefined();
   });
 
-  it("blocks forecast publishing until the stale champion is refreshed", () => {
+  it("routes stale champion readiness to the separate champion workflow", () => {
     renderPanel({ readiness: STALE_CHAMPION_READINESS });
 
     const modelCard = screen.getByText("2. Refresh Five-Model Roster").closest("article");
-    const publishCard = screen.getByText("3. Build Release Candidate").closest("article");
+    const championCard = screen.getByText("3. Select & Assign Champion").closest("article");
+    const publishCard = screen.getByText("4. Build Release Candidate").closest("article");
     const modelScoped = within(modelCard!);
+    const championScoped = within(championCard!);
     const publishScoped = within(publishCard!);
 
-    expect(modelScoped.getByText(/resolves the current champion readiness issue/i)).toBeDefined();
+    expect(modelScoped.queryByText(/resolves the current champion readiness issue/i)).toBeNull();
     expect((modelScoped.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled).toBe(
       false
     );
-    expect(publishScoped.getByText(/run step 2.*five-model roster/i)).toBeDefined();
+    expect(championScoped.getByText(/resolves the current champion readiness issue/i)).toBeDefined();
+    expect(
+      (championScoped.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+    expect(publishScoped.getByText(/run step 3.*select.*champion/i)).toBeDefined();
     expect(publishScoped.getByText("Prerequisite")).toBeDefined();
     expect(publishScoped.queryByText("Ready")).toBeNull();
     expect((publishScoped.getByRole("button", { name: "Prerequisite required" }) as HTMLButtonElement).disabled).toBe(
@@ -379,7 +390,7 @@ describe("PipelineBuilderPanel", () => {
 
   it("does not call an unchecked downstream workflow ready while prerequisites load", () => {
     renderPanel({ readinessLoading: true });
-    const publishCard = screen.getByText("3. Build Release Candidate").closest("article");
+    const publishCard = screen.getByText("4. Build Release Candidate").closest("article");
     const scoped = within(publishCard!);
 
     expect(scoped.getByText("Checking")).toBeDefined();

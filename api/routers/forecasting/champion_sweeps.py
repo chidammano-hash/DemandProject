@@ -4,7 +4,7 @@ A sweep orchestrates the existing champion-experiment machinery: it fans out a
 grid of candidate champion configs, ranks them globally + per demand segment,
 assembles a per-segment composite, and recommends a winner. Children are ordinary
 ``champion_experiment`` rows, so compare/detail reuse that subsystem. Production
-promotion is reserved for the governed model-refresh lifecycle.
+promotion is reserved for the governed champion-refresh lifecycle.
 
 All endpoints live under the /champion-sweeps prefix. See spec
 ``docs/specs/02-forecasting/30-champion-strategy-sweep.md``.

@@ -78,8 +78,8 @@ docker compose exec -T postgres psql -U demand -d demand_mvp \
 Migration 203 intentionally classifies all pre-manifest staging as
 `legacy_invalid`. It does not infer that an old or mixed population was a safe
 release candidate. It also leaves pre-migration champion result rows without an
-experiment id/checksum. After applying it, run the named **model-refresh**
-pipeline so the exact current five-run lineage is evaluated and the new champion
+experiment id/checksum. After applying it, run **model-refresh**, then the named
+**champion-refresh** pipeline so the exact current five-run lineage is evaluated and the new champion
 experiment/results are promoted atomically. The retired manual
 `/champion-experiments/{id}/promote` and `/promote-results` routes return 410 and
 cannot be used for cutover. Then run a fresh full Generate action and promote
@@ -122,10 +122,11 @@ causes long tracking retries from inside the API container.
 
 ### Required model refresh before publish
 
-Run the named **model-refresh** pipeline before every **forecast-publish**. It
-runs and loads all five backtests in order—LightGBM, N-HiTS, N-BEATS, MSTL, and
-Chronos 2E—then creates and atomically promotes a governed champion experiment
-after proving all five runs share current sales and cluster lineage. Do not generate from an older
+Run **model-refresh**, then **champion-refresh**, before every
+**forecast-publish**. Model refresh runs and loads all five backtests in
+order—LightGBM, N-HiTS, N-BEATS, MSTL, and Chronos 2E. Champion refresh then
+creates and atomically promotes a governed champion experiment after proving
+all five runs share current sales and cluster lineage. Do not generate from an older
 promoted experiment: it can contain routes produced before the canonical
 adapters or population rules changed, including MSTL routes for DFUs with too
 little history. Only after the five backtests and governed champion refresh complete
@@ -565,12 +566,12 @@ The production forecast is a **derived** artifact. Anything that invalidates the
 
 | Trigger | Steps |
 |---|---|
-| Monthly planning cycle (default) | Run named `model-refresh` (all five backtests + champion), review, run `forecast-publish`, then promote the exact source run |
+| Monthly planning cycle (default) | Run `model-refresh`, run `champion-refresh`, review, run `forecast-publish`, then promote the exact source run |
 | New backtest + champion cycle | Run all five backtests and load them, rerun champion selection, review on Champion tab, then run `forecast-publish` and promote |
-| Source data refresh (`make pipeline-full` / `pipeline-refresh`) | Run `model-refresh`, review, then `forecast-publish` and promote |
-| Hyperparameter tuning (`make tune-all`) | Run `model-refresh`, review, then `forecast-publish` and promote |
-| Cluster scenario promotion (`cluster-all`) | Run `model-refresh` against the new assignments, review, then `forecast-publish` and promote |
-| Cold-start config change (`min_history_months`, etc.) | Dry-run to preview, then run `model-refresh`, `forecast-publish`, and promote |
+| Source data refresh (`make pipeline-full` / `pipeline-refresh`) | Run `model-refresh`, `champion-refresh`, review, then `forecast-publish` and promote |
+| Hyperparameter tuning (`make tune-all`) | Run `model-refresh`, `champion-refresh`, review, then `forecast-publish` and promote |
+| Cluster scenario promotion (`cluster-all`) | Run `model-refresh` against the new assignments, then `champion-refresh`, review, `forecast-publish`, and promote |
+| Cold-start config change (`min_history_months`, etc.) | Dry-run to preview, then run `model-refresh`, `champion-refresh`, `forecast-publish`, and promote |
 
 A scheduled job (`forecast_pipeline_config.yaml` `production_forecast.scheduler.cron: "0 6 2 * *"`) runs `generate_production_forecast` on the 2nd of each month at 06:00. **The scheduler does NOT auto-promote** — promotion always requires an explicit API call so an operator owns the gate decision.
 
@@ -672,7 +673,8 @@ ORDER BY src, forecast_month;
 |---|---|
 | Schema bootstrap | `make forecast-prod-schema` |
 | Train persisted production models | `make train-production-all` |
-| Refresh five backtests + champion | Run named pipeline `model-refresh` from the Jobs UI/API |
+| Refresh five backtests | Run named pipeline `model-refresh` from the Jobs UI/API |
+| Select and atomically assign champion | Run named pipeline `champion-refresh` from the Jobs UI/API |
 | Train, generate, and prepare top three | Run named pipeline `forecast-publish` from the Jobs UI/API |
 | Generate all DFUs | `make forecast-generate` |
 | Generate single DFU | `make forecast-generate-dfu ITEM=<id> LOC=<loc>` |

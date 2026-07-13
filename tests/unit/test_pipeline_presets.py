@@ -23,6 +23,7 @@ class TestPresetConfig:
             "data-refresh",
             "clustering-refresh",
             "model-refresh",
+            "champion-refresh",
             "forecast-publish",
             "forecast-snapshot-bundle",
             "period-roll",
@@ -55,17 +56,33 @@ class TestPresetConfig:
             steps = preset_steps(get_pipeline_preset(name))
             assert steps[0]["job_type"] != "archive_forecast_snapshot"
 
-    def test_model_pipelines_finish_selection_with_governed_champion_refresh(self):
-        for name in ("model-refresh", "full-refresh"):
-            steps = preset_steps(get_pipeline_preset(name))
-            job_types = [step["job_type"] for step in steps]
-            assert "champion_select" not in job_types
-            assert "governed_champion_refresh" in job_types
-            governed_backtests = [
-                step for step in steps if step["job_type"].startswith("backtest_")
-            ]
-            assert len(governed_backtests) == 5
-            assert all(step["params"] == {"governed": True} for step in governed_backtests)
+    def test_model_refresh_stops_after_five_governed_backtests(self):
+        steps = preset_steps(get_pipeline_preset("model-refresh"))
+        job_types = [step["job_type"] for step in steps]
+        assert "champion_select" not in job_types
+        assert "governed_champion_refresh" not in job_types
+        governed_backtests = [
+            step for step in steps if step["job_type"].startswith("backtest_")
+        ]
+        assert len(governed_backtests) == 5
+        assert all(step["params"] == {"governed": True} for step in governed_backtests)
+
+    def test_champion_refresh_is_a_separate_atomic_assignment_pipeline(self):
+        steps = preset_steps(get_pipeline_preset("champion-refresh"))
+        assert [step["job_type"] for step in steps] == ["governed_champion_refresh"]
+
+    def test_full_refresh_runs_model_evidence_before_champion_assignment(self):
+        steps = preset_steps(get_pipeline_preset("full-refresh"))
+        job_types = [step["job_type"] for step in steps]
+        champion_index = job_types.index("governed_champion_refresh")
+        governed_backtests = [
+            (index, step)
+            for index, step in enumerate(steps)
+            if step["job_type"].startswith("backtest_")
+        ]
+        assert len(governed_backtests) == 5
+        assert all(step["params"] == {"governed": True} for _, step in governed_backtests)
+        assert all(index < champion_index for index, _ in governed_backtests)
 
     def test_full_refresh_promotes_clusters_before_tuning(self):
         steps = preset_steps(get_pipeline_preset("full-refresh"))

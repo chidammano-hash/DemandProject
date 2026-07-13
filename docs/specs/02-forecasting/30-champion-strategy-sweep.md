@@ -270,7 +270,7 @@ Under a new `/champion-sweeps` prefix — added to `api/main.py` **before** `dom
 | GET | `/champion-sweeps/{sweep_id}/leaderboard` | Global-ranked members joined to their `champion_experiment` rows (strategy, params, accuracy, ceiling, gap, score, gate_eligible, rank). |
 | GET | `/champion-sweeps/{sweep_id}/segments` | Per-segment winner map + per-segment scores (from `champion_sweep_segment_score`), and the global-vs-composite head-to-head. |
 | POST | `/champion-sweeps/{sweep_id}/cancel` | Cancel running/queued sweep + its queued children. `require_api_key`. |
-| POST | `/champion-sweeps/{sweep_id}/promote-winner` | Retired compatibility boundary. Always returns `410 manual_champion_promotion_retired` before reading or mutating the DB; use the named `model-refresh` pipeline. `require_api_key`. |
+| POST | `/champion-sweeps/{sweep_id}/promote-winner` | Retired compatibility boundary. Always returns `410 manual_champion_promotion_retired` before reading or mutating the DB; use the named `champion-refresh` pipeline. `require_api_key`. |
 | DELETE | `/champion-sweeps/{sweep_id}` | Delete sweep + members (children left intact unless orphaned). `require_api_key`. |
 
 All reads use `get_conn()` / `get_async_read_only_conn()`, `%s` placeholders, `psycopg.sql.Identifier`
@@ -316,7 +316,7 @@ strategy + params (e.g. smooth→`expanding`, intermittent→`rolling(6)`). The 
 segment→winner map is exactly this shape, so the composite is stored **as a `per_segment`
 experiment whose `strategy_params` carry the discovered map**. It remains analysis evidence and does
 not write `forecast_pipeline_config.yaml` or champion facts. Adopting the recommendation requires a
-reviewed production-config change followed by the named `model-refresh` pipeline, whose governed
+reviewed production-config change followed by the named `champion-refresh` pipeline, whose governed
 refresh re-evaluates current five-model lineage and atomically promotes its own result. There is no
 one-off production artifact or direct experiment-promotion shortcut.
 
@@ -388,7 +388,7 @@ generates each constituent forecast, and stages their configured weighted blend 
 - DDL: `sql/192_champion_sweep.sql`; add the three tables to the `db-truncate-data` +
   cleanup runbook (`docs/operations-manual/11-maintenance-troubleshooting.md`).
 - Operations: extend `docs/operations-manual/12-ui-pipeline-runbook.md` Phase 7 (Champion) with the
-  sweep flow (run sweep → review global + per-segment → use governed model-refresh for production).
+  sweep flow (run sweep → review global + per-segment → use governed champion-refresh for production).
 - Docs: this spec; `docs/ARCHITECTURE.md` Feature Catalog; `docs/specs/07-champion-selection.md`
   cross-link. Update `CLAUDE.md` only if a new critical rule emerges (none expected — additive).
 - Backward compatible: existing single experiments, compare, and promotion are untouched — the sweep

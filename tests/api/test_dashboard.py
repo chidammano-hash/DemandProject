@@ -1129,7 +1129,7 @@ async def test_pipeline_readiness_requires_one_governed_promoted_champion(mock_p
     assert data["ready"] is False
     check = data["checks"][0]
     assert check["stage"] == "champion"
-    assert "model-refresh" in check["detail"]
+    assert "champion-refresh" in check["detail"]
 
 
 @pytest.mark.asyncio

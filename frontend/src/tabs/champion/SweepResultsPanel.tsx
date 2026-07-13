@@ -3,7 +3,7 @@
  *
  * Two views: a global-ranked leaderboard (with gate-eligibility badges) and a
  * per-segment winner map with a "composite vs. best global" headline. Sweep
- * recommendations are analysis-only; governed model-refresh owns promotion.
+ * recommendations are analysis-only; governed champion-refresh owns promotion.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -75,7 +75,7 @@ export function SweepResultsPanel({ sweepId }: { sweepId: number }) {
                 {sweep.recommended_gate_eligible ? "" : " · gate ✗"}
               </span>
               <div className="text-[11px] text-muted-foreground">
-                Analysis only · production promotion runs through model-refresh
+                Analysis only · production promotion runs through champion-refresh
               </div>
             </div>
           ) : null}

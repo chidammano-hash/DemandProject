@@ -260,7 +260,8 @@ def validate_backtest_lineage_rows(
             "Champion refresh requires the latest completed and loaded backtest for "
             "all five models to carry the current governed lineage ("
             + "; ".join(details)
-            + "). Re-run model-refresh; the incumbent champion was not touched."
+            + "). Run model-refresh before retrying champion-refresh; the incumbent "
+            "champion was not touched."
         )
     return tuple((model_id, observed[model_id]) for model_id in models)
 
@@ -272,7 +273,7 @@ def create_governed_experiment(
 ) -> int:
     """Create a queued experiment without changing either promoted incumbent."""
     notes = (
-        "Created by the governed model-refresh lifecycle. The incumbent remains "
+        "Created by the governed champion-refresh lifecycle. The incumbent remains "
         "active until this experiment and its historical results are complete."
     )
     with _get_conn() as conn, conn.transaction(), conn.cursor() as cur:
@@ -288,9 +289,9 @@ def create_governed_experiment(
                  AND cluster.is_promoted = TRUE
                RETURNING experiment_id""",
             (
-                "Governed model refresh",
+                "Governed champion refresh",
                 notes,
-                "governed-model-refresh",
+                "governed-champion-refresh",
                 job_id,
                 spec.strategy,
                 json.dumps(spec.strategy_params),
@@ -306,7 +307,7 @@ def create_governed_experiment(
         if row is None:
             raise RuntimeError(
                 "The promoted clustering experiment changed before champion refresh "
-                "could be created; restart model-refresh"
+                "could be created; restart champion-refresh"
             )
     return int(row[0])
 
@@ -482,7 +483,7 @@ def _validated_experiment_spec(
     if actual != wanted:
         raise RuntimeError(
             "Champion experiment no longer matches the current governed five-model contract; "
-            "restart model-refresh"
+            "restart champion-refresh"
         )
     if bool(is_promoted) != bool(is_results_promoted):
         raise RuntimeError(
@@ -585,7 +586,7 @@ def finalize_governed_champion_refresh(
         cluster_row = cur.fetchone()
         if cluster_row is None or int(cluster_row[0]) != spec.cluster_experiment_id:
             raise RuntimeError(
-                "The promoted clustering experiment changed during model-refresh; "
+                "The promoted clustering experiment changed during champion-refresh; "
                 "the incumbent champion was left unchanged"
             )
 
@@ -698,7 +699,7 @@ def finalize_governed_champion_refresh(
                    FROM champion_experiment
                    WHERE experiment_id = %s""",
                 (
-                    "model-refresh",
+                    "champion-refresh",
                     previous_experiment_id,
                     json.dumps(_promotion_snapshot(spec)),
                     experiment_id,

@@ -96,10 +96,11 @@ The Champion stage (`ChampionExperimentsPanel`) creates and runs read-only selec
   active config or champion results.
 - The old **Promote Config**, **Load Results**, and sweep **Promote winner** controls are retired.
   Their compatibility endpoints return `410 manual_champion_promotion_retired` with guidance to
-  `POST /jobs/pipelines/named/model-refresh`; they perform no DB/config mutation and submit no job.
+  `POST /jobs/pipelines/named/champion-refresh`; they perform no DB/config mutation and submit no job.
   Generic job launch, scheduling, and ad-hoc pipeline APIs also reject and hide
   `champion_results_load`.
-- The named **model-refresh** workflow uses `governed_champion_refresh`: it verifies the
+- The named **model-refresh** workflow stops after loading all five governed backtests.
+- The separate **champion-refresh** workflow uses `governed_champion_refresh`: it verifies the
   exact current five-run lineage and atomically promotes the completed experiment and its results.
 - Named pipeline submission is server-idempotent. Concurrent or repeated
   launches of the same preset return HTTP 200 with `status=already_running`
@@ -122,7 +123,7 @@ variants in the **Sweep Builder**; the live counter shows how many candidates th
 (capped at `sweep.max_candidates`, default 24; per-segment scoring adds **no** extra runs). The
 **Sweep Results** panel shows the global leaderboard (with gate-eligibility badges), the per-segment
 winner map, and a "composite vs. best global" headline. Every recommendation is analysis-only.
-To adopt one, make a reviewed production-config change and run the named **model-refresh** workflow;
+To adopt one, make a reviewed production-config change and run the named **champion-refresh** workflow;
 the UI never writes production config or champion facts. See spec
 `docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
 

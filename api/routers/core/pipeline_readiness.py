@@ -110,7 +110,7 @@ def _append_governed_checks(
                 title="Champion lineage could not be verified",
                 detail=(
                     "The governed champion state is incomplete. Run named pipeline "
-                    "'model-refresh' before generating or publishing forecasts."
+                    "'champion-refresh' before generating or publishing forecasts."
                 ),
             )
         )
@@ -140,7 +140,7 @@ def _append_governed_checks(
                 title="No sole governed champion is promoted",
                 detail=(
                     "Production forecasting requires exactly one results-promoted governed "
-                    "champion. Run named pipeline 'model-refresh'."
+                    "champion. Run named pipeline 'champion-refresh'."
                 ),
             )
         )
@@ -156,7 +156,7 @@ def _append_governed_checks(
                 title="Promoted champion lacks governed five-model evidence",
                 detail=(
                     f"Champion experiment {experiment_id} is not bound to the exact five-model "
-                    "governed backtest roster. Run named pipeline 'model-refresh'."
+                    "governed backtest roster. Run 'model-refresh', then 'champion-refresh'."
                 ),
             )
         )
@@ -178,7 +178,7 @@ def _append_governed_checks(
                 title="Promoted champion predates the current clusters",
                 detail=(
                     f"Champion experiment {experiment_id} does not carry the sole current "
-                    "promoted cluster lineage. Run named pipeline 'model-refresh'."
+                    "promoted cluster lineage. Run 'model-refresh', then 'champion-refresh'."
                 ),
             )
         )
@@ -197,7 +197,7 @@ def _append_governed_checks(
                 title="Current sales lineage could not be verified",
                 detail=(
                     "Run named pipeline 'data-refresh' to synchronize the canonical sales "
-                    "source before model-refresh and forecast-publish."
+                    "source before model-refresh, champion-refresh, and forecast-publish."
                 ),
             )
         )
@@ -219,7 +219,8 @@ def _append_governed_checks(
                 detail=(
                     f"Champion experiment {experiment_id} uses sales batch "
                     f"{champion_sales_batch_id}, while batch {current_sales_batch_id} is "
-                    "current. Run 'model-refresh', then 'forecast-publish'."
+                    "current. Run 'model-refresh', then 'champion-refresh', then "
+                    "'forecast-publish'."
                 ),
             )
         )
@@ -372,7 +373,7 @@ def get_pipeline_readiness(response: FastAPIResponse) -> dict[str, Any]:
                     title="Champion readiness could not be verified",
                     detail=(
                         "Governed champion lineage is unavailable. Repair the schema or query, "
-                        "then run named pipeline 'model-refresh'."
+                        "then run named pipeline 'champion-refresh'."
                     ),
                 )
             )

@@ -292,7 +292,8 @@ def run_named_pipeline(name: str):
     """Launch a named pipeline preset as a sequential JobManager pipeline.
 
     This is the one-call way to bring a whole lifecycle current (e.g.
-    ``data-refresh``, ``model-refresh``, ``forecast-publish``, ``full-refresh``)
+    ``data-refresh``, ``model-refresh``, ``champion-refresh``,
+    ``forecast-publish``, ``full-refresh``)
     instead of manually stepping each job.
     """
     from common.services.pipeline_presets import get_pipeline_preset, preset_steps

@@ -188,19 +188,19 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.getAllByRole("button", { name: "Prepare Release" })).toHaveLength(1);
   });
 
-  it("offers Model Refresh when governed champion evidence is missing", () => {
+  it("offers Champion Refresh when governed champion evidence is missing", () => {
     const { onPreparePublish } = renderCard({
       snapshotReadiness: {
         ...readySnapshotRoster,
         ready: false,
         champion_ready: false,
-        stale_reason: "Run the named Model Refresh pipeline.",
-        action_pipeline: "model-refresh",
+        stale_reason: "Run the named Champion Refresh pipeline.",
+        action_pipeline: "champion-refresh",
       },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh Models" }));
-    expect(onPreparePublish).toHaveBeenCalledWith("model-refresh");
+    fireEvent.click(screen.getByRole("button", { name: "Assign Champion" }));
+    expect(onPreparePublish).toHaveBeenCalledWith("champion-refresh");
   });
 
   it("shows pipeline progress without allowing duplicate preparation", () => {

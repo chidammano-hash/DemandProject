@@ -100,8 +100,9 @@ def test_stale_sales_recommend_model_refresh_before_forecast_publish():
         ),
     )
 
-    assert [item.pipeline_name for item in recommendations][:2] == [
+    assert [item.pipeline_name for item in recommendations][:3] == [
         "model-refresh",
+        "champion-refresh",
         "forecast-publish",
     ]
 
@@ -172,6 +173,10 @@ def test_ai_cannot_omit_a_system_required_workflow(monkeypatch):
             "description": "Refresh models",
             "steps": [{"job_type": "run_backtest", "params": {}}],
         },
+        "champion-refresh": {
+            "description": "Assign champion",
+            "steps": [{"job_type": "governed_champion_refresh", "params": {}}],
+        },
         "forecast-publish": {
             "description": "Publish forecast",
             "steps": [{"job_type": "generate_production_forecast", "params": {}}],
@@ -195,6 +200,7 @@ def test_ai_cannot_omit_a_system_required_workflow(monkeypatch):
 
     assert [item["pipeline_name"] for item in result["recommendations"]] == [
         "model-refresh",
+        "champion-refresh",
         "forecast-publish",
     ]
 

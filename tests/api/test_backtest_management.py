@@ -813,7 +813,7 @@ async def test_snapshot_roster_readiness_returns_recovery_action_when_incomplete
 
 
 @pytest.mark.asyncio
-async def test_snapshot_readiness_routes_missing_governed_champion_to_model_refresh():
+async def test_snapshot_readiness_routes_missing_governed_champion_to_champion_refresh():
     pool, _conn, _cursor = _make_pool(
         fetchall_return=[("champion", "champion", None, None, None)]
     )
@@ -835,8 +835,8 @@ async def test_snapshot_readiness_routes_missing_governed_champion_to_model_refr
     status = resp.json()
     assert status["ready"] is False
     assert status["champion_ready"] is False
-    assert status["action_pipeline"] == "model-refresh"
-    assert "named model refresh" in status["stale_reason"].lower()
+    assert status["action_pipeline"] == "champion-refresh"
+    assert "named champion refresh" in status["stale_reason"].lower()
     assert "routing artifact missing" not in status["stale_reason"].lower()
 
 

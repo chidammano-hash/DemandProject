@@ -20,8 +20,10 @@ from common.services.champion_lineage import (
     GovernedChampionLineageError,
     load_active_governed_champion_lineage,
 )
-from common.services.cluster_lineage import PromotedClusterPopulation
-from common.services.cluster_lineage import load_promoted_cluster_population
+from common.services.cluster_lineage import (
+    PromotedClusterPopulation,
+    load_promoted_cluster_population,
+)
 from common.services.forecast_lineage import sha256_file
 from common.services.forecast_snapshot_validation import (
     SnapshotContenderIntegrityError,
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 DIRECT_INFERENCE_MODEL_IDS = frozenset({"mstl", "chronos2_enriched"})
 PUBLISH_PIPELINE_NAME = "forecast-publish"
-MODEL_REFRESH_PIPELINE_NAME = "model-refresh"
+CHAMPION_REFRESH_PIPELINE_NAME = "champion-refresh"
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,7 +284,7 @@ def evaluate_snapshot_roster_readiness(
                 active_champion_ready = False
                 active_champion_stale_reason = (
                     "There is no sole current governed champion results experiment with an "
-                    "intact routing artifact. Run the named Model Refresh pipeline."
+                    "intact routing artifact. Run the named Champion Refresh pipeline."
                 )
             cur.execute(
                 """SELECT model_id, snapshot_role, contender_rank,
@@ -360,7 +362,7 @@ def evaluate_snapshot_roster_readiness(
         action_pipeline = None
     elif not active_champion_ready:
         stale_reason = active_champion_stale_reason
-        action_pipeline = MODEL_REFRESH_PIPELINE_NAME
+        action_pipeline = CHAMPION_REFRESH_PIPELINE_NAME
     elif not complete_structure:
         stale_reason = (
             "The current champion plus exact top-three snapshot roster is incomplete. "

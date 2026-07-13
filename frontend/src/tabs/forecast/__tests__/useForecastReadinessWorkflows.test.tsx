@@ -82,20 +82,20 @@ describe("forecast readiness workflow hooks", () => {
     expect(result.current.isPreparingPublish).toBe(true);
   });
 
-  it("launches model-refresh when champion lineage is the readiness blocker", async () => {
+  it("launches champion-refresh when champion lineage is the readiness blocker", async () => {
     vi.mocked(runNamedPipeline).mockResolvedValue({
-      pipeline_id: "pipe-models",
-      name: "model-refresh",
+      pipeline_id: "pipe-champion",
+      name: "champion-refresh",
       status: "running",
-      steps: 7,
+      steps: 1,
     });
     const { result } = renderHook(() => useForecastPublishPreparation(), {
       wrapper: createWrapper(),
     });
 
-    await act(async () => result.current.preparePublish("model-refresh"));
+    await act(async () => result.current.preparePublish("champion-refresh"));
 
-    expect(runNamedPipeline).toHaveBeenCalledWith("model-refresh");
+    expect(runNamedPipeline).toHaveBeenCalledWith("champion-refresh");
     expect(result.current.isPreparingPublish).toBe(true);
   });
 

@@ -79,7 +79,7 @@ export interface SnapshotRosterReadiness {
   required_contender_count: number;
   contenders: SnapshotContenderReadiness[];
   stale_reason: string | null;
-  action_pipeline: "model-refresh" | "forecast-publish" | null;
+  action_pipeline: "model-refresh" | "champion-refresh" | "forecast-publish" | null;
 }
 
 /** Promotion status — the currently active promoted model. */

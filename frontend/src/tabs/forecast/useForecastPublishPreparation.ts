@@ -58,13 +58,20 @@ export function useForecastPublishPreparation() {
     queryClient.invalidateQueries({ queryKey: forecastPanelKeys.jobs(0) });
 
     if (outcome === "completed") {
-      toast.success(
+      const message =
         activePipeline === "model-refresh"
-          ? "Model Refresh completed; governed champion evidence is being revalidated."
-          : "Release preparation completed; publish evidence is being revalidated."
-      );
+          ? "Model Refresh completed; the five-model evidence is being revalidated."
+          : activePipeline === "champion-refresh"
+            ? "Champion assignment completed; governed champion evidence is being revalidated."
+            : "Release preparation completed; publish evidence is being revalidated.";
+      toast.success(message);
     } else {
-      const label = activePipeline === "model-refresh" ? "Model Refresh" : "Forecast Publish";
+      const label =
+        activePipeline === "model-refresh"
+          ? "Model Refresh"
+          : activePipeline === "champion-refresh"
+            ? "Champion Refresh"
+            : "Forecast Publish";
       toast.error(`${label} ${outcome}. Open Jobs for the failed step and retry.`);
     }
   }, [activePipeline, data?.jobs, pipelineId, queryClient]);
@@ -76,11 +83,13 @@ export function useForecastPublishPreparation() {
     try {
       const submitted = await runNamedPipeline(pipeline);
       setPipelineId(submitted.pipeline_id);
-      toast.info(
+      const message =
         pipeline === "model-refresh"
-          ? "Model Refresh started. Tuning, five governed backtests, and champion selection will run in sequence."
-          : "Forecast Publish started. Model fitting, champion generation, and top-three evidence will run in sequence."
-      );
+          ? "Model Refresh started. Tuning and five governed backtests will run in sequence."
+          : pipeline === "champion-refresh"
+            ? "Champion Refresh started. Current five-model evidence will be evaluated and assigned atomically."
+            : "Forecast Publish started. Model fitting, champion generation, and top-three evidence will run in sequence.";
+      toast.info(message);
     } catch (error) {
       setIsPreparing(false);
       setPipelineId(null);
