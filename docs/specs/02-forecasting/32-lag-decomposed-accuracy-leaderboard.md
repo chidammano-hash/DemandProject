@@ -20,7 +20,6 @@ Planners need to see model accuracy at each fixed forecast lag (0–4 months), n
 |---|---|---|
 | GET | `/forecast/accuracy/lag-leaderboard` | Per-lag ranked models with `accuracy_pct`, `wape`, `bias`, `n_rows` |
 
-**Note:** Pinball loss requires quantile forecast rows; not computed until quantile heads ship in production backtests.
 
 ## UI
 

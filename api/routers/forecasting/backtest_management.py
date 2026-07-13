@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Collection, Mapping
 from typing import Any
 
 import psycopg
@@ -19,15 +20,46 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from api.auth import require_api_key
 from api.core import get_conn
 from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
-from common.core.utils import get_algorithm_roster
+from common.core.planning_date import get_planning_date
+from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
+from common.ml.backtest_config import build_backtest_config_snapshot
+from common.ml.neural_artifacts import (
+    NeuralArtifactLineageMismatchError,
+    load_neural_training_cohort_identity,
+    read_active_neural_artifact_ref,
+)
+from common.ml.neural_forecast import SUPPORTED_NEURAL_MODELS
+from common.ml.production_non_tree import direct_model_runtime_contract
+from common.ml.tree_artifact_lineage import ProductionTreeArtifactLineage
+from common.ml.tree_artifacts import (
+    TreeArtifactLineageMismatchError,
+    build_tree_artifact_spec,
+    build_tree_model_config_payload,
+    read_active_tree_artifact_ref,
+)
+from common.services.cluster_lineage import load_promoted_cluster_population
+from common.services.forecast_generation import GENERATOR_CONTRACT_VERSION
+from common.services.forecast_population import resolve_forecast_sales_table
+from common.services.forecast_snapshot_validation import validate_ready_snapshot_contender
+from common.services.sales_lineage import load_completed_sales_lineage
+
+from ._training_readiness import (
+    DIRECT_INFERENCE_MODEL_IDS,
+    CurrentTrainingLineage,
+    evaluate_snapshot_roster_readiness,
+    invalid_artifact_reason,
+    load_current_training_lineage,
+    mark_direct_model_ready,
+    mark_not_trained,
+    missing_artifact_reason,
+    production_model_base_dir,
+    retrain_reason,
+    validate_active_champion_readiness,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/backtest-management", tags=["backtest-management"])
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _BACKTEST_DIR = _PROJECT_ROOT / "data" / "backtest"
 
@@ -43,7 +75,7 @@ MODEL_TO_JOB_TYPE: dict[str, str] = {
 }
 
 # Map model_id → the subdirectory name under data/backtest/ where outputs live.
-# Most models use the model_id itself; tree models use the _cluster suffix dir.
+# Every retained model uses its canonical pipeline ID as the output directory.
 MODEL_TO_DIR: dict[str, str] = {
     "lgbm_cluster": "lgbm_cluster",
     "chronos2_enriched": "chronos2_enriched",
@@ -52,11 +84,7 @@ MODEL_TO_DIR: dict[str, str] = {
     "nbeats": "nbeats",
 }
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
+PRODUCTION_TRAINABLE_MODEL_IDS = frozenset({"lgbm_cluster", *SUPPORTED_NEURAL_MODELS})
 
 def _read_metadata_from_disk(model_id: str) -> dict[str, Any] | None:
     """Read backtest_metadata.json from disk for a model. Returns None if missing."""
@@ -71,7 +99,27 @@ def _read_metadata_from_disk(model_id: str) -> dict[str, Any] | None:
         return None
 
 
-def _row_to_dict(row: tuple) -> dict[str, Any]:
+def _load_current_training_lineage(
+    config: Mapping[str, Any],
+    *,
+    neural_min_history_values: Collection[int] = (),
+    require_direct_history: bool = False,
+) -> CurrentTrainingLineage:
+    """Load current readiness inputs through this router's patchable dependencies."""
+    return load_current_training_lineage(
+        config,
+        neural_min_history_values=neural_min_history_values,
+        get_conn=get_conn,
+        get_planning_date=get_planning_date,
+        load_completed_sales_lineage=load_completed_sales_lineage,
+        load_promoted_cluster_population=load_promoted_cluster_population,
+        resolve_forecast_sales_table=resolve_forecast_sales_table,
+        load_neural_training_cohort_identity=load_neural_training_cohort_identity,
+        require_direct_history=require_direct_history,
+    )
+
+
+def _serialize_backtest_run(row: tuple) -> dict[str, Any]:
     """Convert a backtest_run row tuple to a response dict.
 
     Column order must match SELECT in get_all_backtest_summary() and get_model_runs():
@@ -110,8 +158,66 @@ def _row_to_dict(row: tuple) -> dict[str, Any]:
 @router.get("/training-status")
 def get_training_status():
     """Get production training status for all forecastable models."""
-    roster = get_algorithm_roster()
+    try:
+        roster = get_algorithm_roster()
+        config = load_forecast_pipeline_config()
+        model_base_dir = production_model_base_dir(config)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        logger.exception("Loading production training configuration failed")
+        raise HTTPException(
+            status_code=500,
+            detail="production training readiness check failed",
+        ) from exc
     result: dict[str, Any] = {}
+    requires_lineage = any(
+        model_id in PRODUCTION_TRAINABLE_MODEL_IDS | DIRECT_INFERENCE_MODEL_IDS
+        and algo_info.get("forecast")
+        for model_id, algo_info in roster.items()
+    )
+    current_lineage: CurrentTrainingLineage | None = None
+    lineage_unavailable_reason: str | None = None
+    if requires_lineage:
+        try:
+            require_direct_history = any(
+                model_id in DIRECT_INFERENCE_MODEL_IDS and algo_info.get("forecast")
+                for model_id, algo_info in roster.items()
+            )
+            neural_min_history_values: set[int] = set()
+            for model_id, algo_info in roster.items():
+                if model_id not in SUPPORTED_NEURAL_MODELS or not algo_info.get("forecast"):
+                    continue
+                params = algo_info.get("params")
+                min_history = params.get("min_history") if isinstance(params, Mapping) else None
+                if (
+                    not isinstance(min_history, int)
+                    or isinstance(min_history, bool)
+                    or min_history <= 0
+                ):
+                    raise ValueError(f"{model_id} requires a positive integer min_history")
+                neural_min_history_values.add(min_history)
+            current_lineage = _load_current_training_lineage(
+                config,
+                neural_min_history_values=neural_min_history_values,
+                require_direct_history=require_direct_history,
+            )
+        except psycopg.Error as exc:
+            logger.exception("Loading current production training lineage failed")
+            raise HTTPException(
+                status_code=500,
+                detail="production training readiness check failed",
+            ) from exc
+        except RuntimeError:
+            logger.warning("Current production training lineage is not ready", exc_info=True)
+            lineage_unavailable_reason = (
+                "Current forecast sales lineage is not ready. Complete a canonical sales load, "
+                "then run Forecast Publish to rebuild production artifacts."
+            )
+        except ValueError as exc:
+            logger.exception("Validating production training configuration failed")
+            raise HTTPException(
+                status_code=500,
+                detail="production training readiness check failed",
+            ) from exc
     for model_id, algo_info in roster.items():
         if not algo_info.get("forecast"):
             continue
@@ -119,40 +225,194 @@ def get_training_status():
             "model_id": model_id,
             "type": algo_info.get("type", "unknown"),
         }
-        meta_path = _PROJECT_ROOT / "data" / "models" / model_id / "training_metadata.json"
-        if meta_path.exists():
+        if model_id in DIRECT_INFERENCE_MODEL_IDS:
+            if current_lineage is None:
+                mark_not_trained(entry, stale_reason=lineage_unavailable_reason)
+                result[model_id] = entry
+                continue
             try:
-                with open(meta_path) as f:
-                    meta = json.load(f)
-                entry["trained"] = True
-                entry["trained_at"] = meta.get("trained_at")
-                entry["training_mode"] = meta.get("training_mode")
-                entry["n_dfus"] = meta.get("n_dfus")
-                entry["planning_date"] = meta.get("planning_date")
-            except (json.JSONDecodeError, OSError):
-                entry["trained"] = False
-                entry["trained_at"] = None
-                entry["training_mode"] = None
-        else:
-            # Check if .pkl files exist (backtest artifacts without metadata)
-            model_dir = _PROJECT_ROOT / "data" / "models" / model_id
-            has_pkl = model_dir.exists() and any(model_dir.glob("cluster_*.pkl"))
-            entry["trained"] = has_pkl
-            entry["trained_at"] = None
-            entry["training_mode"] = "backtest" if has_pkl else None
+                config_snapshot = build_backtest_config_snapshot(config, model_id)
+                runtime_contract = direct_model_runtime_contract(model_id)
+            except (OSError, RuntimeError, TypeError, ValueError):
+                logger.warning(
+                    "Direct production preflight failed for %s",
+                    model_id,
+                    exc_info=True,
+                )
+                mark_not_trained(
+                    entry,
+                    stale_reason=(
+                        f"The current {model_id} direct-inference configuration or runtime "
+                        "cannot be proven. Fix the forecast runtime/configuration, then run "
+                        "the named Forecast Publish pipeline."
+                    ),
+                )
+            else:
+                mark_direct_model_ready(
+                    entry,
+                    history_end=current_lineage.history_end,
+                    source_sales_batch_id=current_lineage.sales.batch_id,
+                    config_checksum=config_snapshot.checksum,
+                    runtime_contract=runtime_contract,
+                )
+            result[model_id] = entry
+            continue
+        if model_id == "lgbm_cluster":
+            if current_lineage is None:
+                mark_not_trained(entry, stale_reason=lineage_unavailable_reason)
+                result[model_id] = entry
+                continue
+            if current_lineage.clustering_enabled and current_lineage.clusters is None:
+                mark_not_trained(
+                    entry,
+                    stale_reason=current_lineage.cluster_stale_reason,
+                )
+                result[model_id] = entry
+                continue
+            clusters = current_lineage.clusters
+            cluster_strategy = "per_cluster" if current_lineage.clustering_enabled else "global"
+            cluster_labels = clusters.cluster_labels if clusters else frozenset({"global"})
+            try:
+                lineage = ProductionTreeArtifactLineage(
+                    source_sales_batch_id=current_lineage.sales.batch_id,
+                    data_checksum=current_lineage.sales.source_hash,
+                    history_end=current_lineage.history_end,
+                    cluster_experiment_id=(clusters.experiment_id if clusters else None),
+                    cluster_assignment_count=(clusters.assignment_count if clusters else None),
+                    cluster_assignment_checksum=(
+                        clusters.assignment_checksum if clusters else None
+                    ),
+                    generator_contract_version=GENERATOR_CONTRACT_VERSION,
+                )
+                expected_spec = build_tree_artifact_spec(
+                    model_id=model_id,
+                    model_config=build_tree_model_config_payload(
+                        config,
+                        model_id=model_id,
+                        project_root=_PROJECT_ROOT,
+                    ),
+                    lineage=lineage,
+                    cluster_strategy=cluster_strategy,
+                    cluster_labels=cluster_labels,
+                )
+                artifact = read_active_tree_artifact_ref(
+                    model_id=model_id,
+                    base_dir=model_base_dir,
+                    expected_spec=expected_spec,
+                )
+            except FileNotFoundError:
+                mark_not_trained(entry, stale_reason=missing_artifact_reason(model_id))
+            except TreeArtifactLineageMismatchError:
+                mark_not_trained(entry, stale_reason=retrain_reason(model_id))
+            except (OSError, RuntimeError, ValueError):
+                logger.warning(
+                    "Ignoring invalid active LightGBM artifact set",
+                    exc_info=True,
+                )
+                mark_not_trained(entry, stale_reason=invalid_artifact_reason(model_id))
+            else:
+                metadata = artifact.metadata
+                lineage = metadata["lineage"]
+                training_metadata = metadata["training_metadata"]
+                entry.update(
+                    trained=True,
+                    ready=True,
+                    trained_at=metadata["trained_at"],
+                    training_mode="production",
+                    n_dfus=training_metadata.get("n_dfus"),
+                    planning_date=lineage["history_end"],
+                    artifact_id=artifact.artifact_set_id,
+                )
+            result[model_id] = entry
+            continue
+        if model_id in SUPPORTED_NEURAL_MODELS:
+            if current_lineage is None:
+                mark_not_trained(entry, stale_reason=lineage_unavailable_reason)
+                result[model_id] = entry
+                continue
+            params = algo_info.get("params")
+            min_history = params.get("min_history") if isinstance(params, Mapping) else None
+            cohort = (
+                current_lineage.neural_cohorts.get(min_history)
+                if isinstance(min_history, int) and not isinstance(min_history, bool)
+                else None
+            )
+            if cohort is None:
+                mark_not_trained(
+                    entry,
+                    stale_reason=(
+                        current_lineage.neural_cohort_stale_reason
+                        or "The current neural training cohort cannot be proven. Run Forecast "
+                        "Publish to rebuild neural production artifacts."
+                    ),
+                )
+                result[model_id] = entry
+                continue
+            try:
+                artifact = read_active_neural_artifact_ref(
+                    model_id=model_id,
+                    base_dir=model_base_dir,
+                    expected_params=algo_info.get("params"),
+                    expected_source_sales_batch_id=current_lineage.sales.batch_id,
+                    expected_data_checksum=current_lineage.sales.source_hash,
+                    expected_history_end=current_lineage.history_end,
+                    expected_training_cohort_checksum=cohort.checksum,
+                    expected_training_dfu_count=cohort.dfu_count,
+                    generator_contract_version=GENERATOR_CONTRACT_VERSION,
+                )
+            except FileNotFoundError:
+                mark_not_trained(entry, stale_reason=missing_artifact_reason(model_id))
+            except NeuralArtifactLineageMismatchError:
+                mark_not_trained(entry, stale_reason=retrain_reason(model_id))
+            except (OSError, RuntimeError, ValueError):
+                logger.warning(
+                    "Ignoring invalid active neural artifact for %s",
+                    model_id,
+                    exc_info=True,
+                )
+                mark_not_trained(entry, stale_reason=invalid_artifact_reason(model_id))
+            else:
+                metadata = artifact.metadata
+                entry.update(
+                    trained=True,
+                    ready=True,
+                    trained_at=metadata["trained_at"],
+                    training_mode="production",
+                    n_dfus=metadata["training_dfu_count"],
+                    planning_date=metadata["history_end"],
+                    artifact_id=artifact.artifact_id,
+                )
+            result[model_id] = entry
+            continue
+        mark_not_trained(
+            entry,
+            stale_reason=(
+                f"Unsupported production readiness contract for {model_id}. "
+                "Keep only the canonical five forecast models."
+            ),
+        )
         result[model_id] = entry
     return result
+
+
+@router.get("/snapshot-roster-readiness")
+def get_snapshot_roster_readiness() -> dict[str, Any]:
+    """Validate the current champion-plus-top-three publish prerequisite."""
+    return evaluate_snapshot_roster_readiness(
+        get_conn=get_conn,
+        get_planning_date=get_planning_date,
+        validate_ready_snapshot_contender=validate_ready_snapshot_contender,
+        validate_active_champion=validate_active_champion_readiness,
+    )
 
 
 @router.post("/{model_id}/train", status_code=201, dependencies=[Depends(require_api_key)])
 def submit_production_training(model_id: str):
     """Submit a production model training job.
 
-    Use model_id='all' to train all forecastable tree models.
-    Only the LightGBM model supports a separate training step.
+    ``model_id='all'`` trains every retained model with a persisted production
+    artifact: LightGBM, N-HiTS, and N-BEATS. MSTL and Chronos 2E infer directly.
     """
-    # Validate model type — only tree models can be trained
-    _TRAINABLE_TYPES = {"tree"}
     is_all = model_id == "all"
     if not is_all:
         roster = get_algorithm_roster()
@@ -162,11 +422,11 @@ def submit_production_training(model_id: str):
                 status_code=404,
                 detail=f"Unknown model_id '{model_id}'. Valid models: {sorted(roster.keys())}",
             )
-        if algo_info.get("type") not in _TRAINABLE_TYPES:
+        if model_id not in PRODUCTION_TRAINABLE_MODEL_IDS:
             raise HTTPException(
                 status_code=400,
                 detail=f"Model '{model_id}' (type={algo_info.get('type')}) does not require training. "
-                f"Only tree models need explicit training.",
+                "Trainable production models are LightGBM, N-HiTS, and N-BEATS.",
             )
 
     try:
@@ -176,7 +436,7 @@ def submit_production_training(model_id: str):
         job_id = jm.submit_job(
             job_type="train_production_model",
             params={"model_id": "" if is_all else model_id, "all_models": is_all},
-            label=f"Train Production: {'All Models' if is_all else model_id}",
+            label=f"Train Production: {'Required Models' if is_all else model_id}",
         )
     except ValueError as exc:
         logger.exception("Failed to submit training job for %s", model_id)
@@ -252,7 +512,7 @@ def get_all_backtest_summary():
                     """
                 )
             for row in cur.fetchall():
-                d = _row_to_dict(row)
+                d = _serialize_backtest_run(row)
                 if _has_candidate_cols and len(row) > 17:
                     d["is_loaded_to_candidate"] = row[17]
                     d["candidate_loaded_at"] = row[18].isoformat() if row[18] else None
@@ -355,7 +615,7 @@ def get_model_runs(model_id: str):
         logger.exception("Failed to query backtest_run for model %s", model_id)
         raise HTTPException(status_code=500, detail="Database error") from None
 
-    return [_row_to_dict(row) for row in rows]
+    return [_serialize_backtest_run(row) for row in rows]
 
 
 @router.get("/{model_id}/current")

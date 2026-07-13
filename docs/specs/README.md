@@ -68,17 +68,12 @@ Predict future demand using ML models, then select the best forecast per item.
 | 09 | [Bias Correction](02-forecasting/09-bias-correction.md) | Detect and correct systematic over/under-forecasting |
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
 | 12 | [Dual Promotion](02-forecasting/12-dual-promotion.md) | Two-stage promotion: config → results for tuning experiments |
-| 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
-| 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
-| 16 | [Expert System Backtest](02-forecasting/16-expert-system-backtest.md) | Segment→algorithm routing backtest (`expsys_accuracy` router) |
-| 17 | [External ML Forecast Loading](02-forecasting/17-ext-ml-forecast-load.md) | ETL to load externally-generated ML forecasts into the platform |
-| 18 | [Chronos 2 Enriched Foundation Model](02-forecasting/18-chronos-foundation-models.md) | The surviving Chronos 2 Enriched foundation model (31 covariates) — architecture, covariates, configuration, performance benchmarks |
+| 18 | [Chronos 2 Enriched Foundation Model](02-forecasting/18-chronos-foundation-models.md) | The canonical foundation model (30 covariates) — architecture, configuration, and operating benchmarks |
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
-| 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
 | 24 | [Candidate Forecast & Promotion](02-forecasting/24-candidate-forecast-promotion.md) | Immutable run/purpose-scoped generation and required-`source_run_id` transactional promotion with exact candidate/production lineage |
-| 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: 7-stage quick workflow + per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
+| 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: quick workflow, per-stage detail, dependency DAG, configuration, database reference, and gap analysis |
 | 27 | [AI Champion Forecast](02-forecasting/27-ai-champion-forecast.md) | Interactive, single-DFU AI adjuster: from the Item Analysis tab an LLM (Ollama/Google/Anthropic/OpenAI) nudges the promoted champion forecast forward and writes a new `model_id='ai_champion'` (preview→save, no batch, no grading) |
 | 28 | [Feature Selection Pipeline](02-forecasting/28-feature-selection-pipeline.md) | Multi-stage per-timeframe feature selection (duplicate / near-zero-variance / correlation / cumulative SHAP) |
 | 29 | [Consensus Plan & Overrides](02-forecasting/29-consensus-plan-overrides.md) | Planner override queue, consensus merge, decision-ledger audit on approve |
@@ -87,7 +82,7 @@ Predict future demand using ML models, then select the best forecast per item.
 | 33 | [Forecast Snapshot Archive & Live FVA](02-forecasting/33-forecast-snapshot-archive-fva.md) | Monthly as-of archive of the exact outgoing champion plus three frozen `snapshot_contender` runs (lags 0-5), atomic release replacement, selected-run-only cleanup, and live FVA |
 | 34 | [Forecast Release Readiness](02-forecasting/34-forecast-release-readiness.md) | Post-release common-cohort readiness plus pre-release exact experiment-stamped quality, structural/lineage/freshness/coverage/CI controls, and payload checksums |
 
-**Reading order:** 01-03 (foundations) → 04-05 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation model) → 19 (pipeline config) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 26 (operational reference)
+**Reading order:** 01-03 (foundations) → 04-05 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 18 (foundation model) → 19 (pipeline config) → 23 (LGBM accuracy tuning) → 26 (operational reference)
 
 ---
 

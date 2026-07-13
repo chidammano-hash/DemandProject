@@ -52,6 +52,7 @@ const MODELS: ModelInfo[] = [
   { id: "lgbm_cluster", label: "LightGBM", type: "tree", tunable: true },
   { id: "chronos2_enriched", label: "Chronos 2E", type: "foundation", tunable: false },
   { id: "mstl", label: "MSTL", type: "statistical", tunable: false },
+  { id: "nhits", label: "N-HiTS", type: "deep_learning", tunable: false },
   { id: "nbeats", label: "N-BEATS", type: "deep_learning", tunable: false },
 ];
 
@@ -73,16 +74,16 @@ describe("BacktestStagePanel — grouped table", () => {
 
   it("renders a section per model family", () => {
     renderPanel();
-    expect(screen.getByText("Tree Models")).toBeDefined();
+    expect(screen.getAllByText("LightGBM").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Foundation")).toBeDefined();
     expect(screen.getByText("Statistical")).toBeDefined();
     expect(screen.getByText("Deep Learning")).toBeDefined();
   });
 
-  it("has a 'Run all' control per group and no Load button (auto-load)", () => {
+  it("offers 'Run all' only for groups with multiple models and no Load button", () => {
     renderPanel();
-    // One "Run all" per non-empty group (4 groups here).
-    expect(screen.getAllByRole("button", { name: /Run all/ }).length).toBe(4);
+    // Only the deep-learning group has multiple models in the canonical roster.
+    expect(screen.getAllByRole("button", { name: /Run all/ }).length).toBe(1);
     // The redundant Load button is gone from the grid.
     expect(screen.queryByRole("button", { name: "Load" })).toBeNull();
     expect(screen.queryByText("Load to DB")).toBeNull();
@@ -97,9 +98,25 @@ describe("BacktestStagePanel — grouped table", () => {
     const { fetchBacktestSummary } = await import("@/api/queries/backtest-management");
     vi.mocked(fetchBacktestSummary).mockResolvedValueOnce({
       nbeats: {
-        latest_run: { status: "failed", is_loaded_to_db: false },
+        latest_run: {
+          id: 2,
+          model_id: "nbeats",
+          job_id: "failed-job",
+          status: "failed",
+          accuracy_pct: null,
+          wape: null,
+          bias: null,
+          n_predictions: null,
+          n_dfus: null,
+          is_loaded_to_db: false,
+          loaded_at: null,
+          load_job_id: null,
+          created_at: "2026-07-12T00:00:00Z",
+          completed_at: "2026-07-12T00:01:00Z",
+        },
         has_predictions: true,
         current_accuracy: null,
+        current_wape: null,
       },
     });
     renderPanel();

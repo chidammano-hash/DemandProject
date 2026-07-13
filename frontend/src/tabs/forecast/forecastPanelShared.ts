@@ -3,6 +3,7 @@
  */
 import type { PipelineAlgorithm } from "@/api/queries/unified-model-tuning";
 import type { BacktestSummary } from "@/api/queries/backtest-management";
+import { isForecastModelId } from "@/lib/model-labels";
 
 // ---------------------------------------------------------------------------
 // Query keys & stale times
@@ -11,6 +12,8 @@ import type { BacktestSummary } from "@/api/queries/backtest-management";
 export const forecastPanelKeys = {
   versions: ["forecast-panel", "versions"] as const,
   jobs: (offset: number) => ["forecast-panel", "jobs", offset] as const,
+  publishPipeline: (pipelineId: string) =>
+    ["forecast-panel", "publish-pipeline", pipelineId] as const,
 };
 
 export const STALE = {
@@ -35,11 +38,11 @@ export interface ForecastAlgorithm {
 
 export function deriveForecastAlgos(
   algorithms: Record<string, PipelineAlgorithm> | undefined,
-  backtestSummary: BacktestSummary | undefined,
+  backtestSummary: BacktestSummary | undefined
 ): ForecastAlgorithm[] {
   if (!algorithms) return [];
   return Object.entries(algorithms)
-    .filter(([, a]) => a.forecast)
+    .filter(([id, a]) => isForecastModelId(id) && a.forecast)
     .map(([id, a]) => {
       const summary = backtestSummary?.[id];
       return {
@@ -54,9 +57,9 @@ export function deriveForecastAlgos(
     });
 }
 
-/** True for model types that need explicit .pkl training before inference. */
+/** True for model types that require a persisted final-refit artifact. */
 export function requiresTraining(type: string): boolean {
-  return type === "tree";
+  return type === "tree" || type === "deep_learning";
 }
 
 // ---------------------------------------------------------------------------

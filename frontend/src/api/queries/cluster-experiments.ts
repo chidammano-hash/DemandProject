@@ -6,8 +6,8 @@
  */
 
 import { buildSearchParams } from "./helpers";
-import { fetchJson } from "./core";
-import type { PCAScatterData } from "./core";
+import type { PCAScatterData } from "./clustering";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Core types

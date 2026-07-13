@@ -7,31 +7,38 @@ from __future__ import annotations
 import argparse
 import logging
 import shutil
-import sys
 from pathlib import Path
 
 import psycopg
 from psycopg import sql
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from common.core.db import get_db_params  # noqa: E402
-from common.core.mv_refresh import refresh_for_tables  # noqa: E402
-from common.core.utils import get_algorithm_roster  # noqa: E402
+from common.core.db import get_db_params
+from common.core.mv_refresh import refresh_for_tables
+from common.core.paths import PROJECT_ROOT
+from common.core.utils import get_algorithm_roster
 
 logger = logging.getLogger(__name__)
+ROOT = PROJECT_ROOT
 MODEL_TABLES = ("forecast_snapshot_roster", "backtest_lag_archive", "backtest_run", "fact_ai_champion_forecast",
                 "fact_candidate_forecast", "fact_external_forecast_monthly",
                 "fact_forecast_snapshot", "fact_production_forecast",
                 "fact_production_forecast_staging")
 REFERENCE_IDS = frozenset({"external", "ceiling"})
+DERIVED_IDS = frozenset({"champion", "ensemble"})
+_TABLE_DERIVED_IDS = {
+    "fact_ai_champion_forecast": frozenset({"ai_champion"}),
+}
 
 
 def retained_ids(table: str) -> frozenset[str]:
-    active = frozenset(get_algorithm_roster(stage="forecast")) | {"champion"}
-    return active | REFERENCE_IDS if table == "fact_external_forecast_monthly" else active
+    retained = (
+        frozenset(get_algorithm_roster(stage="forecast"))
+        | DERIVED_IDS
+        | _TABLE_DERIVED_IDS.get(table, frozenset())
+    )
+    if table == "fact_external_forecast_monthly":
+        retained |= REFERENCE_IDS
+    return retained
 
 
 def clean_database(conn: psycopg.Connection, *, execute: bool) -> dict[str, int]:

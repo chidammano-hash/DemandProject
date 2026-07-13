@@ -6,8 +6,9 @@ import type {
   InsightStatus,
   InsightType,
 } from "@/types/ai-planner";
-import { fetchJson, submitJob } from "./core";
 import { buildSearchParams } from "./helpers";
+import { submitJob } from "./jobs";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // AI Planner queries (IPAIfeature1)

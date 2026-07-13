@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/run_champion_selection.py`, `common/ml/champion/` (9-module package: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py`), `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `scripts/ml/run_champion_selection.py`, `common/ml/champion/` (9-module package: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py`), `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AggregateAnalysisTab.tsx`, `frontend/src/tabs/ModelTuningTab.tsx` |
 
 > **Choosing the champion configuration.** Which strategy (single-model winner vs. blend) and which
 > model subset is best for *your* data is answered empirically by the **Champion Strategy Sweep**
@@ -87,13 +87,7 @@ With `execution_lag = 0`, the formula degrades to `shift(1)` -- fully backward c
 | `ensemble_rolling` | Blend top-K models using rolling-window WAPE instead of expanding | Combines rolling's adaptiveness to regime changes with ensemble's hedging against wrong picks |
 | `optimized_decay` | Walk-forward validation to auto-select the best decay factor from candidates [0.75, 0.80, 0.85, 0.90, 0.95]; splits timeline into train/validation, picks factor with lowest validation WAPE | When the optimal decay rate is unknown; eliminates manual tuning |
 
-### Tier 3: ML-Driven Selection (1)
-
-| Strategy | Key Idea | Best For |
-|----------|----------|----------|
-| `hybrid_meta_router` | Uses trained ML classifier to predict best model per DFU with confidence score. High confidence (>=60%) trusts the single predicted model; low confidence hedges by blending top-K via inverse-WAPE weights | Large DFU populations with diverse demand patterns; ported from algorithm_testing hybrid ensemble |
-
-### Tier 4: Demand-Aware Routing (3)
+### Tier 3: Demand-Aware Routing (3)
 
 | Strategy | Key Idea | Best For |
 |----------|----------|----------|
@@ -101,7 +95,7 @@ With `execution_lag = 0`, the formula degrades to `shift(1)` -- fully backward c
 | `per_segment` | Classifies each DFU into Syntetos-Boylan demand archetypes (smooth, erratic, intermittent, lumpy) based on ADI and CV² metrics, then routes each segment to a different sub-strategy | Heterogeneous portfolios mixing steady sellers with intermittent/lumpy SKUs |
 | `per_cluster` | Groups DFUs by ML cluster label from dim_sku, computes best model per cluster via aggregate expanding WAPE, assigns cluster champion to all DFUs in that cluster | When ML clustering captures demand structure that aligns with model strengths |
 
-### Tier 5: Advanced Blending & Risk (4)
+### Tier 4: Advanced Blending & Risk (4)
 
 | Strategy | Key Idea | Best For |
 |----------|----------|----------|
@@ -110,7 +104,7 @@ With `execution_lag = 0`, the formula degrades to `shift(1)` -- fully backward c
 | `uncertainty_aware` | Adds a penalty for models with volatile errors (high std-dev of absolute errors). Score = prior_wape + weight × normalized_std_err. Picks the model with lowest risk-adjusted score | When model consistency matters as much as average accuracy; penalizes unreliable models |
 | `diverse_ensemble` | Blends top-K models with a diversity penalty: models from the same family (e.g., `nbeats` + `nhits`, both `dl`) get penalized during selection. Blending weights use unpenalized inverse-WAPE | Portfolios where structurally similar models would otherwise dominate the ensemble |
 
-### Tier 6: Intelligent Ensembles (10)
+### Tier 5: Intelligent Ensembles (10)
 
 | Strategy | Key Idea | Best For |
 |----------|----------|----------|
@@ -125,9 +119,9 @@ With `execution_lag = 0`, the formula degrades to `shift(1)` -- fully backward c
 | `stacked_strategies` | Runs multiple base strategies, evaluates each on recent months, blends their outputs weighted by walk-forward accuracy | Meta-ensemble of strategies rather than models |
 | `cluster_regime_hybrid` | Per-cluster strategy selection combined with regime-aware switching within each cluster | Combines structural demand grouping with temporal adaptation |
 
-### Tier 7: Reinforcement Learning (4)
+### Tier 6: Reinforcement Learning (4)
 
-These strategies treat model selection as an online learning problem with exploration/exploitation tradeoffs. Unlike greedy strategies (Tiers 1-6) that always pick what *was* best, RL strategies occasionally explore models that *might* have become better.
+These strategies treat model selection as an online learning problem with exploration/exploitation tradeoffs. Unlike greedy strategies (Tiers 1-5) that always pick what *was* best, RL strategies occasionally explore models that *might* have become better.
 
 | Strategy | Algorithm | Key Mechanism | Best For |
 |----------|-----------|---------------|----------|
@@ -155,7 +149,7 @@ Current strategies (expanding, ensemble, etc.) are **purely greedy** — they pi
 
 ### Strategy Design Principles
 
-All 31 strategies share these properties:
+All 30 strategies share these properties:
 
 - **Strictly causal**: Selection for month T uses only data from months with `startdate < T - execution_lag`
 - **Exec-lag-aware**: Uses `shift(execution_lag + 1)` to exclude months whose actuals weren't available at forecast issuance time
@@ -165,14 +159,14 @@ All 31 strategies share these properties:
 
 ### Module Layout
 
-The 31 strategies live in `common/ml/champion/` (split from the legacy 3,530-LoC `common/ml/champion_strategies.py`). Importers should use `from common.ml.champion import ...` -- the package re-exports `STRATEGY_REGISTRY`, `register_strategy`, and every strategy implementation.
+The 30 strategies live in `common/ml/champion/` (split from the legacy 3,530-LoC `common/ml/champion_strategies.py`). Importers should use `from common.ml.champion import ...` -- the package re-exports `STRATEGY_REGISTRY`, `register_strategy`, and every strategy implementation.
 
 | Sub-module | Strategies | Purpose |
 |------------|------------|---------|
 | `registry.py` | -- | `STRATEGY_REGISTRY` dict + `@register_strategy` decorator |
-| `basic.py` | 5 | Baseline strategies: `expanding`, `rolling`, `decay`, `last_value`, `oracle` |
+| `basic.py` | 5 | Core strategies: `expanding`, `rolling`, `decay`, `ensemble`, `ensemble_rolling` |
 | `blend.py` | 10 | Blending/ensemble strategies (e.g. `ensemble`, `ensemble_rolling`, `adaptive_ensemble`, `diverse_ensemble`, `learned_blend`, `ridge_blend`, `shrinkage_blend`, `cascade_ensemble`, `error_correcting`, `uncertainty_aware`) |
-| `meta.py` | 2 | `meta_learner`, `hybrid_meta_router` |
+| `meta.py` | 1 | `meta_learner` |
 | `bandit.py` | 4 | RL/bandit strategies: `thompson_sampling`, `linucb`, `exp3`, `thompson_ensemble` |
 | `segment.py` | 3 | Segment-driven: `per_segment`, `per_cluster`, `cluster_regime_hybrid` |
 | `regime.py` | 2 | `dynamic_window`, `regime_adaptive` |
@@ -217,22 +211,20 @@ No new tables. Champion and ceiling predictions are stored in the existing `fact
 |--------|------|-------------|
 | GET | `/competition/config` | Current config + available model_ids from DB |
 | PUT | `/competition/config` | Update config (writes YAML to disk) |
-| POST | `/competition/run` | Execute champion selection, return summary |
+| POST | `/competition/run` | Submit `champion_select` (the governed experiment + atomic results promotion), return job id (202) |
 | GET | `/competition/summary` | Last run summary |
 
-After a successful champion run, `competition.py` enqueues the
-`refresh_forecast_views` job through `common/services/job_registry.py` instead of
-calling `REFRESH MATERIALIZED VIEW` inside the request. This keeps the API
-response fast and lets the background runner refresh `agg_forecast_monthly`,
-`agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, and `agg_dfu_coverage`
-`CONCURRENTLY`.
+`/competition/run` performs no forecast-table mutation in the request. The
+governed job creates a champion experiment, atomically promotes its exact
+winners/results, then refreshes the full materialized-view dependency closure
+through `common/core/mv_refresh.py`.
 
 ## Pipeline
 
 | Target | Description |
 |--------|-------------|
-| `make champion-select` | Run champion selection using configured strategy |
-| `make champion-simulate` | Simulate all 31 strategies, compare accuracy vs. ceiling (supports `--parallel N`) |
+| `make champion-select` | Run the governed five-model experiment and atomically promote audited results |
+| `make champion-simulate` | Simulate all 30 strategies, compare accuracy vs. ceiling (supports `--parallel N`) |
 | `make champion-train-meta` | Train meta-learner classifier |
 | `make champion-all` | train-meta + simulate + select (full pipeline) |
 
@@ -277,8 +269,6 @@ The competing models list is derived from `algorithms[*].compete == true` in the
 | `primary_strategy` | hybrid_warmup | adaptive_ensemble | Phase 2 strategy name (any registered) |
 | `decay_candidates` | optimized_decay | [0.75..0.95] | Candidate decay factors to evaluate |
 | `validation_months` | optimized_decay | 3 | Walk-forward validation window |
-| `confidence_threshold` | hybrid_meta_router | 0.6 | Min classifier confidence for single-model pick |
-| `blend_top_k` | hybrid_meta_router | 3 | Models to blend when confidence is low |
 | `adi_threshold` | per_segment | 1.32 | ADI boundary for demand classification |
 | `cv2_threshold` | per_segment | 0.49 | CV² boundary for demand classification |
 | `uncertainty_weight` | uncertainty_aware | 0.3 | Penalty weight for error volatility |
@@ -307,5 +297,4 @@ The competing models list is derived from `algorithms[*].compete == true` in the
 
 - [Production Forecast](./08-production-forecast.md) -- uses champion assignments to route inference
 - [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- controls which models compete
-- [Chronos Foundation Models](./18-chronos-foundation-models.md) -- Chronos 2 Enriched, the remaining foundation model variant that participates in champion selection
-- [Expert Panel](./15-expert-panel-algorithm-selection.md) -- 31-expert panel that routes DFUs to best-fit algorithms, complementary to champion selection
+- [Chronos 2 Enriched](./18-chronos-foundation-models.md) -- the canonical foundation model in champion selection

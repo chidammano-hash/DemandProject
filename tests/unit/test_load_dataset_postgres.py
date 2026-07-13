@@ -4,11 +4,14 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl.load_dataset_postgres import (
     _ensure_partition_exists,
     _is_partitioned,
+    _refresh_original_sales,
     _resolve_forecast_execution_lag,
     load_domain,
 )
@@ -58,7 +61,7 @@ class TestResolveForecastExecutionLag:
 
 
 # _load_forecast_archive removed (US9): it was dead code — external forecasts
-# skip the archive (owned by load_backtest_forecasts.py / load_ext_ml_forecasts.py).
+# skip the archive (owned by load_backtest_forecasts.py).
 
 
 # ---------- TestPartitionHelpers ----------
@@ -108,6 +111,84 @@ class TestPartitionHelpers:
 # ---------- TestLoadDomain ----------
 
 class TestLoadDomain:
+    def test_original_sales_mirror_requires_exact_row_parity(self):
+        cur = MagicMock()
+        cur.rowcount = 9
+
+        with pytest.raises(RuntimeError, match="mirror row count"):
+            _refresh_original_sales(
+                cur,
+                source_table="fact_sales_monthly",
+                columns=["sales_ck", "item_id"],
+                expected_rows=10,
+            )
+
+        sqls = [call.args[0] for call in cur.execute.call_args_list]
+        assert sqls[0] == "TRUNCATE TABLE fact_sales_monthly_original"
+        assert "INSERT INTO fact_sales_monthly_original" in sqls[1]
+
+    @patch(
+        "scripts.etl.load_dataset_postgres._refresh_original_sales",
+        side_effect=RuntimeError("mirror mismatch"),
+    )
+    @patch("scripts.etl.load_dataset_postgres.complete_batch")
+    @patch("scripts.etl.load_dataset_postgres.fail_batch")
+    @patch("scripts.etl.load_dataset_postgres.create_batch", return_value=1)
+    @patch("scripts.etl.load_dataset_postgres.file_hash", return_value="abc123")
+    @patch("scripts.etl.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
+    @patch("scripts.etl.load_dataset_postgres.psycopg.connect")
+    def test_original_sales_mirror_failure_rolls_back_batch(
+        self,
+        mock_connect,
+        _mock_db,
+        _mock_hash,
+        _mock_batch,
+        mock_fail_batch,
+        mock_complete_batch,
+        _mock_refresh,
+        tmp_path,
+    ):
+        csv_file = tmp_path / "clean_sales.csv"
+        csv_file.write_text("col1,col2\na,b\n")
+        cur = MagicMock()
+        cur.fetchone.side_effect = [
+            (1,),
+            (False,),
+            (1_000_000,),
+            (False,),
+            (False,),
+            (False,),
+        ]
+        cur.fetchall.return_value = []
+        cur.rowcount = 1
+        copy_ctx = MagicMock()
+        cur.copy.return_value.__enter__.return_value = copy_ctx
+        cur.copy.return_value.__exit__.return_value = False
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        conn.cursor.return_value.__exit__.return_value = False
+        connection_context = MagicMock()
+        connection_context.__enter__.return_value = conn
+        connection_context.__exit__.return_value = False
+        mock_connect.return_value = connection_context
+        spec = MagicMock()
+        spec.name = "sales"
+        spec.table = "fact_sales_monthly"
+        spec.columns = ["col1", "col2"]
+        spec.ck_field = "sales_ck"
+        spec.key_fields = ["col1"]
+        spec.int_fields = set()
+        spec.float_fields = set()
+        spec.date_fields = set()
+        spec.business_key_separator = "_"
+
+        with pytest.raises(RuntimeError, match="mirror mismatch"):
+            load_domain(spec, csv_file)
+
+        conn.rollback.assert_called_once()
+        mock_complete_batch.assert_not_called()
+        mock_fail_batch.assert_called_once()
+
     @patch("scripts.etl.load_dataset_postgres.complete_batch")
     @patch("scripts.etl.load_dataset_postgres.create_batch", return_value=1)
     @patch("scripts.etl.load_dataset_postgres.file_hash", return_value="abc123")
@@ -158,6 +239,8 @@ class TestLoadDomain:
         executed_sqls = [c[0][0] for c in cur.execute.call_args_list]
         assert any("CREATE TEMP TABLE" in s for s in executed_sqls)
         assert any("TRUNCATE" in s for s in executed_sqls)
+        assert any("TRUNCATE TABLE fact_sales_monthly_original" in s for s in executed_sqls)
+        assert any("INSERT INTO fact_sales_monthly_original" in s for s in executed_sqls)
 
     @patch("scripts.etl.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
     @patch("scripts.etl.load_dataset_postgres.psycopg")

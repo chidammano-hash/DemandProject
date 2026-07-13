@@ -10,8 +10,8 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-mstl backtest-nhits backtest-nbeats backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-lgbm-full tune-all tune-lgbm-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-ingestion perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router load-ext-lgbm load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run auto-create-partitions-weekly auto-create-partitions-weekly-dry-run refresh-customer-filter-options
-.PHONY: forecast-snapshot-contenders forecast-archive forecast-staging-clean
+.PHONY: help deploy deploy-check deploy-pydeps deploy-redis deploy-sql deploy-frontend deploy-api deploy-smoke refresh-customer-mv init init-pip up down logs db-apply-sql db-apply-inventory db-apply-inv-backtest api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-mstl backtest-nhits backtest-nbeats backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-lgbm-full tune-all tune-lgbm-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-ingestion perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain auto-create-partitions auto-create-partitions-dry-run auto-create-partitions-weekly auto-create-partitions-weekly-dry-run refresh-customer-filter-options
+.PHONY: forecast-snapshot-contenders forecast-archive forecast-staging-clean api-gpu-check api-gpu
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -57,7 +57,7 @@ deploy-check:
 	@# in a real split deployment it hits the replica's own max_connections).
 	@# Defaults mirror api/pool.py (12 / 20 / 12) and docker-compose.yml (200).
 	@# Gate trips when total > 85% of max_connections.
-	@WORKERS=$$(grep '^GUNICORN_WORKERS=' .env | cut -d= -f2); WORKERS=$${WORKERS:-4}; \
+	@WORKERS=$$(grep '^GUNICORN_WORKERS=' .env | cut -d= -f2); WORKERS=$${WORKERS:-1}; \
 	 POOL=$$(grep '^POOL_MAX_SIZE=' .env | cut -d= -f2); POOL=$${POOL:-12}; \
 	 APOOL=$$(grep '^ASYNC_POOL_MAX_SIZE=' .env | cut -d= -f2); APOOL=$${APOOL:-20}; \
 	 RPOOL=$$(grep '^READ_POOL_MAX_SIZE=' .env | cut -d= -f2); RPOOL=$${RPOOL:-12}; \
@@ -172,7 +172,7 @@ deploy-smoke:
 # Developer tooling
 # ---------------------------------------------------------------------------
 audit-routers:  ## Verify router files match main.py mounts and vite proxy entries
-	@python3 scripts/tools/audit_routes.py 2>/dev/null || echo "Run: python3 scripts/tools/audit_routes.py"
+	@$(UV) python scripts/tools/audit_routes.py
 
 new-router:
 	@python3 scripts/tools/scaffold_router.py --domain $(DOMAIN) --name $(NAME)
@@ -230,7 +230,7 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  forecast-clean-list  - list forecast row counts by model + month"
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
 	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
-	@echo "  champion-select      - run champion model selection (best-of-models per DFU)"
+	@echo "  champion-select      - governed five-model experiment + atomic promotion"
 	@echo "  champion-simulate    - simulate all strategies, compare accuracy vs ceiling"
 	@echo "  champion-train-meta  - train meta-learner classifier for champion selection"
 	@echo "  champion-all         - train-meta + simulate + select (full pipeline)"
@@ -239,17 +239,6 @@ help:  ## Auto-generated from `## ...` annotations on target lines
 	@echo "  tune-all             - Tune LightGBM"
 	@echo "  tune-lgbm-clusters   - Per-cluster Bayesian tuning for LGBM (30 trials)"
 	@echo "  tune-clusters        - Run LightGBM per-cluster tuning"
-	@echo "  expert-panel         - Expert Panel algorithm selection test (5000 DFUs, 5 TFs, ~30 min)"
-	@echo "  expert-panel-quick   - Quick Expert Panel test (1000 DFUs, 3 TFs, ~8 min)"
-	@echo "  expert-panel-mini    - Minimal Expert Panel test (200 DFUs, 2 TFs, ~2 min)"
-	@echo "  expert-panel-loc     - Expert Panel for all DFUs at one location: make expert-panel-loc LOC=1401-BULK"
-	@echo "  adv-expert-panel     - Advanced Expert Panel (execution-lag accuracy, foundation models + DL + stat upgrades)"
-	@echo "  adv-expert-panel-quick - Quick Advanced Expert Panel (execution-lag accuracy, 1000 DFUs, 5 TFs)"
-	@echo "  adv-expert-panel-mini  - Minimal Advanced Expert Panel (200 DFUs, 2 TFs)"
-	@echo "  adv-expert-panel-loc   - Advanced Expert Panel for all DFUs at one location: make adv-expert-panel-loc LOC=1401-BULK"
-	@echo "  expsys-backtest        - Expert System Backtest: full population, segment-assigned algo, loads to DB (~4-5h)"
-	@echo "  expsys-backtest-dry    - ExpSys accuracy only, no DB load (--skip-load)"
-	@echo "  expsys-backtest-replace - ExpSys: delete existing rows then reload"
 	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/forecasting/forecast_pipeline_config.yaml"
 	@echo "  features-compute     - compute all SKU features (volume, trend, seasonality, variability, lifecycle)"
 	@echo "  lt-profile-schema    - create dim_item_lead_time_profile table (one-time)"
@@ -331,8 +320,8 @@ init-pip:
 	python3 -m venv .venv
 	. .venv/bin/activate && pip install --upgrade pip && pip install fastapi uvicorn pydantic psycopg[binary] python-dotenv pytest
 
-up:  ## Start Docker services (Postgres, MLflow) + apply DDL
-	$(DC) up -d
+up:  ## Start Docker infrastructure (Postgres, MLflow, Redis) + apply DDL
+	$(DC) up -d postgres mlflow redis
 	$(MAKE) db-apply-sql
 
 
@@ -342,11 +331,29 @@ db-apply-sql:  ## Apply all sql/*.sql migration files to Postgres
 			sleep 1; \
 		done \
 	'
-	@for f in $$(ls sql/*.sql | sort); do \
-		$(PSQL) -v ON_ERROR_STOP=1 < "$$f" >/dev/null; \
+	@$(PSQL) -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migration (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());" >/dev/null
+	@set -e; \
+	count=$$($(PSQL) -At -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM schema_migration"); \
+	has_schema=$$($(PSQL) -At -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.dim_item') IS NOT NULL"); \
+	if [ "$$count" = "0" ] && [ "$$has_schema" = "t" ]; then \
+		echo "Baselining existing schema migration history"; \
+		find sql -maxdepth 1 -type f -name '*.sql' -print | sort | while IFS= read -r f; do \
+			$(PSQL) -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migration(filename) VALUES ('$$f') ON CONFLICT DO NOTHING;" </dev/null >/dev/null; \
+		done; \
+	fi
+	@set -e; find sql -maxdepth 1 -type f -name '*.sql' -print | sort | while IFS= read -r f; do \
+		applied=$$($(PSQL) -At -v ON_ERROR_STOP=1 -c "SELECT EXISTS (SELECT 1 FROM schema_migration WHERE filename = '$$f')" </dev/null); \
+		if [ "$$applied" = "t" ]; then continue; fi; \
+		if grep -q '^-- MIGRATION: SUPERSEDED' "$$f"; then \
+			echo "Skipping superseded $$f"; \
+		else \
+			echo "Applying $$f"; \
+			$(PSQL) -v ON_ERROR_STOP=1 < "$$f" >/dev/null; \
+		fi; \
+		$(PSQL) -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migration(filename) VALUES ('$$f');" </dev/null >/dev/null; \
 	done
 	$(PSQL) -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
-	@echo "Applied $$(ls sql/*.sql | wc -l | tr -d ' ') SQL migration files"
+	@echo "Database migrations are current ($$($(PSQL) -At -c 'SELECT COUNT(*) FROM schema_migration') tracked)"
 
 db-apply-sql-lakebase:  ## Apply all sql/*.sql to a networked Postgres / Lakebase (token-auth via env)
 	$(UV) python -m scripts.db.apply_sql_lakebase $(ARGS)
@@ -463,7 +470,7 @@ load-all:  ## Load all clean CSVs into Postgres + refresh views
 	# dfu.txt carries no ML cluster label. The loader preserves ml_cluster across its
 	# own TRUNCATE, but on a first load after a clustering promote the in-DB snapshot is
 	# empty — re-apply the promoted labels from data/clustering/cluster_labels.csv so
-	# per-cluster tree models route correctly. Idempotent; --skip-if-missing no-ops
+	# per-cluster LightGBM artifacts route correctly. Idempotent; --skip-if-missing no-ops
 	# cleanly on a fresh DB before any clustering scenario is promoted (loop-4).
 	$(UV) python scripts/ml/restore_cluster_assignments.py --skip-if-missing
 	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sales
@@ -493,6 +500,12 @@ refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
 api:  ## Run FastAPI on :8000 with --reload
 	$(UV) uvicorn api.main:app --reload --port 8000
+
+api-gpu-check:  ## Fail unless native Apple MPS or CUDA is available
+	@DEMAND_GPU=auto DEMAND_CHRONOS_GPU=on DEMAND_NEURAL_GPU=on $(UV) --extra foundation --extra dl python -c 'from common.ml.chronos2_enriched import _resolve_device; from common.ml.neural_forecast import _detect_device; print("Chronos GPU ready:", _resolve_device("auto")); print("N-BEATS/N-HiTS GPU ready:", _detect_device())'
+
+api-gpu: api-gpu-check  ## Run the host API with GPU-required forecasting runtimes
+	DEMAND_GPU=auto DEMAND_CHRONOS_GPU=on DEMAND_NEURAL_GPU=on $(UV) --extra foundation --extra dl --extra statistical uvicorn api.main:app --reload --port 8000
 
 ui-init:  ## Install npm deps for frontend
 	cd frontend && npm install
@@ -752,24 +765,6 @@ backtest-load-main-only:  ## Load specific models to main table only (skip archi
 backtest-load-archive-only:  ## Load specific models to archive only (skip main). Usage: make backtest-load-archive-only MODELS="lgbm_cluster chronos2_enriched"
 	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --archive-only
 
-# ---------------------------------------------------------------------------
-# External ML forecast loading (ext_lgbm, ext_cat, ext_xg, ext_best)
-# ---------------------------------------------------------------------------
-load-ext-lgbm:   ## Load ext_lgbm from data/input/df_ml_lgbm_l2_extract.csv
-	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_lgbm --replace
-
-load-ext-cat:    ## Load ext_cat from data/input/df_ml_cat_l2_extract.csv
-	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_cat --replace
-
-load-ext-xg:     ## Load ext_xg from data/input/df_ml_xg_l2_extract.csv
-	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_xg --replace
-
-load-ext-best:   ## Load ext_best from data/input/df_ml_best.csv
-	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_best --replace
-
-load-ext-all: load-ext-lgbm load-ext-cat load-ext-xg load-ext-best  ## Load all 4 external ML forecast models
-	@echo "All external ML forecasts loaded."
-
 backtest-clean:
 	$(UV) python scripts/ml/clean_backtest_models.py $(MODELS)
 
@@ -802,7 +797,7 @@ accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/lag-curve" | python3 -m json.tool | head -40
 
 champion-select:
-	$(UV) python scripts/ml/run_champion_selection.py
+	$(UV) python -m scripts.ml.run_governed_champion_refresh
 
 champion-simulate:
 	$(UV) python scripts/ml/simulate_champion_strategies.py
@@ -824,19 +819,6 @@ tune-lgbm-clusters:
 	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model lgbm --trials 30
 
 tune-clusters: tune-lgbm-clusters
-
-# ── Production Baseline Seeding ──────────────────────────────────────────────
-seed-baselines:          ## Seed production baselines into experiment tables
-	$(UV) python scripts/etl/seed_production_baselines.py
-
-seed-baselines-tuning:
-	$(UV) python scripts/etl/seed_production_baselines.py --scope tuning
-
-seed-baselines-champion:
-	$(UV) python scripts/etl/seed_production_baselines.py --scope champion
-
-seed-baselines-clustering:
-	$(UV) python scripts/etl/seed_production_baselines.py --scope clustering
 
 # ── LGBM Tuning ──────────────────────────────────────────────────────────────
 lgbm-tuning-list:
@@ -863,50 +845,6 @@ lgbm-auto-tune-dry-run:
 
 lgbm-auto-tune-list:
 	$(UV) python scripts/ml/auto_tune.py --list-strategies
-
-# ── Expert Panel Algorithm Selection ────────────────────────────────────────
-expert-panel:            ## Run Expert Panel test (5000 DFUs, 5 timeframes, ~30 min)
-	$(UV) python -m scripts.ml.run_expert_panel
-
-expert-panel-quick:      ## Quick Expert Panel test (1000 DFUs, 3 timeframes, ~8 min)
-	$(UV) python -m scripts.ml.run_expert_panel --n-dfus 1000 --n-timeframes 3
-
-expert-panel-mini:       ## Minimal Expert Panel test (200 DFUs, 2 timeframes, ~2 min)
-	$(UV) python -m scripts.ml.run_expert_panel --n-dfus 200 --n-timeframes 2
-
-expert-panel-loc:        ## Run Expert Panel for all DFUs at a specific location: make expert-panel-loc LOC=1401-BULK
-	@if [ -z "$(LOC)" ]; then echo "Usage: make expert-panel-loc LOC=1401-BULK"; exit 1; fi
-	$(UV) python -m scripts.ml.run_expert_panel --loc $(LOC)
-
-# ── Advanced Expert Panel (Foundation Models + Deep Learning) ───────────────
-adv-expert-panel:        ## Advanced Expert Panel (5000 DFUs, 10 TFs, execution-lag accuracy, foundation+DL+stat upgrades)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --n-timeframes 10
-
-adv-expert-panel-quick:  ## Quick Advanced Expert Panel (1000 DFUs, 5 TFs, execution-lag accuracy)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --n-dfus 1000 --n-timeframes 5
-
-adv-expert-panel-mini:   ## Minimal Advanced Expert Panel (200 DFUs, 2 TFs)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --n-dfus 200 --n-timeframes 2
-
-adv-expert-panel-loc:    ## Advanced Expert Panel for all DFUs at a specific location: make adv-expert-panel-loc LOC=1401-BULK
-	@if [ -z "$(LOC)" ]; then echo "Usage: make adv-expert-panel-loc LOC=1401-BULK"; exit 1; fi
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_adv_expert_panel --loc $(LOC)
-
-route-analysis:          ## Compare per-DFU routing strategies on saved predictions (no retraining, ~2 min)
-	$(UV) python -m scripts.ml.expert_panel_route_analysis
-
-route-analysis-min3:     ## Same as route-analysis but require 3+ timeframes of history per DFU
-	$(UV) python -m scripts.ml.expert_panel_route_analysis --min-history 3
-
-# ── Expert System Backtest (full population, segment-assigned algorithm) ─────
-expsys-backtest:         ## Full ExpSys backtest: all DFUs, 10 TFs, loads to DB (~4-5h)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest
-
-expsys-backtest-dry:     ## ExpSys accuracy only — no DB loading (--skip-load)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --skip-load
-
-expsys-backtest-replace: ## ExpSys: delete existing rows first, then reload
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --replace
 
 # AI Champion is interactive-only (per-DFU "AI Adjust" button on the Item Analysis
 # tab → POST /ai-champion/adjust + /save). No batch Make target by design.
@@ -1055,7 +993,7 @@ forecast-prod-schema:
 train-production: ## Train a single model on full history: make train-production MODEL=lgbm_cluster
 	$(UV) python scripts/ml/train_production_models.py --model $(MODEL)
 
-train-production-all: ## Train all forecastable tree models on full history
+train-production-all: ## Final-refit LightGBM, N-HiTS, and N-BEATS on full history
 	$(UV) python scripts/ml/train_production_models.py --all
 
 forecast-generate:  ## Generate production forecast inference rows
@@ -1147,29 +1085,7 @@ planned-orders-dry:
 
 planned-orders-all: planned-orders-schema planned-orders-generate
 
-# ---------------------------------------------------------------------------
-# F2.2 — Multi-Horizon Quantile Demand Plan
-# ---------------------------------------------------------------------------
 VERSION ?= $(shell date +%Y-%m-%d)_production
-
-quantile-schema:
-	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/047_create_demand_plan.sql').read()); conn.commit(); conn.close(); print('quantile schema applied')"
-
-# NOTE: generate_quantile_forecasts is an MVP stub — its quantile models train on
-# synthetic random data, so it now REFUSES to write to fact_demand_plan by default
-# (the consensus plan + safety stock consume that table). Use `quantile-dry` to
-# preview. Pass --allow-synthetic only for dev. Wire it to the real feature pipeline
-# (backtest_framework) before production use.
-quantile-train:
-	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION)
-
-quantile-train-dfu:
-	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dfu $(ITEM) $(LOC)
-
-quantile-dry:
-	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dry-run
-
-quantile-all: quantile-schema quantile-train
 
 ## F2.3 — Consensus Forecasting & Planner Overrides
 consensus-schema:
@@ -1400,7 +1316,7 @@ setup-data:
 setup-features: setup-data features-compute cluster-all lt-profile-all abc-xyz-all demand-signals-all
 	@echo "✓ Phase 2 complete: clustering, SKU features, lead time, ABC-XYZ, demand signals"
 
-setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all seed-baselines
+setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all
 	@echo "✓ Phase 3 complete: backtests, champion selection"
 
 inv-plan-refresh: ## Run end-to-end inventory planning pipeline (SS → EOQ → Repl Plan → Orders → Exceptions)
@@ -1412,7 +1328,7 @@ inv-plan-refresh-dry: ## Preview inventory pipeline without DB writes
 setup-inv-planning: eoq-all policy-all ss-all exceptions-generate fill-rate-all health-all supplier-perf-all investment-all intramonth-all control-tower-all rebalancing-all
 	@echo "✓ Phase 4 complete: inventory planning (safety stock, EOQ, policies, exceptions, health)"
 
-setup-demand-planning: forecast-prod-all projection-all po-all quantile-all consensus-all planned-orders-all replplan-all bias-all blended-all service-level-all lead-time-all echelon-all
+setup-demand-planning: forecast-prod-all projection-all po-all consensus-all planned-orders-all replplan-all bias-all blended-all service-level-all lead-time-all echelon-all
 	@echo "✓ Phase 5 complete: demand planning (forecasts, projections, orders, replenishment)"
 
 setup-ops: sop-all events-all financial-plan-all storyboard-all scenarios-all dq-all
@@ -1635,7 +1551,7 @@ fresh-champion: fresh-backtest champion-all  ## Load + features + backtests + ch
 	@echo "  Run 'make check-all' to validate, then start services."
 	@echo "============================================================"
 
-fresh-all: db-truncate-data clean-artifacts fresh-champion seed-baselines policy-all ss-all eoq-all health-all  ## Full cleanup & recreate: truncate → clean → load → ML → champion → baselines + baseline planning
+fresh-all: db-truncate-data clean-artifacts fresh-champion policy-all ss-all eoq-all health-all  ## Full cleanup & recreate: truncate → clean → load → ML → champion + planning
 	@echo ""
 	@echo "============================================================"
 	@echo "  Full database cleanup & recreate complete."

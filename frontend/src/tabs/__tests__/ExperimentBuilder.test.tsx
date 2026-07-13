@@ -22,7 +22,7 @@ const mockTemplatesLgbm = {
       source: "algorithm_config",
     },
     {
-      id: "expert_aggressive_depth",
+      id: "curated_conservative",
       label: "Conservative (Stable Demand)",
       description: "Best for stable, low-variability items with strong regularization",
       params: {
@@ -36,31 +36,31 @@ const mockTemplatesLgbm = {
         min_child_samples: 60,
       },
       config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true },
-      source: "expert",
+      source: "curated",
     },
     {
-      id: "expert_ultra_slow_lr",
+      id: "curated_high_precision",
       label: "High Precision (Long Training)",
       description: "Maximizes accuracy with extended training for subtle patterns",
       params: { n_estimators: 3000, learning_rate: 0.008, subsample: 0.85, colsample_bytree: 0.85 },
       config: { cluster_strategy: "per_cluster", recursive: true },
-      source: "expert",
+      source: "curated",
     },
     {
-      id: "expert_sparse_demand",
+      id: "curated_intermittent",
       label: "Intermittent Demand",
       description: "Optimized for sparse or intermittent demand patterns",
       params: { feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100 },
       config: {},
-      source: "expert",
+      source: "curated",
     },
     {
-      id: "expert_balanced",
+      id: "curated_balanced",
       label: "Balanced (Best All-Around)",
       description: "Well-rounded settings combining top findings from prior experiments",
       params: { learning_rate: 0.015, n_estimators: 2000 },
       config: {},
-      source: "expert",
+      source: "curated",
     },
     {
       id: "custom",
@@ -69,53 +69,6 @@ const mockTemplatesLgbm = {
       params: {},
       config: {},
       source: "custom",
-    },
-  ],
-};
-
-const mockTemplatesCatboost = {
-  templates: [
-    {
-      id: "production_baseline",
-      label: "Current Production Settings",
-      description: "Current CatBoost parameters",
-      params: { iterations: 3000, learning_rate: 0.008, depth: 10, l2_leaf_reg: 7.5 },
-      config: {},
-      source: "algorithm_config",
-    },
-    {
-      id: "expert_ordered_symmetric",
-      label: "Temporal Optimized",
-      description: "Best for time-series data with strong seasonal patterns",
-      params: {
-        grow_policy: "SymmetricTree",
-        depth: 8,
-        bootstrap_type: "Ordered",
-        iterations: 4000,
-      },
-      config: {},
-      source: "expert",
-    },
-  ],
-};
-
-const mockTemplatesXgboost = {
-  templates: [
-    {
-      id: "production_baseline",
-      label: "Current Production Settings",
-      description: "Current XGBoost parameters",
-      params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 8 },
-      config: {},
-      source: "algorithm_config",
-    },
-    {
-      id: "expert_dart",
-      label: "Balanced Diversity",
-      description: "Uses tree dropout for robust, well-generalized forecasts",
-      params: { booster: "dart", rate_drop: 0.08, skip_drop: 0.5 },
-      config: {},
-      source: "expert",
     },
   ],
 };
@@ -207,9 +160,6 @@ const mockSubmitSampledLgbmExperiment = vi.fn().mockResolvedValue({
 const mockFetchCompletedClusterExperiments = vi
   .fn()
   .mockResolvedValue({ experiments: mockCompletedClusterExperiments });
-const mockOnClose = vi.fn();
-const mockOnSuccess = vi.fn();
-
 vi.mock("@/api/queries", () => ({
   lgbmTuningKeys: {
     runs: (p?: Record<string, unknown>) => ["lgbm-tuning-runs", p],
@@ -409,7 +359,7 @@ describe("ExperimentBuilder", () => {
 
   it("pre-fills params on template select", async () => {
     const aggressiveDepth = mockTemplatesLgbm.templates.find(
-      (t) => t.id === "expert_aggressive_depth"
+      (t) => t.id === "curated_conservative"
     );
     expect(aggressiveDepth).toBeDefined();
     expect(aggressiveDepth!.params.max_depth).toBe(10);
@@ -423,7 +373,7 @@ describe("ExperimentBuilder", () => {
   it("shows delta column values", async () => {
     // Verify that template params differ from production baseline
     const baseline = mockTemplatesLgbm.templates.find((t) => t.id === "production_baseline")!;
-    const aggressive = mockTemplatesLgbm.templates.find((t) => t.id === "expert_aggressive_depth")!;
+    const aggressive = mockTemplatesLgbm.templates.find((t) => t.id === "curated_conservative")!;
 
     // reg_lambda delta: 1.0 -> 3.5 = +250%
     const baselineRegLambda = baseline.params.reg_lambda as number;
@@ -461,13 +411,13 @@ describe("ExperimentBuilder", () => {
   it("submits experiment on launch click", async () => {
     const result = await mockSubmitModelExperiment({
       run_label: "Test Experiment",
-      template: "expert_aggressive_depth",
+      template: "curated_conservative",
       params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 10 },
       config: { cluster_strategy: "per_cluster", recursive: true },
     });
     expect(mockSubmitModelExperiment).toHaveBeenCalledWith({
       run_label: "Test Experiment",
-      template: "expert_aggressive_depth",
+      template: "curated_conservative",
       params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 10 },
       config: { cluster_strategy: "per_cluster", recursive: true },
     });
@@ -499,44 +449,6 @@ describe("ExperimentBuilder", () => {
       toastFn(`Experiment "${result.run_id}" queued successfully`);
     }
     expect(toastFn).toHaveBeenCalledWith(expect.stringContaining("queued successfully"));
-  });
-
-  it("adapts form to CatBoost params", async () => {
-    mockFetchModelTemplates.mockResolvedValue(mockTemplatesCatboost);
-    const templates = await mockFetchModelTemplates("catboost");
-    expect(templates.templates[0].params).toHaveProperty("iterations");
-    expect(templates.templates[0].params).toHaveProperty("depth");
-    expect(templates.templates[0].params).toHaveProperty("l2_leaf_reg");
-    // CatBoost uses iterations, not n_estimators
-    expect(templates.templates[0].params).not.toHaveProperty("n_estimators");
-    expect(templates.templates[0].params).not.toHaveProperty("max_depth");
-  });
-
-  it("adapts form to XGBoost params", async () => {
-    mockFetchModelTemplates.mockResolvedValue(mockTemplatesXgboost);
-    const templates = await mockFetchModelTemplates("xgboost");
-    // XGBoost DART template has booster, rate_drop, skip_drop
-    const dartTemplate = templates.templates.find((t: { id: string }) => t.id === "expert_dart");
-    expect(dartTemplate).toBeDefined();
-    expect(dartTemplate.params).toHaveProperty("booster", "dart");
-    expect(dartTemplate.params).toHaveProperty("rate_drop", 0.08);
-    expect(dartTemplate.params).toHaveProperty("skip_drop", 0.5);
-  });
-
-  it("hides DART params until booster=dart", async () => {
-    // DART-specific params (rate_drop, skip_drop) should only appear when booster=dart
-    const xgbBaselineParams = mockTemplatesXgboost.templates[0].params;
-    const xgbDartParams = mockTemplatesXgboost.templates[1].params;
-
-    // Baseline does not have DART params
-    expect(xgbBaselineParams).not.toHaveProperty("rate_drop");
-    expect(xgbBaselineParams).not.toHaveProperty("skip_drop");
-    expect(xgbBaselineParams).not.toHaveProperty("booster");
-
-    // DART template has them
-    expect(xgbDartParams).toHaveProperty("booster", "dart");
-    expect(xgbDartParams).toHaveProperty("rate_drop");
-    expect(xgbDartParams).toHaveProperty("skip_drop");
   });
 
   // -------------------------------------------------------------------------
@@ -576,7 +488,7 @@ describe("ExperimentBuilder", () => {
   it("submit payload includes cluster_source and cluster_experiment_id when experimental selected", async () => {
     const result = await mockSubmitModelExperiment({
       run_label: "Cluster Experiment Test",
-      template: "production",
+      template: "production_baseline",
       params: { n_estimators: 1500, learning_rate: 0.02 },
       config: {
         cluster_strategy: "per_cluster",
@@ -606,7 +518,7 @@ describe("ExperimentBuilder", () => {
 
     await mockSubmitModelExperiment({
       run_label: "Production Cluster Test",
-      template: "production",
+      template: "production_baseline",
       params: { n_estimators: 1500 },
       config: configPayload,
     });

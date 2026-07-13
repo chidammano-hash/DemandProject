@@ -1,6 +1,5 @@
 # Forecast Domain Configuration — consolidated from:
-#   seasonality_config.yaml, variability_config.yaml,
-#   quantile_forecast_config.yaml, bias_correction_config.yaml
+#   seasonality_config.yaml, variability_config.yaml, bias_correction_config.yaml
 
 seasonality:
   # Minimum months of non-zero history required
@@ -50,31 +49,6 @@ variability:
   intermittency_threshold:
     # Fraction of zero-demand months that triggers 'lumpy' regardless of CV
     ratio: 0.30
-
-quantile_forecast:
-  quantiles: [0.10, 0.50, 0.90]
-  default_horizon_months: 12
-  max_horizon_months: 18
-  weekly_disaggregation: true
-
-  model:
-    objective: quantile
-    n_estimators: 300
-    learning_rate: 0.05
-    num_leaves: 31
-    min_child_samples: 20
-    subsample: 0.8
-    colsample_bytree: 0.8
-    verbose: -1
-
-  sigma_guard_rails:
-    min_sigma: 0.0
-    max_sigma_multiplier: 3.0   # Never allow σ > 3× the P50 value
-
-  plan_versioning:
-    production_label: production
-    max_active_versions: 5      # Archive older versions automatically
-    retention_days: 180
 
 bias_correction:
   # Rolling window weights (most-recent first, must sum to 1.0)

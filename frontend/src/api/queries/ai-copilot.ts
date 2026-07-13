@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 export interface CopilotContextInput {
   page: string;

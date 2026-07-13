@@ -8,6 +8,16 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
+GENERATOR_CONTRACT_METADATA_KEY = "generator_contract_version"
+GENERATOR_CONTRACT_VERSION = "canonical-five-artifact-lineage-v2"
+
+
+def build_generation_metadata(metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Stamp immutable runs with the forecast implementation contract used."""
+    stamped = dict(metadata or {})
+    stamped[GENERATOR_CONTRACT_METADATA_KEY] = GENERATOR_CONTRACT_VERSION
+    return stamped
+
 
 def reserve_generation_run(
     cur: Any,
@@ -41,7 +51,7 @@ def reserve_generation_run(
             month,
             horizon_months,
             created_by,
-            Jsonb(metadata or {}),
+            Jsonb(build_generation_metadata(metadata)),
         ),
     )
     cur.execute(
@@ -62,6 +72,19 @@ def reserve_generation_run(
         raise ValueError("forecast generation run UUID has a different identity")
 
     status = str(row[4])
+    if status == "generating":
+        cur.execute(
+            """SELECT EXISTS (
+                   SELECT 1 FROM fact_production_forecast_staging
+                   WHERE run_id = %s::uuid
+               )""",
+            (str(run_id),),
+        )
+        has_rows = bool(cur.fetchone()[0])
+        if has_rows or int(row[5] or 0) > 0:
+            raise ValueError(
+                "generating forecast run already has staged rows and cannot be resumed"
+            )
     if status == "invalid" and resume_invalid:
         cur.execute(
             """SELECT EXISTS (
@@ -90,10 +113,22 @@ def invalidate_generation_run(cur: Any, run_id: UUID | str, reason: str) -> bool
     """Mark a not-yet-ready run invalid without mutating completed evidence."""
     safe_reason = reason.strip()[:500] or "forecast generation failed"
     cur.execute(
+        """DELETE FROM fact_production_forecast_staging staging
+           USING forecast_generation_run generation
+           WHERE staging.run_id = %s::uuid
+             AND generation.run_id = staging.run_id
+             AND generation.generation_purpose IN (
+                 'release_candidate', 'snapshot_contender'
+             )
+             AND generation.run_status IN ('generating', 'invalid')""",
+        (str(run_id),),
+    )
+    cur.execute(
         """UPDATE forecast_generation_run
            SET run_status = 'invalid', promotion_eligible = FALSE,
                invalid_reason = %s, completed_at = NOW()
            WHERE run_id = %s::uuid
+             AND generation_purpose IN ('release_candidate', 'snapshot_contender')
              AND run_status IN ('generating', 'invalid')""",
         (safe_reason, str(run_id)),
     )

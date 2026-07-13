@@ -55,6 +55,7 @@ export function VariabilityPanel() {
         },
       ].filter((d) => d.value > 0)
     : [];
+  const volatileRows = volatile?.rows ?? [];
 
   return (
     <div className="space-y-4">
@@ -112,7 +113,7 @@ export function VariabilityPanel() {
         </div>
       )}
 
-      {volatile?.rows?.length > 0 && (
+      {volatileRows.length > 0 && (
         <div className="overflow-x-auto">
           <div className="text-xs p-2 rounded bg-muted/30 border mb-3">
             <span className="font-medium text-foreground">Demand CV (Coefficient of Variation = std dev ÷ mean): </span>
@@ -133,7 +134,7 @@ export function VariabilityPanel() {
               </tr>
             </thead>
             <tbody>
-              {volatile.rows.map((r: VariabilityDetailRow, i: number) => (
+              {volatileRows.map((r: VariabilityDetailRow, i: number) => (
                 <tr key={`${r.item_id}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
                   <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                   <td className="py-1 pr-2">{r.loc}</td>

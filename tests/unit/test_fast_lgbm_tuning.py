@@ -55,4 +55,5 @@ def test_tuning_objectives_read_validation_actuals_from_unmasked_grid() -> None:
     cluster_source = (PROJECT_ROOT / "scripts/ml/tune_cluster_hyperparams.py").read_text()
 
     assert 'y_val = full_grid.loc[val_data.index, "qty"].values' in global_source
-    assert 'y_val = cluster_grid.loc[val_data.index, "qty"].values' in cluster_source
+    assert 'cluster_grid["_actual_qty"] = cluster_grid["qty"]' in cluster_source
+    assert 'y_val = val_data["_actual_qty"].values' in cluster_source

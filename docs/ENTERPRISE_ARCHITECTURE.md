@@ -44,7 +44,7 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | # | Strategic Goal | Platform Capability |
 |---|---|---|
 | SG-1 | Unify demand sensing, forecasting, and inventory planning into one analytical platform | 10 data domains, 6 dimension tables, 4 fact tables, 28 materialized views serving 21 interactive UI tabs |
-| SG-3 | Reduce forecast error through automated model selection and ensemble methods | Expanding-window backtest (10 timeframes), 31-expert panel testing 30+ algorithms, champion accuracy 75.24% |
+| SG-3 | Reduce forecast error through automated model selection and ensemble methods | Expanding-window backtests across the canonical five-model roster and governed champion promotion |
 | SG-4 | Optimize inventory investment by balancing service levels against working capital | Safety stock (Z-score + Monte Carlo), EOQ, 4 replenishment policy types, efficient frontier optimization |
 | SG-5 | Enable proactive exception management through AI-driven insight generation | Claude-powered AI Planning Agent with 10 tools, portfolio-wide scans, 5 insight types |
 | SG-6 | Establish a unified S&OP process with measurable governance | 6-stage S&OP state machine with approval workflows and financial impact analysis |
@@ -137,7 +137,7 @@ graph TB
 | **Demand Planner** | Accuracy, Item Analysis, Clusters, Model Tuning | Forecast review, SHAP analysis, champion selection, bias correction | `planner` | Daily |
 | **Inventory Manager** | Inv Planning (34 panels), Fill Rate, Rebalancing | Safety stock, EOQ, exception queue, replenishment plan, supplier performance | `planner` | Daily |
 | **Supply Chain VP** | Control Tower, S&OP, Dashboard, AI Planner | KPI command center, S&OP approval, scenario planning, AI insights | `manager` | Weekly |
-| **Data Scientist** | Model Tuning Studio, Cluster Experiments, Champion Experiments | Hyperparameter tuning, backtest runs, cluster experimentation, expert panel | `planner` / `admin` | Weekly |
+| **Data Scientist** | Model Tuning Studio, Cluster Experiments, Champion Experiments | LightGBM tuning, retained-model backtests, and cluster/champion experimentation | `planner` / `admin` | Weekly |
 | **IT Administrator** | Jobs, Data Quality, Settings, SQL Runner | Job scheduling, DQ checks, system config, audit logs | `admin` | As needed |
 
 ### 2.3 Architecture Principles
@@ -213,8 +213,6 @@ Supply Chain Command Center
 │   │   └── WAPE, bias, accuracy% with multi-dimensional slicing (model, lag, cluster, month)
 │   ├── L2: Hyperparameter Tuning
 │   │   └── Optuna Bayesian optimization with cluster-adaptive profiles
-│   └── L2: Expert Panel Algorithm Selection
-│       └── 31-expert panel testing 30+ statistical algorithms (croston, tsb, theta, ETS, ARIMA)
 │
 ├── L1: DEMAND INTELLIGENCE
 │   ├── L2: SKU Clustering
@@ -324,8 +322,8 @@ Supply Chain Command Center
 | Market Signal | External CSV drops from ERP | `data/input/*.csv` |
 | Data Ingestion | Normalize + Load pipeline | `scripts/etl/normalize_dataset_csv.py`, `scripts/etl/load_dataset_postgres.py` |
 | Demand Sensing | Variability analysis + demand signals | `scripts/ml/compute_sku_features.py` (unified SKU features), `scripts/inventory/compute_demand_signals.py` |
-| Forecast Generation | 3 tree-model backtests | `scripts/run_backtest.py`, `common/ml/backtest_framework.py` |
-| Champion Selection | Meta-learner + simulate + select | `scripts/ml/run_champion_selection.py`, `common/ml/champion_strategies.py` |
+| Forecast Generation | Five-model backtest roster: LightGBM, N-HiTS, N-BEATS, MSTL, Chronos 2E | `scripts/ml/run_backtest.py`, `scripts/ml/run_backtest_dl.py`, `scripts/ml/run_backtest_mstl.py`, `scripts/ml/run_backtest_chronos2_enriched.py` |
+| Champion Selection | Strategy evaluation + select | `scripts/ml/run_champion_selection.py`, `common/ml/champion/` |
 | Exception Detection | 6 exception types with severity | `scripts/inventory/generate_replenishment_exceptions.py`, `common/engines/exception_engine.py` |
 | Planner Action | AI insight generation + review | `common/ai/ai_planner.py`, `api/routers/intelligence/ai_planner.py` |
 | Inventory Decision | Safety stock + EOQ + policy | `scripts/inventory/compute_safety_stock.py`, `scripts/inventory/compute_eoq.py` |
@@ -574,6 +572,14 @@ separates promotable `release_candidate` runs from non-promotable
 and historical-results checksums, and extends production/model promotion with
 exact source/release/audit lineage and canonical SHA-256 payload checksums;
 unique indexes enforce one active release and one promotion per source run.
+Migration 205 constrains new/updated champion experiments to the canonical five
+model ids without duplicates. Migration 206 retains but invalidates ready
+release candidates that predate the immutable
+`canonical-five-real-adapters-v1` generator contract.
+Migration 209 advances the active contract to
+`canonical-five-artifact-lineage-v2` and invalidates older ready release or
+snapshot candidates so artifact, source-roster, and snapshot lineage is never
+inferred from a legacy status flag.
 
 ### 4.3 Data Flow Architecture
 
@@ -600,7 +606,7 @@ flowchart LR
     end
 
     subgraph "Phase 4: Backtest"
-        LABELS --> BT[3 Models x<br>10 Timeframes]
+        LABELS --> BT[Five canonical models<br>across backtest timeframes]
         BT --> PRED[Predictions +<br>SHAP Values]
     end
 
@@ -633,8 +639,12 @@ flowchart LR
 
 **Forecast Generation & Transactional Promotion**: after champion selection,
 normal generation creates one immutable `release_candidate` manifest and
-run-scoped staging payload. Champion routing preserves each producing source
-model inside the coherent run. Promotion requires that exact `source_run_id`,
+run-scoped staging payload. It builds the full active eligible sales population,
+aligns the latest-as-of champion routes, assigns explicit LightGBM fallback to
+uncovered eligible DFUs, and rejects an MSTL route below its 25-month history
+contract. Champion routing preserves each producing source model inside the
+coherent run. Operators rerun all five backtests and champion selection before
+publishing under this contract. Promotion requires that exact `source_run_id`,
 executes under `SERIALIZABLE` plus a transaction advisory lock, revalidates
 the exact experiment-stamped historical common-cohort quality plus
 structural/lineage/freshness/coverage/CI evidence, archives the outgoing
@@ -644,7 +654,9 @@ stores the gate report and exact source, release, replacement, and archive
 evidence. Historical backtests continue to load
 `fact_external_forecast_monthly`/`backtest_lag_archive`; the legacy
 `fact_candidate_forecast` table is not a release source. DDL: `sql/121`,
-`sql/122`, and `sql/203_create_forecast_generation_run.sql`.
+`sql/122`, `sql/203_create_forecast_generation_run.sql`,
+`sql/205_enforce_champion_model_roster.sql`, and
+`sql/206_invalidate_pre_canonical_generator_runs.sql`.
 
 #### Forecast Dual-Path Loading (Critical)
 
@@ -818,7 +830,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | Module | Purpose |
 |---|---|
 | `backtest_framework.py` | Expanding-window evaluation (10 timeframes A-J), DFU cohort classification |
-| `champion/` (package, 9 sub-modules) | 31 champion selection strategies — split from former `champion_strategies.py` god-module into 9 sub-modules (expanding, rolling, decay, ensemble, meta-learner families) |
+| `champion/` (package, 9 sub-modules) | 30 champion selection strategies — split from former `champion_strategies.py` god-module into 9 sub-modules (expanding, rolling, decay, ensemble, meta-learner families) |
 | `feature_engineering.py` | Causal feature construction (lag 1-12, rolling stats, Fourier, Croston, calendar) |
 | `tuning.py` | Optuna Bayesian hyperparameter optimization with cluster-adaptive profiles |
 | `shap_selector.py` | SHAP-based feature importance and selection (cumulative threshold 0.95) |
@@ -1245,7 +1257,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  ┌─────────────────────────────────────────────────────────┐     │
 │  │ Selection & Inference                                    │     │
 │  │                                                          │     │
-│  │ Champion Selection (31 strategies in 9 sub-modules):     │     │
+│  │ Champion Selection (30 strategies in 9 sub-modules):     │     │
 │  │   Expanding, Rolling, Decay, Ensemble, Meta-Learner     │     │
 │  │   families — `common/ml/champion/` package               │     │
 │  │   Exec-lag-aware strict causality with fallback model   │     │
@@ -1254,8 +1266,6 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │   12-month forward with P10/P90 CI bands                │     │
 │  │   Versioned plan_version for audit trail                │     │
 │  │                                                          │     │
-│  │ Expert Panel:                                            │     │
-│  │   31 experts testing 30+ algorithms (croston, tsb,      │     │
 │  └─────────────────────────────────────────────────────────┘     │
 │                         │                                         │
 │  ┌─────────────────────────────────────────────────────────┐     │
@@ -1637,7 +1647,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Context** | Customers running their lakehouse on Databricks want the platform to use **Lakebase** (Databricks' managed, Postgres-compatible OLTP DB) instead of self-hosted PostgreSQL, with **Delta Lake** (Unity Catalog) as the system-of-record for input data, synced into Lakebase — while keeping the application code essentially unchanged. |
 | **Decision** | Adopt a **synced-vs-native table split**: the existing `DomainSpec`/`etl_config.yaml` **source** tables become **read-only Lakebase synced tables** fed from Delta; all **app-written** tables (forecasts, experiments, champion, AI/chat logs) stay **native** Lakebase tables written by the unchanged psycopg/`COPY` paths. Connection auth moves from a static password to **rotating Lakebase OAuth tokens** behind the single `get_db_params` cred source. Host on a **Databricks App** (API) + **Workflows** (pipelines); artifacts to **Unity Catalog Volumes**; the SKU-Chat agent flips `auth.mode` to **bedrock**. Full plan in [docs/specs/01-foundation/09-databricks-lakebase-migration.md](specs/01-foundation/09-databricks-lakebase-migration.md). |
 | **Rationale** | Lakebase is Postgres wire-compatible, so the entire app/SQL/ML/frontend layer and all 33 MVs are unchanged. The codebase already separates source-loaded from app-written tables — exactly the line Lakebase's read-only synced tables force — so the split is classification, not rewrite. Three existing abstractions (single DB-cred source of truth, the `READ_REPLICA_URL` switch, the agent `auth.mode` switch) localize the real changes. |
-| **Consequences** | The hot-path change is token-rotation auth in `common/core/db.py`/`api/pool.py` (long-lived pooled connections must reconnect with a fresh token). The highest correctness risk is the **write-after-sync conflict** on `dim_sku` (loaded from source AND mutated by `sku_features`) and `customer_features_monthly` — must be modelled as native-seeded-from-raw, or clustering and full-grain accuracy/FVA joins break silently. Source-load ETL scripts (`load_dataset_postgres.py`, `load_customer_demand_postgres.py`, `load_ext_ml_forecasts.py`) are retired for Delta sync; generative-pipeline COPYs are untouched. Extension allowlist (`vector`/`pg_trgm`/`pgcrypto`/`pg_stat_statements`), pool sizing vs Lakebase `max_connections`, and Redis (external vs in-memory fallback) must be verified per target workspace. |
+| **Consequences** | The hot-path change is token-rotation auth in `common/core/db.py`/`api/pool.py` (long-lived pooled connections must reconnect with a fresh token). The highest correctness risk is the **write-after-sync conflict** on `dim_sku` (loaded from source AND mutated by `sku_features`) and `customer_features_monthly` — must be modelled as native-seeded-from-raw, or clustering and full-grain accuracy/FVA joins break silently. Source-load ETL scripts (`load_dataset_postgres.py`, `load_customer_demand_postgres.py`) are retired for Delta sync; generative-pipeline COPYs are untouched. Extension allowlist (`vector`/`pg_trgm`/`pgcrypto`/`pg_stat_statements`), pool sizing vs Lakebase `max_connections`, and Redis (external vs in-memory fallback) must be verified per target workspace. |
 
 ### ADR-018: Central MV-Refresh Service and Workflow Orchestration
 
@@ -1657,7 +1667,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Context** | Forward staging was keyed by model rather than generation, so snapshot-contender work could overwrite or mix release inputs. Promotion selected an ambient staging population, warned rather than failed on route gaps, deleted production before all evidence was checked, and did not persist an exact source or value checksum. The outgoing champion archive depended on orchestration timing rather than the database transaction that replaced it. |
 | **Decision** | Migration 203 introduces `forecast_generation_run` and purpose-scoped immutable staging (`release_candidate`, `snapshot_contender`, `legacy_invalid`), stamps promoted champion history with its experiment id, and freezes exact winners/historical-result checksums. Promotion requires an explicit source run, executes on the primary under `SERIALIZABLE` plus a transaction-scoped advisory lock, re-evaluates experiment-stamped historical common-cohort quality, revalidates current structural/lineage/freshness/coverage/CI evidence, archives the outgoing champion plus the frozen top three for lags 0-5 before delete, publishes with verified audit lineage, and requires canonical candidate/production SHA-256 equality before commit. The promotion audit stores gate, source, release, replacement, and archive evidence; unique indexes enforce one active release and one promotion per source run. |
 | **Rationale** | Release identity and value equality must be database-verifiable properties, not conclusions inferred from "latest" rows, job order, or counts after the fact. Purpose separation preserves bounded FVA evidence without contaminating promotable inputs. Putting archive and replacement in one transaction eliminates the loss window. |
-| **Consequences** | Pre-manifest staging is deliberately non-promotable, so migration 203 requires a fresh generation. An outgoing release without verifiable production lineage or a complete champion-plus-three archive blocks replacement until repaired. Promotion can serialize behind another release and may abort/retry under PostgreSQL serializable conflicts. The transaction gate re-evaluates WAPE/lift/incumbent/bias policy from exact experiment-stamped historical rows, but it does not stamp a "candidate WAPE" on future rows without actuals. Champion experiment review and the post-release common-cohort scorecard remain visible governance surfaces. Expert-system backtests are evaluation-only and cannot write production. |
+| **Consequences** | Pre-manifest staging is deliberately non-promotable, so migration 203 requires a fresh generation. An outgoing release without verifiable production lineage or a complete champion-plus-three archive blocks replacement until repaired. Promotion can serialize behind another release and may abort/retry under PostgreSQL serializable conflicts. The transaction gate re-evaluates WAPE/lift/incumbent/bias policy from exact experiment-stamped historical rows, but it does not stamp a "candidate WAPE" on future rows without actuals. Champion experiment review and the post-release common-cohort scorecard remain visible governance surfaces. |
 
 ---
 
@@ -1814,7 +1824,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | G-16 | ETL Streaming | Several ETL stages loaded full result sets into memory; risked OOM at 40× scale | Chunked streaming for large result sets | **Closed** — `stream_query_in_chunks` / `read_sql_chunked` helpers added in `common/core/db.py`; large ETL stages migrated | Closed |
 | G-17 | Scale Test Coverage | No quantitative baseline for endpoint cost at >1× data volume | Reproducible scale test harness | **Closed** — scale-test scripts added; baselines captured at 1× and 40× for the customer-analytics endpoints (drove ADR-016) | Closed |
 | G-18 | Weekly Partitioning | `fact_customer_demand_monthly` and similar tables partitioned monthly; growth at 40× scale projects out beyond comfortable per-partition row count | Weekly range partitioning for high-volume facts | **Open (DDL drafted)** — cutover SQL drafted and flagged for DBA review; not yet applied. Migration is destructive enough to require a maintenance window | Open |
-| G-19 | Forecast Release Atomicity | Mutable model-scoped staging, ambient promotion source, orchestration-only outgoing archive, and no exact release checksum | Immutable purpose-scoped generations and one atomic archive→publish transaction | **Closed** — migration 203, explicit `source_run_id`, serializable advisory-locked promotion, exact candidate/production/archive lineage, and database-enforced active singleton; see ADR-019 | Closed |
+| G-19 | Forecast Release Atomicity | Mutable model-scoped staging, ambient promotion source, orchestration-only outgoing archive, and no exact release checksum | Immutable purpose-scoped generations and one atomic archive→publish transaction | **Closed** — migrations 203/205/206, explicit `source_run_id`, canonical roster and generator contract, serializable advisory-locked promotion, exact candidate/production/archive lineage, and database-enforced active singleton; see ADR-019 | Closed |
 
 ### 11.2 Migration Roadmap
 

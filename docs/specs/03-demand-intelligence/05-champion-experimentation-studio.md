@@ -36,7 +36,7 @@
 
 ## Problem
 
-The existing champion selection pipeline (`scripts/run_champion_selection.py`) is a one-shot fire-and-forget operation. Users cannot:
+The existing champion selection pipeline (`scripts/ml/run_champion_selection.py`) is a one-shot fire-and-forget operation. Users cannot:
 
 1. **Experiment with strategies** — No way to test expanding vs rolling vs decay vs ensemble vs meta_learner side-by-side
 2. **Compare results** — No infrastructure for comparing champion accuracy, ceiling accuracy, gap, or model distribution between configurations
@@ -167,20 +167,19 @@ All strategies use `shift(exec_lag+1)` to prevent data leakage.
 
 ---
 
-## 2-Stage Promotion
+## Governed Production Boundary
 
-### Stage 1: Promote Config
-1. Verify experiment is completed
-2. Backup `config/forecasting/forecast_pipeline_config.yaml` → `.bak.<experiment_id>`
-3. Write new champion strategy, params, metric, lag_mode, min_sku_rows to `champion` section
-4. Clear previous `is_promoted` flags
-5. Set `is_promoted=TRUE`, insert into `champion_promotion_log`
+Manual experiments and sweeps are analysis-only. The former Stage 1 and Stage 2
+routes remain authenticated compatibility boundaries but always return
+`410 manual_champion_promotion_retired` before any config/DB mutation or job
+submission. Their UI controls have been removed.
 
-### Stage 2: Load Results
-1. Submit `champion_results_load` job via `JobManager`
-2. Job runs `scripts/run_champion_selection.py` (reads updated `forecast_pipeline_config.yaml` champion section)
-3. On completion: sets `is_results_promoted=TRUE`
-4. Frontend polls via `/promote-results/status`
+Production changes use `POST /jobs/pipelines/named/model-refresh`. Its governed
+champion refresh validates current sales, cluster, five-model roster, and loaded
+backtest lineage, evaluates a new experiment without touching the incumbent,
+then swaps champion facts and both promotion flags atomically. A reviewed change
+to the production champion strategy must be made in config before that workflow;
+an experiment cannot write config itself.
 
 ---
 
@@ -204,17 +203,22 @@ All strategies use `shift(exec_lag+1)` to prevent data leakage.
 
 ## Job Pipeline
 
-Two job types registered in `common/services/job_registry.py`:
+The registry retains these two job types:
 
 | Job Type | Group | Callable | Script |
 |----------|-------|----------|--------|
-| `champion_experiment` | champion | `_run_champion_experiment` | `scripts/run_champion_experiment.py` |
-| `champion_results_load` | champion | `_run_champion_results_load` | `scripts/run_champion_selection.py` |
+| `champion_experiment` | champion | `_run_champion_experiment` | `scripts/ml/run_champion_experiment.py` |
+| `champion_results_load` | champion | `_run_champion_results_load` | `scripts/ml/run_champion_selection.py` |
 
-The experiment runner (`scripts/run_champion_experiment.py`) reuses:
+`champion_results_load` is retained only for historical job-state compatibility.
+It is hidden from the launch catalog and rejected by generic single-job,
+recurring-schedule, and ad-hoc-pipeline APIs. New production work uses
+`governed_champion_refresh` through the named `model-refresh` pipeline.
+
+The experiment runner (`scripts/ml/run_champion_experiment.py`) reuses:
 - `STRATEGY_REGISTRY`, `compute_strategy_accuracy()`, `compute_ceiling()` re-exported from
   `common/ml/champion/` (package root; implementations live in `registry.py` + `helpers.py`)
-- `load_monthly_errors_df()`, `load_dfu_features()` from `scripts/run_champion_selection.py`
+- `load_monthly_errors_df()`, `load_dfu_features()` from `scripts/ml/run_champion_selection.py`
 
 ---
 
@@ -246,7 +250,7 @@ The experiment runner (`scripts/run_champion_experiment.py`) reuses:
 
 1. `sql/102_champion_experiments.sql` — DB schema
 2. `config/forecasting/champion_experiment_templates.yaml` — Templates
-3. `scripts/run_champion_experiment.py` — Async runner
+3. `scripts/ml/run_champion_experiment.py` — Async runner
 4. `common/services/job_state.py` + `job_registry.py` — Job registration
 5. `api/routers/forecasting/champion_experiments.py` — API router
 6. `api/main.py` + `frontend/vite.config.ts` + `index.ts` — Integration

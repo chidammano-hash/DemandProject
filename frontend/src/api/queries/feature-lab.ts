@@ -7,7 +7,7 @@
  * `api/routers/forecasting/feature_lab.py`.
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // --- Types (frontend contract) ---
 

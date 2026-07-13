@@ -4,20 +4,24 @@ templates:
     - id: production_baseline
       label: "Current Production Settings"
       description: "The parameters currently running in production"
-      source: algorithm_config
-    - id: expert_aggressive_depth
+      source: pipeline_config
+    - id: curated_conservative
       label: "Conservative (Stable Demand)"
       description: "Strong regularization for stable, low-variability items"
+      source: curated
       params: {max_depth: 10, num_leaves: 63, reg_lambda: 3.5, reg_alpha: 0.5, path_smooth: 8.0, min_child_samples: 60}
-    - id: expert_ultra_slow_lr
+    - id: curated_high_precision
       label: "High Precision (Long Training)"
       description: "Extended training for subtle demand patterns"
+      source: curated
       params: {learning_rate: 0.008, n_estimators: 3000, subsample: 0.85, colsample_bytree: 0.85}
-    - id: expert_sparse_demand
+    - id: curated_intermittent
       label: "Intermittent Demand"
       description: "Regularized settings for sparse demand"
+      source: curated
       params: {feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100, min_gain_to_split: 0.05, reg_alpha: 1.0, path_smooth: 12.0}
-    - id: expert_balanced_champion
+    - id: curated_balanced
       label: "Balanced (Best All-Around)"
       description: "Balanced accuracy and training cost"
+      source: curated
       params: {learning_rate: 0.015, n_estimators: 2000, max_depth: 12, num_leaves: 95, reg_lambda: 2.5, reg_alpha: 0.3, feature_fraction_bynode: 0.8, path_smooth: 6.0, min_child_samples: 50}

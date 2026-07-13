@@ -36,17 +36,14 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x>=13.0.0", "numba>=0.59.0"]
-expert-panel = ["pmdarima>=2.0.0"]
 foundation = [
     "chronos-forecasting>=2.2.2",
-    "accelerate>=0.30.0",  # HF Trainer backend for fine-tuning Chronos-Bolt (spec 32)
+    "accelerate>=0.30.0",
 ]
 dl = [
     "neuralforecast>=3.1.9",
 ]
-# Statistical baselines (MSTL, AutoCES, DynamicOptimizedTheta, IMAPA, TSB, ADIDA, SES).
-# Required by common/ml/expert_panel/statistical_upgrades.py and the MSTL backtest;
-# without it those models return empty predictions. Install via `uv sync --extra statistical`.
+# MSTL backtest dependency. Install via `uv sync --extra statistical`.
 statistical = [
     "statsforecast>=2.0.0",
 ]
@@ -116,7 +113,6 @@ ignore = [
 "common/services/perf_profiler.py" = ["BLE001"]
 "common/services/query_tracker.py" = ["BLE001"]
 "common/services/webhook_dispatcher.py" = ["BLE001"]
-"common/ml/expert_panel/**" = ["BLE001"]
 "scripts/**" = ["BLE001"]
 "tests/**" = ["BLE001"]
 

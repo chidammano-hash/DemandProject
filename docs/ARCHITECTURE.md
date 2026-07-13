@@ -264,7 +264,7 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - **Customer Analytics progressive workspace + AI:** the React tab mounts only one of five task views (Overview, Customers, Segments, Service risk, Buying behavior), eliminating the all-panels vertical wall. `POST /customer-analytics/ask` grounds answers in filtered KPI/top-customer/service-risk evidence. Laptop development reuses signed-in Codex CLI GPT models; production switches with `CUSTOMER_ANALYTICS_AI_RUNTIME=openai` + `OPENAI_API_KEY`. Runtime/model/tier are disclosed in the UI.
    - **Async router pilot (Item 19):** `AsyncConnectionPool` sibling in `api/pool.py` (`ASYNC_POOL_MIN_SIZE` / `ASYNC_POOL_MAX_SIZE` env). Helpers `get_async_conn()` and `get_async_read_only_conn()` in `api/core.py`. 5 customer_analytics sub-routers (16 GET handlers) and `inv_planning_insights.py` (11 GETs) are `async def`. `/lifecycle` migrated from `ThreadPoolExecutor` to `asyncio.gather`
    - **Read-replica scaffold (Item 24):** `READ_REPLICA_URL` env -> `get_read_replica_params()` in `common/core/db.py`. Sync + async read-replica pools with primary fallback (when env unset, behaviour is bit-identical). Customer Analytics async GETs opt in via `get_async_read_only_conn()`; Dashboard and Forecast Accuracy sync GETs use `get_read_only_conn()` plus `@cached_sync(...)` for repeated hot reads. See `docs/RUNBOOK.md` "Read Replica Deployment" for setup
-   - **MV refresh:** All `REFRESH MATERIALIZED VIEW` calls in the Makefile and `scripts/etl/load_ext_ml_forecasts.py` use `CONCURRENTLY` to avoid blocking readers
+   - **MV refresh:** all refreshes route through `common/core/mv_refresh.py`, which applies dependency ordering and uses concurrent refreshes where supported
    - **Query plan visibility:** `pg_stat_statements` enabled (`sql/170`)
    - **Active perf bug fix:** `competition.py:270-277` previously refreshed forecast MVs synchronously inside the request; the work is now enqueued via `job_registry` as a `refresh_forecast_views` job type. The endpoint returns `mv_refresh_job_id`; the frontend polls `/jobs/{id}` for completion
    - Query performance tracking: slow query detection, response time histograms
@@ -277,14 +277,14 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - `WebhookDispatcher` in `common/services/webhook_dispatcher.py` with HMAC-SHA256 signed payloads
    - Retry with exponential backoff (configurable max attempts)
    - Router: `api/routers/platform/webhooks.py` (register, list, test, delivery history)
-   - Config: `config/webhook_config.yaml` (retry policy, signing secrets, event types)
+   - Configuration is code/DB-backed: retry defaults live in `common/services/webhook_dispatcher.py`; per-registration signing secrets and event types live in `dim_webhook_registration`
 6g. SQL Runner:
    - Freeform read-only SQL execution from the UI
    - Two-layer write protection: regex-based DML/DDL rejection + DB-level `SET TRANSACTION READ ONLY`
    - Configurable row limits (default 1000) and query timeouts (default 30s)
    - Schema browser (information_schema introspection) and in-memory query history
    - Router: `api/routers/platform/sql_runner.py` (execute, schema, history)
-   - Config: `config/sql_runner_config.yaml` (max_rows, statement_timeout_ms, enabled)
+   - The three SQL Runner limits are intentionally inlined in `api/routers/platform/sql_runner.py`; there is no standalone YAML
    - Frontend: `SqlRunnerTab` under System sidebar section
 6h. API Governance:
    - Rate limiting via `common/services/rate_limiter.py` (token bucket algorithm)
@@ -305,7 +305,7 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - Source-provided cluster assignments stored in `dim_sku.cluster_assignment`; promoted
      ML assignments stored in `sku_cluster_assignment` and exposed by
      `current_sku_cluster_assignment`
-   - Master switch: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` controls whether the clustering pipeline runs; when `false`, all backtest scripts auto-fall back to `global` strategy
+   - Master switch: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` controls whether the clustering pipeline runs; when `false`, LightGBM falls back to its global strategy
    - Pipeline config references: `cluster_tuning_profiles.yaml`, `cluster_experiment_templates.yaml`
 9. LGBM backtesting (Feature 44):
    - Expanding window backtest (10 timeframes A-J) with LightGBM regressors
@@ -317,51 +317,39 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - Execution-lag predictions loaded into `fact_external_forecast_monthly` via COPY + upsert
    - All-lag (0-4) predictions archived in `backtest_lag_archive` for accuracy at any horizon
    - MLflow experiment tracking (`demand_backtest`)
-   - Configurable `cluster_strategy`: `per_cluster` (default) or `global`; `ml_cluster` used for partitioning only, not as a model feature
-   - Native categorical feature handling via ordered target encoding (no one-hot needed)
-   - GPU support via `task_type="GPU"`; auto-detected at runtime
-   - MLflow experiment tracking (`demand_backtest`)
-   - Configurable `cluster_strategy`: `per_cluster` (default) or `global`; `ml_cluster` used for partitioning only, not as a model feature
-   - Native categorical support via `enable_categorical=True` with `tree_method="hist"`
-   - GPU support via `device="cuda"`; auto-detected at runtime
-   - MLflow experiment tracking (`demand_backtest`)
-11b. Customer-Enriched Tree Model Backtesting:
-   - Same per-cluster expanding-window framework as standard tree models — identical `fit_model()` call
-   - Feature groups: concentration (HHI, top-customer share, Gini), dynamics (churn, retention, acquisition), true demand (demand/sales ratio, OOS rate), channel mix (entropy, shift), cross-customer (CV, sync), customer attribute mix (store type entropy, chain ratio, premise diversity, delivery frequency, sub-channel entropy)
-   - Features pre-computed by `scripts/ml/generate_customer_features.py` → `customer_features_monthly` table at item × location × month grain
-   - Left-joined to DFU feature matrix; NaN filled with 0 for item-locs without customer data
-   - 3 SHAP-protected features (true_demand_ratio, n_active_cust, hhi_demand); remaining 31 subject to SHAP pruning
-   - Regularization bumped vs base models (lower colsample_bytree, higher L1/L2) to counteract wider feature set
-   - CLI: `make customer-features && make backtest-cust-enriched-all`
-   - See `docs/specs/02-forecasting/21-customer-enriched-features.md` for full spec
-11c. MSTL backtesting:
+10. MSTL backtesting:
    - MSTL (Multiple Seasonal-Trend decomposition using LOESS) from the `statsforecast` library
    - Per-DFU fitting with parallel workers (default 8); decomposes into trend + multiple seasonal components
    - Config in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.mstl.params`: `season_length: 12`, `min_history: 25`
    - Outputs to `data/backtest/mstl/`; default model ID: `mstl`
    - CLI: `make backtest-mstl`, `make backtest-mstl-full` (backtest + load)
-11c. N-HiTS backtesting:
+11. N-HiTS backtesting:
    - N-HiTS deep learning model from the `neuralforecast` library
    - Global model training (single model across all DFUs); supports Apple MPS, CUDA, and CPU
    - Config in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.nhits.params`: `h: 6`, `input_size: 24`, `max_steps: 500`
    - Outputs to `data/backtest/nhits/`; default model ID: `nhits`
    - CLI: `make backtest-nhits`, `make backtest-nhits-full` (backtest + load)
-11d. N-BEATS backtesting:
+12. N-BEATS backtesting:
    - N-BEATS deep learning model from the `neuralforecast` library
    - Global model training (single model across all DFUs); supports Apple MPS, CUDA, and CPU
    - Config in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.nbeats.params`: `h: 6`, `input_size: 24`, `max_steps: 500`
    - Outputs to `data/backtest/nbeats/`; default model ID: `nbeats`
    - CLI: `make backtest-nbeats`, `make backtest-nbeats-full` (backtest + load)
-12. Multi-dimensional accuracy slicing:
+13. Chronos 2E backtesting:
+   - Pretrained `amazon/chronos-2` weights with 14 historical numeric, 13 known-future calendar/Fourier, and 3 categorical covariates
+   - Uses `common/ml/chronos2_enriched.py` in both backtest and production; default model ID: `chronos2_enriched`
+   - Config in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.chronos2_enriched.params`
+   - CLI: `make backtest-chronos2e`, `make backtest-chronos2e-full`
+14. Multi-dimensional accuracy slicing:
    - Pre-aggregated `agg_accuracy_by_dim` view: (model_id, lag, month, cluster, supplier, abc_vol, region, brand) grain
    - Pre-aggregated `agg_accuracy_lag_archive` view: same grain for archive table + timeframe
    - `/forecast/accuracy/slice` endpoint: compare WAPE, Accuracy %, Bias across models by any DFU attribute
    - `/forecast/accuracy/lag-curve` endpoint: accuracy degradation by lag horizon (0–4) per model
    - UI Accuracy Comparison panel: model comparison pivot table + lag curve chart
    - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
-17. Champion model selection (feature15):
+15. Champion model selection (feature15):
    - Per-DFU per-month best-model selection using Forecast Value Added (FVA) approach
-   - 8 configurable strategies via `common/ml/champion/` package strategy registry (`registry.py` plus per-family modules: `basic`, `blend`, `meta`, `bandit`, `segment`, `regime`, `routing`, `helpers`); 31 strategies preserved across all families:
+   - Configurable strategies via `common/ml/champion/` package strategy registry (`registry.py` plus per-family modules: `basic`, `blend`, `meta`, `bandit`, `segment`, `regime`, `routing`, `helpers`); 30 strategies across all families:
      - `expanding` — cumulative WAPE, all prior months equal weight (default)
      - `rolling` — last N months only (configurable `window_months`)
      - `decay` — exponential decay weighting recent months more (`decay_factor`)
@@ -381,7 +369,7 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - Simulation script (`simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling; includes 16 simulation entries: expanding, rolling_3/6/9/12, decay_090/095, ensemble_top3_inv/eq, meta_learner, ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt
    - YAML config: `config/forecasting/forecast_pipeline_config.yaml` (master config — `champion` section for strategy, strategy_params, meta_learner; `algorithms` section for competing models via `compete: true` flag)
    - CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
-   - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
+   - API endpoints: `GET/PUT /competition/config`, `POST /competition/run` (202 governed job submission), `GET /competition/summary`
    - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, strategy selector, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
    - Summary saved to `data/champion/champion_summary.json` (includes `fallback_rows_inserted` count)
 18. Data Explorer performance & UX (feature16):
@@ -400,7 +388,7 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - **Demand side:** Unified sales vs multi-model forecast overlay on a single chart; three analysis modes (Item @ Location, All Items @ Location, Item @ All Locations); `GET /sku/analysis` endpoint; per-model KPI cards; toggleable measure visibility; typeahead item/location filters
    - **Past backtest + future forecast on one timeline:** future staging reads the latest immutable `release_candidate` per requested model and exposes its exact source run. The legacy `/forecast/candidate` → `fact_candidate_forecast` historical overlay is inert because that table has no writer; working historical model lines come from loaded `fact_external_forecast_monthly` evidence. See `docs/specs/02-forecasting/24-candidate-forecast-promotion.md` §5.4.
    - **Clickable forecast lines**: clicking any backtest model line sets `selectedModel` state; selected line renders thicker + unselected lines fade to 30% opacity; hint text "click a forecast line to explore SHAP" near toggles
-   - **Per-DFU SHAP Panel** (`DfuShapPanel.tsx`): on model selection renders a stacked Recharts BarChart below the overlay chart showing signed SHAP feature contributions per month; future months rendered at 45% fill opacity; 15-color palette per feature; scrollable container (min 800px); dual-stack with `ReferenceLine y={0}` baseline; falls back to cluster-level summary SHAP (existing `/forecast/shap/{model}/summary` endpoint) with warning banner when per-DFU pkl artifacts are not available (404); placeholder card when no model selected
+   - **Per-DFU SHAP Panel** (`DfuShapPanel.tsx`): on model selection renders a stacked Recharts BarChart below the overlay chart showing signed SHAP feature contributions per month; future months rendered at 45% fill opacity; 15-color palette per feature; scrollable container (min 800px); dual-stack with `ReferenceLine y={0}` baseline. LightGBM explanations resolve the exact current cluster from the validated active production-tree bundle and its persisted categorical encoders; an unavailable or lineage-mismatched active bundle fails explicitly instead of reading a loose cluster pickle. Cluster-level summary SHAP remains the non-DFU fallback; placeholder card when no model is selected
    - **Supply side:** Inventory KPI cards, trend chart (dual Y-axis), paginated position table, item detail drill-down — all from sub-panels in `tabs/inventory/`
 20. Market intelligence (feature18):
    - `POST /market-intelligence` endpoint combining Google Custom Search + GPT-4o narrative
@@ -751,7 +739,7 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 - Cluster experiments API router at `/cluster-experiments` with 10 endpoints: list, detail, create, update, delete, promote, compare, templates, completed, used-by
 
 **Champion Experimentation Studio (Feature 48) — new tables:**
-62.  `champion_experiment` — champion selection strategy experiment lifecycle tracking (Feature 48); grain: `(experiment_id)` SERIAL PK; columns: label, notes, template_id, status (queued/running/completed/failed/cancelled), created_at, started_at, completed_at, runtime_seconds, job_id, strategy (expanding/rolling/decay/ensemble/meta_learner), strategy_params (JSONB), meta_learner_params (JSONB), models (JSONB, default all 3 tree models), metric (accuracy_pct/wape), lag_mode (execution/0-4), min_sku_rows, champion_accuracy, ceiling_accuracy, gap_bps, n_champions, n_dfu_months, model_distribution (JSONB), is_promoted, promoted_at, is_results_promoted, results_promoted_at, results_promote_job_id; DDL: `sql/102_champion_experiments.sql`
+62.  `champion_experiment` — champion selection strategy experiment lifecycle tracking (Feature 48); grain: `(experiment_id)` SERIAL PK; columns: label, notes, template_id, status (queued/running/completed/failed/cancelled), created_at, started_at, completed_at, runtime_seconds, job_id, strategy (expanding/rolling/decay/ensemble/meta_learner), strategy_params (JSONB), meta_learner_params (JSONB), models (JSONB, default canonical five-model roster), metric (accuracy_pct/wape), lag_mode (execution/0-4), min_sku_rows, champion_accuracy, ceiling_accuracy, gap_bps, n_champions, n_dfu_months, model_distribution (JSONB), is_promoted, promoted_at, is_results_promoted, results_promoted_at, results_promote_job_id; DDL: `sql/102_champion_experiments.sql`, canonical roster constraint/default in `sql/205_enforce_champion_model_roster.sql`
 63.  `champion_experiment_lag` — per-execution-lag accuracy breakdown for each champion experiment (Feature 48); grain: `(id)` SERIAL PK, UNIQUE(experiment_id, exec_lag); columns: experiment_id (FK), exec_lag, champion_accuracy, ceiling_accuracy, gap_bps, n_dfu_months, model_distribution (JSONB); DDL: `sql/102_champion_experiments.sql`
 64.  `champion_experiment_month` — per-month accuracy breakdown for each champion experiment (Feature 48); grain: `(id)` SERIAL PK, UNIQUE(experiment_id, month_start); columns: experiment_id (FK), month_start (DATE), champion_accuracy, ceiling_accuracy, gap_bps, n_champions, model_distribution (JSONB); DDL: `sql/102_champion_experiments.sql`
 65.  `champion_experiment_comparison` — cached pairwise comparison results for champion experiments (Feature 48); grain: `(id)` SERIAL PK, UNIQUE(experiment_a_id, experiment_b_id); columns: experiment_a_id (FK), experiment_b_id (FK), created_at, overall_comparison (JSONB), per_lag_comparison (JSONB), per_month_comparison (JSONB), model_dist_comparison (JSONB), config_diffs (JSONB); DDL: `sql/102_champion_experiments.sql`
@@ -759,16 +747,18 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 - Champion experiments API router at `/champion-experiments`, `/demand-history` with 15 endpoints: list, templates, promoted, promotions, compare, detail, lags, months, logs, create, promote, promote-results, promote-results/status, cancel, delete
 67.  `fact_candidate_forecast` — legacy candidate table; grain: `(item_id, loc, model_id, forecast_month)` UNIQUE. It currently has no writer and is not used by forward promotion; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 68.  `model_promotion_log` — exact promotion/demotion audit; grain: `(id)` SERIAL PK; includes model/type/version/cardinalities plus `source_run_id`, `production_run_id`, gate report, candidate/production/archive checksums, archive time, and replacement id. Database indexes enforce one active release and one promotion per source run; DDL: `sql/121`, extended by `sql/203_create_forecast_generation_run.sql`
-- `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`.
+- `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, generator-contract metadata, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`. Migration `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready release candidates invalid and non-promotable without deleting their evidence.
 - Newly promoted `fact_production_forecast` rows carry `source_run_id`, `promotion_log_id`, a distinct production `run_id`, and `lineage_status='verified'`. The promotion transaction hashes candidate and production in the same stable order and requires equality before commit.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
-- Backtest management API router at `/backtest-management` with 6 endpoints: promotion-status, candidate-summary, staging-summary, {model_id}/generate, {model_id}/promote, {model_id}/train (tree-model-only validation)
+- Backtest management API router at `/backtest-management` with 6 endpoints: promotion-status, candidate-summary, staging-summary, {model_id}/generate, {model_id}/promote, {model_id}/train (persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct)
 
 ### Database Schema Housekeeping (perf work)
 
 - `pg_stat_statements` extension enabled (`sql/170`) for query plan visibility
 - 9 empty future partitions of `fact_customer_demand_monthly` dropped (`sql/171`)
 - Redundant `fact_sales_monthly_sales_ck_key` index dropped, reclaiming 519 MB (`sql/172`); `uq_forecast_ck_model` retained — it backs 3 `ON CONFLICT` upsert sites
+- Full-DFU partial indexes on the current and immutable-original sales facts
+  support canonical production population/history reads (`sql/207`)
 - `scripts/db/auto_create_partitions.py` — creates upcoming partitions on a configurable cadence; supports `interval=Literal["month","week"]` (weekly cadence uses `isocalendar()` ISO-week math)
 - Weekly-partitioning DDL prep (Item 25): `sql/184` and `sql/185` are cutover migrations and should be **REVIEWED BEFORE RUN**. The `chk_cust_demand_month_start` `CHECK` constraint on `fact_customer_demand_monthly` is flagged for a separate migration before any switch to weekly grain
 
@@ -829,7 +819,7 @@ Operator entry points: `make refresh-mvs-tiered` / `make refresh-accuracy-mvs`
 
 **Automatic writers** (all via the central service): ETL domain loads
 (`run_pipeline.py` / `load.py` derive tables per domain via
-`tables_written_for_domain()`), backtest loads, ext-ML loads, champion
+`tables_written_for_domain()`), canonical backtest loads, champion
 selection, forecast promotion (`fact_production_forecast` →
 `mv_fairness_audit`), DQ auto-fix, cluster promotion (dim_sku dependents),
 inventory planning pipeline, projection compute, and the forecast-clean
@@ -945,7 +935,7 @@ flowchart TD
 | **MSTL Backtest** | `run_backtest_mstl.py` | sales, forecast | `data/backtest/mstl/` | `forecast_pipeline_config.yaml` (`algorithms.mstl`) |
 | **N-HiTS Backtest** | `run_backtest_dl.py --model nhits` | sales, forecast | `data/backtest/nhits/` | `forecast_pipeline_config.yaml` (`algorithms.nhits`) |
 | **N-BEATS Backtest** | `run_backtest_dl.py --model nbeats` | sales, forecast | `data/backtest/nbeats/` | `forecast_pipeline_config.yaml` (`algorithms.nbeats`) |
-| **Backtest Load** | `load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — (flags: `--models`, `--bulk`, `--main-only`, `--archive-only`) |
+| **Backtest Load** | `scripts/etl/load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — (flags: `--models`, `--bulk`, `--main-only`, `--archive-only`) |
 | **Champion** | `run_champion_selection.py` | `fact_external_forecast_monthly`, archive | rows with `model_id='champion'`, `'ceiling'` | `forecast_pipeline_config.yaml` (champion section) |
 | **Repl Plan** | `compute_replenishment_plan.py` | `fact_production_forecast`, SS, EOQ | `fact_replenishment_plan` | — |
 | **AI Insights** | `generate_ai_insights.py` | multi-table queries (DFU, forecast, inventory, health) | `ai_insights`, `ai_planning_memos`, `ai_call_log` | `ai_planner_config.yaml` |
@@ -965,7 +955,7 @@ flowchart TD
 `api/main.py` creates the app, adds middleware, and mounts all 83 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/` organized into 6 domain subfolders (`core/`, `forecasting/`, `intelligence/`, `inventory/`, `operations/`, `platform/`). `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `api_governance.py` does not exist as a router file (governance logic is in `common/services/rate_limiter.py`).
 
 **Mounted router modules** (alphabetical, exact list lives in `api/main.py`):
-accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster_eda, cluster_experiments, clusters, collaboration, competition, config_manager, consensus_plan, control_tower, customer_analytics, dashboard, data_quality, demand_history, domains, echelon_planning, events, explain_router, expsys_accuracy, external_signals, feature_lab, fill_rate, financial_plan, fva, integrated_targets, integration, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_algorithm_comparison, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_insights, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, medallion, model_tuning, notifications, po_router, production_forecast, reports, sampled_backtest, service_level, shap, sku_chat, sku_features, sop, sourcing_router, sql_runner, storyboard, supply, supply_scenarios, tuning_chat, unified_model_tuning, users, webhooks, working_capital.
+accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster_eda, cluster_experiments, clusters, collaboration, competition, config_manager, consensus_plan, control_tower, customer_analytics, dashboard, data_quality, demand_history, domains, echelon_planning, events, explain_router, external_signals, feature_lab, fill_rate, financial_plan, fva, integrated_targets, integration, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_algorithm_comparison, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_insights, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, medallion, model_tuning, notifications, po_router, production_forecast, reports, sampled_backtest, service_level, shap, sku_chat, sku_features, sop, sourcing_router, sql_runner, storyboard, supply, supply_scenarios, tuning_chat, unified_model_tuning, users, webhooks, working_capital.
 
 **Router packages (split from large single-file routers; aggregated routers exposed as the listed name above):**
 - `api/routers/forecasting/tuning/` — 15 sub-modules (`__init__`, `_helpers`, `list`, `detail`, `create`, `compare`, `cluster`, `lag`, `logs`, `month`, `promote`, `promote_results`, `cancel_delete`, `templates`, `promotions`); imported as `unified_model_tuning`; 15 endpoints preserved at `/model-tuning/*`. Replaced the prior `unified_model_tuning.py` (1798 LoC) with no shim.
@@ -1022,7 +1012,8 @@ All API prefixes proxied to FastAPI at `http://127.0.0.1:8000`:
 
 ## 17. Shared Backtest Framework (`common/`)
 
-All tree-based backtest scripts share common logic extracted into reusable modules:
+The canonical forecast backtests share common data, timeframe, post-processing,
+and persistence logic through reusable modules:
 
 | Module | Purpose |
 |--------|---------|
@@ -1061,6 +1052,11 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 
 ## 18. ML Pipeline Components
 
+The maintained base-model roster is exactly LightGBM (`lgbm_cluster`), N-HiTS
+(`nhits`), N-BEATS (`nbeats`), MSTL (`mstl`), and Chronos 2E
+(`chronos2_enriched`). Benchmark (`external`, `ceiling`) and composite
+(`champion`, `ensemble`) identities are not additional base algorithms.
+
 1. **SKU Feature Computation** (`common/ml/sku_features/` via `compute_all_sku_features()`, `classify_seasonality_profile()`, `classify_variability_class()`, `write_features_to_dim_sku()`):
    - Unified pipeline: `scripts/ml/compute_sku_features.py` orchestrates feature extraction, classification, and persistence in a single pass
    - Extracts 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle) from `fact_sales_monthly` (36-month window, min 12 months) using `common.ml.clustering.features._compute_features_for_group`
@@ -1084,56 +1080,64 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Compound labels: `high_volume_seasonal_growing`, `low_volume_intermittent`, `medium_volume_periodic`, etc.
    - Two-pass disambiguation: base labels first, then secondary features resolve duplicates
 4. **Assignment Update** (`common/ml/clustering/scenario.py` via `promote_scenario()`):
-   - Updates `dim_sku.cluster_assignment` column in PostgreSQL
+   - Promotes assignments into `sku_cluster_assignment`; readers use `current_sku_cluster_assignment`
    - Validates updates and reports cluster distribution
 5. **LGBM Backtest** (`run_backtest.py` → `common/ml/backtest_framework.py` — Feature 44):
    - Uses shared `run_tree_backtest()` orchestrator from `common/ml/backtest_framework.py`
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`; selects based on `cluster_strategy` config key
    - `ml_cluster` is a metadata column (in `METADATA_COLS`) — used for per-cluster partitioning, excluded from `feature_cols`
    - Algorithm options read from `config/forecasting/forecast_pipeline_config.yaml` (`algorithms.lgbm_cluster`: cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparams under `.params`)
-   - Default model IDs: `lgbm_cluster` (per_cluster) or `lgbm_global` (global)
+   - Canonical model ID: `lgbm_cluster`; `cluster_strategy` controls per-cluster versus global training
    - Outputs two CSVs: execution-lag only (main table) + all lags 0-4 (archive)
    - Deduplication across timeframes (latest timeframe wins)
    - MLflow logging via `common/ml/mlflow_utils.py` to `demand_backtest` experiment
    - LightGBM uses unified `fit_model()` from `common/ml/model_registry.py`
    - Early stopping: standardized 5% patience (10% for sparse clusters) via `compute_early_stop_patience()` with custom WAPE eval callbacks
    - Best iteration: abstracted via `get_best_iteration()` (handles `best_iteration_` vs `best_iteration` attribute differences)
-   - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`
-   - `ml_cluster` used for partitioning only (in `METADATA_COLS`), not a model feature; `cluster_strategy` config key selects mode
-   - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`
-   - `ml_cluster` used for partitioning only (in `METADATA_COLS`), not a model feature; `cluster_strategy` config key selects mode
-11. **Chronos 2 Enriched Backtest** (`run_backtest_chronos2_enriched.py` → `foundation_models.py`):
-    - 17 past-only numeric (lags, rolling, croston, cluster), 13 future calendar/fourier, 4 categorical
+6. **Chronos 2 Enriched Backtest** (`run_backtest_chronos2_enriched.py` → `common/ml/chronos2_enriched.py`):
+    - 14 past-only numeric (lags, rolling, Croston), 13 future calendar/Fourier, 3 categorical
     - Builds full feature matrix via `build_feature_matrix()`, masks per timeframe
     - Vectorized input construction (~2.3s for 214K DFUs)
     - Default model ID: `chronos2_enriched`
     - See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for full details
-13. **MSTL Backtest** (`run_backtest_mstl.py` → `adv_algorithm_testing/statistical_upgrades.py`):
+7. **MSTL Backtest** (`run_backtest_mstl.py` → `common/ml/mstl.py`):
     - MSTL (Multiple Seasonal-Trend decomposition using LOESS) from the `statsforecast` library
-    - Per-DFU fitting with parallel workers (default 8 via `--workers` flag); decomposes into trend + multiple seasonal components
+    - Per-DFU fitting with `num_workers: 8` from the master config (`--workers` is an explicit override)
     - Uses shared `generate_timeframes()`, `load_backtest_data()`, `postprocess_predictions()`, `save_backtest_output()` from backtest framework
     - Checkpoint/resume support via `BacktestCheckpointer`
-    - Config: `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.mstl.params` — `season_length: 12`, `min_history: 25`
+    - Config: `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.mstl.params` — `season_length: 12`, `min_history: 25`, `num_workers: 8`
     - Outputs to `data/backtest/mstl/` with execution-lag + all-lags CSVs + metadata JSON
     - Default model ID: `mstl`
     - CLI: `make backtest-mstl`, `make backtest-mstl-full`
-13. **N-HiTS Backtest** (`run_backtest_dl.py --model nhits` → `adv_algorithm_testing/dl_models.py`):
+8. **N-HiTS Backtest** (`run_backtest_dl.py --model nhits` → `common/ml/neural_forecast.py`):
     - N-HiTS (Neural Hierarchical Interpolation for Time Series) deep learning model from the `neuralforecast` library
     - Global model training: single model trained across all DFUs simultaneously (cross-learning)
     - Supports Apple MPS, CUDA, and CPU for GPU acceleration
     - Uses shared backtest framework utilities for timeframe generation, data loading, postprocessing, and output saving
-    - Config: `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.nhits.params` — `h: 6`, `input_size: 24`, `max_steps: 500`, `batch_size: 32`, `learning_rate: 0.001`, `scaler_type: standard`
+    - Config: `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.nhits.params` — `h: 6`, `input_size: 24`, `max_steps: 500`, `batch_size: 32`, `learning_rate: 0.001`, `scaler_type: standard`; start padding keeps observed short series eligible
     - Outputs to `data/backtest/nhits/`; default model ID: `nhits`
     - CLI: `make backtest-nhits`, `make backtest-nhits-full`
-14. **N-BEATS Backtest** (`run_backtest_dl.py --model nbeats` → `adv_algorithm_testing/dl_models.py`):
+9. **N-BEATS Backtest** (`run_backtest_dl.py --model nbeats` → `common/ml/neural_forecast.py`):
     - N-BEATS (Neural Basis Expansion Analysis for Time Series) deep learning model from the `neuralforecast` library
     - Global model training: single model trained across all DFUs simultaneously (cross-learning)
     - Supports Apple MPS, CUDA, and CPU for GPU acceleration
     - Same shared backtest framework utilities as N-HiTS
-    - Config: `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.nbeats.params` — `h: 6`, `input_size: 24`, `max_steps: 500`, `batch_size: 32`, `learning_rate: 0.001`, `scaler_type: standard`
+    - Config: `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.nbeats.params` — `h: 6`, `input_size: 24`, `max_steps: 500`, `batch_size: 32`, `learning_rate: 0.001`, `scaler_type: standard`; start padding keeps observed short series eligible
     - Outputs to `data/backtest/nbeats/`; default model ID: `nbeats`
     - CLI: `make backtest-nbeats`, `make backtest-nbeats-full`
-15. **Backtest Loader** (`load_backtest_forecasts.py`):
+10. **Canonical Non-Tree Production Dispatch** (`common/ml/production_non_tree.py`):
+    - Routes MSTL, N-HiTS, N-BEATS, and Chronos 2E through the same adapters used by their backtests; production does not substitute a heuristic while retaining a canonical model label
+    - Validates exact model identity, unique and complete DFU-month coverage, finite nonnegative quantities, and contiguous publish months before returning staging rows
+    - Fails the generation run when a required optional dependency is absent or an adapter returns incomplete output; the production image installs the `statistical`, `dl`, and `foundation` dependency groups
+    - Generation derives the complete active type-1-sales population at `(item_id, customer_group, loc)` grain, drops stale routes, uses the latest route dated on or before each production month, and assigns explicit LightGBM fallback routes to uncovered eligible DFUs
+    - MSTL routes require its configured 25 history months; a stale shorter route fails with instructions to rerun MSTL backtesting and champion selection
+11. **Persisted Production Artifacts** (`common/ml/tree_artifacts.py`, `common/ml/neural_artifacts.py`):
+    - LightGBM publishes one complete immutable cluster set under `data/models/lgbm_cluster/production_tree/versions/<artifact_set_id>/`; `production_tree/active.json` is replaced atomically only after metadata, the exact promoted-cluster roster, and the complete checksum manifest validate
+    - The active tree version contains `metadata.json`, `training_metadata.json`, `checksums.json`, and opaque `models/*.pkl` files. No loose `cluster_<id>.pkl` or `data/models/lgbm_cluster/<cluster>/model.pkl` path participates in production or SHAP inference
+    - The explicit global LightGBM strategy is a separate valid contract with exactly one `global` artifact; per-cluster versions require the current promoted experiment and no missing or extra labels
+    - N-HiTS and N-BEATS publish immutable global versions under `data/models/{nhits,nbeats}/neuralforecast/`; MSTL and Chronos 2E remain direct adapters with no product-specific final fit
+    - All persisted versions bind the sales batch/hash, latest closed `history_end`, model/configuration, and generator contract. Generation validates lineage before deserialization and stamps the exact tree artifact-set id and neural artifact ids on `forecast_generation_run.metadata`
+12. **Backtest Loader** (`scripts/etl/load_backtest_forecasts.py`):
    - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
    - Supports `--model MODEL_ID` (single model), `--models M1 M2 ...` (multi-model), `--all` (scan all model subdirs), `--input PATH` (legacy)
@@ -1144,9 +1148,9 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
    - CLI: `make backtest-load-all`, `make backtest-load-all-bulk`, `make backtest-load-bulk`, `make backtest-load-main-only`, `make backtest-load-archive-only`
    - Each backtest writes to `data/backtest/<model_id>/` subdirectory (prevents CSV overwrites — PL-001 fix)
-16. **Champion Selection** (`run_champion_selection.py` + `common/ml/champion/` package):
+13. **Champion Selection** (`run_champion_selection.py` + `common/ml/champion/` package):
    - 8 configurable strategies: expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling
-   - Strategy registry in `common/ml/champion/` package (split from the prior `champion_strategies.py`, 3530 LoC, no shim) — modules: `registry`, `basic`, `blend`, `meta`, `bandit`, `segment`, `regime`, `routing`, `helpers`; 31 strategies preserved; all strategies operate on pandas DataFrames (testable without DB)
+   - Strategy registry in `common/ml/champion/` package (split from the prior `champion_strategies.py`, 3530 LoC, no shim) — modules: `registry`, `basic`, `blend`, `meta`, `bandit`, `segment`, `regime`, `routing`, `helpers`; 30 active strategies; all strategies operate on pandas DataFrames (testable without DB)
    - New strategies: `hybrid_warmup` (ensemble for stable months + rolling for warm-up; addresses 58% coverage gap), `adaptive_ensemble` (varies top-K 2–5 per DFU-month based on model WAPE spread), `ensemble_rolling` (blends top-K using rolling window WAPE instead of expanding)
    - All strategies enforce **exec-lag-aware causality** via `shift(exec_lag + 1)` per DFU-model group — selection for month T excludes last exec_lag months whose actuals weren't available at issuance time; backward compatible with exec_lag=0
    - **Fallback model** fills warm-up DFU-months (NOT EXISTS + ON CONFLICT DO NOTHING insert) so every DFU-month has a champion row
@@ -1155,18 +1159,18 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Ceiling rows stored as `model_id='ceiling'` — theoretical upper bound with perfect foresight
    - Refreshes materialized views so champion + ceiling auto-appear in all accuracy comparisons
    - Config-driven via `config/forecasting/forecast_pipeline_config.yaml` (`champion` section); also callable via API
-   - Simulation (`scripts/simulate_champion_strategies.py`): runs all 16 strategy variants (including ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt), compares accuracy vs ceiling
+   - Simulation (`scripts/ml/simulate_champion_strategies.py`): runs all 16 strategy variants (including ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt), compares accuracy vs ceiling
    - **Fixes:** Decimal -> float cast for DB values, `is_ensemble` detection checks synthetic model_id (not in competing list), per-cluster strategy loads `dfu_features`, cached winners CSV (`experiment_{id}_winners.csv`) for fast UI load, `item_id` read as str dtype, promoted experiment deletion cleans up forecast rows + promotion_log FK
-17. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/ml/tuning.py`):
+14. **Hyperparameter Tuning** (`scripts/ml/tune_hyperparams.py` + `common/ml/tuning.py`):
    - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
    - `n_estimators` determined by early stopping (excluded from search space)
    - Per-cluster WAPE breakdown logged in output JSON and MLflow
    - Search spaces and CV settings in `config/forecasting/hyperparameter_tuning.yaml` (includes `inline_n_trials: 20`, `inline_n_splits: 3`)
    - Output: `data/tuning/best_params_<model>.json` consumed via `params_file` key in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (Feature 44)
    - MLflow experiment: `hyperparameter_tuning`
-   - **Per-cluster Bayesian tuning:** `scripts/tune_cluster_hyperparams.py` runs Optuna independently per `ml_cluster`, producing cluster-specific hyperparameter overrides written to `config/forecasting/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches by Phase 1 `cluster_name` exact match, then Phase 2 statistical criteria fallback. CLI: `make tune-lgbm-clusters`, `make tune-clusters`.
+   - **Per-cluster Bayesian tuning:** `scripts/ml/tune_cluster_hyperparams.py` runs Optuna independently per `ml_cluster`, producing cluster-specific hyperparameter overrides written to `config/forecasting/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches by Phase 1 `cluster_name` exact match, then Phase 2 statistical criteria fallback. CLI: `make tune-lgbm-clusters`, `make tune-clusters`.
    - **Two modes:** Production (`params_file` in algorithm config — global tune once, apply everywhere) vs. Honest backtesting (`tune_inline: true` in algorithm config — 600 fits vs 250, no future leakage)
-18. **SHAP Feature Selection** (`common/ml/shap_selector.py` — Feature 42):
+15. **SHAP Feature Selection** (`common/ml/shap_selector.py` — Feature 42):
    - Per-timeframe SHAP computation integrated into `run_tree_backtest()` via `feature_selector_fn` hook
    - For per_cluster/transfer strategies: SHAP pooled across cluster models weighted by cluster size via `_weighted_pool_cluster_shap`; `ml_cluster` excluded from effective feature set
    - Feature selection: cumulative importance threshold (default 95%) or exact top-N; minimum 5 features guaranteed
@@ -1174,7 +1178,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart; **per-DFU interactive SHAP panel** (`DfuShapPanel.tsx`) in Item Analysis tab
    - Config keys in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`: `shap_select`, `shap_top_n`, `shap_threshold`, `shap_sample_size`; composable with `tune_inline` and `params_file` (Feature 44)
    - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
-19. **Recursive Multi-Step Inference** (`common/ml/backtest_framework.py` + `common/ml/feature_engineering.py` — Feature 43):
+16. **Recursive Multi-Step Inference** (`common/ml/backtest_framework.py` + `common/ml/feature_engineering.py` — Feature 43):
    - In direct mode (default), months 2+ of the prediction window use `qty_lag_1 = 0` (masked sales). In recursive mode, each predict month is scored individually, and the model's prediction for month T is written back via `update_grid_with_predictions()` before scoring month T+1
    - `update_grid_with_predictions(grid, month, predictions)` in `common/ml/feature_engineering.py`: writes predicted `basefcst_pref` to `qty[month]` then recomputes all lag (1-12) and rolling (3m/6m/12m) features in a single vectorized `groupby().shift()` pass
    - `_predict_single_month(models, data, feature_cols)` in `common/ml/backtest_framework.py`: routes one month's batch to the correct cluster model dict (per-cluster) or single model (global) without retraining
@@ -1190,14 +1194,14 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Wilson EOQ formula with MOQ rounding and months-supply cap
    - `fact_eoq_targets` table stores computed per-DFU EOQ metrics
    - Config: `config/inventory/eoq_config.yaml` (ordering_cost, holding_cost_pct, moq, max_eoq_months_supply)
-   - Script: `scripts/compute_eoq.py` reads from `agg_inventory_monthly`, writes to `fact_eoq_targets`
+   - Script: `scripts/inventory/compute_eoq.py` reads from `agg_inventory_monthly`, writes to `fact_eoq_targets`
    - 3 API endpoints: `GET /inv-planning/eoq/summary`, `GET /inv-planning/eoq/detail`, `GET /inv-planning/eoq/sensitivity`
    - Frontend: InvPlanningTab with KPI cards (avg EOQ, total cycle stock, avg order frequency, total annual cost), sensitivity curve chart, paginated detail table
    - Makefile: `eoq-schema`, `eoq-compute`, `eoq-all`
 26. Replenishment Policy Management (IPfeature5):
    - 4 default policies in `config/inventory/replenishment_policy_config.yaml`: A-Class Continuous Review (ROP/EOQ), B/C Periodic Review, Lumpy/Intermittent Manual Review, Emergency/Critical Parts
    - DDL: `dim_replenishment_policy` + `fact_dfu_policy_assignment` (sql/025)
-   - Script: `scripts/assign_replenishment_policies.py` — upsert policies from config + auto-assign DFUs by segment (--dry-run, --force-overwrite)
+   - Script: `scripts/inventory/assign_replenishment_policies.py` — upsert policies from config + auto-assign DFUs by segment (--dry-run, --force-overwrite)
    - 5 API endpoints: `GET /inv-planning/policies`, `POST /inv-planning/policies`, `PUT /inv-planning/policies/{id}`, `GET /inv-planning/policy-assignments/compliance`, `POST /inv-planning/policy-assignments/assign`
    - Frontend: Policy Management panel in InvPlanningTab — policy cards with service level/type/config badges, ring gauge for DFU coverage, auto-assign button, compliance table, edit modal
    - Makefile: `policy-schema`, `policy-assign`, `policy-all`
@@ -1214,7 +1218,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Recommendation formula: `max(effective_eoq, gap + eoq/2)` capped at `max_eoq_months_supply x demand`; order_by = TODAY (critical), TODAY+review_cycle (high/medium)
    - Deduplication: skip if same item_id+loc+exception_type open within last 7 days
    - DDL: `fact_replenishment_exceptions` with 6 indexes including partial index on open+critical (sql/027)
-   - Script: `scripts/generate_replenishment_exceptions.py` — pure-function detection/recommendation + DB write with --dry-run support
+   - Script: `scripts/inventory/generate_replenishment_exceptions.py` — pure-function detection/recommendation + DB write with --dry-run support
    - 5 API endpoints using `get_conn()` directly: `GET /inv-planning/exceptions` (paginated, filterable by type/severity/status/item/loc), `GET /inv-planning/exceptions/summary`, `PUT /inv-planning/exceptions/{id}/acknowledge` (auth), `PUT /inv-planning/exceptions/{id}/status` (auth), `POST /inv-planning/exceptions/generate` (auth)
    - Frontend: Exception Queue panel at top of InvPlanningTab — 4 KPI cards (Total Open, Critical, High, Rec. Order Value), type/severity filter pills, status toggle, item/loc filter inputs, exception table with inline action buttons (Acknowledge/Mark Ordered/Resolve), row background coloring by severity
    - Makefile: `exceptions-schema`, `exceptions-generate`, `exceptions-generate-dry`
@@ -1228,14 +1232,14 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 30. Demand Sensing & Short-Horizon Signal Integration (IPfeature9):
    - Short-horizon demand signals computed from recent sales velocity and inventory movement patterns
    - DDL: `sql/029_create_demand_signals.sql` — `fact_demand_signals` table
-   - Script: `scripts/compute_demand_signals.py`
+   - Script: `scripts/inventory/compute_demand_signals.py`
    - 3 API endpoints in `api/routers/inventory/inv_planning_demand_signals.py`: `GET /inv-planning/demand-signals/summary`, `/list`, `/item`
    - Makefile: `demand-signals-schema`, `demand-signals-compute`, `demand-signals-all`
    - Tests: `tests/api/test_inv_planning_demand_signals.py`, `tests/unit/test_demand_signals.py`
 31. Safety Stock Monte Carlo Simulation (IPfeature10):
    - Probabilistic safety stock simulation using configurable number of iterations and seed
    - DDL: `sql/030_create_ss_simulation_results.sql` — `fact_ss_simulation_results` table
-   - Script: `scripts/run_ss_simulation.py`
+   - Script: `scripts/inventory/run_ss_simulation.py`
    - Config: `config/inventory/inventory_planning_config.yaml` (simulation section: n_simulations, random_seed)
    - 3 API endpoints: `POST /inv-planning/simulation/run`, `GET /inv-planning/simulation/results`, `GET /inv-planning/simulation/compare`, `GET /inv-planning/simulation/{id}/status`
    - Makefile: `sim-schema`, `sim-run`
@@ -1243,7 +1247,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 32. ABC-XYZ Policy Matrix (IPfeature11):
    - Combined ABC volume segmentation x XYZ demand variability classification into 3x3 policy matrix
    - DDL: `sql/005_create_dim_dfu.sql` — XYZ classification columns on DFU dimension
-   - Script: `scripts/classify_abc_xyz.py`
+   - Script: `scripts/inventory/classify_abc_xyz.py`
    - 3 API endpoints: `GET /inv-planning/abc-xyz/matrix`, `/summary`, `/detail`
    - Frontend: AbcXyzPanel in InvPlanningTab
    - Makefile: `abc-xyz-schema`, `abc-xyz-classify`, `abc-xyz-all`
@@ -1258,14 +1262,14 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 34. Capital Investment Optimization (IPfeature13):
    - Portfolio-level inventory investment planning with efficient frontier computation
    - DDL: `sql/033_create_investment_plan.sql` — `fact_inventory_investment_plan` + `fact_efficient_frontier` tables
-   - Script: `scripts/compute_investment_plan.py`
+   - Script: `scripts/inventory/compute_investment_plan.py`
    - 4 API endpoints: `GET /inv-planning/investment/efficient-frontier`, `/summary`, `/detail`, `POST /inv-planning/investment/plan`
    - Makefile: `investment-schema`, `investment-plan`, `investment-all`
    - Tests: `tests/api/test_inv_planning_investment.py`, `tests/unit/test_investment_plan.py`
 35. Intra-Month Stockout Detection (IPfeature14):
    - Daily inventory scan detects within-month stockout events before end-of-month snapshot
    - DDL: `sql/034_create_intramonth_stockout.sql` — `mv_intramonth_stockout` materialized view
-   - Script: `scripts/refresh_intramonth_stockout.py`
+   - Script: `scripts/inventory/refresh_intramonth_stockout.py`
    - 3 API endpoints: `GET /inv-planning/intramonth-stockouts/summary`, `/detail`, `/daily`
    - Frontend: IntramonthPanel in InvPlanningTab
    - Makefile: `intramonth-schema`, `intramonth-refresh`, `intramonth-all`
@@ -1274,7 +1278,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Single-pane-of-glass operational dashboard aggregating KPIs, alerts, critical items, and trends
    - DDL: `sql/035_create_control_tower_kpis.sql` — `mv_control_tower_kpis` materialized view
    - Router: `api/routers/operations/control_tower.py` — 4 endpoints: `GET /control-tower/kpis`, `/alerts`, `/top-critical`, `/trend`
-   - Frontend: `frontend/src/tabs/ControlTowerTab.tsx` — dedicated Control Tower tab registered in App.tsx and AppSidebar
+   - Frontend: `frontend/src/tabs/CommandCenterTab.tsx` — Command Center surface registered in App.tsx and AppSidebar
    - Router registered in `api/main.py`; Vite proxy entry `/control-tower` added to `frontend/vite.config.ts`
    - Makefile: `control-tower-schema`, `control-tower-refresh`, `control-tower-all`
    - Tests: `tests/api/test_control_tower.py`, `src/tabs/__tests__/ControlTowerTab.test.tsx`
@@ -1286,12 +1290,12 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Frontend: Inventory panels (now part of ItemAnalysisTab) with KPI cards, filter controls (item/location debounce, months selector), trend chart (dual Y-axis), paginated position table, item detail panel
    - Makefile: `normalize-inventory`, `load-inventory`, `refresh-agg-inventory`, `db-apply-inventory`, `inventory-pipeline`
 22. Backtest model cleanup (feature23):
-   - CLI utility (`scripts/clean_backtest_models.py`) for selective removal of model predictions
+   - CLI utility (`scripts/ml/clean_backtest_models.py`) for selective removal of model predictions
    - Deletes from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`
    - Refreshes 5 materialized views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`
    - Modes: `--list` (inventory), `--dry-run` (preview), `--all-backtest` (bulk cleanup excluding external)
    - Makefile targets: `backtest-clean`, `backtest-list`
-   - Date-range cleanup: `scripts/clean_forecasts_by_date.py` deletes by time bucket (`--before`, `--after`, `--between`, `--months`) on `startdate` or `fcstdate`, with optional `--model` filter, `--forecast-only`/`--archive-only` scope
+   - Date-range cleanup: `scripts/ml/clean_forecasts_by_date.py` deletes by time bucket (`--before`, `--after`, `--between`, `--months`) on `startdate` or `fcstdate`, with optional `--model` filter, `--forecast-only`/`--archive-only` scope
    - Makefile targets: `forecast-clean`, `forecast-clean-list`
 23. Product-grade UI overhaul (feature36):
    - Collapsible sidebar navigation (12 nav items across 5 sections (tower, operations, supply, demand, system), 64px collapsed / 240px expanded, mobile drawer)
@@ -1321,7 +1325,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - **Scenario queueing:** When a group is busy, new jobs are queued (`status="queued"`) instead of rejected with 409. Queued jobs auto-dispatch via `_dispatch_next()` when the active job completes (FIFO order)
    - **View Results navigation:** "View Results" in Workflows → Workflow Library navigates to Clusters with `?scenario_job=<id>` for completed cluster-scenario jobs; Clusters auto-loads and renders ScenarioCharts
    - **Past Scenarios history:** ClustersTab What-If panel shows last 10 completed scenarios in an accordion with inline charts and promote buttons
-   - **Resilient execution:** All subprocess jobs use `Popen(start_new_session=True)` — stopping the API does NOT kill running jobs. PID and parameters are stored in `job_history` for real kill via `os.killpg(SIGTERM)` and PID-aware startup recovery. Live backtest/tuning processes are re-adopted and run their job-specific finalizers; other orphaned processes are stopped and safely re-queued because their exit code cannot be recovered. Dead/missing processes and legacy rows marked `Interrupted by server restart` are re-queued from persisted parameters instead of being lost. Backtest success is fail-closed: generation plus execution-lag/all-lag database loading must both succeed before the job and `backtest_run` become completed. Persistent `log` streams subprocess output to DB in real time. Kill button with 2-step confirmation in ActiveJobsPanel. Execution logs are visible in both active and history panels via `GET /jobs/{id}/logs` polling.
+   - **Resilient execution:** All subprocess jobs use `Popen(start_new_session=True)` — stopping the API does NOT kill running jobs. PID, process identity, durable parameters, execution group, attempt token, command digest, and exact child exit result are bound to `job_history` (migration 208). Startup recovery leases each row, re-adopts only a matching process, and compare-and-set finalizes only the owning attempt. A missing/mismatched result, unverifiable PID, or lost recovery lease quarantines the group for operator review instead of guessing success or launching duplicate work. Queued jobs retain their exact submit-time group, and completed pipeline steps are reconciled idempotently if the API exits before submitting the successor. Backtest success is fail-closed: generation plus execution-lag/all-lag database loading must both succeed before the job and `backtest_run` become completed. Persistent `log` streams subprocess output to DB in real time. Kill button with 2-step confirmation in ActiveJobsPanel. Execution logs are visible in both active and history panels via `GET /jobs/{id}/logs` polling.
    - **AI Tuning integration:** Tuning chat `confirm-run` submits via `JobManager.submit_job("tuning_backtest")` instead of standalone `ThreadPoolExecutor` — gets PID tracking, cancel, log streaming, and restart recovery for free
    - **pg-queue scaffold (Item 22, durable, out-of-process):**
    - `common/services/pg_queue.py`: `enqueue_job()`, `claim_next_job()` using `SELECT … FOR UPDATE SKIP LOCKED`, state transitions (`pending` -> `running` -> `succeeded`/`failed`), exponential-backoff requeue on transient failures
@@ -1335,7 +1339,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Agent calls Claude `claude-sonnet-4-20250514` via Anthropic SDK; tool_use loop dispatches to Python handlers with real DB queries
    - DDL: `sql/036_create_ai_insights.sql` — `ai_insights` table (5 insight types, 4 severities, open/acknowledged/resolved workflow) + `ai_planning_memos` table (portfolio/DFU scope narratives)
    - Config: `config/ai/ai_planner_config.yaml` (model, thresholds, severity rules, portfolio_scan_limit, schedule)
-   - Script: `scripts/generate_ai_insights.py` — CLI batch scan (`--portfolio`, `--item`/`--loc`, `--dry-run`)
+   - Script: `scripts/ai/generate_ai_insights.py` — CLI batch scan (`--portfolio`, `--item`/`--loc`, `--dry-run`)
    - 5 API endpoints in `api/routers/intelligence/ai_planner.py`: `POST /ai-planner/analyze` (single DFU, synchronous), `POST /ai-planner/portfolio-scan` (202 background), `GET /ai-planner/insights` (paginated, filterable), `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
    - Frontend: `AIPlannerTab.tsx` — insight cards with severity badges, financial impact chips, causal reasoning, acknowledge/resolve actions; portfolio health KPI bar; planning memo markdown panel
    - Types: `frontend/src/types/ai-planner.ts` — AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType
@@ -1394,7 +1398,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Signal ingestion pipeline: fetch, normalize, align to DFU grain, store in `fact_external_signals`
    - Demand decomposition: break demand into base + trend + seasonal + external signal components
    - DDL: `sql/067_create_external_signals_tables.sql` — `external_signal_sources` + `fact_external_signals` + `demand_decomposition` tables
-   - Config: `config/external_signals_config.yaml` (source definitions, fetch schedules, normalization rules)
+   - Source definitions and refresh cadence are stored in `dim_external_signal_source`; there is no standalone external-signals YAML
    - Router: `api/routers/intelligence/external_signals.py` — `GET /external-signals/sources`, `POST /external-signals/sources` (register), `GET /external-signals/data` (query signals), `GET /external-signals/decomposition` (decomposed demand), `POST /external-signals/fetch` (trigger fetch)
    - Makefile: `ext-signals-schema`, `ext-signals-fetch`, `ext-signals-decompose`
 
@@ -1412,7 +1416,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Scheduled distribution: cron-based report generation and delivery via email, Slack, or S3
    - Delivery tracking: log all report deliveries with status, recipients, file paths
    - DDL: `sql/069_create_report_tables.sql` — `report_templates` + `report_schedules` + `report_deliveries` tables
-   - Config: `config/report_config.yaml` (template defaults, delivery methods, S3 bucket config)
+   - Report templates and schedules are database-backed (`dim_report_template`, `fact_report_schedule`); there is no standalone report YAML
    - Router: `api/routers/platform/reports.py` — `GET /reports/templates`, `POST /reports/templates`, `GET /reports/schedules`, `POST /reports/schedules`, `POST /reports/generate` (on-demand), `GET /reports/deliveries`
    - Makefile: `report-schema`
 
@@ -1432,7 +1436,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
    - Retry with exponential backoff: configurable max attempts (default 5), backoff factor, timeout
    - Payload format: JSON with `event_type`, `timestamp`, `data`, `signature` headers (`X-Webhook-Signature`)
    - DDL: `sql/070_create_webhook_tables.sql` — `webhook_registrations` + `webhook_deliveries` tables
-   - Config: `config/webhook_config.yaml` (retry policy, signing algorithm, event types, timeout)
+   - Retry/backoff/timeout defaults live in `common/services/webhook_dispatcher.py`; signing secrets and event subscriptions are stored per registration in PostgreSQL
    - Router: `api/routers/platform/webhooks.py` — `GET /webhooks` (list registrations), `POST /webhooks` (register endpoint), `DELETE /webhooks/{id}`, `POST /webhooks/{id}/test` (send test payload), `GET /webhooks/{id}/deliveries` (delivery log)
    - Makefile: `webhook-schema`
 
@@ -1446,14 +1450,14 @@ All tree-based backtest scripts share common logic extracted into reusable modul
      - `fact_sop_gaps` — demand-supply gap analysis with severity and resolution
      - `fact_sop_approved_plan` — locked approved demand plan per cycle
    - Config: `config/operations/sop_config.yaml` (stage definitions, approval rules, gap thresholds)
-   - Script: `scripts/run_sop_cycle.py` — CLI actions: `--action create` (new cycle), `--action advance` (next stage), `--action populate-demand` (fill demand review from forecast)
+   - Script: `scripts/ops/run_sop_cycle.py` — CLI actions: `--action create` (new cycle), `--action advance` (next stage), `--action populate-demand` (fill demand review from forecast)
    - Router: `api/routers/operations/sop.py` — `GET /sop/cycles` (list cycles), `GET /sop/cycles/{id}` (cycle detail with stage), `POST /sop/cycles` (create cycle), `PUT /sop/cycles/{id}/advance` (advance stage), `GET /sop/gaps` (gap analysis), `GET /sop/approved-plan` (locked approved demand)
    - Frontend: `SopTab.tsx` — S&OP cycle stage machine with visual stage progress bar, gap cards with severity badges, advance/approve action buttons, approved plan table
    - Makefile: `sop-schema`, `sop-create`, `sop-advance`, `sop-populate`, `sop-all`
 
 49. Inventory Rebalancing (IPfeature-rebalancing):
    - Cross-location transfer optimization to reduce network-wide DOS imbalance
-   - Computation engine: `scripts/compute_rebalancing.py` — greedy solver (fast heuristic: iterates items by DOS CV, transfers from highest-DOS to lowest-DOS locations) + LP solver (scipy.optimize.linprog for globally optimal transfer plan minimizing total cost subject to DOS constraints)
+   - Computation engine: `scripts/inventory/compute_rebalancing.py` — greedy solver (fast heuristic: iterates items by DOS CV, transfers from highest-DOS to lowest-DOS locations) + LP solver (scipy.optimize.linprog for globally optimal transfer plan minimizing total cost subject to DOS constraints)
    - Network topology: `dim_transfer_lane` table defines location-to-location transfer lanes with cost, lead time, and min/max quantity constraints
    - Plans: `fact_rebalancing_plan` (plan header with status workflow: draft → approved → executed/cancelled) + `fact_rebalancing_transfer` (individual item-level transfer recommendations with before/after DOS, cost, and benefit estimates)
    - Network balance detection: `mv_network_balance` materialized view computes per-item DOS CV across locations; items with DOS CV above threshold flagged as imbalanced
@@ -1499,7 +1503,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
 | `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
-| `tabs/ModelTuningTab.tsx` (212L, was 975L) | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — Model Readiness table with 4-step action buttons per model: Train → Generate → Load → Promote; "Candidates" column showing loaded DFU count; "Promote Champion" button for DFU-level champion selection; crown badge on currently promoted production model; tree-model-only validation on Train), Cluster EDA, Feature Lab. Sub-folder `tabs/model-tuning/` adds: AIAdvisorFAB, BacktestDetailPanel, BacktestStagePanel, EnhancedPromoteModal, LagFilterBar, LogViewer, ParameterTable, RunHistoryTable, TemplateSelector, TuneStagePanel, `_helpers.ts`, `_types.ts` |
+| `tabs/ModelTuningTab.tsx` (212L, was 975L) | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — five-model readiness with persisted-artifact training for LightGBM/N-HiTS/N-BEATS, direct MSTL/Chronos generation, immutable candidate review, and exact-run promotion), Cluster EDA, Feature Lab. Sub-folder `tabs/model-tuning/` adds: AIAdvisorFAB, BacktestDetailPanel, BacktestStagePanel, EnhancedPromoteModal, LagFilterBar, LogViewer, ParameterTable, RunHistoryTable, TemplateSelector, TuneStagePanel, `_helpers.ts`, `_types.ts` |
 | `tabs/SkuFeaturesTab.tsx` (113L, was 821L) | `tabs/sku-features/` | SummaryCards, FeatureTable, FeatureHistograms, CategoricalDistributions, ComputeButton, `constants.ts`, `utils.ts` |
 | `tabs/ExplorerTab.tsx` (245L, was 810L) | `tabs/explorer/` | 11 co-located files: ExplorerHeader, ExplorerTable, ExplorerPagination, ExplorerErrorBanner, DomainFiltersPanel, FieldVisibilityPanel, useExplorerState, useExplorerQueries, useColumnSuggestions, `_helpers.ts`, `types.ts` |
 | `tabs/CommandCenterTab.tsx` | `tabs/command-center/` | KpiSummaryCard, ExceptionFeedCard, `exceptions.ts` |
@@ -1574,7 +1578,8 @@ All config files live in `config/`. Every compute script externalizes parameters
 | `data/backtest/<model_id>/` | Backtest predictions + SHAP CSVs | `run_backtest*.py` |
 | `data/clustering/` | Feature matrices, KMeans model, labels | `run_cluster_pipeline.py` via `common/ml/clustering/` |
 | `data/tuning/` | `best_params_<model>.json` | `tune_hyperparams.py` |
-| `data/models/<model_id>/` | Persisted `.pkl` model artifacts | Backtest scripts (via `model_persistence_fn`) |
+| `data/models/lgbm_cluster/production_tree/` | Atomic LightGBM active pointer plus immutable, complete, checksummed cluster-set versions | `scripts/ml/train_production_models.py` via `common/ml/tree_artifacts.py` |
+| `data/models/{nhits,nbeats}/neuralforecast/` | Atomic active pointers plus immutable global neural final-fit versions | `scripts/ml/train_production_models.py` via `common/ml/neural_artifacts.py` |
 | `data/input/` | Raw source CSVs/TXTs (read-only) | External system export |
 
 ---
@@ -1730,23 +1735,23 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_shap.py` | `api/routers/forecasting/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
 | `test_model_registry.py` | `common/ml/model_registry.py` — canonical ↔ native param mapping, roundtrips, get_best_iteration, compute_early_stop_patience, fit_model dispatch | 20 |
 | `test_backtest_recursive.py` | `common/ml/backtest_framework.py` — `_fill_predict_nans`, `_predict_single_month` (global/cluster/transfer), recursive loop integration | 13 |
-| `test_eoq.py` | `scripts/compute_eoq.py` — Wilson EOQ formula, effective EOQ with MOQ+cap, sensitivity curve | 23 |
+| `test_eoq.py` | `scripts/inventory/compute_eoq.py` — Wilson EOQ formula, effective EOQ with MOQ+cap, sensitivity curve | 23 |
 | `test_inv_planning_eoq.py` | `api/routers/inventory/inv_planning_eoq.py` — EOQ summary, detail, sensitivity endpoints | 10 |
 | `test_replenishment_policy.py` | Policy assignment logic — auto-assign rules, dry-run, force-overwrite, compliance calculation | 18 |
 | `test_inv_planning_policy.py` | `api/routers/inventory/inv_planning_policy.py` — policy CRUD, assign, compliance endpoints | 13 |
 | `test_health_score.py` | Pure-Python replicas of SQL scoring logic — SS coverage, DOS target, stockout risk, forecast accuracy, composite, health tier | 42 |
 | `test_inv_planning_health.py` | `api/routers/inventory/inv_planning_health.py` — health summary, detail, heatmap endpoints | 12 |
-| `test_exception_generation.py` | `scripts/generate_replenishment_exceptions.py` — detect_exception_type, compute_recommendation pure functions | 19 |
+| `test_exception_generation.py` | `scripts/inventory/generate_replenishment_exceptions.py` — detect_exception_type, compute_recommendation pure functions | 19 |
 | `test_inv_planning_exceptions.py` | `api/routers/inventory/inv_planning_exceptions.py` — exception list, summary, acknowledge, status, generate endpoints | 13 |
 | `test_fill_rate.py` | `api/routers/operations/fill_rate.py` — fill rate summary, trend, detail endpoints | varies |
 | `test_inv_planning_demand_signals.py` | `api/routers/inventory/inv_planning_demand_signals.py` — demand signals summary, list, item endpoints | varies |
-| `test_demand_signals.py` | `scripts/compute_demand_signals.py` — demand signal computation pure functions | varies |
+| `test_demand_signals.py` | `scripts/inventory/compute_demand_signals.py` — demand signal computation pure functions | varies |
 | `test_inv_planning_simulation.py` | `api/routers/inventory/inv_planning_simulation.py` — simulation run, results, compare, status endpoints | varies |
 | `test_inv_planning_abc_xyz.py` | `api/routers/inventory/inv_planning_abc_xyz.py` — ABC-XYZ matrix, summary, detail endpoints | varies |
-| `test_abc_xyz_classification.py` | `scripts/classify_abc_xyz.py` — ABC-XYZ classification logic | varies |
+| `test_abc_xyz_classification.py` | `scripts/inventory/classify_abc_xyz.py` — ABC-XYZ classification logic | varies |
 | `test_inv_planning_supplier.py` | `api/routers/inventory/inv_planning_supplier.py` — supplier performance summary, detail, items endpoints | varies |
 | `test_inv_planning_investment.py` | `api/routers/inventory/inv_planning_investment.py` — investment efficient-frontier, summary, detail, plan endpoints | varies |
-| `test_investment_plan.py` | `scripts/compute_investment_plan.py` — investment plan computation logic | varies |
+| `test_investment_plan.py` | `scripts/inventory/compute_investment_plan.py` — investment plan computation logic | varies |
 | `test_inv_planning_intramonth.py` | `api/routers/inventory/inv_planning_intramonth.py` — intramonth stockout summary, detail, daily endpoints | varies |
 | `test_control_tower.py` | `api/routers/operations/control_tower.py` — control tower kpis, alerts, top-critical, trend endpoints | varies |
 | `test_ai_planner.py` | `common/ai/ai_planner.py` — tool functions, agent loop, dry-run mode | 18 |
@@ -1876,7 +1881,7 @@ setup-all                     # Everything: data + ML + planning + ops (~4-6 hou
 ├── setup-backtest            # features → backtest-all → champion-all
 │   └── setup-features        # setup-data (normalize-all + load-all) → features-compute → cluster/lt/abc-xyz/demand-signals
 ├── setup-inv-planning        # SS, EOQ, policies, exceptions, health, fill rate, supplier, investment, rebalancing
-├── setup-demand-planning     # production forecasts, projections, POs, quantile, consensus, planned orders, bias, blended, service level, echelon
+├── setup-demand-planning     # production forecasts, projections, POs, consensus, planned orders, bias, blended, service level, echelon
 └── setup-ops                 # S&OP, events, financial plan, storyboard, scenarios, DQ
 
 setup-data        # Data only (~30 min)
@@ -1903,10 +1908,35 @@ A capability-level summary of what the platform does. (Architecture/data-flow de
 
 **Production Forecast Panel:** immutable run→production workflow. Generate
 allocates and returns one `source_run_id`; normal champion generation preserves
-all routed source models inside that coherent `release_candidate`. The UI polls
-for that exact run and enables Promote only when it is ready and eligible.
+all routed source models inside that coherent `release_candidate`. Generation
+requires the synchronized `fact_sales_monthly_original` mirror through the
+latest closed month and derives the
+full eligible population independently of the winners artifact. Eligibility is
+resolved at `(item_id, customer_group, loc)` grain; an item/location is
+published only when every active customer group satisfies the applicable
+history floor. Generation
+uses latest-as-of routing, fills uncovered eligible DFUs with an explicit
+LightGBM route, and rejects MSTL routes below its 25-month history contract. The
+UI polls for that exact run and enables Promote only when it is ready and eligible.
 Promotion requires the same id—there is no ambiguous "latest staging" or bypass
-path. Frontend `src/tabs/forecast/`; specs 24 and 34.
+path. Pre-contract ready candidates are invalidated by `sql/206`; new champion
+experiments are constrained to the canonical five by `sql/205`. Run all five
+backtests and champion selection before every publish. Frontend
+`src/tabs/forecast/`; specs 24 and 34.
+
+Forecast artifact lineage rejects an empty/stale mirror and any latest sales
+audit produced by the legacy `safe_upsert` path. The canonical sales loader
+replaces current and immutable-original facts together; mirror row count must
+match the accepted batch and mirror `MAX(load_ts)` must be at or after batch
+`started_at`. Recovery is one `make normalize-sales && make load-sales`, then a
+fresh model refresh/publish cycle.
+
+Before generation, `forecast-publish` final-refits the three persisted families:
+LightGBM uses the atomic all-cluster `production_tree` bundle, while N-HiTS and
+N-BEATS use immutable global neural artifacts. MSTL and Chronos 2E infer
+directly. The same publish workflow freezes exactly three WAPE-ranked snapshot
+contenders; promotion archives the outgoing champion plus those three series at
+lags 0 through 5 before replacing production.
 
 **Forecast Release Readiness and Transactional Promotion:** the Command Center
 verifies the active planning-month release across one fixed, full-grain
@@ -1923,7 +1953,7 @@ The transaction re-evaluates quality from the exact experiment-stamped
 historical champion rows but does not stamp a candidate WAPE on forward rows
 without actuals. The champion experiment and post-release scorecard remain the
 review surfaces. API
-`/forecast-release/readiness`; migration `sql/203`; policy in
+`/forecast-release/readiness`; migrations `sql/203`, `sql/205`, and `sql/206`; policy in
 `champion.release_readiness`; spec
 `docs/specs/02-forecasting/34-forecast-release-readiness.md`.
 
@@ -1969,7 +1999,7 @@ Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBA
 
 APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Persisted `job_schedule` rows are **re-registered into APScheduler at API boot** (`restore_schedules()`), and config-declared defaults (`config/platform/jobs_config.yaml`) are guaranteed via `ensure_default_schedules()` — the nightly `refresh_all_mvs` staleness safety net ships enabled. Workflows → Workflow Library provides live progress, kill controls, schedules, logs, and cross-tab completion alerts.
 
-**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `inventory-refresh`, and `full-refresh`. The publish pipeline has no leading archive step because the required outgoing archive is inside the promotion transaction. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
+**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `inventory-refresh`, and `full-refresh`. `model-refresh` finishes with `governed_champion_refresh`: it binds the current five loaded backtest runs to identical sales/cluster lineage, creates a champion experiment, and atomically swaps audited champion facts plus both promotion flags only after the experiment succeeds. The publish pipeline has no leading archive step because the required outgoing archive is inside the promotion transaction. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
 
 **AI-verified operational planning:** `common/ai/workflow_planner/` evaluates
 input changes and database readiness, then asks GPT to verify and explain the

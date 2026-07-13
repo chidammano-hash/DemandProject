@@ -6,9 +6,9 @@ Verifies that:
   - lag_mode="2" queries fact_external_forecast_monthly with lag=2
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
-import pytest
 
 
 def _mock_read_sql(expected_table: str):
@@ -50,7 +50,7 @@ class TestLoadMonthlyErrorsLagMode:
         from scripts.ml.run_champion_selection import load_monthly_errors_df
         df = load_monthly_errors_df(
             db={"host": "x", "dbname": "x", "user": "x", "password": "x"},
-            models=["lgbm_cluster", "catboost_cluster"],
+            models=["lgbm_cluster", "mstl"],
             lag_mode="all",
         )
         assert not df.empty

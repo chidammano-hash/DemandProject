@@ -53,7 +53,3 @@ demand_history:
   matrix_max_cols: 50
   workbench_default_limit: 50
   cache_ttl_seconds: 120
-  hierarchical_model_ids:
-    - bolt_hierarchical
-  top_down_model_ids:
-    - chronos_bolt

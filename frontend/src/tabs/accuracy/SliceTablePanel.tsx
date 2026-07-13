@@ -302,7 +302,7 @@ export function SliceTablePanel({
           Models (comma-separated, blank = all)
           <input
             className="h-9 w-52 rounded-md border border-input bg-background px-3 text-sm"
-            placeholder="e.g. lgbm_global,external"
+            placeholder="e.g. lgbm_cluster,nhits"
             value={sliceModels}
             onChange={onSliceModelsChange}
             disabled={loadingSlice}

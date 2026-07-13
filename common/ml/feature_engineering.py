@@ -1,7 +1,7 @@
 """Shared feature engineering for the LightGBM backtest model.
 
 Builds the full (sku_ck x month) feature matrix with lag, rolling, calendar,
-and attribute features. Used by all tree-based backtest scripts.
+and attribute features. Used by LightGBM and covariate-enriched adapters.
 
 Feature groups (in build order):
   1. Lag + rolling (qty_lag_*, rolling_mean_*, rolling_std_*)
@@ -15,6 +15,7 @@ Feature groups (in build order):
 
 import logging
 import time
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -32,8 +33,22 @@ from common.core.constants import (
     ROLLING_WINDOWS,
     TS_PROFILE_FEATURES,
 )
+from common.core.utils import load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _ts_profile_lookback_months() -> int:
+    """Return the configured training/serving TS-profile history window."""
+    pipeline = load_forecast_pipeline_config()
+    production = pipeline.get("production_forecast")
+    if not isinstance(production, dict) or "lookback_months" not in production:
+        raise ValueError("production_forecast.lookback_months must be configured")
+    lookback_months = int(production["lookback_months"])
+    if lookback_months <= 0:
+        raise ValueError("production_forecast.lookback_months must be positive")
+    return lookback_months
 
 
 def _recompute_derived_features(df: pd.DataFrame) -> None:
@@ -228,7 +243,11 @@ def _compute_ts_profile_features(
     cutoff: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     """Compute canonical per-DFU demand profiles, optionally before a cutoff."""
-    source = grid.loc[grid["startdate"] <= cutoff] if cutoff is not None else grid
+    profile_end = pd.Timestamp(cutoff if cutoff is not None else grid["startdate"].max())
+    profile_start = profile_end - pd.DateOffset(months=_ts_profile_lookback_months() - 1)
+    source = grid.loc[
+        (grid["startdate"] >= profile_start) & (grid["startdate"] <= profile_end)
+    ]
     profiles: dict[str, list[float]] = {column: [] for column in TS_PROFILE_FEATURES}
     sku_cks: list[object] = []
 

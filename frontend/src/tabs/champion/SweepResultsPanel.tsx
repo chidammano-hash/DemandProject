@@ -2,23 +2,21 @@
  * SweepResultsPanel — leaderboard + per-segment winner map for a champion sweep.
  *
  * Two views: a global-ranked leaderboard (with gate-eligibility badges) and a
- * per-segment winner map with a "composite vs. best global" headline. Promote
- * the recommended winner via the existing Stage-1 promotion. See spec 30.
+ * per-segment winner map with a "composite vs. best global" headline. Sweep
+ * recommendations are analysis-only; governed model-refresh owns promotion.
  */
 import { useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Crown, Layers } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Layers } from "lucide-react";
 
 import {
   championSweepKeys,
   fetchChampionSweep,
   fetchSweepLeaderboard,
   fetchSweepSegments,
-  promoteSweepWinner,
   type ChampionSweep,
 } from "@/api/queries";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -28,7 +26,6 @@ const fmtPct = (v: number | null | undefined) => (v == null ? "--" : `${Number(v
 const fmtScore = (v: number | null | undefined) => (v == null ? "--" : Number(v).toFixed(2));
 
 export function SweepResultsPanel({ sweepId }: { sweepId: number }) {
-  const qc = useQueryClient();
   const running = (s?: ChampionSweep) => s?.status === "queued" || s?.status === "running";
 
   const { data: sweep } = useQuery({
@@ -47,12 +44,7 @@ export function SweepResultsPanel({ sweepId }: { sweepId: number }) {
     enabled: sweep?.status === "completed" && sweep?.mode !== "global",
   });
 
-  const promote = useMutation({
-    mutationFn: () => promoteSweepWinner(sweepId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: championSweepKeys.detail(sweepId) }),
-  });
-
-  const members = lb?.members ?? [];
+  const members = useMemo(() => lb?.members ?? [], [lb]);
   const recommendedId = sweep?.recommended_experiment_id ?? null;
   const compositeMember = members.find((m) => m.is_composite) ?? null;
   const bestGlobal = useMemo(
@@ -77,27 +69,18 @@ export function SweepResultsPanel({ sweepId }: { sweepId: number }) {
             ) : null}
           </div>
           {sweep.status === "completed" && recommendedId != null ? (
-            <div className="flex items-center gap-2">
+            <div className="text-right">
               <span className="text-xs text-muted-foreground">
                 Recommended #{recommendedId} · score {fmtScore(sweep.recommended_score)}
                 {sweep.recommended_gate_eligible ? "" : " · gate ✗"}
               </span>
-              <Button
-                size="sm"
-                disabled={!sweep.recommended_gate_eligible || promote.isPending}
-                onClick={() => promote.mutate()}
-                title={sweep.recommended_gate_eligible ? "Promote the recommended config" : "Recommendation did not pass the promote gate"}
-              >
-                <Crown className="mr-1 h-3.5 w-3.5" />
-                {promote.isPending ? "Promoting…" : "Promote winner"}
-              </Button>
+              <div className="text-[11px] text-muted-foreground">
+                Analysis only · production promotion runs through model-refresh
+              </div>
             </div>
           ) : null}
         </CardContent>
       </Card>
-      {promote.isError ? (
-        <div className="text-xs text-red-500">{(promote.error as Error).message}</div>
-      ) : null}
 
       {/* Composite vs best global headline */}
       {sweep.status === "completed" && compositeMember && bestGlobal ? (

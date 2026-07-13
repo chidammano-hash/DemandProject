@@ -25,17 +25,24 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.ml.expert_panel.statistical_upgrades import run_statistical_upgrades
-from common.core.db import get_db_params
-from common.core.planning_date import get_planning_date
-from common.ml.backtest_framework import (
+from common.core.db import get_db_params  # noqa: E402 — after CLI path bootstrap
+from common.core.planning_date import get_planning_date  # noqa: E402 — after CLI path bootstrap
+from common.ml.backtest_framework import (  # noqa: E402 — after CLI path bootstrap
     BacktestCheckpointer,
     generate_timeframes,
     load_backtest_data,
     postprocess_predictions,
     save_backtest_output,
 )
-from common.services.perf_profiler import profiled_section
+from common.ml.backtest_config import (  # noqa: E402 — after CLI path bootstrap
+    BACKTEST_CONFIG_METADATA_KEY,
+    build_backtest_config_snapshot,
+)
+from common.ml.monthly_history import (  # noqa: E402 — after CLI path bootstrap
+    select_bounded_history,
+)
+from common.ml.mstl import run_mstl  # noqa: E402 — after CLI path bootstrap
+from common.services.perf_profiler import profiled_section  # noqa: E402 — after CLI path bootstrap
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +63,8 @@ def main() -> None:
         help="Override output directory (default: data/backtest from config)",
     )
     parser.add_argument(
-        "--workers", type=int, default=8,
-        help="Parallel workers for per-DFU fitting (default: 8)",
+        "--workers", type=int, default=None,
+        help="Override configured parallel workers for per-DFU fitting",
     )
     parser.add_argument(
         "--resume", action="store_true",
@@ -81,33 +88,37 @@ def main() -> None:
             from common.core.utils import load_forecast_pipeline_config
             cfg = load_forecast_pipeline_config()
 
-        algo_entry = cfg.get("algorithms", {}).get(CONFIG_KEY, {})
-        # Support pipeline config format (params sub-dict) or flat legacy format
-        mstl_cfg = algo_entry.get("params", algo_entry)
-        if not algo_entry.get("enabled", True):
+        backtest_config_snapshot = build_backtest_config_snapshot(cfg, MODEL_ID)
+
+        algo_entry = cfg["algorithms"][CONFIG_KEY]
+        mstl_cfg = algo_entry["params"]
+        if not algo_entry["enabled"]:
             logger.info("MSTL is disabled in config; exiting")
             return
 
-        backtest_cfg = cfg.get("backtest", {})
-        n_timeframes = backtest_cfg.get("n_timeframes", 10)
-        embargo_months = backtest_cfg.get("embargo_months", 0)
+        backtest_cfg = cfg["backtest"]
+        history_lookback_months = int(cfg["production_forecast"]["lookback_months"])
+        n_timeframes = int(backtest_cfg["n_timeframes"])
+        embargo_months = int(backtest_cfg["embargo_months"])
 
         output_dir = (
             Path(args.output_dir) if args.output_dir
-            else ROOT / backtest_cfg.get("output_dir", "data/backtest")
+            else ROOT / backtest_cfg["output_dir"]
         )
 
-        model_id = algo_entry.get("model_id", mstl_cfg.get("model_id", MODEL_ID))
+        model_id = MODEL_ID
         mstl_params = {
-            "season_length": mstl_cfg.get("season_length", 12),
-            "min_history": mstl_cfg.get("min_history", 25),
+            "season_length": int(mstl_cfg["season_length"]),
+            "min_history": int(mstl_cfg["min_history"]),
+            "num_workers": int(mstl_cfg["num_workers"]),
         }
+        n_workers = args.workers if args.workers is not None else mstl_params["num_workers"]
 
     logger.info(
         "MSTL backtest config: model_id=%s, n_timeframes=%d, "
         "embargo_months=%d, workers=%d, season_length=%d",
         model_id, n_timeframes, embargo_months,
-        args.workers, mstl_params["season_length"],
+        n_workers, mstl_params["season_length"],
     )
 
     # ── Step 1: Load data ───────────────────────────────────────────────────
@@ -179,7 +190,7 @@ def main() -> None:
     # ── Step 3: Run MSTL per timeframe ──────────────────────────────────────
     logger.info(
         "Step 3: Running MSTL inference across %d timeframes (%d workers)...",
-        len(timeframes), args.workers,
+        len(timeframes), n_workers,
     )
     all_predictions: list[pd.DataFrame] = []
     all_predictions.extend(ckpt.load_all_existing())
@@ -205,7 +216,11 @@ def main() -> None:
             logger.info("  No predict months -- skipping")
             continue
 
-        train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
+        train_sales = select_bounded_history(
+            sales_df,
+            history_end=train_end,
+            lookback_months=history_lookback_months,
+        )
         if train_sales.empty:
             logger.info("  No training data -- skipping")
             continue
@@ -220,11 +235,12 @@ def main() -> None:
         )
 
         with profiled_section(f"mstl_tf_{label}"):
-            preds = run_statistical_upgrades(
+            preds = run_mstl(
                 train_sales[["sku_ck", "startdate", "qty"]],
                 predict_months,
-                {"mstl": mstl_params},
-                n_workers=args.workers,
+                season_length=mstl_params["season_length"],
+                min_history=mstl_params["min_history"],
+                n_workers=n_workers,
             )
 
         if preds.empty:
@@ -292,6 +308,10 @@ def main() -> None:
                 "model_type": "statistical_upgrade",
                 "architecture": "mstl",
                 "per_dfu": True,
+                "history_lookback_months": history_lookback_months,
+                BACKTEST_CONFIG_METADATA_KEY: {
+                    model_id: backtest_config_snapshot.as_metadata()
+                },
             },
             dfu_cohort_map=dfu_cohort_map,
         )

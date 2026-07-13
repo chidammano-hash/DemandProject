@@ -156,7 +156,6 @@ export function RunHistoryTable({
                   const isBaseline = baselineId === run.run_id;
                   const isCandidate = candidateId === run.run_id;
                   const isSelected = isBaseline || isCandidate;
-                  const runRecord = run as Record<string, unknown>;
                   return (
                     <TableRow
                       key={run.run_id}
@@ -187,12 +186,12 @@ export function RunHistoryTable({
                           {run.is_promoted && (
                             <Crown className="shrink-0 h-3 w-3 text-amber-500" />
                           )}
-                          {runRecord.is_results_promoted === true && (
+                          {run.is_results_promoted === true && (
                             <Database className="shrink-0 h-3 w-3 text-blue-500" />
                           )}
-                          {runRecord.cluster_source === "experimental" && (
+                          {run.cluster_source === "experimental" && (
                             <span className="shrink-0 px-1.5 py-0 text-[9px] font-medium rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
-                              Exp #{String(runRecord.cluster_experiment_id ?? "?")}
+                              Exp #{String(run.cluster_experiment_id ?? "?")}
                             </span>
                           )}
                         </div>

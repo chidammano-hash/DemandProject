@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `common/services/metrics.py`, `api/routers/forecasting/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx`, `sql/011_create_accuracy_slice_views.sql`, `sql/011_create_accuracy_slice_views.sql` |
+| **Key Files** | `common/services/metrics.py`, `api/routers/forecasting/accuracy.py`, `frontend/src/tabs/AggregateAnalysisTab.tsx`, `sql/011_create_accuracy_slice_views.sql` |
 
 ---
 
@@ -93,7 +93,6 @@ No dedicated config file. Accuracy formulas are defined in `common/services/metr
 
 Beyond point accuracy (WAPE / bias / accuracy%), the platform ships:
 
-- **CRPS + pinball loss** — `common/ml/crps.py` (`compute_crps`, `compute_pinball_loss`); selectable as the champion-selection metric via `champion.metric` in `forecast_pipeline_config.yaml` (currently `wape`; falls back to WAPE until quantile rows are guaranteed).
 - **FM quantile → safety-stock bridge** — `common/ml/fm_quantile_bridge.py` turns foundation-model quantile output into a demand distribution for downstream safety stock.
 - **Weekly granularity + rolling 13-week view** — `agg_sales_weekly` (`sql/150`) plus a rolling-13-week analytics endpoint.
 

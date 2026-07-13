@@ -406,6 +406,18 @@ export function ItemAnalysisTab() {
     return skuData.models;
   }, [skuData]);
 
+  // A selected item/location can aggregate multiple customer groups. Pass the
+  // DFU grain to SHAP only when it is unambiguous; the API returns a useful 422
+  // for ambiguous selections instead of silently choosing the first group.
+  const shapCustomerGroups = new Set(
+    (skuData?.dfu_attributes ?? [])
+      .map((attrs) => attrs.customer_group?.trim())
+      .filter((group): group is string => Boolean(group)),
+  );
+  const shapCustomerGroup = shapCustomerGroups.size === 1
+    ? shapCustomerGroups.values().next().value
+    : undefined;
+
   function handleReset() {
     setSkuData(null);
     setSkuAutoSampled(false);
@@ -602,6 +614,7 @@ export function ItemAnalysisTab() {
                     selectedModel={selectedModel}
                     itemNo={debouncedSkuItem}
                     loc={debouncedSkuLocation}
+                    customerGroup={shapCustomerGroup}
                     skuMode="item_location"
                     visibleMonths={mergedFilteredSeries.map((p) => String(p.month))}
                   />

@@ -655,14 +655,11 @@ SHAP
 Bias
 Performance KPIs
 Model
-bolt_hierarchical
-chronos_bolt
-external
+chronos2_enriched
 lgbm_cluster
 mstl
 nbeats
 nhits
-seasonal_naive
 1mo
 3mo
 6mo
@@ -719,14 +716,11 @@ Category	Forecast	Actual
 2026-02	2246252	2111356
 Accuracy Heatmap
 Model
-bolt_hierarchical
-chronos_bolt
-external
+chronos2_enriched
 lgbm_cluster
 mstl
 nbeats
 nhits
-seasonal_naive
 Rows
 Category
 Brand
@@ -860,7 +854,7 @@ Lag 4
 69%
 72%
 75%
-bolt_hierarchicalchronos_boltlgbm_clustermstlnbeatsnhitsseasonal_naive
+chronos2_enrichedlgbm_clustermstlnbeatsnhits
 
 
 ### Demand History (?tab=demandHistory)  [loaded]
@@ -3191,12 +3185,11 @@ Ordered
 external
 S
 STAGING −
-Chronos Bolt
+Chronos 2E
 LightGBM
 MSTL
 N-BEATS
 N-HiTS
-Seasonal Naive
 SUPPLY +
 On Hand
 (u)

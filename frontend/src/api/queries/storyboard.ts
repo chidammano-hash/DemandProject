@@ -3,7 +3,7 @@ import type {
   StoryboardSummary,
   PlannerDecision,
 } from "@/types/storyboard";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------
@@ -11,7 +11,8 @@ import { buildSearchParams } from "./helpers";
 // ---------------------------------------------------------------------------
 export const storyboardKeys = {
   summary: () => ["sb-summary"] as const,
-  list: (params: Record<string, unknown>) => ["sb-list", params] as const,
+  lists: () => ["sb-list"] as const,
+  list: (params: Record<string, unknown>) => [...storyboardKeys.lists(), params] as const,
   detail: (id: string) => ["sb-detail", id] as const,
 };
 

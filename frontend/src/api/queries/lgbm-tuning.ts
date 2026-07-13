@@ -1,5 +1,3 @@
-import { STALE } from "./core";
-
 // --- Query keys ---
 export const lgbmTuningKeys = {
   runs: (params?: { limit?: number; status?: string }) => ["lgbm-tuning-runs", params] as const,
@@ -30,6 +28,8 @@ export interface TuningRun {
   is_results_promoted?: boolean;
   results_promoted_at?: string | null;
   results_promote_job_id?: string | null;
+  cluster_source?: "production" | "experimental";
+  cluster_experiment_id?: number | null;
 }
 
 export interface PromoteResponse {

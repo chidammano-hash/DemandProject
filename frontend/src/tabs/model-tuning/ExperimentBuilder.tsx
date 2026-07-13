@@ -1,7 +1,7 @@
 /**
  * ExperimentBuilder -- Full-screen dialog for configuring and launching a new
  * tuning experiment. Features template radio buttons (production baseline,
- * 4 expert templates, custom), a hyperparameter form with Value/Default/Delta
+ * 4 curated templates, custom), a hyperparameter form with Value/Default/Delta
  * columns, training config section, validation with inline errors, and launch
  * with loading state.
  */
@@ -27,6 +27,8 @@ import {
   submitSampledLgbmExperiment,
   submitModelExperiment,
   type ClusterExperiment,
+  type CreateExperimentResponse,
+  type CreateSampledExperimentResponse,
 } from "@/api/queries";
 
 import {
@@ -69,7 +71,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
   const paramSpecs = useMemo(() => getParamSpecs(model), [model]);
   const defaults = useMemo(() => getDefaults(model), [model]);
 
-  const [selectedTemplate, setSelectedTemplate] = useState<string>("production");
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("production_baseline");
   const [runLabel, setRunLabel] = useState("");
   const [notes, setNotes] = useState("");
   const [params, setParams] = useState<Record<string, unknown>>({ ...defaults });
@@ -95,7 +97,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
   useEffect(() => {
     const d = getDefaults(model);
     setParams({ ...d });
-    setSelectedTemplate("production");
+    setSelectedTemplate("production_baseline");
     setRunLabel("");
     setNotes("");
     setErrors([]);
@@ -115,7 +117,7 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
       if (tmpl) {
         setParams({ ...tmpl.params });
         setConfig({ ...tmpl.config });
-        if (templateId !== "custom" && templateId !== "production") {
+        if (templateId !== "custom" && templateId !== "production_baseline") {
           setRunLabel(tmpl.label);
         }
       }
@@ -132,7 +134,11 @@ export function ExperimentBuilder({ model, open, onClose, onSubmitted }: Experim
   }, []);
 
   // Submit mutation
-  const submitMut = useMutation({
+  const submitMut = useMutation<
+    CreateExperimentResponse | CreateSampledExperimentResponse,
+    Error,
+    void
+  >({
     mutationFn: () => {
       if (executionMode === "quick") {
         return submitSampledLgbmExperiment({

@@ -328,66 +328,19 @@ class TestTrainPredict:
         preds = clf.predict(X_test)
         assert len(preds) == len(X_test)
 
-    def test_xgboost_classifier_uses_registry_params(self, monkeypatch):
-        """XGBoost meta-learner goes through model_registry with configured params."""
+    def test_unsupported_classifier_is_rejected(self):
         from scripts.ml import train_meta_learner as module
 
-        X_train = pd.DataFrame({"a": [0.0, 1.0, 2.0, 3.0]})
-        y_train = pd.Series(["A", "B", "A", "B"])
-        X_test = pd.DataFrame({"a": [4.0, 5.0]})
-        y_test = pd.Series(["A", "B"])
-        captured: dict[str, object] = {}
+        assert set(module._CLASSIFIER_PARAM_KEYS) == {"random_forest"}
 
-        class FakeClassifier:
-            def predict(self, X):
-                return np.array([0] * len(X))
-
-        fake_classifier = FakeClassifier()
-
-        def fake_build_tree_classifier(model_name, params):
-            captured["model_name"] = model_name
-            captured["params"] = params
-            return fake_classifier
-
-        def fake_fit_tree_classifier(model, model_name, X, y):
-            captured["fit_model"] = model
-            captured["fit_name"] = model_name
-            captured["fit_rows"] = len(X)
-            captured["encoded_labels"] = set(y.tolist())
-
-        monkeypatch.setattr(module, "build_tree_classifier", fake_build_tree_classifier)
-        monkeypatch.setattr(module, "fit_tree_classifier", fake_fit_tree_classifier)
-
-        clf, accuracy, report = module.train_classifier(
-            X_train,
-            y_train,
-            X_test,
-            y_test,
-            model_type="xgboost",
-            n_estimators=11,
-            max_depth=3,
-            learning_rate=0.2,
-            random_state=7,
-            n_jobs=1,
-            eval_metric="mlogloss",
-        )
-
-        assert clf is fake_classifier
-        assert captured["model_name"] == "xgboost"
-        assert captured["params"] == {
-            "n_estimators": 11,
-            "max_depth": 3,
-            "learning_rate": 0.2,
-            "random_state": 7,
-            "n_jobs": 1,
-            "eval_metric": "mlogloss",
-        }
-        assert captured["fit_model"] is fake_classifier
-        assert captured["fit_name"] == "xgboost"
-        assert captured["fit_rows"] == len(X_train)
-        assert captured["encoded_labels"] == {0, 1}
-        assert 0.0 <= accuracy <= 1.0
-        assert isinstance(report, dict)
+        with pytest.raises(ValueError, match="random_forest"):
+            module.train_classifier(
+                pd.DataFrame({"a": [0.0, 1.0]}),
+                pd.Series(["A", "B"]),
+                pd.DataFrame({"a": [2.0]}),
+                pd.Series(["A"]),
+                model_type="retired_classifier",
+            )
 
     def test_missing_classifier_config_fails_loud(self, monkeypatch):
         from scripts.ml import train_meta_learner as module

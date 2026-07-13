@@ -9,6 +9,7 @@ const createChampionSweep = vi.fn().mockResolvedValue({
 });
 
 vi.mock("@/api/queries", () => ({
+  championExperimentKeys: { templates: () => ["champion-templates"] },
   championSweepKeys: { all: ["champion-sweeps"] },
   createChampionSweep: (...a: unknown[]) => createChampionSweep(...a),
   fetchChampionTemplates: vi.fn().mockResolvedValue({
@@ -25,10 +26,12 @@ vi.mock("@/api/queries/unified-model-tuning", () => ({
   fetchPipelineConfig: vi.fn().mockResolvedValue({
     algorithms: {
       lgbm_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
+      nhits: { type: "deep_learning", enabled: true, compete: true, forecast: true },
       nbeats: { type: "deep_learning", enabled: true, compete: false, forecast: true },
       chronos2_enriched: { type: "foundation", enabled: true, compete: true, forecast: true },
+      catboost_cluster: { type: "tree", enabled: true, compete: true, forecast: true },
     },
-    champion: { models: ["lgbm_cluster", "chronos2_enriched"] },
+    champion: { models: ["lgbm_cluster", "chronos2_enriched", "catboost_cluster"] },
   }),
 }));
 
@@ -50,6 +53,7 @@ describe("SweepBuilder", () => {
     // Config-driven model roster (labels via model-labels).
     expect(await screen.findByText("LightGBM")).toBeDefined();
     expect(screen.getByText("Chronos 2E")).toBeDefined();
+    expect(screen.queryByText("Catboost Cluster")).toBeNull();
     expect(screen.getByText("Mode")).toBeDefined();
     expect(screen.getByText("Segment axis")).toBeDefined();
     expect(screen.getByText("Objective")).toBeDefined();
@@ -57,8 +61,10 @@ describe("SweepBuilder", () => {
 
   it("offers model-subset presets", async () => {
     renderBuilder();
-    expect(await screen.findByText(/All tree \(1\)/)).toBeDefined();
-    expect(screen.getByText(/All foundation \(1\)/)).toBeDefined();
+    expect(await screen.findByText(/N-HiTS \+ N-BEATS \(2\)/)).toBeDefined();
+    expect(screen.getByText(/LightGBM \+ Chronos 2E \(2\)/)).toBeDefined();
+    expect(screen.queryByText(/All tree/)).toBeNull();
+    expect(screen.queryByText(/All foundation/)).toBeNull();
   });
 
   it("candidate count = number of templates (model subset doesn't multiply)", async () => {

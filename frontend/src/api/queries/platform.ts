@@ -3,7 +3,8 @@
  * Covers: auth, data quality, notifications, collaboration, FVA, reports, webhooks.
  */
 
-import { fetchJson } from "./core";
+import { getAccessToken } from "../authSession";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Auth (08-02)
@@ -14,7 +15,7 @@ export interface UserProfile { user_id: string; email: string; display_name: str
 export interface AuditEntry { audit_id: number; user_id: string | null; email: string | null; display_name: string | null; action: string; resource_type: string; resource_id: string; old_value: Record<string, unknown> | null; new_value: Record<string, unknown> | null; created_at: string | null; }
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("ds_access_token");
+  const token = getAccessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -213,6 +214,53 @@ export interface FVASnapshotMonth {
   last_refresh_at: string | null;
 }
 
+export interface FVAWaterfallStage {
+  stage_id: string;
+  label: string;
+  description?: string;
+  accuracy_pct: number | null;
+  delta_vs_prev: number | null;
+  state: "actual" | "missing" | "planned";
+  n_rows?: number;
+}
+
+export interface FVAWaterfallPayload {
+  months: number;
+  waterfall: {
+    stages: FVAWaterfallStage[];
+    benchmark: FVAWaterfallStage | null;
+    external: Record<string, unknown> | null;
+    champion: Record<string, unknown> | null;
+    ceiling: Record<string, unknown> | null;
+    models: Array<Record<string, unknown>>;
+  };
+}
+
+export interface FVAIntervention {
+  intervention_id: number;
+  user_id: string | null;
+  intervention_type: string;
+  resource_type: string;
+  resource_id: string;
+  metric_before: number | null;
+  metric_after: number | null;
+  financial_impact_estimate: number | null;
+  actual_financial_impact: number | null;
+  measurement_window_start: string | null;
+  measurement_window_end: string | null;
+  status: string;
+  created_at: string | null;
+}
+
+export interface FVAROISummary {
+  months: number;
+  total_interventions: number;
+  measured: number;
+  pending: number;
+  total_estimated_impact: number;
+  total_actual_impact: number;
+}
+
 export const fvaKeys = {
   waterfall: (m: number) => ["fva", "waterfall", m],
   interventions: ["fva", "interventions"],
@@ -221,13 +269,16 @@ export const fvaKeys = {
   snapshotAccuracy: (recordMonth: string) => ["fva", "snapshot", recordMonth],
 } as const;
 
-export const fetchFVAWaterfall = async (months = 12) =>
+export const fetchFVAWaterfall = async (months = 12): Promise<FVAWaterfallPayload> =>
   fetchJson(`/fva/waterfall?months=${months}`);
 
-export const fetchFVAInterventions = async (limit = 50, offset = 0) =>
+export const fetchFVAInterventions = async (
+  limit = 50,
+  offset = 0,
+): Promise<{ total: number; interventions: FVAIntervention[] }> =>
   fetchJson(`/fva/interventions?limit=${limit}&offset=${offset}`);
 
-export const fetchFVAROI = async (months = 12) =>
+export const fetchFVAROI = async (months = 12): Promise<FVAROISummary> =>
   fetchJson(`/fva/roi-summary?months=${months}`);
 
 export const fetchFVASnapshotMonths = async (): Promise<{ months: FVASnapshotMonth[] }> =>

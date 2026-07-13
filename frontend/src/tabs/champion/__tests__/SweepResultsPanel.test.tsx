@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import { TestQueryWrapper } from "@/tabs/__tests__/test-utils";
 import { SweepResultsPanel } from "../SweepResultsPanel";
@@ -64,11 +64,10 @@ describe("SweepResultsPanel", () => {
     expect(screen.getByText("intermittent")).toBeDefined();
   });
 
-  it("promote winner is enabled and fires when gate-eligible", async () => {
+  it("keeps sweep recommendations read-only", async () => {
     renderPanel();
-    const btn = await screen.findByRole("button", { name: /Promote winner/ });
-    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(btn);
-    await waitFor(() => expect(promoteSweepWinner).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByText(/Recommended #7/)).toBeDefined());
+    expect(screen.queryByRole("button", { name: /Promote winner/ })).toBeNull();
+    expect(promoteSweepWinner).not.toHaveBeenCalled();
   });
 });

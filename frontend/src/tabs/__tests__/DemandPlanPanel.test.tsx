@@ -14,7 +14,7 @@ vi.mock("../../api/queries", () => ({
         plan_version: "2026-04-01_production",
         plan_date: "2026-04-01",
         plan_label: "production",
-        model_id: "lgbm_quantile_cluster",
+        model_id: "lgbm_cluster",
         horizon_months: 12,
         sku_count: 4823,
         status: "active",
@@ -123,6 +123,8 @@ describe("DemandPlanPanel", () => {
       </TestQueryWrapper>
     );
     expect(screen.getByText(/Enter an item and location/i)).toBeDefined();
+    expect(screen.queryByText(/make demand-plan-compute/i)).toBeNull();
+    expect(screen.queryByText(/make quantile-train/i)).toBeNull();
   });
 
   it("renders demand plan table after submitting", async () => {

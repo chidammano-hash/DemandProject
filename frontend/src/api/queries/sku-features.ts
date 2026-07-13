@@ -11,7 +11,7 @@
  */
 
 import { buildQuerySuffix } from "./helpers";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Core types

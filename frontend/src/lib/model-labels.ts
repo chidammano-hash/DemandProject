@@ -1,5 +1,21 @@
 /** Shared display constants for models and strategies. */
 
+export const FORECAST_MODEL_IDS = [
+  "lgbm_cluster",
+  "nhits",
+  "nbeats",
+  "mstl",
+  "chronos2_enriched",
+] as const;
+
+export type ForecastModelId = (typeof FORECAST_MODEL_IDS)[number];
+
+const FORECAST_MODEL_ID_SET = new Set<string>(FORECAST_MODEL_IDS);
+
+export function isForecastModelId(id: string): id is ForecastModelId {
+  return FORECAST_MODEL_ID_SET.has(id);
+}
+
 export const MODEL_LABELS: Record<string, string> = {
   lgbm_cluster: "LightGBM",
   chronos2_enriched: "Chronos 2E",

@@ -37,6 +37,7 @@ function makeContextValue(overrides: Partial<GlobalFilterContextValue> = {}): Gl
     setFilters: vi.fn(),
     resetFilters: vi.fn(),
     hasActiveFilters: false,
+    planningDate: null,
     ...overrides,
   };
 }

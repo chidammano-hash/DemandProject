@@ -2,7 +2,7 @@
  * BacktestDetailPanel -- detail view for non-tunable models showing
  * current KPIs, run/load actions, and run history table.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, Database, CheckCircle2, Clock, XCircle, Loader2 } from "lucide-react";
 
@@ -181,7 +181,7 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
         <KpiCard label="DFUs" value={nDfus != null ? formatInt(nDfus) : "--"} size="md" />
       </div>
 
-      {/* Backtest config (tree models only) */}
+      {/* LightGBM-only backtest configuration. */}
       <BacktestConfigPanel modelId={modelId} />
 
       {/* Action buttons */}

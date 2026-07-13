@@ -25,6 +25,10 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
 from common.core.planning_date import get_planning_date
+from common.services.forecast_generation import (
+    GENERATOR_CONTRACT_METADATA_KEY,
+    GENERATOR_CONTRACT_VERSION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +389,7 @@ async def get_staging_forecasts(
                         FROM forecast_generation_run generation
                         WHERE generation_purpose = 'release_candidate'
                           AND run_status IN ('ready', 'promoted')
+                          AND metadata ->> %s = %s
                     )
                     SELECT generation.requested_model_id,
                            staging.model_id AS source_model_id,
@@ -401,7 +406,14 @@ async def get_staging_forecasts(
                     WHERE generation.run_rank = 1
                       AND staging.item_id = %s AND staging.loc = %s
                     ORDER BY generation.requested_model_id, staging.forecast_month
-                """, (item_id, loc))
+                """,
+                    (
+                        GENERATOR_CONTRACT_METADATA_KEY,
+                        GENERATOR_CONTRACT_VERSION,
+                        item_id,
+                        loc,
+                    ),
+                )
                 rows = cur.fetchall()
             except psycopg.Error:  # staging schema may not exist yet
                 logger.exception("Failed to read immutable staging forecasts")

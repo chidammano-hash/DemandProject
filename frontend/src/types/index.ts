@@ -40,6 +40,17 @@ export type SkuClustersPayload = {
   clusters: ClusterInfo[];
 };
 
+export type ClusterProfile = {
+  cluster_id: number;
+  label: string;
+  mean_demand: number;
+  cv_demand: number;
+  seasonality_strength: number;
+  trend_slope: number;
+  growth_rate: number;
+  zero_demand_pct: number;
+};
+
 export type ClusterProfilesPayload = {
   profiles: ClusterProfile[];
   metadata: {
@@ -162,6 +173,12 @@ export type ErrorContributorsPayload = {
   source: string;
 };
 
+export type MarketIntelSearchResult = {
+  title: string;
+  link: string;
+  snippet: string;
+};
+
 export type MarketIntelPayload = {
   item_id: string;
   location_id: string;
@@ -184,6 +201,12 @@ export type SkuAnalysisKpis = {
   sum_forecast: number;
   sum_actual: number;
   months_covered: number;
+};
+
+export type SkuModelMonthly = {
+  month: string;
+  forecast: number;
+  actual: number;
 };
 
 export type SkuAnalysisPayload = {

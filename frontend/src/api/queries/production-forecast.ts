@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // F1.1 — Production Forecast (future-period ML predictions)
@@ -38,23 +38,24 @@ export interface ProductionForecastPayload {
 
 export interface ProductionForecastAbcRow {
   abc_class: string;
-  sku_count: number;
+  dfu_count: number;
   forecast_qty: number;
 }
 
 export interface ProductionForecastSummaryPayload {
   plan_version: string | null;
   horizon_months: number;
-  total_sku_count: number;
+  total_dfu_count: number;
   total_forecast_qty: number;
   generated_at: string | null;
   by_abc_class: ProductionForecastAbcRow[];
+  ci_coverage_pct: number;
+  avg_ci_width: number | null;
 }
 
 export interface ProductionForecastVersion {
   plan_version: string;
-  sku_count?: number;
-  dfu_count?: number;
+  dfu_count: number;
   total_rows: number;
   generated_at: string | null;
 }

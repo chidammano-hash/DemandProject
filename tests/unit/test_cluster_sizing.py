@@ -50,19 +50,26 @@ class TestComputeMinClusterRows:
 
     def test_reads_config_when_spf_is_none(self):
         """When samples_per_feature is None, should read from forecast_pipeline_config.yaml."""
-        mock_cfg = {"clustering": {"samples_per_feature": 5}}
+        mock_cfg = {"clustering": {"cluster_sizing": {"samples_per_feature": 5}}}
         with patch("common.core.utils.load_forecast_pipeline_config", return_value=mock_cfg):
             result = compute_min_cluster_rows(20)
             # 20 * 5 * 1.25 = 125
             assert result == 125
 
-    def test_config_fallback_default_spf(self):
-        """When config has no clustering section, should default to spf=3."""
-        mock_cfg = {}
+    @pytest.mark.parametrize(
+        "mock_cfg",
+        [
+            {},
+            {"clustering": {}},
+            {"clustering": {"samples_per_feature": 5}},
+            {"clustering": {"cluster_sizing": {}}},
+        ],
+    )
+    def test_missing_exact_config_path_fails_loud(self, mock_cfg):
+        """Cluster sizing has one required YAML path and no Python fallback."""
         with patch("common.core.utils.load_forecast_pipeline_config", return_value=mock_cfg):
-            result = compute_min_cluster_rows(66)
-            # 66 * 3 * 1.25 = 247.5 → 247
-            assert result == 247
+            with pytest.raises((KeyError, ValueError), match="samples_per_feature"):
+                compute_min_cluster_rows(66)
 
     def test_static_constant_still_available(self):
         """MIN_CLUSTER_ROWS constant should still be 50 for backward compat."""

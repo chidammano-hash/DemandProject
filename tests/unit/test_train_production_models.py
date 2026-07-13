@@ -1,9 +1,9 @@
 """Tests for production tree model training orchestration."""
 
 import json
-import pickle
 import sys
-from unittest.mock import MagicMock, patch
+from datetime import date
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 import pandas as pd
@@ -11,12 +11,31 @@ import pytest
 
 from common.core.constants import MIN_CLUSTER_ROWS
 from common.core.utils import load_forecast_pipeline_config
+from common.ml.tree_artifact_lineage import ProductionTreeArtifactLineage
+from common.ml.tree_artifacts import build_tree_artifact_spec
 
 
 class PicklableModelStub:
     """Small model double for artifact serialization tests."""
 
     feature_importances_ = [0.7, 0.3]
+
+
+def _tree_spec(label: str):
+    return build_tree_artifact_spec(
+        model_id="lgbm_cluster",
+        model_config={"algorithm": "lgbm", "clustering": {"enabled": True}},
+        lineage=ProductionTreeArtifactLineage(
+            source_sales_batch_id=91,
+            data_checksum="a" * 64,
+            history_end=date(2026, 6, 1),
+            cluster_experiment_id=17,
+            cluster_assignment_count=1,
+            cluster_assignment_checksum="b" * 64,
+        ),
+        cluster_strategy="per_cluster",
+        cluster_labels={label},
+    )
 
 
 def _make_train_df(cluster_label: str, n_rows: int) -> pd.DataFrame:
@@ -84,6 +103,7 @@ def test_train_cluster_builds_tree_model_through_registry():
                                 needs_cat_dtype_cast=False,
                                 constant_target_guard=True,
                                 backtest_cfg={},
+                                validation_fraction=0.20,
                             )
 
     assert label == "normal"
@@ -144,6 +164,7 @@ def test_train_cluster_saved_model_refits_all_history_after_early_stopping():
                                 needs_cat_dtype_cast=False,
                                 constant_target_guard=True,
                                 backtest_cfg={},
+                                validation_fraction=0.20,
                             )
 
     assert model is final_model
@@ -155,80 +176,73 @@ def test_train_cluster_saved_model_refits_all_history_after_early_stopping():
     assert len(y_all) == len(train)
 
 
-def test_train_cluster_routes_intermittent_to_seasonal_naive_artifact():
-    """Production training must deploy the same sparse-cluster fallback used in backtests."""
-    from common.ml.seasonal_naive import SeasonalNaiveModel
-    from scripts.ml.train_production_models import _train_cluster
-
-    train = _make_train_df("sparse", 60)
-    train["qty"] = [0.0 if i % 5 else 10.0 for i in range(len(train))]
-
-    with patch(
-        "scripts.ml.train_production_models.build_tree_model",
-        side_effect=AssertionError("intermittent clusters should not fit a tree"),
-    ) as build:
-        with patch("scripts.ml.train_production_models.fit_model") as fit:
-            with patch(
-                "scripts.ml.train_production_models.compute_cluster_demand_stats",
-                return_value={
-                    "mean_demand": 2.0,
-                    "cv_demand": 2.0,
-                    "zero_demand_pct": 0.8,
-                    "seasonal_amplitude": 0.0,
-                },
-            ):
-                with patch(
-                    "scripts.ml.train_production_models.resolve_cluster_params",
-                    return_value=({"n_estimators": 100}, "default"),
-                ):
-                    label, model, meta = _train_cluster(
-                        "sparse",
-                        1,
-                        1,
-                        train,
-                        ["month"],
-                        [],
-                        {"n_estimators": 100},
-                        model_name="lgbm",
-                        model_class=MagicMock,
-                        lib_module=MagicMock(),
-                        iter_param="n_estimators",
-                        needs_cat_dtype_cast=False,
-                        constant_target_guard=True,
-                        backtest_cfg={
-                            "baseline_intermittent": True,
-                            "baseline_intermittent_window": 12,
-                            "intermittent_threshold": 0.7,
-                            "lumpy_threshold": 0.3,
-                        },
-                    )
-
-    assert label == "sparse"
-    assert isinstance(model, SeasonalNaiveModel)
-    assert meta["cluster_profile"] == "seasonal_naive_baseline"
-    assert meta["demand_pattern"] == "intermittent"
-    assert meta["n_estimators_used"] == 0
-    build.assert_not_called()
-    fit.assert_not_called()
-
-
 def test_production_and_backtest_share_tree_default_params():
     """Backtest and production training must resolve identical tree params."""
     from scripts.ml.run_backtest import MODEL_REGISTRY
     from scripts.ml.train_production_models import _MODEL_LIBRARY
 
     cfg = load_forecast_pipeline_config()
-    model_ids = {
-        "lgbm": "lgbm_cluster",
-        "catboost": "catboost_cluster",
-        "xgboost": "xgboost_cluster",
-    }
+    algo_params = cfg["algorithms"]["lgbm_cluster"]["params"]
+    assert _MODEL_LIBRARY["lgbm"]["default_params_fn"](algo_params, seed=7) == (
+        MODEL_REGISTRY["lgbm"]["default_params"](algo_params, seed=7)
+    )
 
-    for model_name, model_id in model_ids.items():
-        algo_params = cfg["algorithms"][model_id]["params"]
-        assert _MODEL_LIBRARY[model_name]["default_params_fn"](algo_params, seed=7) == (
-            MODEL_REGISTRY[model_name]["default_params"](algo_params, seed=7)
+
+def test_tree_final_refit_uses_latest_closed_month_and_excludes_record_month():
+    from scripts.ml.train_production_models import _select_closed_training_history
+
+    sales = pd.DataFrame(
+        {
+            "startdate": pd.to_datetime(["2026-05-01", "2026-06-01", "2026-07-01"]),
+            "qty": [10.0, 20.0, 999.0],
+        }
+    )
+
+    closed, history_end = _select_closed_training_history(
+        sales,
+        planning_month=pd.Timestamp("2026-07-01"),
+    )
+
+    assert history_end == pd.Timestamp("2026-06-01")
+    assert closed["startdate"].max() == pd.Timestamp("2026-06-01")
+    assert 999.0 not in set(closed["qty"])
+
+
+def test_tree_final_refit_fails_when_latest_closed_month_is_missing():
+    from scripts.ml.train_production_models import _select_closed_training_history
+
+    sales = pd.DataFrame(
+        {
+            "startdate": pd.to_datetime(["2026-04-01", "2026-05-01"]),
+            "qty": [10.0, 20.0],
+        }
+    )
+
+    with pytest.raises(RuntimeError, match=r"latest closed month 2026-06"):
+        _select_closed_training_history(
+            sales,
+            planning_month=pd.Timestamp("2026-07-01"),
         )
+
+
+def test_disabled_clustering_collapses_tree_final_refit_to_one_global_model():
+    from scripts.ml.train_production_models import _apply_production_cluster_strategy
+
+    training = pd.DataFrame(
+        {
+            "sku_ck": ["A", "B"],
+            "ml_cluster": ["stable", "lumpy"],
+            "qty": [10.0, 20.0],
+        }
+    )
+
+    global_training = _apply_production_cluster_strategy(
+        training,
+        clustering_enabled=False,
+    )
+
+    assert set(global_training["ml_cluster"]) == {"global"}
+    assert set(training["ml_cluster"]) == {"stable", "lumpy"}
 
 
 def test_apply_tuned_params_file_overlays_best_params_and_iterations(tmp_path):
@@ -292,11 +306,11 @@ def test_apply_tuned_params_file_accepts_legacy_base_model_name(tmp_path):
 def test_apply_tuned_params_file_rejects_wrong_model_artifact(tmp_path):
     from scripts.ml.train_production_models import _apply_tuned_params_file
 
-    params_file = tmp_path / "best_params_catboost.json"
+    params_file = tmp_path / "best_params_other_model.json"
     params_file.write_text(
         json.dumps(
             {
-                "model": "catboost_cluster",
+                "model": "other_model",
                 "best_params": {"learning_rate": 0.03},
                 "best_n_estimators": 250,
             }
@@ -313,14 +327,13 @@ def test_apply_tuned_params_file_rejects_wrong_model_artifact(tmp_path):
         )
 
 
-def test_save_training_metadata_records_params_source(tmp_path):
-    from scripts.ml.train_production_models import _save_training_metadata
+def test_build_training_metadata_records_params_source():
+    from scripts.ml.train_production_models import _build_training_metadata
 
-    _save_training_metadata(
-        out_dir=tmp_path,
-        model_id="xgboost_cluster",
+    metadata = _build_training_metadata(
+        model_id="lgbm_cluster",
         planning_date="2026-07-01",
-        params_source="tuning_file:data/tuning/best_params_xgboost.json",
+        params_source="tuning_file:data/tuning/best_params_lgbm.json",
         cluster_results={"0": {"val_wape": 12.3}},
         feature_cols_per_cluster={"0": ["month"]},
         total_rows=10,
@@ -328,18 +341,16 @@ def test_save_training_metadata_records_params_source(tmp_path):
         elapsed_seconds=1.23,
     )
 
-    metadata = json.loads((tmp_path / "training_metadata.json").read_text())
-    assert metadata["params_source"] == "tuning_file:data/tuning/best_params_xgboost.json"
+    assert metadata["params_source"] == "tuning_file:data/tuning/best_params_lgbm.json"
 
 
-def test_save_cluster_artifact_uses_meta_estimators_after_final_refit(tmp_path):
+def test_build_cluster_artifact_uses_meta_estimators_after_final_refit():
     """Final refit models may not expose best_iteration; persist selected round from meta."""
-    from scripts.ml.train_production_models import _save_cluster_artifact
+    from scripts.ml.train_production_models import _build_cluster_artifact
 
     model = PicklableModelStub()
 
-    _save_cluster_artifact(
-        out_dir=tmp_path,
+    artifact = _build_cluster_artifact(
         cluster_label="normal",
         model=model,
         feature_cols=["month", "qty_lag_1"],
@@ -351,10 +362,8 @@ def test_save_cluster_artifact_uses_meta_estimators_after_final_refit(tmp_path):
             "total_rows": 100,
             "val_wape": 12.3,
         },
+        tree_spec=_tree_spec("normal"),
     )
-
-    with open(tmp_path / "cluster_normal.pkl", "rb") as f:
-        artifact = pickle.load(f)
 
     assert artifact["n_estimators_used"] == 17
 
@@ -363,16 +372,7 @@ def test_main_all_exits_nonzero_when_any_tree_model_fails():
     """The all-model training job must not report success with missing artifacts."""
     from scripts.ml.train_production_models import main
 
-    roster = {
-        "lgbm_cluster": {"type": "tree"},
-        "catboost_cluster": {"type": "tree"},
-        "xgboost_cluster": {"type": "tree"},
-        "rolling_mean": {"type": "statistical"},
-    }
-
-    def fake_train(model_id: str) -> None:
-        if model_id == "catboost_cluster":
-            raise RuntimeError("catboost failed")
+    roster = {"lgbm_cluster": {"type": "tree"}}
 
     with patch.object(sys, "argv", ["train_production_models.py", "--all"]):
         with patch("scripts.ml.train_production_models.load_project_env"):
@@ -380,30 +380,26 @@ def test_main_all_exits_nonzero_when_any_tree_model_fails():
                 "scripts.ml.train_production_models.get_algorithm_roster", return_value=roster
             ):
                 with patch(
-                    "scripts.ml.train_production_models.train_production_model",
-                    side_effect=fake_train,
+                    "scripts.ml.train_production_models._train_model_in_subprocess",
+                    return_value=1,
                 ) as train:
                     with pytest.raises(SystemExit) as exc:
                         main()
 
     assert exc.value.code == 1
-    assert train.call_count == 3
-    assert [call.args[0] for call in train.call_args_list] == [
-        "catboost_cluster",
-        "lgbm_cluster",
-        "xgboost_cluster",
-    ]
+    train.assert_called_once_with("lgbm_cluster")
 
 
-def test_main_all_succeeds_when_all_tree_models_train():
-    """All three tree families should be attempted and a clean run should exit normally."""
+def test_main_all_trains_every_model_that_requires_a_persisted_artifact():
+    """LightGBM and both neural models require final-refit artifacts."""
     from scripts.ml.train_production_models import main
 
     roster = {
         "lgbm_cluster": {"type": "tree"},
-        "catboost_cluster": {"type": "tree"},
-        "xgboost_cluster": {"type": "tree"},
-        "seasonal_naive": {"type": "statistical"},
+        "mstl": {"type": "statistical"},
+        "nhits": {"type": "deep_learning"},
+        "nbeats": {"type": "deep_learning"},
+        "chronos2_enriched": {"type": "foundation"},
     }
 
     with patch.object(sys, "argv", ["train_production_models.py", "--all"]):
@@ -411,11 +407,10 @@ def test_main_all_succeeds_when_all_tree_models_train():
             with patch(
                 "scripts.ml.train_production_models.get_algorithm_roster", return_value=roster
             ):
-                with patch("scripts.ml.train_production_models.train_production_model") as train:
+                with patch(
+                    "scripts.ml.train_production_models._train_model_in_subprocess",
+                    return_value=0,
+                ) as train:
                     main()
 
-    assert [call.args[0] for call in train.call_args_list] == [
-        "catboost_cluster",
-        "lgbm_cluster",
-        "xgboost_cluster",
-    ]
+    assert train.call_args_list == [call("lgbm_cluster"), call("nbeats"), call("nhits")]

@@ -10,6 +10,8 @@ Produces two CSVs under data/backtest/<model_id>/:
   - backtest_predictions_all_lags.csv (lag 0-4 archive)
 """
 
+# ruff: noqa: E402 -- CLI path bootstrap precedes project imports.
+
 import importlib
 import json
 import logging
@@ -33,11 +35,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.constants import FORECAST_QTY_COL, METADATA_COLS, compute_min_cluster_rows
-from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
+from common.core.utils import get_algorithm_roster, load_config, load_forecast_pipeline_config
 from common.ml.backtest_framework import (
     compute_cluster_demand_stats,
     resolve_cluster_params,
     run_tree_backtest,
+)
+from common.ml.backtest_config import (
+    BACKTEST_CONFIG_METADATA_KEY,
+    build_backtest_config_snapshot,
 )
 from common.ml.model_registry import (
     build_tree_model,
@@ -178,6 +184,24 @@ def _import_model_class(dotted_path: str) -> type:
     return getattr(mod, class_name)
 
 
+def _merge_backtest_training_settings(
+    algo: dict[str, Any],
+    backtest_cfg: dict[str, Any],
+    root_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose pipeline-level recursive/SHAP settings to the tree runner."""
+    merged = dict(algo)
+    defaults: dict[str, object] = {
+        "recursive_noise_enabled": False,
+        "recursive_noise_pct": 0.05,
+        "recursive_lag_smooth": 0.0,
+        "shap_retrain_threshold": 0.10,
+    }
+    for key, default in defaults.items():
+        merged.setdefault(key, backtest_cfg.get(key, root_cfg.get(key, default)))
+    return merged
+
+
 # ── Single-cluster training worker (used by both sequential and parallel) ─────
 
 
@@ -198,11 +222,12 @@ def _train_single_cluster(
     constant_target_guard: bool,
     iter_param: str,
     fit_extras: dict | None = None,
-) -> tuple[str, pd.DataFrame | None, Any | None, dict | str | None]:
+) -> tuple[str, pd.DataFrame | None, Any | None, dict | None]:
     """Train a single cluster model. Returns (cluster_label, result_df, model, meta).
 
-    meta is a dict with training metadata, "fallback_needed" for small clusters,
-    or None if the cluster was skipped entirely.
+    ``meta`` is a dict with training metadata, or ``None`` when the cluster has
+    no requested prediction rows. A forecastable cluster below the fit floor is
+    rejected so no heuristic can be emitted under the LightGBM model identity.
 
     This function is self-contained with no shared mutable state, making it safe
     for use in ProcessPoolExecutor.  Accepts only picklable arguments (no lambdas
@@ -219,22 +244,15 @@ def _train_single_cluster(
         [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
     )
 
-    min_rows = compute_min_cluster_rows(len(feature_cols))
-    if len(train_c) < min_rows or len(pred_c) == 0:
-        if len(pred_c) > 0:
-            logger.info(
-                "Cluster %d/%d '%s': skipped (train=%d < %d), marking %d predictions for fallback",
-                ci,
-                n_clusters,
-                cluster_label,
-                len(train_c),
-                min_rows,
-                len(pred_c),
-            )
-            result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-            result[FORECAST_QTY_COL] = 0.0  # placeholder — overwritten by fallback
-            return cluster_label, result, None, "fallback_needed"
+    if len(pred_c) == 0:
         return cluster_label, None, None, None
+
+    min_rows = compute_min_cluster_rows(len(feature_cols))
+    if len(train_c) < min_rows:
+        raise ValueError(
+            "LightGBM has too few training rows for cluster "
+            f"{cluster_label!r}: {len(train_c)} < {min_rows}"
+        )
 
     # Sort by (startdate, sku_ck) — date-primary for time ordering, sku_ck
     # as tiebreaker for reproducible row ordering when two DFUs share a date.
@@ -416,46 +434,6 @@ def _train_single_cluster(
     return cluster_label, result, final_model, meta
 
 
-# ── Naive fallback for small clusters ─────────────────────────────────────────
-
-
-def _compute_naive_fallback(
-    train_c: pd.DataFrame,
-    pred_c: pd.DataFrame,
-) -> pd.DataFrame:
-    """Compute seasonal naive baseline for small clusters that cannot train a model.
-
-    For each prediction row, uses the historical mean demand for the same
-    calendar month from the training data.  If no matching month exists in
-    training history, falls back to the overall mean demand across all months.
-    The result is always >= 0 (legitimate zero demand is preserved).
-
-    Returns a DataFrame with columns:
-        sku_ck, item_id, customer_group, loc, startdate, basefcst_pref
-    """
-    result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-
-    if len(train_c) == 0 or "qty" not in train_c.columns:
-        result[FORECAST_QTY_COL] = 0.0
-        return result
-
-    # Extract calendar month from startdate for both train and predict
-    train_months = pd.to_datetime(train_c["startdate"]).dt.month
-    pred_months = pd.to_datetime(pred_c["startdate"]).dt.month
-
-    # Compute per-month historical mean demand
-    month_means = train_c.assign(_month=train_months).groupby("_month")["qty"].mean()
-
-    # Overall mean as fallback for months with no history
-    overall_mean = float(train_c["qty"].mean())
-
-    # Map each prediction row to its monthly mean (or overall mean)
-    fallback_values = pred_months.map(month_means).fillna(overall_mean).values
-    result[FORECAST_QTY_COL] = np.maximum(fallback_values, 0.0)
-
-    return result
-
-
 # ── Per-cluster training function ─────────────────────────────────────────────
 
 
@@ -474,7 +452,7 @@ def train_and_predict_per_cluster(
     max_workers: int = 4,
     per_cluster_feature_cols: dict[str, list[str]] | None = None,
 ) -> tuple[pd.DataFrame, dict, dict[str, dict]]:
-    """Train separate tree models per ml_cluster.
+    """Train separate LightGBM models per ``ml_cluster``.
 
     ml_cluster is a metadata column (in METADATA_COLS) — used to partition DFUs
     into per-cluster models, but excluded from feature_cols (not a model feature).
@@ -492,9 +470,21 @@ def train_and_predict_per_cluster(
     all_results: list[pd.DataFrame] = []
     models: dict = {}
     model_meta: dict[str, dict] = {}
-    fallback_clusters: list[str] = []  # clusters needing naive fallback
 
-    clusters = sorted(train_df["ml_cluster"].dropna().unique())
+    if predict_df["ml_cluster"].isna().any():
+        raise ValueError("LightGBM prediction rows contain a null cluster assignment")
+
+    train_clusters = set(train_df["ml_cluster"].dropna().unique().tolist())
+    predict_clusters = set(predict_df["ml_cluster"].unique().tolist())
+    unmatched_clusters = predict_clusters - train_clusters
+    if unmatched_clusters:
+        labels = ", ".join(sorted(str(value) for value in unmatched_clusters))
+        raise ValueError(
+            "LightGBM prediction rows have no matching training cluster: "
+            f"{labels}"
+        )
+
+    clusters = sorted(train_clusters, key=str)
     label = model_name.upper()
     n_clusters = len(clusters)
     logger.info("Training %d per-cluster %s models...", n_clusters, label)
@@ -519,13 +509,10 @@ def train_and_predict_per_cluster(
     }
 
     def _collect_result(
-        cl: str, result: pd.DataFrame | None, model: Any, meta: dict | str | None
+        cl: str, result: pd.DataFrame | None, model: Any, meta: dict | None
     ) -> None:
-        """Collect training result, separating fallback-needed clusters."""
-        if meta == "fallback_needed":
-            fallback_clusters.append(cl)
-            # Don't append the placeholder result — we'll recompute via naive fallback
-        elif result is not None:
+        """Collect one fitted cluster result."""
+        if result is not None:
             all_results.append(result)
         if model is not None:
             models[cl] = model
@@ -599,37 +586,6 @@ def train_and_predict_per_cluster(
                 **_worker_kwargs,
             )
             _collect_result(cl, result, model, meta)
-
-    # Apply naive fallback for small clusters
-    if fallback_clusters:
-        logger.info(
-            "Computing naive fallback for %d small cluster(s): %s",
-            len(fallback_clusters),
-            fallback_clusters,
-        )
-        for cl in fallback_clusters:
-            train_c = train_df[train_df["ml_cluster"] == cl]
-            pred_c = predict_df[predict_df["ml_cluster"] == cl]
-            if len(pred_c) > 0:
-                fb_result = _compute_naive_fallback(train_c, pred_c)
-                all_results.append(fb_result)
-                logger.info(
-                    "Cluster '%s': naive fallback applied to %d predictions "
-                    "(mean basefcst_pref=%.2f)",
-                    cl,
-                    len(fb_result),
-                    float(fb_result[FORECAST_QTY_COL].mean()),
-                )
-
-    no_cluster = predict_df[
-        predict_df["ml_cluster"].isna()
-        | ((predict_df["ml_cluster"] == "__unknown__") & ("__unknown__" not in models))
-    ]
-    if len(no_cluster) > 0:
-        logger.info("%d predict rows with no cluster -> zeroing", len(no_cluster))
-        result = no_cluster[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-        result[FORECAST_QTY_COL] = 0.0
-        all_results.append(result)
 
     return pd.concat(all_results, ignore_index=True), models, model_meta
 
@@ -794,7 +750,7 @@ def persist_cluster_models(
         except AttributeError:
             importance_raw = []
         importance_dict = (
-            dict(zip(cluster_features, [float(v) for v in importance_raw]))
+            dict(zip(cluster_features, [float(v) for v in importance_raw], strict=True))
             if len(importance_raw) == len(cluster_features)
             else {}
         )
@@ -831,7 +787,7 @@ def persist_cluster_models(
         except AttributeError:
             imp = []
         if len(imp) == len(cluster_features):
-            fi_dict = dict(zip(cluster_features, [float(v) for v in imp]))
+            fi_dict = dict(zip(cluster_features, [float(v) for v in imp], strict=True))
             fi_sorted = dict(sorted(fi_dict.items(), key=lambda x: x[1], reverse=True))
             with open(fi_dir / f"cluster_{cluster_label}.json", "w") as f:
                 json.dump(fi_sorted, f, indent=2)
@@ -875,7 +831,13 @@ def main() -> None:
         default=None,
         help="Path to config YAML (default: config/forecasting/forecast_pipeline_config.yaml)",
     )
-    parser.add_argument("--model-id", type=str, default=None, help="Override model_id from config")
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default=None,
+        choices=["lgbm_cluster"],
+        help="Canonical output model_id (only lgbm_cluster is supported)",
+    )
     parser.add_argument(
         "--n-timeframes", type=int, default=None, help="Override n_timeframes from config"
     )
@@ -948,6 +910,11 @@ def main() -> None:
             (section for section in _candidate_sections if section and section in _algorithm_cfg),
             _default_config_section,
         )
+        backtest_config_snapshot = build_backtest_config_snapshot(
+            cfg,
+            _selected_config_section,
+            cluster_tuning_profiles=load_config("cluster_tuning_profiles.yaml"),
+        )
         algo_entry = _algorithm_cfg.get(_selected_config_section, {})
         # Extract params sub-dict if present (pipeline config format)
         if "params" in algo_entry:
@@ -955,7 +922,6 @@ def main() -> None:
             # Merge lifecycle/meta keys the script needs
             for mk in (
                 "enabled",
-                "model_id",
                 "cluster_strategy",
                 "recursive",
                 "shap_select",
@@ -1001,20 +967,9 @@ def main() -> None:
         except FileNotFoundError:
             pass  # No pipeline config — run unconditionally
 
-        # Propagate backtest-level noise/smoothing settings into algo dict so run_tree_backtest
-        # can access them via algo_config (algo only holds the per-algorithm sub-dict).
-        algo.setdefault(
-            "recursive_noise_enabled",
-            backtest_cfg.get("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False)),
-        )
-        algo.setdefault(
-            "recursive_noise_pct",
-            backtest_cfg.get("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05)),
-        )
-        algo.setdefault(
-            "recursive_lag_smooth",
-            backtest_cfg.get("recursive_lag_smooth", cfg.get("recursive_lag_smooth", 0.0)),
-        )
+        # run_tree_backtest receives the per-algorithm mapping, so explicitly
+        # overlay the pipeline-level training contract used by this evaluation.
+        algo = _merge_backtest_training_settings(algo, backtest_cfg, cfg)
 
     # Resolve cluster override: CLI flag takes priority, then algo_config key
     cluster_override = args.cluster_override or algo.get("cluster_override_path")
@@ -1057,10 +1012,8 @@ def main() -> None:
     }
     if cluster_strategy == "global":
         _inner_train_fn = train_and_predict_global
-        default_model_id = f"{model_name}_global"
     else:
         _inner_train_fn = train_and_predict_per_cluster
-        default_model_id = f"{model_name}_cluster"
         _model_kwargs["parallel"] = args.parallel
         _model_kwargs["max_workers"] = args.workers
         if args.parallel:
@@ -1078,7 +1031,7 @@ def main() -> None:
         _model_meta_registry.update(meta)
         return result, models
 
-    model_id = args.model_id or algo.get("model_id", default_model_id)
+    model_id = registry["config_section"]
     n_timeframes = args.n_timeframes or backtest_cfg.get("n_timeframes", 10)
     output_dir = ROOT / backtest_cfg.get("output_dir", "data/backtest")
     embargo_months = backtest_cfg.get("embargo_months", 0)
@@ -1287,7 +1240,12 @@ def main() -> None:
         seed_value = seed_idx
         seed_params = {**model_params, _seed_param_key: seed_value}
 
-        seed_extra_meta: dict[str, Any] = {"params_source": params_source}
+        seed_extra_meta: dict[str, Any] = {
+            "params_source": params_source,
+            BACKTEST_CONFIG_METADATA_KEY: {
+                model_id: backtest_config_snapshot.as_metadata()
+            },
+        }
         if n_seeds > 1:
             seed_extra_meta["seed"] = seed_value
             seed_extra_meta["n_seeds"] = n_seeds

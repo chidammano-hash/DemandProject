@@ -1,8 +1,8 @@
 /**
  * ChampionExperimentsPanel — Main panel for the Champion sub-tab.
  *
- * KPI cards, experiment list table, comparison panel, log viewer,
- * and promote modal. Self-contained (not gated by model selector).
+ * KPI cards, experiment list table, comparison panel, and log viewer.
+ * Production champion mutation is reserved for the governed model-refresh flow.
  */
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +16,6 @@ import {
   Target,
   TrendingUp,
   Activity,
-  BarChart3,
   Trophy,
 } from "lucide-react";
 
@@ -47,13 +46,12 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { StatusBadge, formatDuration, timeAgo } from "@/components/shared-tuning-utils";
+import { StatusBadge, formatDuration } from "@/components/shared-tuning-utils";
 import { cn } from "@/lib/utils";
 
 import { LagFilterBar } from "@/tabs/model-tuning/LagFilterBar";
 import { ChampionExperimentBuilder } from "./ChampionExperimentBuilder";
 import { ChampionComparisonPanel } from "./ChampionComparisonPanel";
-import { ChampionPromoteModal } from "./ChampionPromoteModal";
 import { SweepBuilder } from "./SweepBuilder";
 import { SweepResultsPanel } from "./SweepResultsPanel";
 import {
@@ -87,7 +85,6 @@ const STRATEGY_SHORT: Record<string, string> = {
   per_segment: "Per-Segment",
   per_cluster: "Per-Cluster",
   seasonal: "Seasonal",
-  hybrid_meta_router: "Meta-Router",
   diverse_ensemble: "Diverse Ens.",
   uncertainty_aware: "Uncertainty",
   cascade_ensemble: "Cascade Ens.",
@@ -116,12 +113,11 @@ export function ChampionExperimentsPanel() {
   const [execLag, setExecLag] = useState<number | undefined>(undefined);
   const [showBuilder, setShowBuilder] = useState(false);
   const [showSweepBuilder, setShowSweepBuilder] = useState(false);
-  const [selectedSweepId, setSelectedSweepId] = useState<number | null>(null);
+  const [selectedSweepId] = useState<number | null>(null);
   const [baselineId, setBaselineId] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
   const [logExpId, setLogExpId] = useState<number | null>(null);
   const [logOffset, setLogOffset] = useState(0);
-  const [promoteExp, setPromoteExp] = useState<ChampionExperiment | null>(null);
 
   // Data
   const { data, isLoading, isError } = useQuery({
@@ -134,7 +130,7 @@ export function ChampionExperimentsPanel() {
     staleTime: CHAMPION_EXP_STALE.EXPERIMENTS,
   });
 
-  const experiments = data?.experiments ?? [];
+  const experiments = useMemo(() => data?.experiments ?? [], [data?.experiments]);
 
   // Sweeps — most recent first; auto-select the newest so results show after launch.
   const { data: sweepData } = useQuery({
@@ -354,10 +350,14 @@ export function ChampionExperimentsPanel() {
                             <div className="flex items-center gap-1">
                               <span className="truncate">{exp.label}</span>
                               {exp.is_promoted && (
-                                <Crown className="shrink-0 h-3 w-3 text-amber-500" title="Promoted to production" />
+                                <span title="Promoted to production">
+                                  <Crown className="shrink-0 h-3 w-3 text-amber-500" />
+                                </span>
                               )}
-                              {(exp as Record<string, unknown>).is_results_promoted === true && (
-                                <Database className="shrink-0 h-3 w-3 text-blue-500" title="Results loaded" />
+                              {exp.is_results_promoted && (
+                                <span title="Results loaded">
+                                  <Database className="shrink-0 h-3 w-3 text-blue-500" />
+                                </span>
                               )}
                             </div>
                           </TableCell>
@@ -396,17 +396,6 @@ export function ChampionExperimentsPanel() {
                               >
                                 <FileText className="h-3 w-3" />
                               </Button>
-                              {exp.status === "completed" && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6"
-                                  title="Promote"
-                                  onClick={() => setPromoteExp(exp)}
-                                >
-                                  <Crown className="h-3 w-3" />
-                                </Button>
-                              )}
                               {(exp.status === "running" || exp.status === "queued") && (
                                 <Button
                                   variant="ghost"
@@ -511,14 +500,6 @@ export function ChampionExperimentsPanel() {
         }
       />
 
-      {/* Promote modal */}
-      {promoteExp && (
-        <ChampionPromoteModal
-          experiment={promoteExp}
-          open={!!promoteExp}
-          onClose={() => setPromoteExp(null)}
-        />
-      )}
     </div>
   );
 }

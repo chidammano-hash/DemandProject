@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Inventory Planning — IPfeature7: Exception Queue & Replenishment Recommendations

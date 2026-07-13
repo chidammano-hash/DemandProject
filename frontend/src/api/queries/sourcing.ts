@@ -2,7 +2,7 @@
  * Sourcing API queries — item-location supply source mapping
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types

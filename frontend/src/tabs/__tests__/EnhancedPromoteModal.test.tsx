@@ -76,7 +76,6 @@ vi.mock("@/api/queries", () => ({
   fetchModelPromotedRun: vi.fn().mockResolvedValue({ promoted: null }),
   fetchModelExperiments: vi.fn().mockResolvedValue({ runs: [], total_count: 0 }),
   fetchModelExperimentLags: vi.fn().mockResolvedValue({ lags: [] }),
-  fetchModelComparison: vi.fn().mockResolvedValue({}),
   fetchModelTemplates: vi.fn().mockResolvedValue({ templates: [] }),
   submitModelExperiment: vi.fn().mockResolvedValue({ run_id: 1, job_id: "abc" }),
   promoteModelExperiment: vi.fn().mockResolvedValue({ success: true }),

@@ -38,7 +38,6 @@ scripts/etl/load.py
 scripts/etl/load_backtest_forecasts.py
 scripts/etl/load_customer_demand_postgres.py
 scripts/etl/load_dataset_postgres.py
-scripts/etl/load_ext_ml_forecasts.py
 scripts/etl/run_pipeline.py
 scripts/forecasting/apply_event_adjustments.py
 scripts/forecasting/compute_blended_forecast.py
@@ -49,7 +48,6 @@ scripts/inventory/run_supply_chain_scenario.py
 scripts/inventory/update_lead_time_actuals.py
 scripts/ml/generate_customer_features.py
 scripts/ml/run_clustering_scenario.py
-scripts/ml/run_expert_system_backtest.py
 scripts/ops/fix_dq_issues.py
 scripts/ops/run_sop_cycle.py
 common/core/etl_helpers.py

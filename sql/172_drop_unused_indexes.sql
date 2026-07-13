@@ -37,7 +37,6 @@ ALTER TABLE fact_sales_monthly DROP CONSTRAINT IF EXISTS fact_sales_monthly_sale
 -- fact_external_forecast_monthly. While pg_stat_user_indexes reports zero
 -- scans, the constraint IS used at write time by the ETL upsert paths:
 --
---   * scripts/etl/load_ext_ml_forecasts.py:181
 --       INSERT ... ON CONFLICT (forecast_ck, model_id) DO UPDATE SET ...
 --   * scripts/etl/load_backtest_forecasts.py:512
 --       INSERT ... ON CONFLICT (forecast_ck, model_id) DO UPDATE SET ...

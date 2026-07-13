@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Model Tuning, Champion Experiments |
-| **Key Files** | `scripts/run_champion_experiment.py`, `common/ml/backtest_framework.py`, `frontend/src/components/LagFilterBar.tsx` |
+| **Key Files** | `scripts/ml/run_champion_experiment.py`, `common/ml/backtest_framework.py`, `frontend/src/tabs/model-tuning/LagFilterBar.tsx` |
 
 ---
 
@@ -61,15 +61,13 @@ The **production-relevant** prediction for a DFU is the one where `lag == execut
 
 ### 2.1 Algorithm Experiments (Model Tuning) — CORRECT semantics
 
-**Data source:** `lgbm_tuning_lag` table, populated by `seed_production_baselines.py`
+**Data source:** `lgbm_tuning_lag`, populated from the completed tuning run's
+all-lag artifact by `tuning_tracker.register_lag_breakdowns()`.
 
 Population code:
 ```python
-# seed_production_baselines.py
-df = pd.read_csv(all_lags_path)  # all-lags archive (5 rows per DFU-month)
-for lag_val, grp in df.groupby("lag"):  # groups by forecast lag 0-4
-    metrics = _compute_accuracy(grp)
-    INSERT INTO lgbm_tuning_lag (run_id, exec_lag, ...) VALUES (...)
+# common/ml/tuning_tracker.py
+register_lag_breakdowns(run_id, all_lags_path)
 ```
 
 | UI button | DB query | What it actually shows |
@@ -133,7 +131,8 @@ Both experiment types should show the same thing when a lag button is pressed:
 
 ### 3.2 Algorithm Experiments — No changes needed
 
-The current implementation already has the correct semantics. `seed_production_baselines.py` groups the all-lags archive by `lag` (forecast lag), so `lgbm_tuning_lag WHERE exec_lag = 0` already returns all DFUs at forecast lag 0.
+The current implementation groups the real all-lags artifact by forecast `lag`,
+so `lgbm_tuning_lag WHERE exec_lag = 0` returns all DFUs at forecast lag 0.
 
 ### 3.3 Champion Experiments — Needs fix
 
@@ -250,8 +249,8 @@ CREATE TABLE champion_experiment_lag (
 |---|---|---|---|
 | 1 | `common/ml/backtest_framework.py` | Replace `expand_to_all_lags()` with `assign_natural_lags()` — computes true forecast lag from timeframe training cutoff (`lag = months(startdate - train_end) - 1`) | Done |
 | 2 | `common/ml/backtest_framework.py` | Update `postprocess_predictions()` to accept `timeframes` list and use natural lags for archive | Done |
-| 3 | `scripts/run_champion_selection.py` | Add `lag_mode="all"` support to `load_monthly_errors_df()` — queries `backtest_lag_archive`, no lag filter | Done |
-| 4 | `scripts/run_champion_experiment.py` | Load all-lags data separately for per-lag breakdown; group by `lag` column (not `execution_lag`) | Done |
+| 3 | `scripts/ml/run_champion_selection.py` | Add `lag_mode="all"` support to `load_monthly_errors_df()` — queries `backtest_lag_archive`, no lag filter | Done |
+| 4 | `scripts/ml/run_champion_experiment.py` | Load all-lags data separately for per-lag breakdown; group by `lag` column (not `execution_lag`) | Done |
 | 5 | `tests/unit/test_natural_lags.py` | 12 unit tests: verify natural lag formula, timeframe mapping, lag coverage, fcstdate, forecast_ck | Done |
 | 6 | `tests/unit/test_champion_lag_modes.py` | Unit tests: verify correct table routing and SQL per lag_mode | Done (5 tests) |
 | 7 | Re-run backtests (`make backtest-all`) | Regenerate archive CSVs with natural lags (genuinely different predictions per lag) | Manual step |

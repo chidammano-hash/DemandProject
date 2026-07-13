@@ -103,6 +103,10 @@ class TestLoadStrategies:
         with pytest.raises(ValueError, match="No strategies"):
             load_strategies(p)
 
+    def test_rejects_non_lightgbm_model(self, strategies_file):
+        with pytest.raises(ValueError, match="Only lgbm"):
+            load_strategies(strategies_file, model="retired_model")
+
 
 # ---------------------------------------------------------------------------
 # Tests: apply_overrides
@@ -272,33 +276,21 @@ class TestProductionStrategies:
         strategies = load_strategies(STRATEGIES_FILE, model="lgbm")
         assert len(strategies) == 13
 
-    def test_has_15_catboost_strategies(self):
-        from scripts.ml.auto_tune import STRATEGIES_FILE
-        strategies = load_strategies(STRATEGIES_FILE, model="catboost")
-        assert len(strategies) == 15
-
-    def test_has_15_xgboost_strategies(self):
-        from scripts.ml.auto_tune import STRATEGIES_FILE
-        strategies = load_strategies(STRATEGIES_FILE, model="xgboost")
-        assert len(strategies) == 15
-
     def test_all_have_required_fields(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
-        for model in ("lgbm", "catboost", "xgboost"):
-            strategies = load_strategies(STRATEGIES_FILE, model=model)
-            for s in strategies:
-                assert "label" in s, f"Strategy missing label: {s}"
-                assert "description" in s, f"Strategy missing description: {s}"
-                assert "overrides" in s, f"Strategy missing overrides: {s}"
-                assert isinstance(s["overrides"], dict)
-                assert len(s["overrides"]) > 0, f"Strategy has empty overrides: {s['label']}"
+        strategies = load_strategies(STRATEGIES_FILE, model="lgbm")
+        for strategy in strategies:
+            assert "label" in strategy, f"Strategy missing label: {strategy}"
+            assert "description" in strategy, f"Strategy missing description: {strategy}"
+            assert "overrides" in strategy, f"Strategy missing overrides: {strategy}"
+            assert isinstance(strategy["overrides"], dict)
+            assert strategy["overrides"], f"Strategy has empty overrides: {strategy['label']}"
 
     def test_all_labels_unique_per_model(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
-        for model in ("lgbm", "catboost", "xgboost"):
-            strategies = load_strategies(STRATEGIES_FILE, model=model)
-            labels = [s["label"] for s in strategies]
-            assert len(labels) == len(set(labels)), f"Duplicate labels for {model}: {labels}"
+        strategies = load_strategies(STRATEGIES_FILE, model="lgbm")
+        labels = [strategy["label"] for strategy in strategies]
+        assert len(labels) == len(set(labels)), f"Duplicate LightGBM labels: {labels}"
 
     def test_overrides_are_valid_lgbm_params(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE

@@ -173,8 +173,8 @@ def get_algorithm_roster(*, stage: str | None = None) -> dict[str, dict]:
     Parameters
     ----------
     stage : str, optional
-        One of ``"tune"``, ``"backtest"``, ``"compete"``, ``"forecast"``,
-        ``"expert"``.  When provided, only algorithms where
+        One of ``"tune"``, ``"backtest"``, ``"compete"``, or ``"forecast"``.
+        When provided, only algorithms where
         ``enabled=True`` AND ``<stage>=True`` are returned.
         When ``None``, returns all enabled algorithms.
     """
@@ -207,37 +207,17 @@ def is_clustering_enabled() -> bool:
 
 
 def get_algorithm_params(model_id: str) -> dict:
-    """Get hyperparameters for a model from the pipeline config.
-
-    Returns the ``params`` sub-dict for the given *model_id* from the
-    ``algorithms`` section of ``forecast_pipeline_config.yaml``.
-
-    For backward compatibility, if the algorithm entry has no ``params``
-    key, falls back to returning all non-lifecycle keys from the entry
-    (i.e., everything except type/enabled/tune/backtest/compete/forecast/
-    expert/output_dir/notes/cluster_strategy).
-    """
+    """Return one model's explicit master-config hyperparameter mapping."""
     cfg = load_forecast_pipeline_config()
-    algo = cfg.get("algorithms", {}).get(model_id, {})
+    algo = cfg.get("algorithms", {}).get(model_id)
+    if not isinstance(algo, dict):
+        raise ValueError(f"Forecast algorithm {model_id!r} is not configured")
     params = algo.get("params")
-    if params is not None:
-        return dict(params)
-    # Fallback: return all non-lifecycle keys from the entry itself
-    _lifecycle_keys = {
-        "type", "enabled", "tune", "backtest", "compete", "forecast",
-        "expert", "output_dir", "notes", "cluster_strategy",
-    }
-    return {k: v for k, v in algo.items() if k not in _lifecycle_keys}
-
-
-def get_algorithm_config_key(model_id: str) -> str:
-    """Get the config key for backward compatibility.
-
-    After consolidation of ``algorithm_config.yaml`` into
-    ``forecast_pipeline_config.yaml``, this simply returns *model_id*
-    (the pipeline algorithm ID is now the canonical key).
-    """
-    return model_id
+    if not isinstance(params, dict):
+        raise ValueError(
+            f"Forecast algorithm {model_id!r} is missing explicit params"
+        )
+    return dict(params)
 
 
 def get_pipeline_config_path() -> Path:

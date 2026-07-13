@@ -41,12 +41,21 @@ export function OrderPatterns({ filters }: Props) {
     total_demand?: number;
     total_orders?: number;
   };
-  const raw = data as
-    | { frequency_histogram?: RawFreq[]; regularity_scatter?: RawReg[]; frequency?: RawFreq[]; regularity?: RawReg[] }
-    | null
-    | undefined;
-  const freqRaw = raw?.frequency_histogram ?? raw?.frequency ?? [];
-  const regRaw = raw?.regularity_scatter ?? raw?.regularity ?? [];
+  const [freqRaw, regRaw] = useMemo(() => {
+    const raw = data as
+      | {
+          frequency_histogram?: RawFreq[];
+          regularity_scatter?: RawReg[];
+          frequency?: RawFreq[];
+          regularity?: RawReg[];
+        }
+      | null
+      | undefined;
+    return [
+      raw?.frequency_histogram ?? raw?.frequency ?? [],
+      raw?.regularity_scatter ?? raw?.regularity ?? [],
+    ] as const;
+  }, [data]);
 
   const freqData = useMemo(
     () => freqRaw.map((f) => ({ bin: f.bin ?? f.bucket ?? "", count: f.count })),
@@ -98,7 +107,7 @@ export function OrderPatterns({ filters }: Props) {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Order Patterns</CardTitle>
-          <ExportButtons panelId="order-patterns" getData={() => freqRaw as unknown as Record<string, unknown>[]} />
+          <ExportButtons panelId="order-patterns" getData={() => freqRaw} />
         </div>
         <p className="text-xs text-muted-foreground">Order frequency histogram and regularity scatter</p>
       </CardHeader>

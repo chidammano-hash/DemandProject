@@ -4,9 +4,8 @@
 (preserving `data/input/`), then run the full pipeline to a live, working product for
 planning month **2026-06**.
 
-**Scope:** every model (tree + foundation Chronos/Bolt/Chronos2/2e + DL N-BEATS/N-HiTS +
-MSTL + baselines), all optional domains (customer demand, sourcing/POs, external ML
-extracts), full product depth (forecast → promote → inventory → demand planning → ops).
+**Scope:** the canonical five-model roster (LightGBM, Chronos 2E, MSTL, N-BEATS, N-HiTS),
+optional operational domains, and the full forecast → publish → inventory workflow.
 
 > Validated against `docs/operations-manual/11-maintenance-troubleshooting.md`,
 > the `Makefile`, `config/etl_config.yaml`, `common/core/domain_specs.py`, and
@@ -52,8 +51,6 @@ command directly.
 - `*_customer_demand.csv` → customer-analytics MVs (`mv_ca_*`)
 - `sourcing.csv` → `dim_sourcing`
 - `purchase_orders.csv` → `fact_purchase_orders`
-- `df_ml_{lgbm,cat,xg,best}_l2_extract.csv` → external ML competition models (`make load-ext-all`)
-- `aws_ml_fcst_*.csv`, `combined_model_map.csv` → **unused by any loader — can be deleted**
 
 ### Optional pre-filter of raw inputs (`data/input/cleanup_input.py`)
 
@@ -78,8 +75,8 @@ Idempotent (re-running removes 0 rows). It only rewrites raw files — the DB re
 
 ```bash
 make up                                        # Postgres 16 + Redis + MLflow; also runs db-apply-sql
-uv sync --extra foundation --extra dl          # REQUIRED for Chronos (foundation) + N-BEATS/N-HiTS (dl)
-# optional: add --extra gpu --extra expert-panel
+uv sync --extra foundation --extra dl --extra statistical  # Chronos 2E, N-BEATS/N-HiTS, MSTL
+# optional: add --extra gpu
 make db-apply-sql                              # idempotent; skip if schema unchanged.
                                                # Does NOT run sql/184,185 (weekly-partition cutover) — leave excluded.
 ```
@@ -143,25 +140,21 @@ make demand-signals-all     # demand signals
 
 ```bash
 make backtest-all           # lgbm, nhits, nbeats, mstl, chronos2_enriched
-make backtest-mstl          # statistical
-make backtest-nbeats        # DL
-make backtest-nhits         # DL
-# chronos2/chronos2e ~5.5–6h EACH; nbeats/nhits add hours. Total >> 12h.
-# Alt for the tree+foundation set if RAM/GPU allows: make backtest-all-parallel (logs in data/backtest/logs/)
+# Chronos 2E is the long pole (~5.5–6h); N-BEATS/N-HiTS add hours.
+# If RAM/GPU allows: make backtest-all-parallel (logs in data/backtest/logs/)
 ```
 
-## PHASE 6 — Load all backtests + external ML models + accuracy MVs
+## PHASE 6 — Load all backtests + accuracy MVs
 
 ```bash
 make backtest-load-all-bulk # load every model under data/backtest/*/ → fact_candidate_forecast (~4x faster)
-make load-ext-all           # ext_lgbm/cat/xg/best → fact_external_forecast_monthly + backtest_lag_archive
-make refresh-accuracy-mvs   # 4 accuracy MVs — MUST run AFTER the two loads above
+make refresh-accuracy-mvs   # accuracy MVs — run after the backtest load
 ```
 
 ## PHASE 7 — Champion selection
 
 ```bash
-make champion-all           # train-meta → simulate → select; writes data/champion/dfu_assignments.csv + champion rows
+make champion-all           # train-meta → simulate → select; writes champion experiment winners + DB rows
 ```
 
 ## PHASE 8 — Production forecast + promote (plan_version = 2026-06)
@@ -179,9 +172,8 @@ curl -X POST -H "X-API-Key: $API_KEY" \
 ## PHASE 9 — Inventory planning, demand planning, operations
 
 ```bash
-make seed-baselines         # seed production baseline experiment rows (precedes inventory)
 make setup-inv-planning     # eoq, policy, ss, exceptions, fill-rate, health, supplier-perf, investment, intramonth, control-tower, rebalancing
-make setup-demand-planning  # projection, planned-orders, replplan, quantile, consensus, bias, blended, service-level, lead-time, echelon (consumes PROMOTED forecast)
+make setup-demand-planning  # projection, planned-orders, replplan, consensus, bias, blended, service-level, lead-time, echelon
 make setup-ops              # S&OP, events, financial plan, storyboard, scenarios, DQ
 ```
 
@@ -202,16 +194,15 @@ make ui                     # Vite on :5173 — open http://localhost:5173
   Phases 8–9 are the gap.
 - **Promotion has no Make target** (Phase 8 curl). For `model_id=champion` the WAPE/coverage
   gate is bypassed (`backtest_management.py:923-931`) — no `bypass_token` needed.
-- **`backtest-all` ≠ all models** — it's tree + foundation only. The DL/statistical/baseline
-  targets in Phase 5 are required for the full roster.
+- **`backtest-all` runs all five models.** Do not repeat the individual targets unless rerunning one failed model.
 - **Do NOT run `make setup-all`** for this — it re-runs `backtest-all` + `champion-all`,
   redoing the overnight Phase 5. The granular Phase 9 targets avoid that.
 - **Ignore manual §9.2 "Option B"** legacy script references (`detect_seasonality.py`, etc.) —
   those scripts were removed; `features-compute` + `cluster-all` replace them.
 - **Biggest time risk:** Phase 5 with foundation+DL is >> 12h. Run it detached/overnight.
-- **`clean-artifacts` defect (fixed 2026-06-17):** the recipe used a hardcoded list of
-  backtest model dirs (`lgbm_cluster`, `chronos`, …) that had drifted to zero overlap with
-  the current roster, so it cleaned nothing under `data/backtest/`. Left stale, Phase 6's
+- **`clean-artifacts` defect (fixed 2026-06-17):** the recipe once used a hardcoded list of
+  backtest model directories that drifted away from the active roster, so it cleaned nothing
+  under `data/backtest/`. Left stale, Phase 6's
   `backtest-load-all-bulk` (loads every `data/backtest/*/`) would re-ingest last run's
   predictions and corrupt champion selection. Now globs `rm -rf data/backtest/*`.
 - **`db-truncate-data` derived-table gaps (fixed 2026-06-17/18):** the truncate block cleared

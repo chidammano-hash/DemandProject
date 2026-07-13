@@ -168,10 +168,16 @@ function ImportanceChart({
               borderRadius: "8px",
               fontSize: "12px",
             }}
-            formatter={(value: number, _name: string, entry: { payload: { fullName: string; category: string } }) => [
-              formatFixed(value, 4),
-              `${entry.payload.fullName} (${entry.payload.category})`,
-            ]}
+            formatter={(value: number, _name: string, item) => {
+              const payload = item.payload as
+                | { fullName?: string; category?: string }
+                | undefined;
+              const label = payload?.fullName ?? "Feature";
+              return [
+                formatFixed(value, 4),
+                payload?.category ? `${label} (${payload.category})` : label,
+              ];
+            }}
           />
           <Bar dataKey="shap_value" radius={[0, 4, 4, 0]} name="SHAP">
             {chartData.map((entry, idx) => (
@@ -188,6 +194,11 @@ function ImportanceChart({
 // 2. Feature Stability Table
 // ---------------------------------------------------------------------------
 function StabilityTable({ features }: { features: FeatureStabilityRow[] }) {
+  const sorted = useMemo(
+    () => [...features].sort((a, b) => a.mean_rank - b.mean_rank),
+    [features],
+  );
+
   if (features.length === 0) {
     return (
       <p className="text-sm text-muted-foreground text-center py-8">
@@ -195,11 +206,6 @@ function StabilityTable({ features }: { features: FeatureStabilityRow[] }) {
       </p>
     );
   }
-
-  const sorted = useMemo(
-    () => [...features].sort((a, b) => a.mean_rank - b.mean_rank),
-    [features],
-  );
 
   return (
     <div className="overflow-x-auto">
@@ -397,10 +403,10 @@ function PerClusterSection() {
                   borderRadius: "8px",
                   fontSize: "12px",
                 }}
-                formatter={(value: number, _name: string, entry: { payload: { fullName: string } }) => [
-                  formatFixed(value, 4),
-                  entry.payload.fullName,
-                ]}
+                formatter={(value: number, _name: string, item) => {
+                  const payload = item.payload as { fullName?: string } | undefined;
+                  return [formatFixed(value, 4), payload?.fullName ?? "Feature"];
+                }}
               />
               <Bar dataKey="shap_value" fill={trendColors[1]} radius={[0, 4, 4, 0]} name="SHAP" />
             </BarChart>
@@ -467,7 +473,7 @@ export function FeatureLabPanel() {
 
   const features = importanceData?.features ?? [];
   const stabilityRows = stabilityData?.features ?? [];
-  const categories = categoriesData?.categories ?? [];
+  const categories = useMemo(() => categoriesData?.categories ?? [], [categoriesData]);
   const catColorMap = useMemo(
     () => new Map(categories.map((c) => [c.category, c.color])),
     [categories],

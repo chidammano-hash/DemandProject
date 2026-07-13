@@ -17,7 +17,7 @@
 The Model Tuning Studio has a single "Promote" action that writes hyperparameters to `forecast_pipeline_config.yaml`. But backtest predictions from tuning experiments are never loaded into PostgreSQL, so:
 
 1. UI accuracy screens (Aggregate Analysis, Item Analysis, accuracy portfolio) cannot see the tuned model's accuracy — they query `fact_external_forecast_monthly`
-2. Champion selection (`scripts/run_champion_selection.py`) cannot compare the tuned model vs others — it reads from `fact_external_forecast_monthly`
+2. Champion selection (`scripts/ml/run_champion_selection.py`) cannot compare the tuned model vs others — it reads from `fact_external_forecast_monthly`
 3. `backtest_lag_archive` doesn't have the new predictions for lag-curve analysis
 
 ## Solution

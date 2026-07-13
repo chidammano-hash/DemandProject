@@ -63,7 +63,7 @@ _SAMPLE_METADATA = {
 _SAMPLE_PARAMS = {
     "run_id": 42,
     "model": "lgbm",
-    "config_path": "/tmp/tuning_test/algorithm_config_test.yaml",
+    "config_path": "/tmp/tuning_test/forecast_pipeline_config.yaml",
     "run_label": "test_experiment",
 }
 
@@ -248,7 +248,10 @@ def test_job_inserts_cluster_breakdowns(
     mock_get_conn.return_value = mock_conn
 
     # Patch Path.exists to return True for the predictions file
-    with patch.object(Path, "exists", return_value=True):
+    with (
+        patch.object(Path, "exists", return_value=True),
+        patch("common.ml.tuning_tracker.register_lag_breakdowns"),
+    ):
         _run_model_tuning_experiment(
             params=_SAMPLE_PARAMS.copy(),
             progress_cb=None,
@@ -445,13 +448,8 @@ def test_job_logs_streamed(
 
 
 # ===========================================================================
-# Bonus: Verify different model types use correct output directories
+# Bonus: Verify the retained model uses its canonical output directory
 # ===========================================================================
-@pytest.mark.parametrize("model,expected_dir", [
-    ("lgbm", "lgbm_cluster"),
-    ("catboost", "catboost_cluster"),
-    ("xgboost", "xgboost_cluster"),
-])
 @patch("common.services.job_state._cleanup_temp_config")
 @patch("common.ml.tuning_tracker.register_cluster_month_breakdowns")
 @patch("common.ml.tuning_tracker.register_timeframes")
@@ -461,13 +459,14 @@ def test_job_logs_streamed(
 def test_job_model_output_directory(
     mock_get_conn, mock_subprocess, mock_complete, mock_timeframes,
     mock_cluster, mock_cleanup,
-    model, expected_dir,
 ):
-    """Each model type uses the correct output directory for metadata lookup."""
+    """LightGBM uses the canonical cluster output directory."""
     from common.services.job_state import _run_model_tuning_experiment
 
     mock_conn, _ = _make_mock_conn()
     mock_get_conn.return_value = mock_conn
+    model = "lgbm"
+    expected_dir = "lgbm_cluster"
 
     params = {
         "run_id": 99,

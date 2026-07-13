@@ -22,15 +22,13 @@ Pipeline configuration was fragmented across 4 separate YAML files, each governi
 | `config/lgbm_tuning_config.yaml` | Tuning run tracking, backup dir, comparison thresholds | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `tracking` section. |
 | `config/production_forecast_config.yaml` | Production forecast horizon, CI bands, model registry, scheduler | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `production_forecast` section. |
 | `config/backtest_sampling_config.yaml` | DFU sampling for backtests | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `backtest_sampling` section. |
-| `config/model_tuning_config.yaml` | Unused -- was never loaded by any script | Deleted. |
-| `config/baseline_seeding.yaml` | Unused -- was never loaded by any script | Deleted. |
 | `config/fva_config.yaml` | Unused -- was never loaded by any script | Deleted. |
 | `config/reporting_config.yaml` | Unused -- was never loaded by any script | Deleted. |
 | `config/demand_signals_external_config.yaml` | Unused -- was never loaded by any script | Deleted. |
 
 ## Solution
 
-A single master config file (`config/forecasting/forecast_pipeline_config.yaml`) consolidates all pipeline settings. It introduces a new `algorithms` section -- a master roster of all 12 algorithms with per-algorithm lifecycle flags that control which pipeline stages each algorithm participates in. Helper functions in `common/core/utils.py` provide filtered access to the roster.
+A single master config file (`config/forecasting/forecast_pipeline_config.yaml`) consolidates all pipeline settings. Its `algorithms` section is the authoritative five-model roster, with lifecycle flags controlling each pipeline stage. Helper functions in `common/core/utils.py` provide filtered access to the roster.
 
 Model-specific hyperparameters (learning_rate, n_estimators, etc.) are now inline under `algorithms.<model_id>.params` in the master config. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve them.
 
@@ -60,8 +58,7 @@ algorithms:
     tune: true        # Include in hyperparameter tuning
     backtest: true     # Include in expanding-window backtest
     compete: true      # Include in champion model selection
-    forecast: true     # Eligible for production forecast (has .pkl artifacts)
-    expert: false      # Available for expert system archetype routing
+    forecast: true     # Eligible for production via a persisted artifact or direct adapter
     params:            # Inline hyperparameters (formerly in algorithm_config.yaml)
     output_dir: data/backtest/lgbm_cluster
 ```
@@ -73,14 +70,13 @@ algorithms:
 | `tune` | `make tune-all` | Include in Bayesian hyperparameter tuning (Optuna) |
 | `backtest` | `make backtest-all` | Include in expanding-window backtest (10 timeframes) |
 | `compete` | `make champion-select` | Include in champion model selection horse race |
-| `forecast` | `make forecast-generate` | Eligible for production forecast inference (requires `.pkl` model artifacts) |
-| `expert` | Expert panel | Available for expert system archetype routing |
+| `forecast` | `make forecast-generate` | Eligible for production forecast inference |
 
 Setting `enabled: false` disables an algorithm across ALL stages.
 
 ### Cluster Strategy
 
-Tree and statistical algorithms include a `cluster_strategy` field that controls how backtesting partitions the data:
+LightGBM includes a `cluster_strategy` field that controls how backtesting partitions the data:
 
 ```yaml
 algorithms:
@@ -95,25 +91,36 @@ algorithms:
 
 | Value | Behavior |
 |---|---|
-| `per_cluster` | Train one model per `ml_cluster` value. Default for tree/statistical algorithms. |
+| `per_cluster` | Train one LightGBM model per promoted `ml_cluster` value. |
 | `global` | Train a single model on all data. Used when clustering is disabled or explicitly configured. |
 
 **Resolution order**: `forecast_pipeline_config.yaml` algorithm entry > default `"per_cluster"`.
 
 When `clustering.enabled` is `false` (see below), backtest scripts auto-fall back to `global` regardless of the per-algorithm `cluster_strategy` setting.
 
-Algorithms with `cluster_strategy`:
+The canonical configuration uses `per_cluster` for `lgbm_cluster`. The other four models run globally.
 
+### Canonical Five Models
 
-### All 10 Algorithms
+| Algorithm | Type | tune | backtest | compete | forecast | cluster_strategy |
+|---|---|---|---|---|---|---|
+| `lgbm_cluster` | tree | yes | yes | yes | yes | per_cluster |
+| `chronos2_enriched` | foundation | no | yes | yes | yes | — |
+| `mstl` | statistical | no | yes | yes | yes | — |
+| `nbeats` | deep_learning | no | yes | yes | yes | — |
+| `nhits` | deep_learning | no | yes | yes | yes | — |
 
-| Algorithm | Type | tune | backtest | compete | forecast | expert | cluster_strategy |
-|---|---|---|---|---|---|---|---|
-| `lgbm_cluster` | tree | yes | yes | yes | yes | no | per_cluster |
-| `chronos2_enriched` | foundation | no | yes | yes | yes | no | — |
-| `mstl` | statistical | no | yes | yes | yes | yes | — |
-| `nbeats` | deep_learning | no | yes | yes | yes | yes | — |
-| `nhits` | deep_learning | no | yes | yes | yes | no | — |
+Runtime hyperparameters are config-required. MSTL declares its backtest `num_workers`; N-HiTS and
+N-BEATS use `start_padding_enabled` and do not impose a second hidden history threshold. The shared
+production population uses `production_forecast` history thresholds; an adapter's explicit stricter
+contract still applies (MSTL requires its configured 25 months).
+
+The persisted-family boundary is explicit: LightGBM, N-HiTS, and N-BEATS are
+final-refit by `scripts/ml/train_production_models.py`; MSTL and Chronos 2E run
+their canonical direct adapters. LightGBM is activated only as the complete
+checksummed set rooted at `data/models/lgbm_cluster/production_tree/` with an
+atomic `active.json` pointer. Loose per-cluster pickle paths are not part of the
+configuration or runtime contract.
 
 ### Per-Algorithm Backtest Config Keys
 
@@ -173,10 +180,8 @@ algorithms:
       params_file: data/tuning/best_params_lgbm.json
 ```
 
-**What was removed:** 30+ granular Makefile targets (e.g., `backtest-lgbm-cluster-shap`,
-file replaces all of them. Five algorithm families (Prophet, StatsForecast, NeuralProphet, PatchTST,
-DeepAR) were also removed along with their Makefile targets; the algorithm roster above provides the
-best accuracy-to-maintenance ratio.
+The five-model roster replaces the prior collection of granular targets and experimental algorithm
+families. Model selection now has one maintained execution path per canonical model.
 
 ### Backtest Settings
 
@@ -455,4 +460,3 @@ All legacy config files have been deleted. The master `forecast_pipeline_config.
 
 - [Backtest Framework](./03-backtest-framework.md) -- uses `backtest` section settings
 - [Tree Models](./04-tree-models.md) -- the algorithms controlled by the per-algorithm config keys above
-- [Expert Panel](./15-expert-panel-algorithm-selection.md) -- uses `expert` lifecycle flag

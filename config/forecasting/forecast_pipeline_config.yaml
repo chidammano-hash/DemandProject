@@ -14,7 +14,6 @@ algorithms:
     backtest: true
     compete: true
     forecast: true
-    expert: false
     cluster_strategy: per_cluster
     output_dir: data/backtest/lgbm_cluster
     params:
@@ -52,13 +51,15 @@ algorithms:
     backtest: true
     compete: true
     forecast: true
-    expert: false
     output_dir: data/backtest/chronos2_enriched
     params:
       device: auto
       batch_size: 1024
       prediction_length: 6
+      min_history: 3
       num_workers: 1
+      model_name: amazon/chronos-2
+      model_revision: 29ec3766d36d6f73f0696f85560a422f50e8498c
   mstl:
     type: statistical
     enabled: true
@@ -66,11 +67,11 @@ algorithms:
     backtest: true
     compete: true
     forecast: true
-    expert: true
     output_dir: data/backtest/mstl
     params:
       season_length: 12
       min_history: 25
+      num_workers: 8
   nbeats:
     type: deep_learning
     enabled: true
@@ -78,7 +79,6 @@ algorithms:
     backtest: true
     compete: true
     forecast: true
-    expert: true
     output_dir: data/backtest/nbeats
     params:
       h: 6
@@ -88,6 +88,11 @@ algorithms:
       learning_rate: 0.001
       scaler_type: standard
       early_stop_patience_steps: -1
+      min_history: 12
+      random_seed: 42
+      start_padding_enabled: true
+      val_size: 0
+      deterministic: true
   nhits:
     type: deep_learning
     enabled: true
@@ -95,7 +100,6 @@ algorithms:
     backtest: true
     compete: true
     forecast: true
-    expert: false
     output_dir: data/backtest/nhits
     params:
       h: 6
@@ -105,6 +109,11 @@ algorithms:
       learning_rate: 0.001
       scaler_type: standard
       early_stop_patience_steps: -1
+      min_history: 12
+      random_seed: 42
+      start_padding_enabled: true
+      val_size: 0
+      deterministic: true
 backtest:
   n_timeframes: 10
   embargo_months: 0
@@ -134,9 +143,24 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: rolling
+  strategy: per_segment
   strategy_params:
-    window_months: 6
+    segment_strategy_map:
+      lumpy:
+        top_k: 2
+        strategy: ensemble
+        weight_method: equal
+        min_prior_months: 3
+      smooth:
+        top_k: 2
+        strategy: ensemble
+        weight_method: equal
+        min_prior_months: 3
+      erratic:
+        top_k: 2
+        strategy: ensemble
+        weight_method: equal
+        min_prior_months: 3
   fallback_model_id: lgbm_cluster
   metric: wape
   lag: execution
@@ -148,25 +172,21 @@ champion:
     min_wape_improvement_pct: 1.0
     min_coverage_frac: 0.8
     bypass_token: null
-  # Planner-facing post-release readiness policy. Thresholds are provisional
-  # pilot targets grounded in the documented 1401-BULK July 2026 baseline.
-  # The transactional promotion gate reuses the coverage, CI, freshness, and
-  # archive controls below for one explicit forecast_generation_run.
   release_readiness:
-    enabled: true  # Fail closed when false; disabled policy never means planner-ready.
-    lookback_months: 6  # Fixed authoritative quality window; callers cannot override it.
-    min_relative_wape_lift_vs_naive_pct: 10.0  # Relative WAPE improvement floor.
-    min_accuracy_delta_vs_external_pct_points: 0.0  # Do not trail the incumbent forecast.
-    max_abs_bias_pct: 5.0  # Absolute portfolio bias ceiling.
-    min_current_plan_coverage_frac: 0.95  # Eligible DFUs with all six release months.
-    min_common_cohort_coverage_frac: 0.95  # Valid champion rows retained in comparison.
-    min_common_cohort_closed_months: 6  # Require the entire configured evidence window.
-    min_common_cohort_dfus: 1000  # Avoid release decisions on a tiny favorable subset.
-    min_common_cohort_actual_volume: 1.0  # Metrics require positive aggregate demand.
-    min_confidence_interval_coverage_frac: 0.95  # Inventory uncertainty evidence floor.
-    require_current_cluster_lineage: true  # Active release experiment must match clusters.
-    require_fresh_sales: true  # Release generation must follow the latest sales load.
-    require_outgoing_archive: true  # Previous plan must be archived before replacement.
+    enabled: true
+    lookback_months: 6
+    min_relative_wape_lift_vs_naive_pct: 10.0
+    min_accuracy_delta_vs_external_pct_points: 0.0
+    max_abs_bias_pct: 5.0
+    min_current_plan_coverage_frac: 0.95
+    min_common_cohort_coverage_frac: 0.95
+    min_common_cohort_closed_months: 6
+    min_common_cohort_dfus: 1000
+    min_common_cohort_actual_volume: 1.0
+    min_confidence_interval_coverage_frac: 0.95
+    require_current_cluster_lineage: true
+    require_fresh_sales: true
+    require_outgoing_archive: true
   meta_learner:
     model_type: random_forest
     n_estimators: 200
@@ -175,23 +195,14 @@ champion:
     class_weight: balanced
     random_state: 42
     n_jobs: -1
-    learning_rate: 0.1
-    eval_metric: mlogloss
     test_months: 3
     performance_window: 6
-  # ═══ Candidate roster (documentation + sweep fallback default) ═══
-  # The LIVE champion selection path (competition.py, run_champion_selection.py,
-  # simulate_champion_strategies.py) derives candidates from get_competing_model_ids()
-  # — i.e. every algorithm with `compete: true` in the `algorithms` section above —
-  # NOT from this list. This list is consumed only by run_champion_sweep.py as the
-  # `default_models` fallback when a sweep grid does not override `models`. Keep it in
-  # sync with the `compete: true` roster so sweep defaults match production reality.
   models:
-  - lgbm_cluster        # tree, per-cluster (primary tree learner)
-  - nhits               # deep learning, global
-  - nbeats              # deep learning, global
-  - mstl                # statistical seasonal decomposition
-  - chronos2_enriched   # foundation model (covariate-enriched)
+  - chronos2_enriched
+  - lgbm_cluster
+  - mstl
+  - nbeats
+  - nhits
 sweep:
   max_candidates: 24
   default_objective: robust
@@ -221,6 +232,10 @@ production_forecast:
     enabled: true
     source_model_ids:
     - lgbm_cluster
+    - chronos2_enriched
+    - mstl
+    - nbeats
+    - nhits
     residual_lag: 0
     min_residual_months: 6
     z_lower: 1.282
@@ -234,10 +249,10 @@ production_forecast:
     job_type: generate_production_forecast
     cron: 0 6 2 * *
 forecast_snapshot:
-  lag_count: 6             # fixed retention window: archive lags 0 through 5 only
-  contender_count: 3       # retain champion plus exactly these ranked alternatives
-  rank_metric: wape        # latest completed, DB-loaded backtest run; lower is better
-  active_window_months: 12 # score a zero only while the DFU remains active
+  lag_count: 6
+  contender_count: 3
+  rank_metric: wape
+  active_window_months: 12
 tracking:
   backup_dir: data/backtest/tuning_archive
   auto_register: true

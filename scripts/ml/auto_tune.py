@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.core.utils import _ts
+from common.core.utils import _ts  # noqa: E402 — after CLI path bootstrap
 
 logger = logging.getLogger(__name__)
 
@@ -50,29 +50,24 @@ _MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "pipeline_key": "lgbm_cluster",
         "model_id": "lgbm_cluster",
     },
-    "catboost": {
-        "algo_section": "catboost",
-        "pipeline_key": "catboost_cluster",
-        "model_id": "catboost_cluster",
-    },
-    "xgboost": {
-        "algo_section": "xgboost",
-        "pipeline_key": "xgboost_cluster",
-        "model_id": "xgboost_cluster",
-    },
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _require_lgbm(model: str) -> None:
+    if model != "lgbm":
+        raise ValueError("Only lgbm is supported by the tuning workflow")
+
+
 def load_strategies(path: Path | None = None, model: str = "lgbm") -> list[dict[str, Any]]:
     """Load strategy definitions from YAML.
 
-    The unified ``tune_strategies.yaml`` has model-level top keys (lgbm,
-    catboost, xgboost) each containing a ``strategies`` list.  For backward
-    compatibility, if the file has a bare ``strategies`` key at the root it
-    is used directly.
+    The unified ``tune_strategies.yaml`` has a LightGBM section containing a
+    ``strategies`` list. A bare root ``strategies`` list is also accepted for
+    a custom local strategy file.
     """
+    _require_lgbm(model)
     p = path or STRATEGIES_FILE
     if not p.exists():
         raise FileNotFoundError(f"Strategy file not found: {p}")
@@ -102,6 +97,7 @@ def apply_overrides(
     model: str = "lgbm",
 ) -> dict[str, Any]:
     """Deep-copy base config and apply strategy overrides to the model section."""
+    _require_lgbm(model)
     cfg = copy.deepcopy(base_config)
     pipeline_key = _MODEL_DEFAULTS[model]["pipeline_key"]
     entry = cfg["algorithms"][pipeline_key]
@@ -154,7 +150,7 @@ def _hline(widths: list[int], left: str, mid: str, right: str) -> str:
 
 
 def _row(cells: list[str], widths: list[int]) -> str:
-    parts = [f" {c:<{w}} " for c, w in zip(cells, widths)]
+    parts = [f" {c:<{w}} " for c, w in zip(cells, widths, strict=True)]
     return _VR + _VR.join(parts) + _VR
 
 
@@ -271,6 +267,7 @@ def register_run(label: str, notes: str, model: str = "lgbm") -> int | None:
     # Fallback: query DB for latest run with this label
     try:
         import psycopg
+
         from common.core.db import get_db_params
         with psycopg.connect(**get_db_params()) as conn:
             with conn.cursor() as cur:
@@ -289,6 +286,7 @@ def register_run(label: str, notes: str, model: str = "lgbm") -> int | None:
 
 def read_metadata(model: str = "lgbm") -> dict[str, Any] | None:
     """Read backtest_metadata.json from the model's output directory."""
+    _require_lgbm(model)
     model_id = _MODEL_DEFAULTS[model]["model_id"]
     meta_path = ROOT / "data" / "backtest" / model_id / "backtest_metadata.json"
     if not meta_path.exists():
@@ -298,16 +296,12 @@ def read_metadata(model: str = "lgbm") -> dict[str, Any] | None:
 
 
 def get_baseline_accuracy(model: str = "lgbm") -> tuple[int | None, float | None]:
-    """Get the baseline (oldest completed run for THIS model) accuracy from DB.
-
-    lgbm_tuning_run is shared across lgbm/catboost/xgboost (model_id column), so the
-    baseline MUST be filtered by model_id — otherwise a catboost/xgboost candidate is
-    compared against an lgbm baseline and the promotion guard lets a worse model
-    through or blocks a better one.
-    """
+    """Get the baseline (oldest completed LightGBM run) accuracy from DB."""
+    _require_lgbm(model)
     model_id = _MODEL_DEFAULTS[model]["model_id"]
     try:
         import psycopg
+
         from common.core.db import get_db_params
         with psycopg.connect(**get_db_params()) as conn:
             with conn.cursor() as cur:
@@ -331,6 +325,7 @@ def promote_params(
     model: str = "lgbm",
 ) -> None:
     """Write the winning strategy's overrides into the production forecast_pipeline_config.yaml."""
+    _require_lgbm(model)
     p = algo_config_path or PIPELINE_CONFIG_FILE
     with open(p) as f:
         cfg = yaml.safe_load(f)
@@ -359,6 +354,7 @@ def export_best_params(
     or passed to ``run_backtest.py`` directly, and is consumed by champion
     selection and production forecast pipelines.
     """
+    _require_lgbm(model)
     pipeline_key = _MODEL_DEFAULTS[model]["pipeline_key"]
     entry = base_config["algorithms"][pipeline_key]
     # Get params from the params sub-dict or from the flat entry
@@ -368,11 +364,11 @@ def export_best_params(
     for k in ("enabled", "model_id", "cluster_strategy", "recursive",
               "shap_select", "shap_threshold", "shap_top_n", "shap_sample_size",
               "tune_inline", "params_file", "type", "tune", "backtest", "compete",
-              "forecast", "expert", "config_key", "output_dir", "notes"):
+              "forecast", "config_key", "output_dir", "notes"):
         full_params.pop(k, None)
     full_params.update(overrides)
 
-    iter_key = "iterations" if model == "catboost" else "n_estimators"
+    iter_key = "n_estimators"
     out = {
         "best_params": {k: v for k, v in full_params.items() if k != iter_key},
         f"best_{iter_key}": full_params.get(iter_key),
@@ -410,10 +406,15 @@ def cmd_list_strategies(strategies: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Auto-tune: run N strategies for any model, register, compare, and promote the best.",
+        description="Auto-tune LightGBM strategies, compare them, and promote the best.",
     )
-    parser.add_argument("--model", type=str, default="lgbm", choices=["lgbm", "catboost", "xgboost"],
-                        help="Model type to tune (default: lgbm)")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="lgbm",
+        choices=["lgbm"],
+        help="Model type to tune (LightGBM)",
+    )
     parser.add_argument("--runs", type=int, default=3,
                         help="Number of strategies to run (default: 3, max: 10)")
     parser.add_argument("--strategies-file", type=str, default=None,
@@ -463,7 +464,7 @@ def main() -> None:
             entry = cfg["algorithms"][pipeline_key]
             section = entry.get("params", entry)
             print(f"  Strategy: {s['label']}")
-            for k, v in s.get("overrides", {}).items():
+            for k in s.get("overrides", {}):
                 print(f"    {k}: {section.get(k)}")
             print()
         return

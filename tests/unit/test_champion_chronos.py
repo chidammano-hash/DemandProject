@@ -1,20 +1,19 @@
-"""Tests for champion model selection with Chronos model_id.
+"""Tests for champion model selection with Chronos2Enriched model_id.
 
 Verifies that the champion selection strategies correctly handle the
-chronos model_id alongside tree-based model_ids (lgbm_cluster, catboost_cluster, etc.).
+chronos2_enriched model_id alongside tree-based model_ids (lgbm_cluster, mstl, etc.).
 
 Tests cover:
-- Chronos model_id is included in champion competition
-- Champion selection works with mixed model_ids (tree + chronos)
-- Expanding strategy correctly picks chronos when it has lower WAPE
-- Ceiling (oracle) correctly picks chronos when it has lowest error
-- Output schema is preserved with chronos in the mix
-- Multiple strategies (rolling, decay, ensemble) work with chronos
+- Chronos2Enriched model_id is included in champion competition
+- Champion selection works with mixed model_ids (tree + chronos2_enriched)
+- Expanding strategy correctly picks chronos2_enriched when it has lower WAPE
+- Ceiling (oracle) correctly picks chronos2_enriched when it has lowest error
+- Output schema is preserved with chronos2_enriched in the mix
+- Multiple strategies (rolling, decay, ensemble) work with chronos2_enriched
 """
 
 from datetime import date
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -22,12 +21,11 @@ from common.ml.champion import (
     STRATEGY_REGISTRY,
     compute_ceiling,
     compute_strategy_accuracy,
-    strategy_expanding,
-    strategy_rolling,
     strategy_decay,
     strategy_ensemble,
+    strategy_expanding,
+    strategy_rolling,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,67 +72,67 @@ def _make_monthly_errors(
     return pd.DataFrame(rows)
 
 
-def _make_mixed_tree_chronos_errors(
+def _make_mixed_tree_chronos2_enriched_errors(
     months: list[date],
     *,
     lgbm_err: float = 10.0,
-    catboost_err: float = 15.0,
-    chronos_err: float = 8.0,
+    mstl_err: float = 15.0,
+    chronos2_enriched_err: float = 8.0,
     actual: float = 100.0,
     dfu: tuple[str, str, str] = ("ITEM1", "GRP1", "LOC1"),
 ) -> pd.DataFrame:
-    """Build monthly errors for lgbm_cluster, catboost_cluster, and chronos.
+    """Build monthly errors for lgbm_cluster, mstl, and chronos2_enriched.
 
     Each model has a consistent error magnitude across all months.
     """
     return _make_monthly_errors(
-        models=["lgbm_cluster", "catboost_cluster", "chronos"],
+        models=["lgbm_cluster", "mstl", "chronos2_enriched"],
         months=months,
         values={
             "lgbm_cluster": [(actual + lgbm_err, actual)] * len(months),
-            "catboost_cluster": [(actual + catboost_err, actual)] * len(months),
-            "chronos": [(actual + chronos_err, actual)] * len(months),
+            "mstl": [(actual + mstl_err, actual)] * len(months),
+            "chronos2_enriched": [(actual + chronos2_enriched_err, actual)] * len(months),
         },
         dfu=dfu,
     )
 
 
 # ---------------------------------------------------------------------------
-# Chronos in champion competition
+# Chronos2Enriched in champion competition
 # ---------------------------------------------------------------------------
 
 
-class TestChronosInCompetition:
-    """Verify chronos model_id participates in champion competition."""
+class TestChronos2EnrichedInCompetition:
+    """Verify chronos2_enriched model_id participates in champion competition."""
 
-    def test_chronos_included_in_expanding_competition(self):
-        """chronos should be evaluated alongside tree models in expanding strategy."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8, chronos_err=5.0, lgbm_err=20.0)
+    def test_chronos2_enriched_included_in_expanding_competition(self):
+        """chronos2_enriched should be evaluated alongside tree models in expanding strategy."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8, chronos2_enriched_err=5.0, lgbm_err=20.0)
         winners = strategy_expanding(df, min_prior_months=3)
         assert len(winners) > 0
-        # chronos has err=5, lgbm has err=20, catboost has err=15
-        # chronos should win all months
-        assert (winners["model_id"] == "chronos").all(), (
-            "chronos with lowest error should win every month"
+        # chronos2_enriched has err=5, lgbm has err=20, mstl has err=15
+        # chronos2_enriched should win all months
+        assert (winners["model_id"] == "chronos2_enriched").all(), (
+            "chronos2_enriched with lowest error should win every month"
         )
 
-    def test_chronos_included_in_rolling_competition(self):
-        """chronos should be evaluated in rolling strategy."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8, chronos_err=5.0, lgbm_err=20.0)
+    def test_chronos2_enriched_included_in_rolling_competition(self):
+        """chronos2_enriched should be evaluated in rolling strategy."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8, chronos2_enriched_err=5.0, lgbm_err=20.0)
         winners = strategy_rolling(df, window_months=4, min_prior_months=3)
         assert len(winners) > 0
-        assert (winners["model_id"] == "chronos").all()
+        assert (winners["model_id"] == "chronos2_enriched").all()
 
-    def test_chronos_included_in_decay_competition(self):
-        """chronos should be evaluated in decay strategy."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8, chronos_err=5.0, lgbm_err=20.0)
+    def test_chronos2_enriched_included_in_decay_competition(self):
+        """chronos2_enriched should be evaluated in decay strategy."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8, chronos2_enriched_err=5.0, lgbm_err=20.0)
         winners = strategy_decay(df, decay_factor=0.9, min_prior_months=3)
         assert len(winners) > 0
-        assert (winners["model_id"] == "chronos").all()
+        assert (winners["model_id"] == "chronos2_enriched").all()
 
-    def test_chronos_included_in_ensemble_competition(self):
-        """chronos should participate in ensemble strategy."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8, chronos_err=5.0, lgbm_err=20.0)
+    def test_chronos2_enriched_included_in_ensemble_competition(self):
+        """chronos2_enriched should participate in ensemble strategy."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8, chronos2_enriched_err=5.0, lgbm_err=20.0)
         winners = strategy_ensemble(df, top_k=3, min_prior_months=3)
         # ensemble blends, so model_id will be "ensemble"
         assert len(winners) > 0
@@ -147,64 +145,64 @@ class TestChronosInCompetition:
 
 
 class TestMixedModelChampion:
-    """Test champion selection with both tree and chronos predictions."""
+    """Test champion selection with both tree and chronos2_enriched predictions."""
 
-    def test_expanding_picks_chronos_when_lower_wape(self):
-        """Expanding strategy should pick chronos when it consistently has lower WAPE."""
-        df = _make_mixed_tree_chronos_errors(
+    def test_expanding_picks_chronos2_enriched_when_lower_wape(self):
+        """Expanding strategy should pick chronos2_enriched when it consistently has lower WAPE."""
+        df = _make_mixed_tree_chronos2_enriched_errors(
             MONTHS_8,
             lgbm_err=15.0,
-            catboost_err=20.0,
-            chronos_err=5.0,  # best
+            mstl_err=20.0,
+            chronos2_enriched_err=5.0,  # best
         )
         winners = strategy_expanding(df, min_prior_months=3)
         assert len(winners) > 0
-        assert (winners["model_id"] == "chronos").all()
+        assert (winners["model_id"] == "chronos2_enriched").all()
 
-    def test_expanding_picks_lgbm_when_chronos_worse(self):
-        """Expanding strategy should pick lgbm when chronos has higher WAPE."""
-        df = _make_mixed_tree_chronos_errors(
+    def test_expanding_picks_lgbm_when_chronos2_enriched_worse(self):
+        """Expanding strategy should pick lgbm when chronos2_enriched has higher WAPE."""
+        df = _make_mixed_tree_chronos2_enriched_errors(
             MONTHS_8,
             lgbm_err=5.0,     # best
-            catboost_err=20.0,
-            chronos_err=25.0,  # worst
+            mstl_err=20.0,
+            chronos2_enriched_err=25.0,  # worst
         )
         winners = strategy_expanding(df, min_prior_months=3)
         assert len(winners) > 0
         assert (winners["model_id"] == "lgbm_cluster").all()
 
-    def test_regime_change_lgbm_to_chronos(self):
-        """Rolling strategy should adapt when chronos becomes better mid-series."""
+    def test_regime_change_lgbm_to_chronos2_enriched(self):
+        """Rolling strategy should adapt when chronos2_enriched becomes better mid-series."""
         months = [date(2024, m, 1) for m in range(1, 9)]
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=months,
             values={
                 # lgbm good early (err=5), bad late (err=30)
                 "lgbm_cluster": [(105, 100)] * 4 + [(130, 100)] * 4,
-                # chronos bad early (err=25), good late (err=2)
-                "chronos": [(125, 100)] * 4 + [(102, 100)] * 4,
+                # chronos2_enriched bad early (err=25), good late (err=2)
+                "chronos2_enriched": [(125, 100)] * 4 + [(102, 100)] * 4,
             },
         )
         winners = strategy_rolling(df, window_months=3, min_prior_months=2)
         late = winners[winners["startdate"] >= pd.Timestamp("2024-07-01")]
         if len(late) > 0:
-            assert (late["model_id"] == "chronos").all(), (
-                "Rolling strategy should adapt and pick chronos after regime change"
+            assert (late["model_id"] == "chronos2_enriched").all(), (
+                "Rolling strategy should adapt and pick chronos2_enriched after regime change"
             )
 
     def test_different_dfus_different_champions(self):
         """Different DFUs should independently select different champions."""
-        # DFU1: chronos is best
-        df1 = _make_mixed_tree_chronos_errors(
+        # DFU1: chronos2_enriched is best
+        df1 = _make_mixed_tree_chronos2_enriched_errors(
             MONTHS_8,
-            lgbm_err=20.0, catboost_err=25.0, chronos_err=5.0,
+            lgbm_err=20.0, mstl_err=25.0, chronos2_enriched_err=5.0,
             dfu=("ITEM1", "GRP1", "LOC1"),
         )
         # DFU2: lgbm is best
-        df2 = _make_mixed_tree_chronos_errors(
+        df2 = _make_mixed_tree_chronos2_enriched_errors(
             MONTHS_8,
-            lgbm_err=3.0, catboost_err=25.0, chronos_err=15.0,
+            lgbm_err=3.0, mstl_err=25.0, chronos2_enriched_err=15.0,
             dfu=("ITEM2", "GRP2", "LOC2"),
         )
         df = pd.concat([df1, df2], ignore_index=True)
@@ -215,26 +213,26 @@ class TestMixedModelChampion:
 
         assert len(dfu1_winners) > 0
         assert len(dfu2_winners) > 0
-        assert (dfu1_winners["model_id"] == "chronos").all()
+        assert (dfu1_winners["model_id"] == "chronos2_enriched").all()
         assert (dfu2_winners["model_id"] == "lgbm_cluster").all()
 
 
 # ---------------------------------------------------------------------------
-# Ceiling (oracle) with chronos
+# Ceiling (oracle) with chronos2_enriched
 # ---------------------------------------------------------------------------
 
 
-class TestCeilingWithChronos:
-    """Test that compute_ceiling correctly includes chronos predictions."""
+class TestCeilingWithChronos2Enriched:
+    """Test that compute_ceiling correctly includes chronos2_enriched predictions."""
 
-    def test_ceiling_picks_chronos_for_best_month(self):
-        """Ceiling should pick chronos when it has lowest error for a given month."""
+    def test_ceiling_picks_chronos2_enriched_for_best_month(self):
+        """Ceiling should pick chronos2_enriched when it has lowest error for a given month."""
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=[date(2024, 1, 1), date(2024, 2, 1)],
             values={
                 "lgbm_cluster": [(105, 100), (120, 100)],  # err=5, err=20
-                "chronos": [(110, 100), (102, 100)],        # err=10, err=2
+                "chronos2_enriched": [(110, 100), (102, 100)],        # err=10, err=2
             },
         )
         ceiling = compute_ceiling(df)
@@ -244,28 +242,28 @@ class TestCeilingWithChronos:
         feb = ceiling[ceiling["startdate"] == pd.Timestamp("2024-02-01")]
 
         assert jan.iloc[0]["model_id"] == "lgbm_cluster"  # err=5 < 10
-        assert feb.iloc[0]["model_id"] == "chronos"        # err=2 < 20
+        assert feb.iloc[0]["model_id"] == "chronos2_enriched"        # err=2 < 20
 
-    def test_ceiling_chronos_always_wins(self):
-        """When chronos is consistently best, ceiling should always pick it."""
-        df = _make_mixed_tree_chronos_errors(
-            MONTHS_8, lgbm_err=15.0, catboost_err=20.0, chronos_err=3.0,
+    def test_ceiling_chronos2_enriched_always_wins(self):
+        """When chronos2_enriched is consistently best, ceiling should always pick it."""
+        df = _make_mixed_tree_chronos2_enriched_errors(
+            MONTHS_8, lgbm_err=15.0, mstl_err=20.0, chronos2_enriched_err=3.0,
         )
         ceiling = compute_ceiling(df)
         assert len(ceiling) == len(MONTHS_8)
-        assert (ceiling["model_id"] == "chronos").all()
+        assert (ceiling["model_id"] == "chronos2_enriched").all()
 
 
 # ---------------------------------------------------------------------------
-# Strategy accuracy with chronos
+# Strategy accuracy with chronos2_enriched
 # ---------------------------------------------------------------------------
 
 
-class TestStrategyAccuracyWithChronos:
-    """Test that accuracy metrics work correctly with chronos predictions."""
+class TestStrategyAccuracyWithChronos2Enriched:
+    """Test that accuracy metrics work correctly with chronos2_enriched predictions."""
 
-    def test_accuracy_with_chronos_winner(self):
-        """Accuracy computation should work when all winners are chronos."""
+    def test_accuracy_with_chronos2_enriched_winner(self):
+        """Accuracy computation should work when all winners are chronos2_enriched."""
         winners = pd.DataFrame({
             "basefcst_pref": [108.0, 95.0],
             "tothist_dmd": [100.0, 100.0],
@@ -277,15 +275,15 @@ class TestStrategyAccuracyWithChronos:
         assert result["n_dfu_months"] == 2
 
     def test_mixed_model_winners_accuracy(self):
-        """Accuracy works when some months are won by chronos, others by lgbm."""
+        """Accuracy works when some months are won by chronos2_enriched, others by lgbm."""
         # Month 1: lgbm wins (fcst=105, actual=100)
-        # Month 2: chronos wins (fcst=102, actual=100)
+        # Month 2: chronos2_enriched wins (fcst=102, actual=100)
         winners = pd.DataFrame({
             "item_id": ["ITEM1", "ITEM1"],
             "customer_group": ["GRP1", "GRP1"],
             "loc": ["LOC1", "LOC1"],
             "startdate": [pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01")],
-            "model_id": ["lgbm_cluster", "chronos"],
+            "model_id": ["lgbm_cluster", "chronos2_enriched"],
             "prior_wape": [0.05, 0.02],
             "basefcst_pref": [105.0, 102.0],
             "tothist_dmd": [100.0, 100.0],
@@ -296,71 +294,71 @@ class TestStrategyAccuracyWithChronos:
 
 
 # ---------------------------------------------------------------------------
-# Output schema with chronos
+# Output schema with chronos2_enriched
 # ---------------------------------------------------------------------------
 
 
-class TestOutputSchemaWithChronos:
-    """Verify output schema is preserved when chronos is in the competition."""
+class TestOutputSchemaWithChronos2Enriched:
+    """Verify output schema is preserved when chronos2_enriched is in the competition."""
 
-    def test_expanding_output_columns_with_chronos(self):
-        """All required output columns present when chronos participates."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8)
+    def test_expanding_output_columns_with_chronos2_enriched(self):
+        """All required output columns present when chronos2_enriched participates."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8)
         winners = strategy_expanding(df, min_prior_months=3)
         if len(winners) > 0:
             assert _REQUIRED_OUTPUT_COLS.issubset(set(winners.columns))
 
-    def test_rolling_output_columns_with_chronos(self):
-        """Rolling strategy output schema preserved with chronos."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8)
+    def test_rolling_output_columns_with_chronos2_enriched(self):
+        """Rolling strategy output schema preserved with chronos2_enriched."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8)
         winners = strategy_rolling(df, window_months=4, min_prior_months=3)
         if len(winners) > 0:
             assert _REQUIRED_OUTPUT_COLS.issubset(set(winners.columns))
 
-    def test_decay_output_columns_with_chronos(self):
-        """Decay strategy output schema preserved with chronos."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8)
+    def test_decay_output_columns_with_chronos2_enriched(self):
+        """Decay strategy output schema preserved with chronos2_enriched."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8)
         winners = strategy_decay(df, decay_factor=0.9, min_prior_months=3)
         if len(winners) > 0:
             assert _REQUIRED_OUTPUT_COLS.issubset(set(winners.columns))
 
 
 # ---------------------------------------------------------------------------
-# Exec-lag with chronos
+# Exec-lag with chronos2_enriched
 # ---------------------------------------------------------------------------
 
 
-class TestExecLagWithChronos:
-    """Exec-lag causality still works when chronos is in the mix."""
+class TestExecLagWithChronos2Enriched:
+    """Exec-lag causality still works when chronos2_enriched is in the mix."""
 
-    def test_expanding_exec_lag_1_with_chronos(self):
+    def test_expanding_exec_lag_1_with_chronos2_enriched(self):
         """With exec_lag=1, May data is excluded from June's selection window.
 
-        Chronos is better in Jan-Apr but terrible in May.
+        Chronos2Enriched is better in Jan-Apr but terrible in May.
         lgbm is worse in Jan-Apr but perfect in May.
         Without exec-lag fix, lgbm would win June (May leaks into prior).
-        With exec-lag fix, chronos wins June (only Jan-Apr considered).
+        With exec-lag fix, chronos2_enriched wins June (only Jan-Apr considered).
         """
         months = [date(2024, m, 1) for m in range(1, 7)]
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=months,
             values={
                 #              Jan      Feb      Mar      Apr      May(leaky)  Jun
                 "lgbm_cluster": [(120,100),(120,100),(120,100),(120,100),(100,100),(110,100)],
-                "chronos":      [(105,100),(105,100),(105,100),(105,100),(200,100),(110,100)],
+                "chronos2_enriched":      [(105,100),(105,100),(105,100),(105,100),(200,100),(110,100)],
             },
             execution_lag=1,
         )
-        # Jan-Apr: chronos err=5/month, lgbm err=20/month → chronos better
-        # May: chronos err=100, lgbm err=0 → lgbm much better
-        # For June (exec_lag=1): prior = Jan-Apr only → chronos wins
+        # Jan-Apr: chronos2_enriched err=5/month, lgbm err=20/month → chronos2_enriched better
+        # May: chronos2_enriched err=100, lgbm err=0 → lgbm much better
+        # For June (exec_lag=1): prior = Jan-Apr only → chronos2_enriched wins
         winners = strategy_expanding(df, min_prior_months=3)
         june = winners[winners["startdate"] == pd.Timestamp("2024-06-01")]
         assert len(june) == 1
-        assert june.iloc[0]["model_id"] == "chronos", (
+        assert june.iloc[0]["model_id"] == "chronos2_enriched", (
             "With exec_lag=1, June selection uses Jan-Apr only (not May), "
-            "so chronos (better in Jan-Apr) should win"
+            "so chronos2_enriched (better in Jan-Apr) should win"
         )
 
 
@@ -370,36 +368,36 @@ class TestExecLagWithChronos:
 
 
 class TestMultipleModelIds:
-    """Test competition with 4+ model_ids including chronos."""
+    """Test competition with 4+ model_ids including chronos2_enriched."""
 
     def test_four_model_competition(self):
-        """lgbm, catboost, xgboost, and chronos all compete."""
+        """lgbm, mstl, nhits, and chronos2_enriched all compete."""
         months = [date(2024, m, 1) for m in range(1, 9)]
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"],
+            models=["lgbm_cluster", "mstl", "nhits", "chronos2_enriched"],
             months=months,
             values={
                 "lgbm_cluster":    [(115, 100)] * 8,  # err=15
-                "catboost_cluster": [(120, 100)] * 8,  # err=20
-                "xgboost_cluster":  [(112, 100)] * 8,  # err=12
-                "chronos":         [(103, 100)] * 8,  # err=3 (best)
+                "mstl": [(120, 100)] * 8,  # err=20
+                "nhits":  [(112, 100)] * 8,  # err=12
+                "chronos2_enriched":         [(103, 100)] * 8,  # err=3 (best)
             },
         )
         winners = strategy_expanding(df, min_prior_months=3)
         assert len(winners) > 0
-        assert (winners["model_id"] == "chronos").all()
+        assert (winners["model_id"] == "chronos2_enriched").all()
 
     def test_four_model_ceiling(self):
         """Ceiling picks per-month best across 4 models."""
         months = [date(2024, 1, 1), date(2024, 2, 1)]
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"],
+            models=["lgbm_cluster", "mstl", "nhits", "chronos2_enriched"],
             months=months,
             values={
                 "lgbm_cluster":    [(102, 100), (130, 100)],  # err=2, err=30
-                "catboost_cluster": [(110, 100), (110, 100)],  # err=10, err=10
-                "xgboost_cluster":  [(108, 100), (105, 100)],  # err=8, err=5
-                "chronos":         [(107, 100), (101, 100)],  # err=7, err=1
+                "mstl": [(110, 100), (110, 100)],  # err=10, err=10
+                "nhits":  [(108, 100), (105, 100)],  # err=8, err=5
+                "chronos2_enriched":         [(107, 100), (101, 100)],  # err=7, err=1
             },
         )
         ceiling = compute_ceiling(df)
@@ -407,26 +405,26 @@ class TestMultipleModelIds:
         jan = ceiling[ceiling["startdate"] == pd.Timestamp("2024-01-01")]
         feb = ceiling[ceiling["startdate"] == pd.Timestamp("2024-02-01")]
         assert jan.iloc[0]["model_id"] == "lgbm_cluster"  # err=2 is lowest
-        assert feb.iloc[0]["model_id"] == "chronos"        # err=1 is lowest
+        assert feb.iloc[0]["model_id"] == "chronos2_enriched"        # err=1 is lowest
 
-    def test_model_distribution_reflects_chronos_wins(self):
-        """Model win counts should include chronos when it wins DFU-months."""
-        # DFU1: chronos wins, DFU2: lgbm wins
+    def test_model_distribution_reflects_chronos2_enriched_wins(self):
+        """Model win counts should include chronos2_enriched when it wins DFU-months."""
+        # DFU1: chronos2_enriched wins, DFU2: lgbm wins
         df1 = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=MONTHS_8,
             values={
                 "lgbm_cluster": [(120, 100)] * 8,
-                "chronos": [(105, 100)] * 8,
+                "chronos2_enriched": [(105, 100)] * 8,
             },
             dfu=("ITEM1", "GRP1", "LOC1"),
         )
         df2 = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=MONTHS_8,
             values={
                 "lgbm_cluster": [(103, 100)] * 8,
-                "chronos": [(125, 100)] * 8,
+                "chronos2_enriched": [(125, 100)] * 8,
             },
             dfu=("ITEM2", "GRP2", "LOC2"),
         )
@@ -434,7 +432,7 @@ class TestMultipleModelIds:
         winners = strategy_expanding(df, min_prior_months=3)
 
         model_counts = winners["model_id"].value_counts()
-        assert "chronos" in model_counts.index
+        assert "chronos2_enriched" in model_counts.index
         assert "lgbm_cluster" in model_counts.index
 
 
@@ -443,31 +441,31 @@ class TestMultipleModelIds:
 # ---------------------------------------------------------------------------
 
 
-class TestChronosEdgeCases:
-    """Edge cases specific to chronos in champion selection."""
+class TestChronos2EnrichedEdgeCases:
+    """Edge cases specific to chronos2_enriched in champion selection."""
 
-    def test_only_chronos_and_one_tree_model(self):
-        """Competition should work with just 2 models: one tree + chronos."""
+    def test_only_chronos2_enriched_and_one_tree_model(self):
+        """Competition should work with just 2 models: one tree + chronos2_enriched."""
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=MONTHS_8,
             values={
                 "lgbm_cluster": [(115, 100)] * 8,
-                "chronos": [(108, 100)] * 8,
+                "chronos2_enriched": [(108, 100)] * 8,
             },
         )
         winners = strategy_expanding(df, min_prior_months=3)
         assert len(winners) > 0
-        assert (winners["model_id"] == "chronos").all()
+        assert (winners["model_id"] == "chronos2_enriched").all()
 
-    def test_chronos_tied_with_tree_model(self):
-        """When chronos and lgbm have identical error, a winner is still selected."""
+    def test_chronos2_enriched_tied_with_tree_model(self):
+        """When chronos2_enriched and lgbm have identical error, a winner is still selected."""
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=MONTHS_8,
             values={
                 "lgbm_cluster": [(110, 100)] * 8,  # err=10
-                "chronos": [(110, 100)] * 8,        # err=10 (tied)
+                "chronos2_enriched": [(110, 100)] * 8,        # err=10 (tied)
             },
         )
         winners = strategy_expanding(df, min_prior_months=3)
@@ -476,23 +474,23 @@ class TestChronosEdgeCases:
         for _, group in winners.groupby(["item_id", "customer_group", "loc", "startdate"]):
             assert len(group) == 1, "Exactly one winner per DFU-month, even in a tie"
 
-    def test_chronos_with_zero_error(self):
-        """chronos with perfect predictions (err=0) should always win."""
+    def test_chronos2_enriched_with_zero_error(self):
+        """chronos2_enriched with perfect predictions (err=0) should always win."""
         df = _make_monthly_errors(
-            models=["lgbm_cluster", "chronos"],
+            models=["lgbm_cluster", "chronos2_enriched"],
             months=MONTHS_8,
             values={
                 "lgbm_cluster": [(110, 100)] * 8,  # err=10
-                "chronos": [(100, 100)] * 8,        # err=0 (perfect)
+                "chronos2_enriched": [(100, 100)] * 8,        # err=0 (perfect)
             },
         )
         winners = strategy_expanding(df, min_prior_months=3)
         assert len(winners) > 0
-        assert (winners["model_id"] == "chronos").all()
+        assert (winners["model_id"] == "chronos2_enriched").all()
 
-    def test_all_strategies_handle_chronos(self):
-        """Every registered strategy should handle chronos model_id without error."""
-        df = _make_mixed_tree_chronos_errors(MONTHS_8)
+    def test_all_strategies_handle_chronos2_enriched(self):
+        """Every registered strategy should handle chronos2_enriched model_id without error."""
+        df = _make_mixed_tree_chronos2_enriched_errors(MONTHS_8)
         for name, fn in STRATEGY_REGISTRY.items():
             if name == "meta_learner":
                 continue  # meta_learner has different signature/requirements

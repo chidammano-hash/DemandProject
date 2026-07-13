@@ -256,7 +256,7 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
     Looks the algorithm up in ``forecast_pipeline_config.yaml`` ``algorithms:``
     section and returns an instantiated estimator:
 
-    - Tree models (``type: tree``) return real ``LGBMRegressor`` instances with hyperparameters
+    - LightGBM (``type: tree``) returns a real ``LGBMRegressor`` with hyperparameters
       taken from the config (overridable via ``params``).  Canonical keys are
       translated to each library's native names via :func:`to_native_params`.
     - Foundation / deep_learning / statistical models return a small stub
@@ -465,7 +465,7 @@ def fit_final_model(
     Production training first uses :func:`fit_model` on a train/validation split
     to choose the boosting round, then constructs a fresh estimator with that
     round count and calls this helper on ALL available rows. Keeping this final
-    fit in the registry preserves the "all tree .fit() calls go through
+    fit in the registry preserves the "all LightGBM .fit() calls go through
     model_registry.py" rule while letting saved production artifacts use the
     validation months as training signal.
     """

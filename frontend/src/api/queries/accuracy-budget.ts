@@ -4,7 +4,7 @@
  *          /monthly-trend, /forecast-value
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types — match actual API response shapes

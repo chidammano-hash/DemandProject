@@ -6,7 +6,7 @@
  * `api/routers/forecasting/cluster_eda.py`.
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // --- Types (frontend contract) ---
 

@@ -82,9 +82,9 @@ async def test_shap_models_empty_when_no_data_dir(tmp_path):
 
 @pytest.mark.asyncio
 async def test_shap_models_lists_models_with_summaries(tmp_path):
-    """shap_models returns models that have shap_summary.csv."""
+    """shap_models exposes only the canonical LightGBM SHAP surface."""
     _write_summary_csv(tmp_path / "lgbm_cluster" / "shap", ["f1", "f2"])
-    _write_summary_csv(tmp_path / "catboost_cluster" / "shap", ["f1"])
+    _write_summary_csv(tmp_path / "retired_model" / "shap", ["f1"])
 
     with patch("api.core._get_pool", return_value=_make_pool()), \
          patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
@@ -94,9 +94,7 @@ async def test_shap_models_lists_models_with_summaries(tmp_path):
             response = await client.get("/forecast/shap/models")
 
     assert response.status_code == 200
-    models = response.json()["models"]
-    assert "lgbm_cluster" in models
-    assert "catboost_cluster" in models
+    assert response.json()["models"] == ["lgbm_cluster"]
 
 
 @pytest.mark.asyncio

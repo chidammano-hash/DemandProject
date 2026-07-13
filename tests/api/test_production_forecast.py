@@ -324,7 +324,7 @@ async def test_staging_overlay_uses_latest_candidate_run_and_preserves_source_mo
     cursor.fetchall.return_value = [
         (
             "champion",
-            "rolling_mean",
+            "mstl",
             datetime.date(2026, 7, 1),
             100.0,
             90.0,
@@ -348,12 +348,13 @@ async def test_staging_overlay_uses_latest_candidate_run_and_preserves_source_mo
 
     assert response.status_code == 200
     row = response.json()["models"]["champion"][0]
-    assert row["source_model_id"] == "rolling_mean"
+    assert row["source_model_id"] == "mstl"
     assert row["source_run_id"] == run_id
     sql = cursor.execute.call_args.args[0]
     assert "forecast_generation_run" in sql
     assert "generation.run_rank = 1" in sql
     assert "staging.run_id = generation.run_id" in sql
+    assert "metadata ->> %s = %s" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +370,7 @@ async def test_candidate_groups_by_model():
         # actual_qty, accuracy_pct, wape, bias, horizon_months, cluster_id
         ("lgbm_cluster", datetime.date(2025, 1, 1), 100.0, 90.0, 110.0, 105.0, 95.2, 4.8, -0.05, 1, "c1"),
         ("lgbm_cluster", datetime.date(2025, 2, 1), 120.0, 108.0, 132.0, 118.0, 96.0, 4.0, 0.02, 1, "c1"),
-        ("seasonal_naive", datetime.date(2025, 1, 1), 80.0, None, None, 105.0, 76.0, 24.0, -0.24, 1, None),
+        ("mstl", datetime.date(2025, 1, 1), 80.0, None, None, 105.0, 76.0, 24.0, -0.24, 1, None),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -382,14 +383,14 @@ async def test_candidate_groups_by_model():
     data = resp.json()
     assert data["item_id"] == "100320"
     assert data["loc"] == "1401-BULK"
-    assert set(data["models"].keys()) == {"lgbm_cluster", "seasonal_naive"}
+    assert set(data["models"].keys()) == {"lgbm_cluster", "mstl"}
     lgbm = data["models"]["lgbm_cluster"]
     assert len(lgbm) == 2
     assert lgbm[0]["forecast_qty"] == 100.0
     assert lgbm[0]["actual_qty"] == 105.0
     assert lgbm[0]["accuracy_pct"] == 95.2
     # Null CI bounds survive as None (not 0).
-    assert data["models"]["seasonal_naive"][0]["forecast_qty_lower"] is None
+    assert data["models"]["mstl"][0]["forecast_qty_lower"] is None
 
 
 @pytest.mark.asyncio

@@ -49,8 +49,7 @@ export interface paths {
          * Forecast Accuracy Lag Leaderboard
          * @description Per-lag model leaderboard ranked by accuracy (data: agg_accuracy_lag_archive).
          *
-         *     Returns WAPE and bias for each model at execution lags 0-4. Pinball loss
-         *     requires quantile forecast rows and is not computed here.
+         *     Returns WAPE and bias for each model at fixed forecast lags 0-4.
          */
         get: operations["forecast_accuracy_lag_leaderboard_forecast_accuracy_lag_leaderboard_get"];
         put?: never;
@@ -375,11 +374,7 @@ export interface paths {
         put?: never;
         /**
          * Run Competition
-         * @description Execute champion model selection using configured strategy.
-         *
-         *     Uses shared strategy module for leak-free per-DFU per-month selection.
-         *     All strategies enforce strict causality: selection for month T uses only
-         *     data from months < T.
+         * @description Submit the fail-closed governed champion lifecycle as a managed job.
          */
         post: operations["run_competition_competition_run_post"];
         delete?: never;
@@ -420,58 +415,6 @@ export interface paths {
          * @description Return the current planning date and whether it is frozen (dev mode).
          */
         get: operations["get_planning_date_info_dashboard_planning_date_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dashboard/pipeline-readiness": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Pipeline Readiness
-         * @description Report whether downstream ML stages are in sync with their inputs.
-         *
-         *     Staleness is *derived live* from generation lineage and timestamps —
-         *     there are no stored flags to get stuck. Four checks:
-         *
-         *     1. **clustering** — total loss of promoted ``sku_cluster_assignment`` rows.
-         *        Most SKUs are inactive and legitimately unclustered, so only **nothing
-         *        clustered** is flagged (the state where per-cluster models silently
-         *        collapse).
-         *     2. **tuning** — ``cluster_tuning_profile_state`` rows flagged stale by a
-         *        cluster promotion that no tuning run has covered.
-         *     3. **champion** — the promoted champion experiment's
-         *        ``cluster_experiment_id`` (sql/198) differs from the currently promoted
-         *        cluster experiment.
-         *     4. **forecast** — a sales load completed after the promoted champion ran.
-         *
-         *     Checks 2-4 skip silently when their tables/columns are not migrated yet.
-         *
-         *     Response shape::
-         *
-         *         {
-         *           "ready": bool,                 # true when nothing is stale
-         *           "checks": [
-         *             {
-         *               "stage": "clustering",
-         *               "status": "stale" | "ok",
-         *               "severity": "high" | "medium" | "low",
-         *               "title": str,
-         *               "detail": str,
-         *               "action": {"kind": "navigate", "target": str, "label": str} | null
-         *             }
-         *           ]
-         *         }
-         */
-        get: operations["get_pipeline_readiness_dashboard_pipeline_readiness_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -602,6 +545,26 @@ export interface paths {
          *     - city: coordinates averaged from zip centroids within each city+state.
          */
         get: operations["dashboard_customer_map_dashboard_customer_map_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/pipeline-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pipeline Readiness
+         * @description Return fail-closed, lineage-backed forecasting lifecycle readiness.
+         */
+        get: operations["get_pipeline_readiness_dashboard_pipeline_readiness_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2269,7 +2232,10 @@ export interface paths {
         post: operations["submit_job_jobs_post"];
         /**
          * Purge Jobs
-         * @description Bulk-delete terminal jobs. Running/queued jobs are always preserved.
+         * @description Bulk-delete terminal non-quarantined jobs.
+         *
+         *     Quarantines require deliberate single-job deletion so the in-memory group
+         *     block is released safely.
          */
         delete: operations["purge_jobs_jobs_delete"];
         options?: never;
@@ -4960,7 +4926,7 @@ export interface paths {
         };
         /**
          * Shap Models
-         * @description List model IDs that have SHAP outputs available.
+         * @description List the canonical LightGBM model when its SHAP output exists.
          */
         get: operations["shap_models_forecast_shap_models_get"];
         put?: never;
@@ -5072,14 +5038,7 @@ export interface paths {
         };
         /**
          * Shap Dfu
-         * @description Compute per-DFU per-month SHAP feature contributions on demand.
-         *
-         *     Loads the persisted pkl model for this DFU's cluster (requires F1.1
-         *     make forecast-generate to have been run), reconstructs the feature matrix
-         *     from historical sales + future production forecast data, and computes
-         *     signed SHAP values for each month.
-         *
-         *     Falls back to 404 if model artifacts are not available (F1.1 not run).
+         * @description Explain one exact DFU with its lineage-valid active production model.
          */
         get: operations["shap_dfu_forecast_shap__model_id__dfu_get"];
         put?: never;
@@ -7798,6 +7757,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backtest-management/snapshot-roster-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Snapshot Roster Readiness
+         * @description Validate the current champion-plus-top-three publish prerequisite.
+         */
+        get: operations["get_snapshot_roster_readiness_backtest_management_snapshot_roster_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/backtest-management/{model_id}/train": {
         parameters: {
             query?: never;
@@ -7811,8 +7790,8 @@ export interface paths {
          * Submit Production Training
          * @description Submit a production model training job.
          *
-         *     Use model_id='all' to train all forecastable tree models.
-         *     Only the LightGBM model supports a separate training step.
+         *     ``model_id='all'`` trains every retained model with a persisted production
+         *     artifact: LightGBM, N-HiTS, and N-BEATS. MSTL and Chronos 2E infer directly.
          */
         post: operations["submit_production_training_backtest_management__model_id__train_post"];
         delete?: never;
@@ -8052,7 +8031,7 @@ export interface paths {
         put?: never;
         /**
          * Promote Model
-         * @description Atomically promote one explicit, immutable release-candidate run.
+         * @description Atomically promote one explicit governed-champion release candidate.
          */
         post: operations["promote_model_backtest_management__model_id__promote_post"];
         delete?: never;
@@ -8292,7 +8271,7 @@ export interface paths {
         put?: never;
         /**
          * Promote Experiment
-         * @description Promote experiment strategy config to forecast_pipeline_config.yaml champion section.
+         * @description Retain the legacy path as an authenticated, fail-closed boundary.
          */
         post: operations["promote_experiment_champion_experiments__experiment_id__promote_post"];
         delete?: never;
@@ -8312,7 +8291,7 @@ export interface paths {
         put?: never;
         /**
          * Promote Results
-         * @description Submit job to run champion selection and load results into forecast tables.
+         * @description Retain the legacy path as an authenticated, fail-closed boundary.
          */
         post: operations["promote_results_champion_experiments__experiment_id__promote_results_post"];
         delete?: never;
@@ -8480,66 +8459,9 @@ export interface paths {
         put?: never;
         /**
          * Promote Winner
-         * @description Promote the sweep's recommended experiment via the existing Stage-1 promote.
-         *
-         *     Refuses unless the recommendation passed the gate (gate-eligible). For a
-         *     per-segment composite, only the demand_class axis yields a promotable winner;
-         *     diagnostic axes (ml_cluster/abc_xyz) leave composite_experiment_id NULL.
+         * @description Retain the legacy path as an authenticated, fail-closed boundary.
          */
         post: operations["promote_winner_champion_sweeps__sweep_id__promote_winner_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/expsys/lag-accuracy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Lag Accuracy
-         * @description Return pre-computed lag accuracy report for the Expert System backtest.
-         *
-         *     Returns the JSON written by run_expert_system_backtest.py after all
-         *     10 timeframes complete.  Shape::
-         *
-         *         {
-         *           "by_lag": {
-         *             "0": {"accuracy_pct": 74.1, "wape": 25.9, "n_dfus": 12345,
-         *                   "n_dfu_months": 123450, "per_segment": {"smooth_high": 82.3, ...}},
-         *             ...
-         *             "4": {...}
-         *           },
-         *           "execution_lag": {"accuracy_pct": 73.8, ...}
-         *         }
-         */
-        get: operations["get_lag_accuracy_expsys_lag_accuracy_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/expsys/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Status
-         * @description Return run status: checkpoints completed, DB row count, last report timestamp.
-         */
-        get: operations["get_status_expsys_status_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9376,6 +9298,57 @@ export interface paths {
         get: operations["explain_forecast_forecast_explain__item_id___loc__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-copilot/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Session */
+        post: operations["create_session_ai_copilot_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-copilot/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: operations["get_session_ai_copilot_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-copilot/sessions/{session_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Turn */
+        post: operations["run_turn_ai_copilot_sessions__session_id__turns_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10274,17 +10247,8 @@ export interface components {
             strategy: string;
             strategy_params?: components["schemas"]["StrategyParams"] | null;
             meta_learner_params?: components["schemas"]["MetaLearnerParams"] | null;
-            /**
-             * Models
-             * @default [
-             *       "lgbm_cluster",
-             *       "nhits",
-             *       "nbeats",
-             *       "mstl",
-             *       "chronos2_enriched"
-             *     ]
-             */
-            models: string[];
+            /** Models */
+            models?: string[];
             /**
              * Metric
              * @default accuracy_pct
@@ -10346,6 +10310,26 @@ export interface components {
              * @default New Tuning Session
              */
             title: string;
+        };
+        /** CreateSessionRequest */
+        CreateSessionRequest: {
+            /** Page */
+            page: string;
+            /** Item Id */
+            item_id?: string | null;
+            /**
+             * Customer Group
+             * @default
+             */
+            customer_group: string;
+            /** Loc */
+            loc?: string | null;
+            /** Opportunity Id */
+            opportunity_id?: string | null;
+            /** Exception Id */
+            exception_id?: string | null;
+            /** Workflow Run Id */
+            workflow_run_id?: string | null;
         };
         /** CreateSharedViewRequest */
         CreateSharedViewRequest: {
@@ -11431,6 +11415,10 @@ export interface components {
             param_overrides?: {
                 [key: string]: unknown;
             } | null;
+            /** Run Label */
+            run_label?: string | null;
+            /** Notes */
+            notes?: string | null;
         };
         /** SaveRequest */
         SaveRequest: {
@@ -11803,6 +11791,11 @@ export interface components {
             rejection_reason: string;
             /** Notes */
             notes?: string | null;
+        };
+        /** TurnRequest */
+        TurnRequest: {
+            /** Prompt */
+            prompt: string;
         };
         /**
          * UpdateExperimentBody
@@ -12775,6 +12768,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -12872,6 +12866,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 scenario_id: string;
@@ -12925,6 +12920,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -12960,6 +12956,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -12967,7 +12964,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13007,26 +13004,6 @@ export interface operations {
         };
     };
     get_planning_date_info_dashboard_planning_date_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_pipeline_readiness_dashboard_pipeline_readiness_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -13275,11 +13252,34 @@ export interface operations {
             };
         };
     };
+    get_pipeline_readiness_dashboard_pipeline_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     market_intelligence_market_intelligence_post: {
         parameters: {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -13970,6 +13970,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -14007,6 +14008,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 policy_id: string;
@@ -14084,6 +14086,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -14337,6 +14340,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 exception_id: string;
@@ -14376,6 +14380,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 exception_id: string;
@@ -14482,6 +14487,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -14946,6 +14952,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15179,6 +15186,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15367,6 +15375,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -15411,6 +15420,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16038,6 +16048,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16080,6 +16091,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16131,6 +16143,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16166,6 +16179,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16221,6 +16235,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 schedule_id: string;
@@ -16254,6 +16269,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16309,6 +16325,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 name: string;
@@ -16406,6 +16423,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 job_id: string;
@@ -16439,6 +16457,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 job_id: string;
@@ -16754,6 +16773,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16791,6 +16811,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 session_id: string;
@@ -16826,6 +16847,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -16861,6 +16883,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 approval_id: string;
@@ -16998,6 +17021,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 exception_id: string;
@@ -17037,6 +17061,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 exception_id: string;
@@ -17113,6 +17138,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -18242,6 +18268,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -19712,6 +19739,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -19749,6 +19777,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 lane_id: string;
@@ -19819,6 +19848,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -19965,6 +19995,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 transfer_id: string;
@@ -20004,6 +20035,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 transfer_id: string;
@@ -20043,6 +20075,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 plan_id: string;
@@ -20583,6 +20616,8 @@ export interface operations {
                 item_id: string;
                 /** @description Location code */
                 loc: string;
+                /** @description Customer group required when item/location is ambiguous */
+                customer_group?: string | null;
                 top_n?: number;
                 lookback_months?: number;
             };
@@ -20899,6 +20934,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -20935,6 +20971,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -21045,6 +21082,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -21108,6 +21146,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -21229,6 +21268,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22444,6 +22484,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 name: string;
@@ -22481,6 +22522,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 name: string;
@@ -22514,6 +22556,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22549,6 +22592,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22634,6 +22678,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22676,6 +22721,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22707,6 +22753,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22833,6 +22880,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -22900,6 +22948,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -23479,6 +23528,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -23545,6 +23595,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 run_id: number;
@@ -23676,6 +23727,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 run_id: number;
@@ -23795,6 +23847,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -23865,6 +23918,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 session_id: string;
@@ -23904,6 +23958,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 session_id: string;
@@ -24122,6 +24177,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -24159,6 +24215,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -24388,6 +24445,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model: string;
@@ -24457,6 +24515,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model: string;
@@ -24658,6 +24717,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model: string;
@@ -24723,6 +24783,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model: string;
@@ -24789,6 +24850,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model: string;
@@ -24921,6 +24983,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -25061,6 +25124,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -25094,6 +25158,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -25131,6 +25196,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -25210,11 +25276,34 @@ export interface operations {
             };
         };
     };
+    get_snapshot_roster_readiness_backtest_management_snapshot_roster_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     submit_production_training_backtest_management__model_id__train_post: {
         parameters: {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model_id: string;
@@ -25332,6 +25421,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model_id: string;
@@ -25367,6 +25457,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model_id: string;
@@ -25463,6 +25554,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model_id: string;
@@ -25500,6 +25592,7 @@ export interface operations {
             };
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 model_id: string;
@@ -25587,6 +25680,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -25762,6 +25856,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -25890,6 +25985,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -25923,6 +26019,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -25932,7 +26029,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25987,6 +26084,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 experiment_id: number;
@@ -26053,6 +26151,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -26119,6 +26218,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 sweep_id: number;
@@ -26214,6 +26314,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 sweep_id: number;
@@ -26247,6 +26348,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path: {
                 sweep_id: number;
@@ -26271,61 +26373,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_lag_accuracy_expsys_lag_accuracy_get: {
-        parameters: {
-            query?: {
-                model_id?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_status_expsys_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };
@@ -26424,6 +26471,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -26493,6 +26541,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -26528,6 +26577,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -26563,6 +26613,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -27135,6 +27186,7 @@ export interface operations {
             query?: never;
             header?: {
                 "x-api-key"?: string | null;
+                authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -27605,6 +27657,122 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_session_ai_copilot_sessions_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "x-api-key"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_ai_copilot_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-api-key"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_turn_ai_copilot_sessions__session_id__turns_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "x-api-key"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TurnRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

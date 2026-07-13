@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import type { GlobalFilters } from "@/types/theme";
 
 export interface SkuCountPayload {

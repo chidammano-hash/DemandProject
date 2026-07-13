@@ -1,0 +1,36 @@
+# Source-control and local agent state
+.git
+.github
+.codex
+.claude
+
+# Secrets and machine-local configuration (Compose injects .env at runtime)
+.env
+.env.*
+!.env.example
+credentials.*
+*secret*
+*.key
+
+# Large/generated runtime state; Compose mounts data at /app/data instead
+data
+mlruns
+
+# Local dependency and build outputs
+.venv
+node_modules
+frontend/node_modules
+frontend/dist
+dist
+build
+
+# Tool caches and test-only material
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+tests
+docs

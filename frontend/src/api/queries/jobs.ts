@@ -1,5 +1,5 @@
 import { buildSearchParams } from "./helpers";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import type {
   Job,
   JobType,
@@ -82,6 +82,16 @@ export interface WorkflowPlan {
   scanned_at: string;
 }
 
+export interface NamedPipelinePreset {
+  name: string;
+  description: string | null;
+  steps: string[];
+}
+
+export interface NamedPipelinesPayload {
+  pipelines: NamedPipelinePreset[];
+}
+
 // ---------------------------------------------------------------------------
 // Job scheduler queries (Feature 39)
 // ---------------------------------------------------------------------------
@@ -128,6 +138,10 @@ export async function runNamedPipeline(
   return fetchJson(`/jobs/pipelines/named/${encodeURIComponent(name)}`, {
     method: "POST",
   });
+}
+
+export async function fetchNamedPipelines(): Promise<NamedPipelinesPayload> {
+  return fetchJson("/jobs/pipelines/named");
 }
 
 export async function submitJob(

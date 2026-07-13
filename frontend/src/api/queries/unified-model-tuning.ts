@@ -7,7 +7,7 @@
  */
 
 import type { TuningComparison } from "./lgbm-tuning";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ export interface ExperimentTemplate {
   description: string;
   params: Record<string, unknown>;
   config: Record<string, unknown>;
-  source: "algorithm_config" | "expert" | "custom";
+  source: "algorithm_config" | "curated" | "custom";
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +240,7 @@ export interface PromotionLogEntry {
 
 export const modelTuningKeys = {
   all: ["model-tuning"] as const,
+  summary: (model: ModelType) => ["model-tuning", model, "summary"] as const,
   experiments: (model: ModelType, params?: Record<string, unknown>) =>
     ["model-tuning", model, "experiments", params] as const,
   experiment: (model: ModelType, runId: number) =>
@@ -294,7 +295,7 @@ async function fetchOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
 // ---------------------------------------------------------------------------
 
 /** List experiments for a model with optional filters. */
-export async function fetchModelExperiments(
+export async function fetchUnifiedModelExperiments(
   model: ModelType,
   params?: {
     status?: string;
@@ -535,7 +536,6 @@ export interface PipelineAlgorithm {
   backtest: boolean;
   compete: boolean;
   forecast: boolean;
-  expert: boolean;
   cluster_strategy?: string;
   output_dir: string;
   params?: Record<string, unknown>;
@@ -572,6 +572,10 @@ export interface PipelineConfig {
     min_history_months: number;
     cold_start_model_id: string;
     cold_start_min_months: number;
+    confidence_interval?: {
+      enabled: boolean;
+      source_model_ids?: string[];
+    };
   };
   backtest_sampling: {
     enabled: boolean;

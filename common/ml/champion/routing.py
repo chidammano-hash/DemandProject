@@ -250,8 +250,8 @@ def strategy_seasonal(
     """Same-quarter cumulative WAPE: selects champion per DFU-month using
     only prior months from the SAME calendar quarter.
 
-    Different models dominate different seasons (e.g., Chronos for holiday Q4,
-    CatBoost for stable Q1). This strategy exploits that seasonality by
+    Different models dominate different seasons (for example, Chronos 2E for
+    holiday Q4 and LightGBM for stable Q1). This strategy exploits that seasonality by
     evaluating each model on its same-quarter track record only.
 
     For each (DFU, month T, model):

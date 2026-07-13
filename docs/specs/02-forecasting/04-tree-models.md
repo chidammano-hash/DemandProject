@@ -24,11 +24,11 @@ A single algorithm cannot optimally forecast all demand patterns. Seasonal produ
 5. Predictions are clipped to zero (demand cannot be negative) and written to CSV
 6. The shared loader script inserts predictions into Postgres
 
-### Model IDs
+### Model ID
 
-| Algorithm | Per-Cluster ID | Global ID |
-|-----------|---------------|-----------|
-| LightGBM | `lgbm_cluster` | `lgbm_global` |
+| Algorithm | Canonical ID | Training scope |
+|-----------|--------------|----------------|
+| LightGBM | `lgbm_cluster` | `cluster_strategy` selects per-cluster or global training without creating a second model ID |
 
 ## Feature Engineering
 

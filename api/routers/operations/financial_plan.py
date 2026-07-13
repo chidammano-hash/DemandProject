@@ -222,7 +222,10 @@ async def get_excess_value(
 @router.post("/finance/budget", status_code=201)
 async def create_budget(body: _BudgetCreate, request: Request):
     """Create a new budget period (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -249,7 +252,10 @@ async def create_budget(body: _BudgetCreate, request: Request):
 @router.put("/finance/budget/{budget_id}")
 async def update_budget(budget_id: int, body: _BudgetUpdate, request: Request):
     """Update a budget period's cap (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:

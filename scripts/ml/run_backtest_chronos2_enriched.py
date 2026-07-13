@@ -1,7 +1,7 @@
 """
 Run Chronos 2 Enriched backtest — Chronos 2 with covariate features.
 
-Unlike the zero-shot Chronos 2 backtest, this version passes:
+This canonical adapter passes:
   - past_covariates: lag/rolling/croston features + categoricals
   - future_covariates: calendar/fourier features (known for any future date)
 
@@ -18,29 +18,35 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.ml.expert_panel.foundation_models import run_foundation_models
-from common.ml.feature_engineering import build_feature_matrix, mask_future_sales
-from common.ml.foundation_backtest import (
+from common.ml.chronos2_enriched import (  # noqa: E402 — after CLI path bootstrap
+    run_chronos2_enriched,
+)
+from common.ml.feature_engineering import (  # noqa: E402 — after CLI path bootstrap
+    build_feature_matrix,
+)
+from common.ml.foundation_backtest import (  # noqa: E402 — after CLI path bootstrap
     FoundationModelSpec,
     PerTimeframeContext,
     PreTimeframeContext,
     build_argparser,
     run_foundation_backtest,
 )
-from common.services.perf_profiler import profiled_section
+from common.services.perf_profiler import profiled_section  # noqa: E402 — after CLI path bootstrap
 
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "chronos2_enriched"
 CONFIG_KEY = "chronos2_enriched"
-DISPATCHER_KEY = "chronos2_enriched"
 
 
 def _extract_params(algo_cfg: dict) -> dict:
     return {
-        "device": algo_cfg.get("device", "auto"),
-        "batch_size": algo_cfg.get("batch_size", 512),
-        "prediction_length": algo_cfg.get("prediction_length", 6),
+        "device": algo_cfg["device"],
+        "batch_size": algo_cfg["batch_size"],
+        "prediction_length": algo_cfg["prediction_length"],
+        "min_history": algo_cfg["min_history"],
+        "model_name": algo_cfg["model_name"],
+        "model_revision": algo_cfg["model_revision"],
     }
 
 
@@ -57,22 +63,30 @@ def _log_config(
     )
 
 
-def _pre_timeframe_hook(ctx: PreTimeframeContext) -> pd.DataFrame:
-    """Build the feature matrix once before iterating through timeframes."""
-    logger.info("Step 3: Building feature matrix (one-time)...")
-    with profiled_section("build_features"):
-        full_grid = build_feature_matrix(
-            ctx.sales_df, ctx.dfu_attrs, ctx.item_attrs, ctx.all_months,
-            cat_dtype="str", customer_features=ctx.customer_features,
-        )
-    logger.info("Feature matrix: %s", full_grid.shape)
-    return full_grid
+def _pre_timeframe_hook(
+    ctx: PreTimeframeContext,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Preserve attributes needed to build cutoff-scoped covariates."""
+    item_attrs = (
+        ctx.item_attrs if isinstance(ctx.item_attrs, pd.DataFrame) else pd.DataFrame()
+    )
+    return ctx.dfu_attrs, item_attrs
 
 
-def _per_timeframe_hook(ctx: PerTimeframeContext, full_grid: pd.DataFrame) -> pd.DataFrame:
-    """Mask features and run enriched inference for a single timeframe."""
-    train_end = ctx.tf["train_end"]
+def _per_timeframe_hook(
+    ctx: PerTimeframeContext,
+    hook_state: tuple[pd.DataFrame, pd.DataFrame],
+) -> pd.DataFrame:
+    """Build causal covariates from the same bounded history used for inference."""
     label = ctx.label
+    dfu_attrs, item_attrs = hook_state
+    active_skus = set(ctx.train_sales["sku_ck"].astype(str))
+    timeframe_attrs = dfu_attrs[
+        dfu_attrs["sku_ck"].astype(str).isin(active_skus)
+    ].copy()
+    history_start = pd.Timestamp(ctx.train_sales["startdate"].min())
+    history_end = pd.Timestamp(ctx.train_sales.attrs["history_end"])
+    history_months = list(pd.date_range(history_start, history_end, freq="MS"))
 
     logger.info(
         "  Train: %s rows (%s DFUs), Predict months: %d, Features: pending",
@@ -81,10 +95,14 @@ def _per_timeframe_hook(ctx: PerTimeframeContext, full_grid: pd.DataFrame) -> pd
         len(ctx.predict_months),
     )
 
-    with profiled_section(f"mask_tf_{label}"):
-        masked_grid = mask_future_sales(full_grid, train_end)
-
-    train_grid = masked_grid[masked_grid["startdate"] <= train_end].copy()
+    with profiled_section(f"build_features_{label}"):
+        train_grid = build_feature_matrix(
+            ctx.train_sales,
+            timeframe_attrs,
+            item_attrs,
+            history_months,
+            cat_dtype="str",
+        )
 
     logger.info(
         "  Train: %s rows (%s DFUs), Predict months: %d, Features: %d cols",
@@ -95,10 +113,10 @@ def _per_timeframe_hook(ctx: PerTimeframeContext, full_grid: pd.DataFrame) -> pd
     )
 
     with profiled_section(f"c2e_tf_{label}"):
-        preds = run_foundation_models(
+        preds = run_chronos2_enriched(
             ctx.train_sales[["sku_ck", "startdate", "qty"]],
             ctx.predict_months,
-            {ctx.dispatcher_key: ctx.model_params},
+            ctx.model_params,
             feature_grid=train_grid,
         )
 
@@ -108,7 +126,6 @@ def _per_timeframe_hook(ctx: PerTimeframeContext, full_grid: pd.DataFrame) -> pd
 spec = FoundationModelSpec(
     model_id=MODEL_ID,
     config_key=CONFIG_KEY,
-    dispatcher_key=DISPATCHER_KEY,
     display_name="Chronos 2 Enriched",
     extract_params=_extract_params,
     model_params_key="chronos2_enriched_params",
@@ -135,7 +152,7 @@ spec = FoundationModelSpec(
     log_config_summary=_log_config,
     supports_parallel=False,  # enriched needs feature grid, no parallel workers
     include_item_attrs=False,
-    include_customer_features=True,
+    include_customer_features=False,
     pre_timeframe_hook=_pre_timeframe_hook,
     per_timeframe_hook=_per_timeframe_hook,
     profiler_prefix="c2e",

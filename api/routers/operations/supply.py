@@ -287,7 +287,10 @@ async def upload_open_pos_csv(
     request: Request = None,
 ):
     """Accept a CSV file upload for on-demand PO ingest."""
-    await require_api_key(x_api_key=(request.headers.get("x-api-key") if request else None))
+    await require_api_key(
+        x_api_key=(request.headers.get("x-api-key") if request else None),
+        authorization=(request.headers.get("authorization") if request else None),
+    )
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -393,7 +396,10 @@ async def generate_planned_orders_async(
     body: GeneratePlannedOrdersRequest = GeneratePlannedOrdersRequest(),
 ):
     """Triggers planned order generation as a background job. Returns 202 immediately."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     import threading
 
     job_id = str(uuid.uuid4())
@@ -570,7 +576,10 @@ async def approve_planned_order(
     request: Request,
 ):
     """Approve a proposed planned order."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -608,7 +617,10 @@ async def reject_planned_order(
     request: Request,
 ):
     """Reject a proposed planned order."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -636,7 +648,10 @@ async def release_planned_order(
     request: Request,
 ):
     """Mark an approved order as released (transmitted to ERP)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -660,7 +675,7 @@ async def release_planned_order(
 
 # ===========================================================================
 # F2.4 — Procurement Workflow & Order Release
-# (fact_purchase_orders — DS-generated POs, separate from imported open POs)
+# (fact_released_purchase_orders — application-generated POs)
 # ===========================================================================
 
 import io
@@ -697,7 +712,7 @@ class _SendErpRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# GET /supply/purchase-orders  (list fact_purchase_orders)
+# GET /supply/purchase-orders  (list fact_released_purchase_orders)
 # ---------------------------------------------------------------------------
 
 @router.get("/supply/purchase-orders")
@@ -711,7 +726,7 @@ async def list_purchase_orders(
     page: int = 1,
     page_size: int = 50,
 ):
-    """List Supply Chain Command Center-generated purchase orders from fact_purchase_orders."""
+    """List application-generated purchase orders from fact_released_purchase_orders."""
     page_size = max(1, min(page_size, 200))
     offset = (max(1, page) - 1) * page_size
 
@@ -741,7 +756,7 @@ async def list_purchase_orders(
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*), COALESCE(SUM(po.total_value), 0) "
-                f"FROM fact_purchase_orders po {where}", params
+                f"FROM fact_released_purchase_orders po {where}", params
             )
             total_row = cur.fetchone()
             total, total_value = int(total_row[0] or 0), float(total_row[1] or 0)
@@ -754,7 +769,7 @@ async def list_purchase_orders(
                     po.po_date, po.requested_delivery_date, po.confirmed_delivery_date,
                     po.status, po.source_exception_id, po.created_by,
                     po.planner_approved_by, po.buyer_released_by, po.erp_po_number
-                FROM fact_purchase_orders po
+                FROM fact_released_purchase_orders po
                 LEFT JOIN dim_supplier s ON s.supplier_id = po.supplier_id
                 {where}
                 ORDER BY po.po_date DESC, po.po_number, po.line_number
@@ -802,7 +817,10 @@ async def create_po_from_exception(
     request: Request,
 ):
     """Convert a replenishment exception to a proposed purchase order."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     from scripts.inventory.release_planned_orders import (
         create_po_from_exception as _create_po,
@@ -819,7 +837,7 @@ async def create_po_from_exception(
         )
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT total_value, requested_delivery_date FROM fact_purchase_orders "
+                "SELECT total_value, requested_delivery_date FROM fact_released_purchase_orders "
                 "WHERE po_number = %s", (po_number,)
             )
             row = cur.fetchone()
@@ -843,12 +861,15 @@ async def approve_purchase_order(
     request: Request,
 ):
     """Planner approves a proposed PO (proposed → planner_approved)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE fact_purchase_orders
+                UPDATE fact_released_purchase_orders
                 SET status = 'planner_approved',
                     planner_approved_by = %s,
                     planner_approved_at = NOW(),
@@ -887,12 +908,15 @@ async def release_purchase_order(
     request: Request,
 ):
     """Buyer releases a planner-approved PO (planner_approved → buyer_released)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE fact_purchase_orders
+                UPDATE fact_released_purchase_orders
                 SET status = 'buyer_released',
                     buyer_released_by = %s,
                     buyer_released_at = NOW(),
@@ -929,7 +953,10 @@ async def release_purchase_order(
 @router.post("/supply/purchase-orders/export-csv")
 async def export_pos_csv(body: _ExportCsvRequest, request: Request):
     """Generate a standardized PO CSV for ERP import. Returns CSV as stream."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -940,7 +967,7 @@ async def export_pos_csv(body: _ExportCsvRequest, request: Request):
                     po.unit_of_measure, po.unit_cost, po.total_value, po.currency,
                     po.requested_delivery_date, po.po_date, po.buyer_code,
                     po.company_code, po.plant_code, po.source_exception_id, po.notes
-                FROM fact_purchase_orders po
+                FROM fact_released_purchase_orders po
                 LEFT JOIN dim_supplier s ON s.supplier_id = po.supplier_id
                 WHERE po.po_number = ANY(%s)
                   AND po.status IN ('buyer_released', 'po_sent')
@@ -988,7 +1015,7 @@ async def get_po_timeline(po_number: str):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT status FROM fact_purchase_orders WHERE po_number = %s LIMIT 1",
+                "SELECT status FROM fact_released_purchase_orders WHERE po_number = %s LIMIT 1",
                 (po_number,)
             )
             po_row = cur.fetchone()

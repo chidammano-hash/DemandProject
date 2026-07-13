@@ -1,6 +1,6 @@
 /** SQL Runner API queries */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 /** Maximum rows the client requests per query execution.
  *  The server enforces its own hard cap (5000) regardless of this value. */

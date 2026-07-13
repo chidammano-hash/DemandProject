@@ -23,7 +23,7 @@ consumed by `common/ml/model_registry.py::build_model()`.
 
 ### 4.1.1 Stage flags
 
-Five boolean stage flags per algorithm control which phase of the pipeline
+Four boolean stage flags per algorithm control which phase of the pipeline
 the model participates in:
 
 | Stage      | Meaning                                                                          |
@@ -32,7 +32,6 @@ the model participates in:
 | `backtest` | Eligible for expanding-window backtest (`make backtest-*`)                       |
 | `compete`  | Included in champion selection (`make champion-all`)                             |
 | `forecast` | Eligible to produce production forecasts (`make forecast-generate`)              |
-| `expert`   | Included in Expert Panel algorithm-selection studies (`make expert-panel*`)      |
 
 Use `get_algorithm_roster(stage="backtest")` to retrieve only models that
 should be backtested; use `get_competing_model_ids()` for champion
@@ -53,10 +52,10 @@ as benchmark rows in `fact_external_forecast_monthly`. Dependent views are refre
 
 | Family          | Model IDs                                                                                                | Notes                                                                  |
 |-----------------|----------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
+| Tree            | `lgbm_cluster`                                                                                           | Per-cluster by default; can run globally without changing model ID     |
 | Foundation      | `chronos2_enriched`                                                                                       | Covariate-aware; always runs globally (no clusters)                    |
+| Statistical     | `mstl`                                                                                                    | Seasonal-trend decomposition; global per-DFU execution                 |
 | Deep learning   | `nbeats`, `nhits`                                                                                        | NeuralForecast NHITS / NBEATS; always global                           |
-
-> (`5ab8d593`). `chronos2_enriched` is the only remaining foundation model.
 
 The `chronos2_enriched` model is also designated as the platform's FM spine
 (`fm_spine.model_id`) and produces the P10 / P50 / P90 quantile bundle.
@@ -72,14 +71,14 @@ algorithms:
   lgbm_cluster:
     type: tree
     cluster_strategy: per_cluster  # "per_cluster" or "global" — ml_cluster used for partitioning only, not a model feature
-    recursive: false       # Set true for recursive multi-step inference (Feature 43)
-    shap_select: false     # Set true for per-timeframe SHAP feature selection (Feature 42)
-    shap_threshold: 0.95   # Cumulative SHAP importance threshold
-    shap_top_n: null       # Exact top-N features (overrides threshold)
-    shap_sample_size: 500
-    tune_inline: false     # Set true for per-timeframe causal tuning (PL-002)
-    params_file: null      # Set to data/tuning/best_params_lgbm.json for pre-tuned params
-    params:                # Inline hyperparameters (replaces old algorithm_config.yaml)
+    params:
+      recursive: false       # Set true for recursive multi-step inference
+      shap_select: false     # Set true for per-timeframe SHAP feature selection
+      shap_threshold: 0.95   # Cumulative SHAP importance threshold
+      shap_top_n: null       # Exact top-N features (overrides threshold)
+      shap_sample_size: 500
+      tune_inline: false     # Set true for per-timeframe causal tuning
+      params_file: null      # Set to data/tuning/best_params_lgbm.json for pre-tuned params
       n_estimators: 500
       learning_rate: 0.05
       # ... (see full file for all keys)
@@ -98,9 +97,7 @@ hyperparameters.
 
 ## 4.2 Customer Features Pre-Compute
 
-variants that consumed customer-derived features - were removed from
-`config/forecasting/forecast_pipeline_config.yaml` in the deprecated-model cleanup
-(`5ab8d593`). No algorithm entry currently sets `customer_features: true`, so no
+No canonical algorithm currently sets `customer_features: true`, so no
 backtest in the active roster reads the customer-features table.
 
 The pre-compute targets and the underlying `customer_features_monthly` table still
@@ -119,9 +116,10 @@ make customer-features-python   # Python fallback (older path)
 
 All backtest targets live at the project root. They write per-model CSV
 artefacts into `data/backtest/<model_id>/` (the `output_dir` from the
-algorithm entry) and a per-run summary JSON. Each backtest also trains
-models AND persists `.pkl` artifacts to `data/models/<model_id>/` for
-downstream production forecasting.
+algorithm entry) and a per-run summary JSON. Backtest artifacts are evaluation
+evidence, not production final fits. The publish flow separately creates an
+immutable LightGBM cluster bundle and immutable global N-HiTS/N-BEATS artifacts;
+MSTL and Chronos 2E remain direct production adapters.
 
 > **Closed-month and lag contract:** Backtests use `embargo_months: 0`, so a July
 > 2026 planning date scores through June and timeframe J trains through May to
@@ -151,18 +149,18 @@ in progress, never rejected with an error:
 ### 4.3.1 Per-family commands
 
 ```bash
-# Tree models (core)
+# Tree model
 make backtest-lgbm
 
-# Statistical baselines
+# Statistical model
 make backtest-mstl
 
 # Deep learning
 make backtest-nbeats
 make backtest-nhits
 
-# Foundation models
-make backtest-chronos2e               # Chronos 2 Enriched (31 covariates)
+# Foundation model
+make backtest-chronos2e               # Chronos 2 Enriched (30 covariates)
 ```
 
 Several backtest targets also have a `*-full` companion target that runs
@@ -173,16 +171,19 @@ the backtest and immediately loads the predictions:
 ### 4.3.2 Run-everything targets
 
 ```bash
-                               # chronos2_enriched
-
-make backtest-all-parallel     # Same 4 models in parallel (logs in data/backtest/logs/)
+make backtest-all              # Complete five-model roster, sequential
+make backtest-all-parallel     # Complete five-model roster, parallel (logs in data/backtest/logs/)
 ```
 
-Enriched) concurrently and pipes each into a per-model log file under
-`data/backtest/logs/`. Use it only on machines with sufficient RAM and CPU;
-on a constrained host run `backtest-all` instead. Tree models use `n_jobs=-1`
-(all CPU cores) and the foundation model uses the GPU, so running tree +
-foundation jobs in parallel is generally safe (CPU vs GPU).
+The parallel target starts all five backtests and writes each process to a per-model log file under
+`data/backtest/logs/`. Use it only on machines with sufficient RAM, CPU, and accelerator memory;
+on a constrained host run `backtest-all` instead. LightGBM can consume all CPU cores while Chronos
+2E and the neural models may share the same accelerator, so parallel execution is intentionally an
+operator choice rather than the default.
+
+Managed N-HiTS and N-BEATS jobs suppress Lightning's per-batch progress bar and persist concise
+timeframe-level messages instead. This keeps the Jobs view and `job_history` log small enough for
+long production runs while preserving checkpoint and completion evidence.
 
 ### 4.3.3 Approximate runtimes
 
@@ -223,7 +224,7 @@ uv run python -m scripts.ml.run_backtest_chronos2_enriched --resume
 ```
 
 See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for the
-full architecture comparison across foundation models.
+Chronos 2E architecture.
 
 ---
 
@@ -350,8 +351,9 @@ across all DFUs.
 switch for the whole clustering pipeline. When `false`:
 
 * `is_clustering_enabled()` returns `False`.
-* All tree and statistical backtests fall back to `cluster_strategy=global`
-  regardless of the per-algorithm setting.
+* LightGBM falls back to `cluster_strategy=global` regardless of its
+  per-algorithm setting. The four non-tree models retain their own execution
+  semantics and do not consume `cluster_strategy`.
 * `ml_cluster` is still preserved in the feature grid but every DFU is
   effectively in the same partition.
 
@@ -377,19 +379,6 @@ When `cluster_strategy=global`:
 
 * A single model is fit on the full grid. `ml_cluster` is added to
   `cat_cols` so the model can learn cluster effects directly.
-
-### 4.6.1 Intermittent cluster routing
-
-Clusters whose zero-demand share exceeds `backtest.intermittent_threshold`
-(default `0.7` → 70% zeros) are **not** trained with the tree model.
-Instead, when `backtest.baseline_intermittent: true`, those clusters are
-`backtest.baseline_intermittent_window` (default 12 months).
-
-This avoids tree models over-fitting noise in extremely sparse partitions
-and is materially more accurate than a small tree fit on near-zero data.
-The routing decision is logged per cluster at backtest time.
-
----
 
 ## 4.7 Multi-Stage Feature Selection (SHAP)
 
@@ -441,14 +430,35 @@ GPU usage is controlled by the `DEMAND_GPU` environment variable. Read by
 
 | Value  | Behaviour                                                                  |
 |--------|----------------------------------------------------------------------------|
-| `auto` | (default) Use GPU if `cupy`/`torch.cuda` is available, otherwise CPU       |
-| `on`   | Force GPU; fail loudly if CUDA / cupy is unavailable                       |
+| `auto` | (default) Use Apple MPS or CUDA when available, otherwise CPU               |
+| `on`   | Require Apple MPS or CUDA; fail loudly instead of silently using CPU         |
 | `off`  | Disable GPU even when available; useful for reproducible benchmark runs    |
 
 ```bash
 DEMAND_GPU=on  make backtest-chronos2e
 DEMAND_GPU=off make backtest-lgbm
 ```
+
+On Apple Silicon, run forecasting natively so PyTorch can use Metal Performance Shaders:
+
+```bash
+make up       # PostgreSQL, MLflow, and Redis only
+make api-gpu  # verifies MPS/CUDA, then starts the only API/job manager
+make ui
+```
+
+Docker Desktop for macOS runs Linux containers and does not expose the Apple Metal/MPS device to
+them. A containerized API therefore uses CPU for Chronos 2E and the neural models. Do not run the
+host and container APIs together; use the native `api-gpu` workflow for accelerated model refreshes
+and reserve `docker compose up -d api` for production-image CPU validation.
+
+`make api-gpu` requires Apple MPS for Chronos 2E, N-HiTS, and N-BEATS and leaves
+`DEMAND_GPU=auto` for LightGBM. The `--all` production trainer launches LightGBM, N-BEATS, and
+N-HiTS in separate Python processes. Do not collapse these into one process on macOS: LightGBM and
+PyTorch can load competing OpenMP runtimes and deadlock during a PyTorch tensor copy even when the
+neural accelerator is set to CPU. Production generation intentionally sets `OMP_NUM_THREADS=1`
+because it must load tree and neural artifacts together for champion routing; neural inference
+still uses MPS, while the single OpenMP thread prevents the mixed-runtime barrier deadlock.
 
 Optional dependencies that the platform falls back gracefully without:
 
@@ -526,9 +536,9 @@ if you invoke `scripts/etl/load_backtest_forecasts.py` directly, add the flag.
 
 **`backtest-all-parallel` runs out of memory**
 *Symptom:* OOM kill in `data/backtest/logs/<model>.log`.
-*Cause:* Four processes plus the foundation model's GPU context exceed host RAM.
+*Cause:* Five model processes plus shared accelerator contexts exceed host RAM or VRAM.
 *Fix:* Run `make backtest-all` (sequential) instead, or stagger by
-running the foundation model separately from the tree models.
+running the CPU and accelerator-heavy models separately.
 
 **No predictions for cold-start DFUs**
 *Symptom:* DFU is missing from the candidate forecast table.

@@ -5,8 +5,8 @@
  * and model comparisons — all sliceable by brand/category/location/cluster.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, CalendarClock, ChartColumn } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { RotateCcw, CalendarClock } from "lucide-react";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,6 @@ import {
   fetchForecastModels,
   fetchAccuracySlice,
   fetchLagCurve,
-  fetchCompetitionConfig,
   fetchCompetitionSummary,
   fetchShapModels,
   fetchShapSummary,
@@ -37,13 +36,10 @@ import {
   fetchShapTimeframeDetail,
   fetchShapClusters,
   fetchSeasonalityProfileNames,
-  saveCompetitionConfig,
-  runCompetition,
   fetchPlanningDate,
   fetchSkuCount,
   filterMetaKeys,
   SLICE_DEFAULT_LIMIT,
-  type CompetitionConfig,
   type SliceParams,
   type LagCurveParams,
   type DashboardFilterParams,
@@ -86,8 +82,6 @@ interface AggregateAnalysisTabProps {
 }
 
 export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
-  const queryClient = useQueryClient();
-
   // --------------- local filter state ---------------
   const [filters, setFilters] = useState<LocalFilters>(EMPTY_FILTERS);
   const debouncedFilters = useDebounce(filters, 300);
@@ -136,9 +130,6 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const [commonDfus, setCommonDfus] = useState(false);
   const [seasonalityProfile, setSeasonalityProfile] = useState("");
   const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
-
-  // --------------- Competition config state ---------------
-  const [competitionConfig, setCompetitionConfig] = useState<CompetitionConfig | null>(null);
 
   // --------------- SHAP panel state ---------------
   const [shapOpen, setShapOpen] = useState(false);
@@ -243,13 +234,6 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     staleTime: STALE.TWO_MIN,
     enabled: visible.lagCurve,
   });
-  const { data: configPayload } = useQuery({
-    queryKey: queryKeys.competitionConfig(),
-    queryFn: fetchCompetitionConfig,
-    staleTime: STALE.FIVE_MIN,
-    enabled: visible.champion,
-    select: (data) => { if (data?.config && competitionConfig === null) setCompetitionConfig(data.config); return data; },
-  });
   const { data: summaryPayload } = useQuery({
     queryKey: queryKeys.competitionSummary(),
     queryFn: fetchCompetitionSummary,
@@ -289,19 +273,9 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     enabled: shapOpen && !!activeShapModel && visible.shap,
   });
 
-  // --------------- Mutations ---------------
-  const saveConfigMutation = useMutation({ mutationFn: saveCompetitionConfig });
-  const runCompetitionMutation = useMutation({
-    mutationFn: async (config: CompetitionConfig) => { await saveCompetitionConfig(config); return runCompetition(); },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.competitionSummary() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.accuracySlice(sliceParams as unknown as Record<string, unknown>) });
-    },
-  });
-
   // --------------- Derived accuracy data ---------------
-  const sliceData: AccuracySliceRow[] = slicePayload?.rows ?? [];
-  const lagCurveData: LagPoint[] = lagPayload?.by_lag ?? [];
+  const sliceData = useMemo<AccuracySliceRow[]>(() => slicePayload?.rows ?? [], [slicePayload]);
+  const lagCurveData = useMemo<LagPoint[]>(() => lagPayload?.by_lag ?? [], [lagPayload]);
   const allModels = useMemo(() => Array.from(new Set(sliceData.flatMap((r) => Object.keys(r.by_model)))).sort(), [sliceData]);
   const lagModels = useMemo(() => Array.from(new Set(lagCurveData.flatMap((p) => Object.keys(p.by_model)))).sort(), [lagCurveData]);
   const activeLagMetric = useMemo(() => (sliceKpis.includes(lagCurveMetric) ? lagCurveMetric : sliceKpis[0]), [sliceKpis, lagCurveMetric]);
@@ -326,13 +300,6 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const handleLagCurveMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setLagCurveMetric(e.target.value), []);
   const handleKpiToggle = useCallback((key: string) => setSliceKpis((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]), []);
   const handleSeasonalityProfileChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSeasonalityProfile(e.target.value), []);
-  const handleCompetingModelToggle = useCallback((model: string) => {
-    setCompetitionConfig((prev) => { if (!prev) return prev; const checked = prev.models.includes(model); return { ...prev, models: checked ? prev.models.filter((x) => x !== model) : [...prev.models, model] }; });
-  }, []);
-  const handleMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, metric: e.target.value } : prev)), []);
-  const handleLagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, lag: e.target.value } : prev)), []);
-  const handleSaveConfig = useCallback(() => { if (!competitionConfig) return; saveConfigMutation.mutate(competitionConfig); }, [competitionConfig, saveConfigMutation]);
-  const handleRunCompetition = useCallback(() => { if (!competitionConfig || competitionConfig.models.length < 2) return; runCompetitionMutation.mutate(competitionConfig); }, [competitionConfig, runCompetitionMutation]);
   const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => { setShapModelId(e.target.value); setShapTimeframeIdx(null); setShapCluster("all"); }, []);
   const handleShapTimeframeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value)), []);
   const handleShapClusterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapCluster(e.target.value), []);
@@ -513,16 +480,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* ================================================================ */}
       {visible.champion && (
         <ChampionPanel
-          competitionConfig={competitionConfig}
-          availableModels={configPayload?.available_models ?? []}
           championSummary={summaryPayload?.summary ?? null}
-          savingConfig={saveConfigMutation.isPending}
-          runningCompetition={runCompetitionMutation.isPending}
-          onCompetingModelToggle={handleCompetingModelToggle}
-          onMetricChange={handleMetricChange}
-          onLagChange={handleLagChange}
-          onSaveConfig={handleSaveConfig}
-          onRunCompetition={handleRunCompetition}
         />
       )}
 

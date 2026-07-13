@@ -163,8 +163,11 @@ export default function FVATab() {
 
       {/* ROI KPI Cards */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <KpiCard label="Total Interventions" value={roi?.total_interventions ?? 0} />
-        <KpiCard label="Measured" value={roi?.measured ?? 0} />
+        <KpiCard
+          label="Total Interventions"
+          value={(roi?.total_interventions ?? 0).toLocaleString()}
+        />
+        <KpiCard label="Measured" value={(roi?.measured ?? 0).toLocaleString()} />
         <KpiCard
           label="Estimated Impact"
           value={formatCurrencyCompact(roi?.total_estimated_impact ?? 0)}

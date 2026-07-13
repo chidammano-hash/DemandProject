@@ -1,17 +1,18 @@
 """Tests for scripts/clean_forecasts_by_date.py — date-based forecast cleanup."""
 
-import pytest
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from scripts.ml.clean_forecasts_by_date import (
-    parse_date,
+    TABLES_ALL,
+    TABLES_ARCHIVE,
+    TABLES_FORECAST,
+    VALID_DATE_COLUMNS,
     build_where_clause,
     clean_by_date,
-    VALID_DATE_COLUMNS,
-    TABLES_ALL,
-    TABLES_FORECAST,
-    TABLES_ARCHIVE,
+    parse_date,
 )
 
 
@@ -81,20 +82,20 @@ class TestBuildWhereClause:
 
     def test_after_with_model(self):
         sql, params = build_where_clause(
-            "fcstdate", after=date(2025, 1, 1), model="lgbm_global"
+            "fcstdate", after=date(2025, 1, 1), model="lgbm_cluster"
         )
         assert sql == "WHERE fcstdate >= %s AND model_id = %s"
-        assert params == [date(2025, 1, 1), "lgbm_global"]
+        assert params == [date(2025, 1, 1), "lgbm_cluster"]
 
     def test_between_with_model(self):
         sql, params = build_where_clause(
             "startdate",
             between=(date(2024, 1, 1), date(2024, 7, 1)),
-            model="catboost_global",
+            model="mstl",
         )
         assert "startdate >= %s AND startdate < %s" in sql
         assert "model_id = %s" in sql
-        assert params == [date(2024, 1, 1), date(2024, 7, 1), "catboost_global"]
+        assert params == [date(2024, 1, 1), date(2024, 7, 1), "mstl"]
 
     def test_single_month(self):
         sql, params = build_where_clause(
@@ -122,13 +123,13 @@ class TestBuildWhereClause:
         assert params == [date(2024, 3, 1), date(2024, 6, 1), "external"]
 
     def test_months_with_fcstdate(self):
-        sql, params = build_where_clause(
+        sql, _params = build_where_clause(
             "fcstdate", months=[date(2025, 1, 1)]
         )
         assert "fcstdate IN (%s)" in sql
 
     def test_fcstdate_column(self):
-        sql, params = build_where_clause("fcstdate", before=date(2025, 1, 1))
+        sql, _params = build_where_clause("fcstdate", before=date(2025, 1, 1))
         assert "fcstdate < %s" in sql
 
     def test_invalid_date_column_raises(self):

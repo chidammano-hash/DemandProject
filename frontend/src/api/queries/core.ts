@@ -14,6 +14,7 @@ export const queryKeys = {
   skuClusters: (source: string) => ["sku-clusters", source] as const,
   clusterProfiles: () => ["cluster-profiles"] as const,
   clusteringDefaults: () => ["clustering-defaults"] as const,
+  clusteringCoreFeatures: () => ["clustering-core-features"] as const,
   clusteringScenario: (id: string) => ["clustering-scenario", id] as const,
   scenarioEstimate: (params: Record<string, unknown>) => ["scenario-estimate", params] as const,
   scenarioStatus: (id: string) => ["scenario-status", id] as const,
@@ -50,6 +51,7 @@ export const queryKeys = {
   jobStats: () => ["job-stats"] as const,
   jobLogs: (id: string) => ["job-logs", id] as const,
   jobSchedules: () => ["job-schedules"] as const,
+  namedPipelines: () => ["named-pipelines"] as const,
   scenarioHistory: () => ["scenario-history"] as const,
   // Inventory Planning keys (IPfeature1+)
   variabilitySummary: (params: Record<string, unknown>) => ["variability-summary", params] as const,
@@ -99,46 +101,10 @@ export const STALE = {
   NONE: 0,
 } as const;
 
-function formatErrorDetail(detail: unknown): string {
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .filter((entry): entry is { loc?: unknown; msg?: unknown } => Boolean(entry) && typeof entry === "object")
-      .map((entry) => {
-        const location = Array.isArray(entry.loc) ? entry.loc.join(".") : "request";
-        const message = typeof entry.msg === "string" ? entry.msg : "Invalid value";
-        return `${location}: ${message}`;
-      });
-    return messages.join("; ") || "Request validation failed";
-  }
-  return "Request failed";
-}
-
 // ---------------------------------------------------------------------------
-// Fetch helpers
+// Fetch helper compatibility export
 // ---------------------------------------------------------------------------
-export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    // Parse FastAPI `{detail}` so formatApiError can sanitize a clean message,
-    // and attach the HTTP status so the global handler maps it to friendly copy
-    // (404 → "That record could not be found.") instead of leaking the raw body.
-    let detail: unknown = text;
-    try {
-      detail = JSON.parse(text);
-    } catch {
-      /* non-JSON body — keep the raw text */
-    }
-    const message = detail && typeof detail === "object" && "detail" in detail
-      ? formatErrorDetail((detail as { detail: unknown }).detail)
-      : text || `HTTP ${res.status}`;
-    const err = new Error(message);
-    Object.assign(err, { status: res.status, detail });
-    throw err;
-  }
-  return res.json() as Promise<T>;
-}
+export { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Re-exports from domain-specific modules (backward compatibility)
@@ -162,7 +128,7 @@ export type { SliceParams, LagCurveParams } from "./accuracy";
 
 export {
   fetchCompetitionConfig, fetchCompetitionSummary,
-  saveCompetitionConfig, runCompetition,
+  saveCompetitionConfig,
 } from "./competition";
 export type { CompetitionConfig, ChampionSummary } from "./competition";
 
@@ -204,13 +170,13 @@ export {
   submitJob, cancelJob, deleteJob, fetchScenarioHistory,
   fetchJobLogs, fetchJobStats, fetchJobSchedules,
   createSchedule, deleteSchedule, submitPipeline,
-  planOperationalWorkflows, runNamedPipeline,
+  planOperationalWorkflows, fetchNamedPipelines, runNamedPipeline,
 } from "./jobs";
 export type {
   Job, JobType, JobListPayload, JobTypesPayload, ActiveJobsPayload,
   JobStats, JobSchedule, JobSchedulesPayload, JobLogsPayload,
   WorkflowPlanAnswer, WorkflowQuestion, WorkflowStep,
-  WorkflowRecommendation, WorkflowPlan,
+  WorkflowRecommendation, WorkflowPlan, NamedPipelinePreset, NamedPipelinesPayload,
 } from "./jobs";
 
 export {

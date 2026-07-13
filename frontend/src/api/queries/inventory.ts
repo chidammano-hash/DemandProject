@@ -1,5 +1,5 @@
 import { buildSearchParams } from "./helpers";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import type {
   InventoryPositionPayload,
   InventoryKpis,

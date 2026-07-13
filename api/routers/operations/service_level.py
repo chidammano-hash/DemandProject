@@ -186,7 +186,10 @@ async def get_chronic_misses(
 @router.put("/analytics/service-level/targets")
 async def upsert_sl_target(body: _TargetUpsert, request: Request):
     """Create or update a service level target (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:

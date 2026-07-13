@@ -174,7 +174,7 @@ PROTECTED_FEATURES = {
 
 #### 2.3.2 Tweedie Disabled for Intermittent Demand
 
-- **File:** `scripts/run_backtest.py` -> `_apply_tweedie_objective()`
+- **File:** `scripts/ml/run_backtest.py` -> `_apply_tweedie_objective()`
 - **What:** Intermittent clusters (>= `intermittent_threshold` zeros, default 70%) are forced to use MAE (`regression_l1`) instead of Tweedie. Lumpy clusters (30-70% zeros) keep the default objective.
 - **Why:** Tweedie's log link function produces reasonable predictions at iteration 0 for highly sparse data (where most targets are zero). Since early stopping monitors WAPE, the WAPE at iteration 0 is already "good" (predicting near-zero for near-zero actuals), causing early stopping to fire at iteration 1 before the model learns any signal. This results in best_iter=1 and catastrophic accuracy (near-zero or negative).
 - **Implementation detail:**
@@ -367,7 +367,7 @@ Key observations:
 
 #### 2.5.3 Training Accuracy in Cluster Logs
 
-- Added `val_accuracy` (computed as `100.0 - val_wape`) to the per-cluster training log in `scripts/run_backtest.py`:
+- Added `val_accuracy` (computed as `100.0 - val_wape`) to the per-cluster training log in `scripts/ml/run_backtest.py`:
   ```
   Cluster 5/9 'high_volume_periodic': train=892,400, pred=12,300, best_iter=1247,
   val_accuracy=86.3%, val_wape=13.7%, profile=high_volume_stable, pattern=continuous (4.2s)
@@ -485,8 +485,8 @@ promotion-grade option.
 
 A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna independently for each `ml_cluster`, producing cluster-specific overrides written to `config/forecasting/cluster_tuning_profiles.yaml`.
 
-- **Script:** `scripts/tune_cluster_hyperparams.py`
-- **Makefile targets:** `make tune-lgbm-clusters`, `make tune-clusters` (all tree models)
+- **Script:** `scripts/ml/tune_cluster_hyperparams.py`
+- **Makefile targets:** `make tune-lgbm-clusters`, `make tune-clusters` (the canonical LightGBM model)
 
 ### 5b.2 How It Works
 
@@ -524,7 +524,7 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 
 ### 5c.4 Cached Winners CSV
 
-- Champion experiment results are cached to `data/champion/experiment_{id}_winners.csv` for fast "Load Results" in the UI
+- Champion experiment results are cached to `data/champion/experiment_{id}_winners.csv` as reproducible analysis evidence and for governed refresh verification; the retired manual "Load Results" UI action is not available
 - CSV dtype fix: `item_id` is read as `str` to prevent numeric truncation
 
 ### 5c.5 Delete Promoted Experiments
@@ -558,7 +558,7 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 | `common/ml/backtest_framework.py` | dropna relaxed to subset=["qty_lag_1"]. `_PROFILE_PRIORITY` ordering. `_log_timeframe_accuracy()` for per-cluster accuracy reporting. `_compute_cluster_wape()` for SHAP retrain safety. Per-cluster feature selection plumbing (`per_cluster_feature_cols` dict). `_predict_single_month` accepts per_cluster_feature_cols and `_sku_cks` passthrough for baseline models needing DFU-level mapping during recursive prediction. |
 | `common/ml/shap_selector.py` | `compute_timeframe_shap_per_cluster()` for independent per-cluster SHAP. `_stratified_sample_for_shap()` for sparse cluster sampling. Constants: `SPARSE_ZERO_PCT_THRESHOLD=0.5`, `SPARSE_MIN_NONZERO_ROWS=100`. |
 | `common/ml/model_registry.py` | `EARLY_STOP_PCT=0.05`, `SPARSE_EARLY_STOP_PCT=0.10`, `SPARSE_EARLY_STOP_FLOOR=50`. `_wape_lgbm()`, `WapeMetric`, `_wape_xgb()` custom eval functions with scaled denominator floor. `fit_model()` accepts `demand_pattern` param for sparse-aware early stopping. |
-| `scripts/tune_cluster_hyperparams.py` | **NEW** — Per-cluster Bayesian hyperparameter tuning pipeline. Runs Optuna independently per `ml_cluster`, writes cluster-specific overrides to `cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. |
+| `scripts/ml/tune_cluster_hyperparams.py` | **NEW** — Per-cluster Bayesian hyperparameter tuning pipeline. Runs Optuna independently per `ml_cluster`, writes cluster-specific overrides to `cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. |
 | `common/ml/champion/` (split from the legacy `common/ml/champion_strategies.py` into 9 sub-modules: `registry.py`, `basic.py`, `blend.py`, `meta.py`, `bandit.py`, `segment.py`, `regime.py`, `routing.py`, `helpers.py` -- see [Champion Selection](./07-champion-selection.md#module-layout)) | Decimal -> float cast for DB values (in `helpers.py`). `is_ensemble` detection fix (checks synthetic model_id). Per-cluster strategy (in `segment.py`) loads `dfu_features`. |
 
 ---

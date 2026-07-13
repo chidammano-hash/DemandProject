@@ -29,8 +29,11 @@ Everything is triggered from one of two tabs:
   (status `queued → running → completed/failed`) and read output under **Job History → logs**.
 - **Preferred operating path:** use **Workflows → Plan & Run → Analyze workflows**,
   run only the first safe recommendation, then analyze again after it completes.
-- **Write actions require the API key.** The UI sends `X-API-Key` automatically once you're
-  authenticated; for direct `curl` you must pass `-H "X-API-Key: $API_KEY"`.
+- **Write actions require authentication.** The UI signs in through
+  `POST /auth/login`, keeps access and refresh tokens in browser-session storage,
+  and centrally sends `Authorization: Bearer ...`; it never receives or exposes
+  the service API key. Planner-or-higher JWTs may run workflows. Automation via
+  direct `curl` may continue to pass `-H "X-API-Key: $API_KEY"`.
 - **Prerequisite:** API on `:8000` and UI on `:5173` running (`make api`, `make ui`). Data must
   already be loaded through Phase 4 (features + clustering) per the reset runbook.
 
@@ -44,21 +47,20 @@ families run concurrently — same family stays serial).
 
 | Model (model_id) | Job type | Notes |
 |---|---|---|
+| `lgbm_cluster` | `backtest_lgbm` | per-cluster LightGBM |
 | `chronos2_enriched` | `backtest_chronos2_enriched` | foundation - slow (multi-hour) |
 | `mstl` | `backtest_mstl` | statistical decomposition — **needs the `statistical` extra** (`uv sync --extra statistical` / `uv pip install statsforecast`); without `statsforecast` the run produces **zero predictions** and the model stays "No backtest" |
 | `nhits`, `nbeats` | `backtest_nhits` / `_nbeats` | deep learning (needs the `dl` extra) |
 
-> **statsforecast extra.** MSTL (and the expert-panel statistical models AutoCES,
-> DynamicOptimizedTheta, IMAPA, TSB, ADIDA) depend on `statsforecast`, declared as the
+> **StatsForecast extra.** MSTL depends on `statsforecast`, declared as the
 > `statistical` optional extra in `pyproject.toml`. If it's not installed, the backtest logs
 > `statsforecast not installed; returning empty DataFrame` for every timeframe and exits with
 > `No predictions produced` — nothing loads, so the UI correctly shows "No backtest". Fix:
 > `uv pip install statsforecast` (or `uv sync --extra statistical`), then re-run.
 
-**Running the whole roster from the UI** (no single "Run all" button): use the
-**Workflows → Workflow Library → Pipeline Builder** and add one step per backtest job type (`backtest_lgbm`,
-Or click **Run** on each model card. The foundation/DL backtests are the multi-hour
-wall — fire them and monitor in Active Jobs.
+**Running the whole roster from the UI:** use each model-family section's **Run all** action, or
+build a workflow with `backtest_lgbm`, `backtest_chronos2_enriched`, `backtest_mstl`,
+`backtest_nhits`, and `backtest_nbeats`. Monitor the multi-hour foundation/DL work in Active Jobs.
 
 ---
 
@@ -79,21 +81,37 @@ wall — fire them and monitor in Active Jobs.
   has a **Run all** action that queues a backtest for every model in that group.
 - **Accuracy** is shown per row (`GET /backtest-management/summary`); run history via
   `GET /backtest-management/{model_id}/runs`.
-- **External ML extracts** (`ext_lgbm/cat/xg/best`) and the **accuracy-MV refresh** have **no
-  dedicated UI button** — run `make load-ext-all` and `make refresh-accuracy-mvs`, or submit a
-  `refresh_forecast_views` job from **Workflows → Workflow Library**.
+- The **accuracy-MV refresh** has no dedicated model-panel button — run
+  `make refresh-accuracy-mvs`, or submit a `refresh_forecast_views` job from
+  **Workflows → Workflow Library**.
 
 ---
 
 ## 12.3 Phase 7 — Champion (Model Tuning → Champion stage)
 
-The Champion stage (`ChampionExperimentsPanel`) creates and runs selection experiments.
+The Champion stage (`ChampionExperimentsPanel`) creates and runs read-only selection experiments.
 
-- **Create / run an experiment** → job type `champion_experiment` (params `{experiment_id}`) or
-  `champion_select`, submitted via `POST /jobs`. Compares loaded backtests by rolling WAPE and
-  writes the per-DFU winners.
-- **Load results** → `champion_results_load` (requires the experiment to be promoted).
-- These three job types are in the `champion` group and are **managed only here**, not in the
+- **Create / run an experiment** → job type `champion_experiment` (params `{experiment_id}`),
+  submitted by `POST /champion-experiments`. It compares loaded backtests without replacing the
+  active config or champion results.
+- The old **Promote Config**, **Load Results**, and sweep **Promote winner** controls are retired.
+  Their compatibility endpoints return `410 manual_champion_promotion_retired` with guidance to
+  `POST /jobs/pipelines/named/model-refresh`; they perform no DB/config mutation and submit no job.
+  Generic job launch, scheduling, and ad-hoc pipeline APIs also reject and hide
+  `champion_results_load`.
+- The named **model-refresh** workflow uses `governed_champion_refresh`: it verifies the
+  exact current five-run lineage and atomically promotes the completed experiment and its results.
+- Named pipeline submission is server-idempotent. Concurrent or repeated
+  launches of the same preset return HTTP 200 with `status=already_running`
+  and the existing pipeline id; only the first launch returns HTTP 202. This
+  protection uses a PostgreSQL advisory lock across API workers, not browser
+  component state. A just-completed intermediate step is held for five minutes
+  to cover successor creation/restart recovery; an abandoned chain with no
+  successor stops blocking a clean relaunch after that recovery window.
+- The stable API job id `champion_select` invokes the identical governed callable and recovery
+  finalizer. Its old hidden configuration card was removed, and the destructive unscoped script is
+  no longer reachable from either the UI or job API.
+- These champion job types are in the `champion` group and are **managed only here**, not in the
   generic Workflow Library job-group list.
 
 **Champion Strategy Sweep (tournament).** The **Run Sweep** button (next to "New Experiment")
@@ -103,10 +121,9 @@ assembles a per-segment composite, and recommends a winner. Pick template chips 
 variants in the **Sweep Builder**; the live counter shows how many candidates the grid expands to
 (capped at `sweep.max_candidates`, default 24; per-segment scoring adds **no** extra runs). The
 **Sweep Results** panel shows the global leaderboard (with gate-eligibility badges), the per-segment
-winner map, and a "composite vs. best global" headline. **Promote winner** delegates to the same
-Stage-1 promotion as a single experiment and is enabled only when the recommendation passes the
-promote gate (`min_wape_improvement_pct` / coverage). Composite promotion is available for the
-`demand_class` axis; `ml_cluster`/`abc_xyz` are diagnostic-only. See spec
+winner map, and a "composite vs. best global" headline. Every recommendation is analysis-only.
+To adopt one, make a reviewed production-config change and run the named **model-refresh** workflow;
+the UI never writes production config or champion facts. See spec
 `docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
 
 ---
@@ -117,12 +134,25 @@ The Forecast stage (`ForecastPanel`) is a guided Train → Generate → Promote 
 
 | Step | UI control → endpoint | Job type | Notes |
 |---|---|---|---|
-| **Train** production models | Train (per model or all) → `POST /backtest-management/{model_id}/train` (or `/all/train`) | `train_production_model` (`{model_id, all_models}`) | **Tree models only** — foundation/DL are zero-shot, no training |
+| **Train** production models | Train one persisted model (or all persisted models) → `POST /backtest-management/{model_id}/train` (or `/all/train`) | `train_production_model` (`{model_id, all_models}`) | LightGBM, N-HiTS, and N-BEATS require immutable production final-fit artifacts. MSTL fits from history and Chronos 2E uses pinned pretrained weights with covariates. |
 | **Generate** forecast | Generate (per model) **or Generate All ready** → `POST /backtest-management/{model_id}/generate?horizon=&confidence_intervals=` | `generate_production_forecast` (`{horizon, model_id, confidence_intervals}`) | writes `fact_production_forecast_staging`; check counts via `GET /backtest-management/staging-summary`. The panel's **Horizon** input + **Include Confidence Intervals** toggle now thread through to every generate path (single / champion / Generate All) |
-| **Promote** to production | Promote → `POST /backtest-management/{model_id}/promote` (single) or `POST /backtest-management/champion/promote` (per-DFU champion) | — (direct call) | single-model promotes pass a **WAPE + coverage gate**; `model_id=champion` **bypasses** that gate (experiment-level gating). `X-API-Key` required; gate decisions logged to the AI ledger. **Gate rejections (409) and "no staged rows" (400) now surface as toasts** instead of failing silently |
+| **Promote** to production | Promote → `POST /backtest-management/{model_id}/promote` (single) or `POST /backtest-management/champion/promote` (per-DFU champion) | — (direct call) | Both paths are fail-closed. Single-model promotion validates its candidate; champion promotion also validates promoted experiment, routing, cluster/tuning lineage, historical quality, forward structure, and the outgoing snapshot archive. `X-API-Key` is required. Gate rejections and missing staging rows surface as toasts. |
+
+The Forecast stage does not infer readiness from an artifact's own metadata.
+`GET /backtest-management/training-status` revalidates LightGBM, N-HiTS, and
+N-BEATS against the current completed sales batch and checksum, latest closed
+month, generator contract, fitted cohort, and (for LightGBM) the promoted
+cluster assignment generation. `GET /backtest-management/snapshot-roster-readiness`
+then validates the current champion plus exact rank-1 through rank-3 contender
+evidence. Until both the champion candidate and this roster are current, every
+**Promote** control stays disabled. Use the single **Prepare Release** action to
+launch the canonical `forecast-publish` workflow; the panel polls that exact
+pipeline and revalidates readiness once its final step completes. Payload
+integrity failures require operator review and intentionally do not offer an
+automatic rebuild action.
 
 **Generate All** (Step 1 header button) fires a generate job for every ready model —
-non-tree models plus production-trained tree models — in one click, carrying the same
+the three artifact-backed models plus direct MSTL and Chronos 2E — in one click, carrying the same
 horizon + CI settings.
 
 Promotion status is shown on the panel (`GET /backtest-management/promotion-status`). Keep the
@@ -170,7 +200,7 @@ These run as generic jobs from **Workflows → Workflow Library → Job Groups**
 > right order). Inventory tab panels auto-refresh once these jobs complete.
 
 Steps that still have **no UI job** (run via `make` per the reset runbook): `setup-demand-planning`'s
-forward-planning suite (projection, planned-orders, quantile, consensus, bias, blended,
+forward-planning suite (projection, planned-orders, consensus, bias, blended,
 service-level, lead-time, echelon) beyond `compute_replenishment_plan`, and the full
 `setup-ops` suite (S&OP, events, financial plan, scenarios) — only `generate_storyboard`,
 `generate_ai_insights`, and `data_quality` (platform group) are exposed as jobs.
@@ -203,9 +233,8 @@ service-level, lead-time, echelon) beyond `compute_replenishment_plan`, and the 
 | Need | Why | Do this instead |
 |---|---|---|
 | "Run all backtests" single button | not implemented | Pipeline Builder with one step per `backtest_*` job type, or per-model Run |
-| Load external ML extracts | no job | `make load-ext-all` |
 | Accuracy-MV refresh after backtest load | no dedicated button | `refresh_forecast_views` job, or `make refresh-accuracy-mvs` |
-| Full demand-planning suite (projection/quantile/consensus/…) | only `compute_replenishment_plan` exposed | `make setup-demand-planning` |
+| Full demand-planning suite (projection/consensus/planned orders/…) | only `compute_replenishment_plan` exposed | `make setup-demand-planning` |
 | Full ops suite (S&OP/events/financial/scenarios) | only storyboard/AI/DQ exposed | `make setup-ops` |
 | Auto-promote champion | deliberate manual gate | review, then click **Promote** on the Forecast stage |
 

@@ -57,7 +57,7 @@ What `make ui-init` does: `cd frontend && npm install` (`Makefile:452-453`).
 
 **Fallback if `uv` is unavailable:** `make init-pip` creates a plain `.venv` and installs the minimum FastAPI stack via `pip` (no ML deps).
 
-**Optional extras** (`pyproject.toml` `[project.optional-dependencies]`, installed via `uv sync --extra <name>`): `foundation` (Chronos), `dl` (NeuralForecast), `statistical` (statsforecast), `gpu` (cupy/numba), and `agent` (`claude-agent-sdk` — required only to run the **SKU Chatbot** live; lazy-imported, so the base install and tests don't need it — see `09-ai-intelligence.md` § 9.12).
+**Optional extras** (`pyproject.toml` `[project.optional-dependencies]`, installed via `uv sync --extra <name>`): `foundation` (Chronos 2E), `dl` (N-HiTS/N-BEATS via NeuralForecast), `statistical` (MSTL via StatsForecast), `gpu` (cupy/numba), and `agent` (`claude-agent-sdk` — required only to run the **SKU Chatbot** live; lazy-imported, so the base install and tests don't need it — see `09-ai-intelligence.md` § 9.12). The production `Dockerfile` installs the first three extras plus `libgomp1`, so every canonical forecast model can execute in the runtime image. A base local install still needs `uv sync --extra foundation --extra dl --extra statistical` before running all five models.
 
 ---
 
@@ -102,6 +102,9 @@ Edit `/Users/manoharchidambaram/projects/DemandProject/.env` (created by `make i
 | `PLANNING_DATE` | unset (uses config) | `common/core/planning_date.py` | Override "today" for all date-sensitive code (`YYYY-MM-DD`). Useful for replaying a fixed planning date. |
 | `USE_SYSTEM_DATE` | unset (`false`) | `common/core/planning_date.py` | When `true`, ignore `config/planning_config.yaml` and use the OS clock. |
 | `DEMAND_GPU` | `auto` | backtest scripts in `scripts/ml/` | GPU acceleration mode: `on` / `off` / `auto`. Falls back gracefully if `cupy` / `numba` are not installed. |
+| `DEMAND_TORCH_GPU` | inherits `DEMAND_GPU` | PyTorch forecast models | Shared fallback accelerator policy: `on` requires Apple MPS/CUDA, `auto` prefers it, and `off` uses CPU. Model-family overrides below take precedence. |
+| `DEMAND_CHRONOS_GPU` | inherits `DEMAND_TORCH_GPU` | Chronos 2E | Chronos accelerator policy. `make api-gpu` requires native MPS/CUDA for Chronos. |
+| `DEMAND_NEURAL_GPU` | inherits `DEMAND_TORCH_GPU` | N-HiTS, N-BEATS | NeuralForecast accelerator policy. `make api-gpu` requires native MPS/CUDA. The all-model trainer isolates every model in a fresh process to prevent the macOS LightGBM/PyTorch OpenMP collision. |
 | `POOL_MIN_SIZE` | `5` | `api/pool.py` | psycopg3 connection pool floor. |
 | `POOL_MAX_SIZE` | `12` | `api/pool.py` | Sync primary pool ceiling. The API runs THREE independent pools per worker (sync / async / read) — see the multi-pool invariant below. |
 | `ASYNC_POOL_MIN_SIZE` | falls back to `POOL_MIN_SIZE` (`5`) | `api/pool.py` | Floor for the async pool used by the async pilot routers (`customer_analytics`, `inv_planning_insights`). |
@@ -109,7 +112,7 @@ Edit `/Users/manoharchidambaram/projects/DemandProject/.env` (created by `make i
 | `READ_REPLICA_URL` | unset (replica disabled — fall back to primary) | `common/core/db.py`, `api/pool.py` | Optional Postgres replica URL (`postgres://user:pass@host:port/dbname`). When set, `get_read_only_conn()` / `get_async_read_only_conn()` route to the replica; `_read_replica_configured()` is the gate. Caller must be lag-tolerant. |
 | `READ_POOL_MIN_SIZE` / `READ_POOL_MAX_SIZE` | `READ_POOL_MAX_SIZE` final default `12` (chain: `READ_POOL_*` → `ASYNC_POOL_*` → `POOL_*`) | `api/pool.py` | Per-pool overrides for the read-replica pool (only created when `READ_REPLICA_URL` is set). Counts against the REPLICA's `max_connections`, not the primary's. |
 
-**Multi-pool connection invariant.** Total backend connections against the PRIMARY are `GUNICORN_WORKERS × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead`; keep that `≤` Postgres `max_connections` (dev `max_connections=200` in `docker-compose.yml`). The read-replica pool (`GUNICORN_WORKERS × READ_POOL_MAX_SIZE`) is bounded by the replica's own ceiling. With the defaults: `4 × (12 + 20) = 128 ≤ 200`. The `make deploy-check` preflight gate computes this exact formula (adding the read pool only when `READ_REPLICA_URL` is set) and fails if the total exceeds 85% of `max_connections`. Override `POSTGRES_MAX_CONNECTIONS` in `.env` if you raise the DB ceiling so the gate stays accurate.
+**Multi-pool connection invariant.** Total backend connections against the PRIMARY are `GUNICORN_WORKERS × (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead`; keep that `≤` Postgres `max_connections` (dev `max_connections=200` in `docker-compose.yml`). The read-replica pool (`GUNICORN_WORKERS × READ_POOL_MAX_SIZE`) is bounded by the replica's own ceiling. The production image defaults to one worker because scheduler and job ownership are process-local, so the default primary-pool ceiling is `1 × (12 + 20) = 32 ≤ 200`. Do not raise `GUNICORN_WORKERS` until job execution and scheduling use durable cross-process ownership; otherwise scheduled and model jobs can overlap. The `make deploy-check` preflight gate computes the connection formula (adding the read pool only when `READ_REPLICA_URL` is set) and fails if the total exceeds 85% of `max_connections`. Override `POSTGRES_MAX_CONNECTIONS` in `.env` if you raise the DB ceiling so the gate stays accurate.
 | `PG_STATEMENT_TIMEOUT_MS` | `30000` | `api/pool.py` | `statement_timeout` applied per backend connection. |
 | `REDIS_URL` | `redis://localhost:6379/0` (host) / `redis://redis:6379/0` (container) | `common/services/cache.py` | Redis connection string. Backs `cached_async` (single-flight de-dup); `reset_cache` flushes the live backend. |
 
@@ -120,12 +123,16 @@ After editing `.env`, reload your shell or restart any running processes — the
 ## 4. Docker Services
 
 ```bash
-make up            # Start postgres + mlflow + redis (and api if you want it containerized) + apply DDL
+make up            # Start postgres + mlflow + redis, then apply DDL
 make logs          # Tail container logs
 make down          # Stop all containers (volumes preserved)
 ```
 
-`make up` runs `docker compose up -d` then `make db-apply-sql` (`Makefile:316-318`).
+`make up` starts only the three infrastructure services and then applies SQL migrations. Start one
+host API separately with `make api`, or use `make api-gpu` to require native Apple MPS/CUDA.
+Applied filenames are recorded in `schema_migration`; an existing pre-ledger database is baselined
+once, while a fresh database applies each regular SQL file exactly once. Historical migrations
+marked `MIGRATION: SUPERSEDED` are tracked without replaying obsolete one-time conversions.
 
 ### 4.1 Containers in `docker-compose.yml`
 
@@ -134,9 +141,20 @@ make down          # Stop all containers (volumes preserved)
 | `postgres` | `pgvector/pgvector:pg16` | `${POSTGRES_HOST_PORT:-5440}` | `5432` | `pg_data` | Primary DB (PG16 + pgvector). Tuned for OLAP — see `docker-compose.yml:8-25`. |
 | `mlflow` | `ghcr.io/mlflow/mlflow:v3.0.0` | `${MLFLOW_HOST_PORT:-5003}` | `5000` | `mlflow_data` | ML experiment tracking. Backend store = same Postgres. UI: `http://localhost:5003`. |
 | `redis` | `redis:7-alpine` | `${REDIS_HOST_PORT:-6379}` | `6379` | `redis_data` | API cache + future job queue. Capped at 256MB LRU. |
-| `api` | built from project `Dockerfile` | `${API_HOST_PORT:-8000}` | `8000` | — | Optional containerized API (gunicorn + uvicorn). For dev you usually run `make api` on the host instead. |
+| `api` | built from project `Dockerfile` | `${API_HOST_PORT:-8000}` | `8000` | `./data:/app/data`, `./config:/app/config` | Containerized API and forecasting job worker (gunicorn + uvicorn). The bind mounts share normalized inputs/artifacts and persist tuning/config promotions across rebuilds. |
 
 Healthchecks: `pg_isready` on Postgres, `redis-cli ping` on Redis. The `api` and `mlflow` services depend on `postgres` being healthy.
+
+Do not remove the API `./data:/app/data` or `./config:/app/config` bind mounts
+when running forecasting jobs through the UI. Without the data mount, jobs
+cannot see host-normalized inputs or persist artifacts for the next pipeline
+step. Without the config mount, cluster tuning appears successful but is lost
+on rebuild, immediately making the persisted LightGBM bundle stale against the
+restored YAML. A production deployment must replace these development bind
+mounts with durable controlled storage at `/app/data` and `/app/config`.
+The image also sets `UV_NO_SYNC=1` and `UV_FROZEN=1`: all five-model optional
+runtimes are installed at build time, and UI-launched jobs must never prune
+those extras or attempt dependency downloads while a release is running.
 
 Postgres has a **5GB** `shm_size` and large `shared_buffers` — make sure Docker Desktop has at least 8 GB of RAM allocated.
 
@@ -153,7 +171,9 @@ What it does (`Makefile:321-331`):
 1. Waits for `pg_isready` inside the `postgres` container.
 2. Iterates `sql/*.sql` in **lexical order** and pipes each through `psql -v ON_ERROR_STOP=1`.
 3. Runs a one-off `ALTER TABLE` to relax `dim_customer.customer_name NOT NULL`.
-4. Prints the count of applied files (currently **143** files in `sql/` — the `170-185` range covers the recent perf work: `pg_stat_statements`, partition cleanup, customer-analytics MVs, `pg_queue`, weekly-partition cutover prep).
+4. Prints the count of applied files (currently **168** files in `sql/`; the
+   sequence now extends through the forecasting durability and artifact-lineage
+   migrations at `208-209`).
 
 ### 5.1 DDL apply order (lexical)
 
@@ -169,6 +189,7 @@ Files are applied in the order returned by `ls sql/*.sql | sort`. The numeric pr
 | `080-099` | Medallion + perf profiling + tuning | `medallion_infrastructure`, `partition_inventory_snapshot`, `dim_sourcing`, `fact_purchase_orders`, `lgbm_tuning`, `tuning_chat`, `unified_model_tuning` |
 | `100-130` | Promotion + experiments + customer demand + integrated targets | `results_promotion`, `cluster_experiments`, `champion_experiments`, `fact_customer_demand_monthly`, `candidate_forecast_and_promotion`, `inventory_algorithm_comparison`, `integrated_targets` |
 | `170-185` | Perf work + customer-analytics MVs + pg-queue + weekly-partition cutover | `pg_stat_statements`, `drop_empty_future_partitions`, `drop_unused_indexes`, `mv_customer_filter_options`, `mv_customer_activity_geo` extension, `mv_ca_segment_trends`, `mv_ca_demand_at_risk`, `mv_ca_order_patterns`, `pg_queue`, weekly-partition cutover prep for `fact_inventory_snapshot` and `fact_customer_demand_monthly` |
+| `186-209` | Forecast release lineage + AI/chat + job durability | AI/FVA retirement, champion/snapshot generation manifests, promoted cluster assignments, canonical roster enforcement, forecast-grain indexes, durable job attempts, and generator-contract invalidation |
 
 A subset of the early DDL files (`001-007`, `009`) are also auto-applied on **first** Postgres container boot via `docker-entrypoint-initdb.d` mounts (`docker-compose.yml:31-38`). `make db-apply-sql` is still required to bring the schema fully up to date — the initdb mounts only run on an empty data volume.
 
@@ -253,7 +274,10 @@ Run after schema setup. Seeds default admin user and configures JWT-based authen
 # api/routers/platform/users.py provides: CRUD for dim_user (admin-only)
 
 # No Make target needed — auth is auto-initialized when API starts.
-# All mutation endpoints use require_role() for RBAC enforcement.
+# Browser users sign in through the app-level login gate. Shared UI requests
+# send a short-lived JWT; X-API-Key is reserved for service automation.
+# Standard mutation endpoints require planner-or-higher; endpoints with a
+# stricter require_role() dependency continue to enforce manager/admin roles.
 # Audit log entries written to fact_audit_log on every state-changing request.
 ```
 
@@ -344,7 +368,9 @@ sudo chown -R "$USER" data/
 ```bash
 make dev
 ```
-Equivalent to `make up && make api && make ui` (`Makefile:14`). Note: `make api` runs in the foreground; in practice run the three targets in three terminals.
+Equivalent to `make up && make api && make ui` (`Makefile:19`). `make up` starts only PostgreSQL,
+MLflow, and Redis; `make api` is therefore the single local job manager and runs in the foreground.
+In practice run the three targets in three terminals.
 
 ### 8.2 Recommended: three terminals
 
@@ -364,6 +390,11 @@ make ui              # cd frontend && npm run dev -- --host --port 5173
 ```
 
 Vite proxies all known API prefixes (see `frontend/vite.config.ts`) to `:8000`, so the UI talks to the live FastAPI process.
+
+Do not also start the Compose `api` service in this workflow. If validating the production image,
+use `docker compose up -d api` and stop any host `make api` process first. Two API runtimes that
+share PostgreSQL but use different PID namespaces cannot safely adopt each other's in-flight model
+subprocesses.
 
 ### 8.3 Verify the stack
 - API docs: `http://localhost:8000/docs`

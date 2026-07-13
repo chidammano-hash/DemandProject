@@ -101,7 +101,7 @@ async def test_feature_importance_no_shap_files():
 
 @pytest.mark.asyncio
 async def test_feature_importance_custom_model_id():
-    """GET /feature-lab/importance?model_id=catboost_cluster uses correct model."""
+    """GET /feature-lab/importance?model_id=mstl uses correct model."""
     with patch("api.routers.forecasting.feature_lab._read_summary", return_value=None) as mock_read:
         with patch("api.core._get_pool", return_value=MagicMock()):
             from api.main import app
@@ -109,10 +109,10 @@ async def test_feature_importance_custom_model_id():
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/feature-lab/importance",
-                    params={"model_id": "catboost_cluster"},
+                    params={"model_id": "mstl"},
                 )
     assert resp.status_code == 200
-    mock_read.assert_called_once_with("catboost_cluster")
+    mock_read.assert_called_once_with("mstl")
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ async def test_feature_categories_no_summary():
 
 @pytest.mark.asyncio
 async def test_feature_categories_custom_model_id():
-    """GET /feature-lab/categories?model_id=xgboost_cluster passes model correctly."""
+    """GET /feature-lab/categories?model_id=nhits passes model correctly."""
     with patch("api.routers.forecasting.feature_lab._read_summary", return_value=None) as mock_read:
         with patch("api.core._get_pool", return_value=MagicMock()):
             from api.main import app
@@ -359,10 +359,10 @@ async def test_feature_categories_custom_model_id():
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/feature-lab/categories",
-                    params={"model_id": "xgboost_cluster"},
+                    params={"model_id": "nhits"},
                 )
     assert resp.status_code == 200
-    mock_read.assert_called_once_with("xgboost_cluster")
+    mock_read.assert_called_once_with("nhits")
 
 
 # ---------------------------------------------------------------------------

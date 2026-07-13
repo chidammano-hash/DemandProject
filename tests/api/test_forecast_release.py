@@ -153,6 +153,12 @@ async def test_release_readiness_passes_only_when_every_required_gate_passes() -
     assert "FROM fact_sales_monthly" in executed_sql
     assert "LEFT JOIN sales_by_dfu prior" in executed_sql
     assert "COALESCE(prior.qty, 0)" in executed_sql
+    state_index = next(
+        index for index, sql in enumerate(sql_calls) if "promotion_state AS" in sql
+    )
+    state_call = cursor.execute.call_args_list[state_index]
+    assert "metadata ->> %s = %s" in state_call.args[0]
+    assert len(state_call.args[1]) == 2
     assert "'seasonal_naive'" not in executed_sql.split("UNION ALL", maxsplit=1)[0]
     from api.main import app
 
@@ -383,7 +389,7 @@ async def test_missing_cluster_assignments_routes_to_clustering() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sales_newer_than_release_routes_to_forecast_publish() -> None:
+async def test_sales_newer_than_release_routes_to_model_refresh() -> None:
     rows = _passing_rows()
     state = list(rows[1])
     state[11] = datetime(2026, 7, 9, tzinfo=UTC)
@@ -392,7 +398,7 @@ async def test_sales_newer_than_release_routes_to_forecast_publish() -> None:
 
     response = await _get_release(pool)
 
-    assert response.json()["next_action"]["pipeline"] == "forecast-publish"
+    assert response.json()["next_action"]["pipeline"] == "model-refresh"
 
 
 @pytest.mark.asyncio

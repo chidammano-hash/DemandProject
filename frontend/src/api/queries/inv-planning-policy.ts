@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Inventory Planning — IPfeature5: Replenishment Policy Management

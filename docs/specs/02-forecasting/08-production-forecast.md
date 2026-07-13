@@ -12,7 +12,17 @@
 
 ## Problem
 
-Backtesting evaluates model accuracy on historical hold-out windows, but the trained weights cover only a partial history window (e.g., 24 of 36 available months). Using those partial-history weights for production inference wastes signal -- the model has never seen the most recent months of data. Furthermore, foundation and statistical models do not produce reusable weight artifacts at all during backtesting. Planners need a dedicated pipeline that (1) trains tree models on ALL available history up to the planning date, (2) generates recursive forward-looking predictions, and (3) attaches confidence interval bands derived from backtest residuals.
+Backtesting evaluates model accuracy on historical hold-out windows, but those
+evaluation fits are not safe production artifacts. Planners need a dedicated
+pipeline that (1) final-refits LightGBM, N-HiTS, and N-BEATS on all closed
+history with immutable lineage, (2) routes MSTL and Chronos 2E through the same
+direct adapters used in backtesting, (3) generates forward-looking predictions,
+and (4) attaches confidence interval bands derived from backtest residuals.
+
+The base-model roster is deliberately fixed to exactly five algorithms:
+LightGBM (`lgbm_cluster`), N-HiTS (`nhits`), N-BEATS (`nbeats`), MSTL (`mstl`),
+and Chronos 2E (`chronos2_enriched`). `external`, `champion`, `ensemble`, and
+`ceiling` are comparison or routing identities, not additional base models.
 
 ## Production Forecast vs. Backtest
 
@@ -22,7 +32,7 @@ Backtesting evaluates model accuracy on historical hold-out windows, but the tra
 | **Training window** | Expanding or sliding window, partial history | Full history up to planning date |
 | **Prediction target** | Historical months where actuals exist | T+1 through T+24 (future months) |
 | **Evaluation** | Compare predictions to actuals (WAPE, accuracy) | No evaluation possible -- predictions are the output |
-| **Artifacts** | Discarded after accuracy scoring | Persisted `.pkl` files for inference |
+| **Artifacts** | Evaluation evidence | Atomic LightGBM bundle + immutable N-HiTS/N-BEATS artifacts; MSTL/Chronos direct |
 | **Frequency** | On-demand or after data refresh | Monthly, on the 2nd after sales close |
 
 ## Pipeline Steps
@@ -34,20 +44,27 @@ The production forecast pipeline has two major phases: **Train** and **Generate*
 Script: `scripts/ml/train_production_models.py`
 
 
-1. Load all sales history from `fact_sales_monthly` up to the planning date
+1. Validate the synchronized `fact_sales_monthly_original` mirror and load it through the latest fully closed month (the month before the planning month; partial planning-month actuals are excluded)
 2. Build the full feature matrix using `build_feature_matrix()` -- identical features to backtest but with all available months
 3. Split into train/validation sets: the last `val_fraction` (20%) of months serve as early-stopping validation
-4. Train one model per cluster (`ml_cluster`), applying per-cluster tuning profiles from `config/forecasting/cluster_tuning_profiles.yaml`
-5. Save model artifacts to `data/models/{model_id}/cluster_{N}.pkl`
-6. Save `training_metadata.json` alongside each artifact with feature columns, row counts, training timestamp, and hyperparameters
-7. Clusters with fewer than `min_cluster_rows` (50) rows are skipped -- their DFUs fall back to the global model or `cold_start_model_id`
+4. Train one LightGBM model per promoted cluster (or one explicitly declared global model when clustering is disabled) and global N-HiTS/N-BEATS final fits
+5. Stamp source batch/hash, history end, configuration, cluster lineage, and generator contract
+6. Publish the complete LightGBM set under `data/models/lgbm_cluster/production_tree/versions/<artifact_set_id>/`, verify every file and checksum, then atomically replace `data/models/lgbm_cluster/production_tree/active.json`; a partial failure leaves the previous active version untouched
+7. Fail closed when any required cluster artifact is missing; production never substitutes an unrelated cluster model
+
+There is no fallback from the immutable-original mirror to
+`fact_sales_monthly`. The latest positive completed sales audit must represent a
+canonical dual-track reload (not legacy `safe_upsert`), its output row count
+must equal the mirror, and `MAX(fact_sales_monthly_original.load_ts)` must be at
+least the batch `started_at`. Run `make normalize-sales && make load-sales` once
+to repair missing or stale mirror lineage.
 
 Usage:
 ```bash
 # Train a single model
 make train-production MODEL=lgbm_cluster
 
-# Train all tree models
+# Train every persisted production model (LightGBM, N-BEATS, N-HiTS)
 make train-production-all
 ```
 
@@ -58,13 +75,30 @@ Script: `scripts/forecasting/generate_production_forecasts.py`
 For each DFU:
 
 1. Look up the champion model assignment (from champion selection) or use `fallback_model_id`
-4. Build a feature vector for T+1 using the last known actuals as lag features
-5. Predict T+1 (point forecast)
-6. For T+2 through T+24, use recursive inference: the predicted value for month T becomes `qty_lag_1` for month T+1, and so on
-7. Write all predictions to `fact_production_forecast` with `plan_version`, `model_id`, `horizon_months`, `lag_source` ("actual" for T+1, "predicted" for T+2+), and `run_id`
+2. Route LightGBM/N-HiTS/N-BEATS winners through validated artifacts and MSTL/Chronos winners through their canonical direct adapters
+3. Generate T+1 through T+24 without using future actuals
+4. Write candidate rows to `fact_production_forecast_staging` with generation lineage
+5. Promote the validated staging generation into `fact_production_forecast`
 
 
-**Fail loud on prediction failure (no silent zero-fill):** if the recursive predict loop raises (`ValueError` / `TypeError` / `ArithmeticError`), the run logs the full traceback and **re-raises** — it does not substitute a column of zeros. An all-zero forecast reads downstream as "no demand" and silently corrupts the plan and safety stock, so a systematic prediction bug now aborts the generate run (the correct posture for data integrity) rather than writing zeros. (Fixed 2026-06-20; previously a bare `except Exception` zero-filled the cluster group.)
+**Fail loud on prediction failure (no silent zero-fill or mislabeled fallback):** if LightGBM prediction fails, the run logs the full traceback and re-raises; it does not substitute zeros. `common/ml/production_non_tree.py` likewise requires the real MSTL, N-HiTS, N-BEATS, or Chronos 2E adapter to return the complete requested DFU-month grid with the correct model id and finite nonnegative values. Missing optional dependencies, empty results, or partial results abort generation instead of substituting a heuristic under the canonical model label.
+
+Every persisted run is stamped with
+`generator_contract_version=canonical-five-artifact-lineage-v2`. Promotion and
+snapshot retry require that exact contract, so staging created by the retired
+heuristic dispatcher cannot be reused as a canonical-model forecast. Chronos 2E
+also rejects NaN/Inf output at the adapter boundary; it never converts invalid
+model output to zero.
+
+The generation manifest records the exact persisted versions used:
+`tree_artifacts.lgbm_cluster.artifact_set_id` for LightGBM and each neural
+artifact id under `neural_artifacts`. A snapshot contender therefore remains
+bound to the same final-fit evidence as its immutable staging payload.
+
+The production `Dockerfile` installs `libgomp1` and the `foundation`, `dl`, and
+`statistical` extras. A local base install must run
+`uv sync --extra foundation --extra dl --extra statistical` before exercising
+all five models.
 
 **Streaming reads:** Both `scripts/forecasting/generate_production_forecasts.py`
 and `scripts/ml/train_meta_learner.py` load their large sales / backtest frames
@@ -90,88 +124,78 @@ See [Forecast CI Bands](./10-forecast-ci-bands.md) for full details on the resid
 
 When `model_selection.strategy` is `champion` (default):
 
-1. The meta-learner from [Champion Selection](./07-champion-selection.md) assigns each DFU a best model based on causal prior WAPE
-2. All participating models must be trained first (Step 1) before inference can run
-3. Each DFU loads the `.pkl` for its assigned champion model and cluster
-4. If no champion assignment exists, `fallback_model_id` (default `lgbm_cluster`) is used
+1. Champion selection assigns each DFU-month a single model or an evaluated ensemble based only on causal prior evidence
+2. LightGBM, N-HiTS, and N-BEATS must have current immutable final-fit artifacts; MSTL and Chronos 2E do not persist a product-specific fit
+3. LightGBM DFUs load the exact promoted-cluster bundle, neural DFUs load their lineage-validated global artifact, and MSTL/Chronos DFUs use `common/ml/production_non_tree.py` with the same adapters as backtesting
+4. Future-dated routes are never used; if no valid latest-as-of assignment exists, `fallback_model_id` (default `lgbm_cluster`) is used explicitly
 
 ## Model Types
 
+### Tree Model (LightGBM)
 
 - **Require explicit training** on full history before inference
-- Produce reusable `.pkl` artifacts per cluster
+- Produce an immutable, checksummed all-cluster artifact bundle
 - Support per-cluster tuning profiles and early stopping
 - Use recursive inference for multi-step horizons (lag features from prior predictions)
 
 ### Foundation Model (Chronos 2 Enriched)
 
-- **No separate training step required** -- zero-shot or pre-trained. `chronos2_enriched` is the only
-  in commit `5ab8d593`); see [Chronos Foundation Models](./18-chronos-foundation-models.md)
+- **No separate production training step required** -- it uses pretrained weights; see
+  [Chronos 2 Enriched](./18-chronos-foundation-models.md)
 - Consume raw sales history directly at inference time
 - Output predictions for all horizons in a single forward pass
 - No `.pkl` artifacts to manage
 
 ### Deep Learning Models (N-BEATS, N-HiTS)
 
-- **No separate production training step** -- Step 1 (`train_production_models.py`) only trains tree
-  models; N-BEATS and N-HiTS never produce `.pkl` artifacts
+- **Require explicit global final-refit training** through Step 1
+- Publish immutable NeuralForecast artifacts bound to sales/config/history lineage
 - `forecast: true` and `compete: true` in the algorithm roster, so a DFU whose champion is
-  `nbeats`/`nhits` IS eligible for production forecasting -- as a non-tree producer it routes through
-  `generate_forecasts_statistical()` like the statistical baselines (see Step 2 above), not a full
-  recursive deep-learning inference pass
+  `nbeats`/`nhits` is eligible for production forecasting through `common/ml/neural_forecast.py`
 
+### Statistical Model (MSTL)
 
 - **No training step required** -- computed directly from history
-- Simple transformations of historical data (moving average, same-month-last-year, trailing-window median, seasonal decomposition)
-- Used as cold-start fallbacks for DFUs with insufficient history
-- Also serve as baselines for intermittent-demand clusters (>70% zero rows)
+- Uses the same `common/ml/mstl.py` adapter in backtest and production
+- Participates in the same champion competition as the other four canonical models
 
 ## Artifact Management
 
-### Directory Structure
+### Directory and metadata contract
 
-```
-data/models/
-├── lgbm_cluster/
-│   ├── cluster_0.pkl
-│   ├── cluster_0_training_metadata.json
-│   ├── cluster_1.pkl
-│   ├── cluster_1_training_metadata.json
-│   └── ...
-│   └── ...
-    └── ...
-```
+Each persisted family uses content-addressed versions plus an atomically
+replaced active pointer. LightGBM versions contain the complete exact cluster
+set; neural versions contain the saved global NeuralForecast model. Metadata
+includes source sales batch/hash, latest closed `history_end`, model/config
+checksum, generator contract, and cluster experiment for per-cluster LightGBM.
 
-### Training Metadata JSON
+```text
+data/models/lgbm_cluster/production_tree/
+├── active.json                         # artifact_set_id + checksums manifest hash
+└── versions/<artifact_set_id>/
+    ├── metadata.json                   # exact cluster roster, config and lineage
+    ├── training_metadata.json          # final-fit diagnostics for this version
+    ├── checksums.json                  # complete version file manifest
+    └── models/0000.pkl, 0001.pkl, ...  # opaque files mapped by metadata.json
 
-Each `.pkl` file has a companion `_training_metadata.json`:
-
-```json
-{
-  "model_id": "lgbm_cluster",
-  "cluster_id": 3,
-  "trained_at": "2026-04-02T06:15:00Z",
-  "planning_date": "2026-04-01",
-  "n_rows": 12480,
-  "n_features": 47,
-  "feature_cols": ["qty_lag_1", "qty_lag_2", "..."],
-  "best_iteration": 312,
-  "val_rmse": 42.7,
-  "hyperparams": {"n_estimators": 500, "learning_rate": 0.05, "...": "..."}
-}
+data/models/{nhits,nbeats}/neuralforecast/
+├── active.json
+└── versions/<artifact_id>/             # metadata, checksums and saved global model
 ```
 
-### `fact_model_registry`
+There is no supported loose `cluster_<id>.pkl`,
+`data/models/lgbm_cluster/<cluster>/model.pkl`, or top-level
+`training_metadata.json` lookup. For a per-cluster set, `metadata.json` must
+declare exactly the currently promoted cluster labels; the explicit global
+strategy must contain exactly the `global` label. Extra, missing, stale, or
+checksum-mismatched files fail validation.
 
-Tracks persisted model weights so the inference pipeline can reload them.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `model_id` | VARCHAR(100) | Algorithm identifier |
-| `cluster_id` | INTEGER | Cluster this model covers |
-| `model_path` | TEXT | Path to `.pkl` file |
-| `feature_cols` | TEXT[] | Ordered feature column names |
-| `is_active` | BOOLEAN | TRUE = use for inference |
+The filesystem active pointer is the runtime registry. The loader verifies the
+pointer, version/file roster, checksums, exact model and cluster identity, and
+current sales/cluster/config lineage **before** deserializing or serving any
+model. Final-fit publication writes a temporary version and switches
+`active.json` only after complete validation, so a failed refit cannot expose a
+partially updated cluster set.
 
 ## Data Model
 
@@ -197,11 +221,17 @@ Tracks persisted model weights so the inference pipeline can reload them.
 
 ## Cold-Start Routing
 
-DFUs with insufficient sales history cannot be forecast by tree models. The pipeline applies tiered routing:
+Production routing derives history through the latest closed month at full
+`(item_id, customer_group, loc)` source grain. An output `(item_id, loc)` is
+eligible only when **every active customer group** satisfies the applicable
+history floor; a partial customer-group aggregate is never published.
+
+The shared routing rules are:
 
 | History Length | Routing | Rationale |
 |----------------|---------|-----------|
-| >= `min_history_months` (12) | Champion tree model | Enough data for ML features and lag computation |
+| >= `min_history_months` (12) | Assigned canonical champion, subject to that model's stricter floor | Enough data for normal routing; MSTL still requires its configured 25 months |
+| 3–11 months | Explicit LightGBM cold-start route | Keeps the eligible cohort complete without sending short histories to neural/MSTL adapters |
 | < `cold_start_min_months` (3) | Skipped entirely | Too little data for any meaningful forecast |
 
 Configured in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`.
@@ -227,7 +257,7 @@ script's `--horizon` and `--confidence-intervals` / `--no-confidence-intervals`
 flags. The CLI flag overrides `confidence_interval.enabled` in the pipeline config,
 so the UI toggle actually takes effect (previously it was silently dropped for
 single-model generation). A **Generate All** button submits a generate job for
-every ready model (non-tree models plus production-trained tree models) in one
+every ready model (artifact-backed LightGBM/N-HiTS/N-BEATS plus direct MSTL and Chronos 2E) in one
 click. Promote/generate failures (the WAPE/coverage gate's 409, or 400 for no
 staged rows) surface as toasts rather than failing silently.
 
@@ -238,7 +268,7 @@ staged rows) surface as toasts rather than failing silently.
 | Target | Description |
 |--------|-------------|
 | `make train-production MODEL=<id>` | Train a single model on full history |
-| `make train-production-all` | Train all tree models on full history |
+| `make train-production-all` | Final-refit every persisted production family: LightGBM, N-BEATS, and N-HiTS |
 | `make forecast-generate` | Generate forecasts for all DFUs (requires trained models) |
 | `make forecast-generate-dfu ITEM=X LOC=Y` | Single DFU inference |
 | `make forecast-generate-dry` | Preview without writing |
@@ -256,41 +286,40 @@ All production forecast settings live in `config/forecasting/forecast_pipeline_c
 ### Production Training
 
 ```yaml
-production_training:
-  enabled: true                 # Master switch for production training step
-  output_dir: data/models       # Where trained model artifacts are saved
-  val_fraction: 0.20            # Last 20% of months used for early stopping validation
-  min_cluster_rows: 50          # Minimum rows per cluster to train (skip sparse clusters)
-  save_metadata: true           # Save training_metadata.json alongside model artifacts
+production_forecast:
+  production_training:
+    enabled: true               # Master switch for production training step
+    output_dir: data/models     # Root for immutable versioned artifacts
+    val_fraction: 0.20          # Last 20% of months used for validation
+    min_cluster_rows: 50        # Minimum rows required; missing clusters fail the complete set
+    save_metadata: true         # Save diagnostics inside each immutable version
 ```
 
 ### Inference
 
 ```yaml
-inference:
-  horizon_months: 18            # Months ahead to forecast (T+1 through T+18)
+production_forecast:
+  horizon_months: 24            # Months ahead to forecast
   recursive: true               # Use recursive inference for multi-step horizons
+  fallback_model_id: lgbm_cluster
 ```
 
 ### Confidence Intervals
 
 ```yaml
-confidence_interval:
-  enabled: true                 # Enable probabilistic forecasts (CI bands)
-  z_lower: 1.282                # Z-score for 10th percentile (P10)
-  z_upper: 1.282                # Z-score for 90th percentile (P90)
-  horizon_scaling: sqrt          # Scale sigma by sqrt(h) for longer horizons
-  sigma_floor: 1.0              # Minimum sigma in units
-  sigma_cap_multiplier: 3.0     # Cap sigma at 3x global median
+production_forecast:
+  confidence_interval:
+    enabled: true               # Enable probabilistic forecasts (CI bands)
+    z_lower: 1.282              # Z-score for 10th percentile (P10)
+    z_upper: 1.282              # Z-score for 90th percentile (P90)
+    horizon_scaling: sqrt       # Scale sigma by sqrt(h) for longer horizons
+    sigma_floor: 1.0            # Minimum sigma in units
+    sigma_cap_multiplier: 3.0   # Cap sigma at 3x global median
 ```
 
-### Model Selection
-
-```yaml
-model_selection:
-  strategy: champion            # 'champion' = use DFU's champion assignment
-  fallback_model_id: lgbm_cluster
-```
+Champion strategy and model roster live in the top-level `champion:` block;
+generation routing fallbacks live in `production_forecast:`. There is no
+separate `inference:` or `model_selection:` block.
 
 ## UI Integration
 
@@ -301,6 +330,12 @@ The **Model Experimentation Studio** provides a Train then Generate workflow:
 3. Review training metadata (row counts, validation RMSE, feature counts)
 4. Trigger forecast generation
 5. View point forecasts with CI bands in the Demand Forecast panel
+
+The monthly publish workflow also prepares exactly three WAPE-ranked
+`snapshot_contender` runs. When the next release replaces the current one,
+promotion archives the outgoing `champion` plus those three frozen contenders
+for snapshot lags 0 through 5; no other staged forecast is part of the bounded
+live-FVA archive.
 
 ## Dependencies
 

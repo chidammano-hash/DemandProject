@@ -1,16 +1,15 @@
 """Champion Experimentation Studio API router.
 
-Provides full CRUD lifecycle for champion selection strategy experiments:
-create, list, compare, promote config, load results, and track promotions.
+Provides CRUD and analysis for champion selection strategy experiments. Legacy
+manual promotion routes remain as fail-closed compatibility boundaries; only
+the governed model-refresh lifecycle may mutate the production champion.
 
 All endpoints live under the /champion-experiments prefix.
 """
 from __future__ import annotations
 
-import copy
 import json
 import logging
-import shutil
 from typing import Any
 
 import yaml
@@ -20,8 +19,12 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
+from api.routers.forecasting._champion_promotion_boundary import (
+    raise_manual_champion_promotion_retired,
+)
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 from common.core.sql_helpers import parse_db_json as _parse_json
-from common.core.utils import reset_config
+from common.core.utils import get_competing_model_ids
 from common.ml.champion import STRATEGY_REGISTRY as _STRAT_REG
 
 logger = logging.getLogger(__name__)
@@ -32,10 +35,7 @@ router = APIRouter(prefix="/champion-experiments", tags=["champion-experiments"]
 # Constants
 # ---------------------------------------------------------------------------
 
-from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
-
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "champion_experiment_templates.yaml"
-_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
 _VALID_STRATEGIES = set(_STRAT_REG.keys())
 _VALID_METRICS = {"accuracy_pct", "wape"}
@@ -78,9 +78,7 @@ class CreateChampionExperimentBody(BaseModel):
     strategy: str = "expanding"
     strategy_params: StrategyParams | None = None
     meta_learner_params: MetaLearnerParams | None = None
-    models: list[str] = Field(
-        default=["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"],
-    )
+    models: list[str] = Field(default_factory=get_competing_model_ids)
     metric: str = "accuracy_pct"
     lag_mode: str = "execution"
     min_sku_rows: int = Field(default=3, ge=1, le=24)
@@ -144,6 +142,35 @@ def _experiment_row_to_dict(row: tuple) -> dict[str, Any]:
         "results_promoted_at": str(row[26]) if row[26] else None,
         "results_promote_job_id": row[27],
     }
+
+
+def _validate_competing_models(models: list[str]) -> None:
+    """Reject model sets outside the configured champion competition roster."""
+    valid_models = get_competing_model_ids()
+    valid_set = set(valid_models)
+    requested = list(models)
+    unsupported = sorted(set(requested) - valid_set)
+    if unsupported:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported champion model(s): {unsupported}. "
+                f"Valid competing models: {valid_models}"
+            ),
+        )
+
+    duplicates = sorted({model_id for model_id in requested if requested.count(model_id) > 1})
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate champion model(s) are not allowed: {duplicates}",
+        )
+
+    if len(requested) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 distinct models are required for champion competition",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +277,9 @@ def get_templates(response: FastAPIResponse):
 
     # For production_baseline: merge in live config from pipeline config champion section
     for tmpl in templates:
-        if tmpl.get("source") in ("model_competition_config", "pipeline_config"):
+        if tmpl.get("source") == "pipeline_config":
             try:
-                from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
+                from common.core.utils import load_forecast_pipeline_config
 
                 pipeline_cfg = load_forecast_pipeline_config()
                 champ = pipeline_cfg.get("champion", {})
@@ -750,11 +777,7 @@ def create_experiment(body: CreateChampionExperimentBody):
             status_code=400,
             detail=f"Invalid lag_mode '{body.lag_mode}'. Must be one of: {sorted(_VALID_LAG_MODES)}",
         )
-    if len(body.models) < 2:
-        raise HTTPException(
-            status_code=400,
-            detail="At least 2 models required for champion competition",
-        )
+    _validate_competing_models(body.models)
 
     strategy_params = body.strategy_params.model_dump(exclude_none=True) if body.strategy_params else {}
     meta_learner_params = body.meta_learner_params.model_dump() if body.meta_learner_params else None
@@ -816,177 +839,23 @@ def create_experiment(body: CreateChampionExperimentBody):
 
 
 # ---------------------------------------------------------------------------
-# 11. POST /champion-experiments/{experiment_id}/promote — Stage 1
+# 11. POST /champion-experiments/{experiment_id}/promote — retired Stage 1
 # ---------------------------------------------------------------------------
 
 @router.post("/{experiment_id}/promote", dependencies=[Depends(require_api_key)])
 def promote_experiment(experiment_id: int):
-    """Promote experiment strategy config to forecast_pipeline_config.yaml champion section."""
-    try:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT {_SELECT_COLS} FROM champion_experiment WHERE experiment_id = %s",
-                (experiment_id,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
-
-            exp = _experiment_row_to_dict(row)
-            if exp["status"] != "completed":
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Cannot promote experiment with status '{exp['status']}' (must be completed)",
-                )
-
-            # Write to pipeline config champion section
-            with open(_PIPELINE_CONFIG_PATH) as f:
-                pipeline_cfg = yaml.safe_load(f) or {}
-
-            # Backup
-            backup_path = _PIPELINE_CONFIG_PATH.with_suffix(
-                f".yaml.bak.{experiment_id}"
-            )
-            shutil.copy2(_PIPELINE_CONFIG_PATH, backup_path)
-
-            # Update champion section in pipeline config
-            new_config = copy.deepcopy(pipeline_cfg)
-            champ = new_config.setdefault("champion", {})
-            champ["strategy"] = exp["strategy"]
-            champ["strategy_params"] = exp["strategy_params"] or {}
-            champ["models"] = exp["models"] or []
-            champ["metric"] = exp["metric"]
-            champ["lag"] = exp["lag_mode"]
-            champ["min_dfu_rows"] = exp["min_sku_rows"]
-            if exp["meta_learner_params"]:
-                champ["meta_learner"] = exp["meta_learner_params"]
-
-            with open(_PIPELINE_CONFIG_PATH, "w") as f:
-                yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
-
-            reset_config("forecast_pipeline_config.yaml")
-            config_written = "forecast_pipeline_config.yaml"
-
-            # Find previous promoted
-            cur.execute(
-                "SELECT experiment_id FROM champion_experiment "
-                "WHERE is_promoted = TRUE AND experiment_id != %s",
-                (experiment_id,),
-            )
-            prev_row = cur.fetchone()
-            previous_id = prev_row[0] if prev_row else None
-
-            # Clear previous promoted flags
-            cur.execute(
-                "UPDATE champion_experiment SET is_promoted = FALSE, promoted_at = NULL "
-                "WHERE is_promoted = TRUE AND experiment_id != %s",
-                (experiment_id,),
-            )
-
-            # Set new promoted
-            cur.execute(
-                "UPDATE champion_experiment SET is_promoted = TRUE, promoted_at = NOW() "
-                "WHERE experiment_id = %s",
-                (experiment_id,),
-            )
-
-            # Audit log — include which config file was written
-            snapshot = copy.deepcopy(new_config)
-            snapshot["_config_written"] = config_written
-            cur.execute(
-                """
-                INSERT INTO champion_promotion_log
-                    (experiment_id, strategy, champion_accuracy,
-                     previous_experiment_id, config_snapshot)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (
-                    experiment_id, exp["strategy"], exp["champion_accuracy"],
-                    previous_id, json.dumps(snapshot),
-                ),
-            )
-            conn.commit()
-
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Failed to promote champion experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to promote experiment") from None
-
-    return {
-        "promoted": True,
-        "experiment_id": experiment_id,
-        "strategy": exp["strategy"],
-        "champion_accuracy": exp["champion_accuracy"],
-        "previous_experiment_id": previous_id,
-        "backup_path": backup_path.name,
-        "config_written": config_written,
-    }
+    """Retain the legacy path as an authenticated, fail-closed boundary."""
+    raise_manual_champion_promotion_retired()
 
 
 # ---------------------------------------------------------------------------
-# 12. POST /champion-experiments/{experiment_id}/promote-results — Stage 2
+# 12. POST /champion-experiments/{experiment_id}/promote-results — retired Stage 2
 # ---------------------------------------------------------------------------
 
-@router.post("/{experiment_id}/promote-results", status_code=201, dependencies=[Depends(require_api_key)])
+@router.post("/{experiment_id}/promote-results", dependencies=[Depends(require_api_key)])
 def promote_results(experiment_id: int):
-    """Submit job to run champion selection and load results into forecast tables."""
-    try:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT status, is_promoted, is_results_promoted "
-                "FROM champion_experiment WHERE experiment_id = %s",
-                (experiment_id,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
-
-            status, is_promoted, is_results_promoted = row
-            if status != "completed":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot load results for experiment with status '{status}'",
-                )
-            if not is_promoted:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Experiment must be promoted (Stage 1) before loading results",
-                )
-            if is_results_promoted:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Results already loaded for this experiment",
-                )
-
-        # Submit job
-        from common.services.job_registry import JobManager
-        jm = JobManager()
-        job_id = jm.submit_job(
-            job_type="champion_results_load",
-            params={"experiment_id": experiment_id},
-            label=f"Load Champion Results (exp #{experiment_id})",
-        )
-
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "UPDATE champion_experiment SET results_promote_job_id = %s "
-                "WHERE experiment_id = %s",
-                (job_id, experiment_id),
-            )
-            conn.commit()
-
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Failed to submit results load for experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to submit results load") from None
-
-    return {
-        "job_id": job_id,
-        "experiment_id": experiment_id,
-        "message": "Champion results load job submitted",
-    }
+    """Retain the legacy path as an authenticated, fail-closed boundary."""
+    raise_manual_champion_promotion_retired()
 
 
 # ---------------------------------------------------------------------------

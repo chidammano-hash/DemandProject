@@ -1,7 +1,7 @@
 """Tests for multi-seed evaluation with variance estimation in run_backtest.py.
 
 Validates:
-- default_params lambdas accept a seed parameter for all models
+- LightGBM default parameters accept a seed
 - Seeds are correctly passed through to model params
 - Backward compatibility: --n-seeds 1 produces same behavior as before
 - Multi-seed metadata includes mean/std statistics
@@ -14,23 +14,15 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import yaml
 
-# Import MODULE_REGISTRY from the script
-import sys
-
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
+from common.core.paths import PROJECT_ROOT
 from scripts.ml.run_backtest import MODEL_REGISTRY
 
 
 def _complete_tree_params() -> dict[str, Any]:
-    """Union of required tree params for seed/default-param unit tests."""
-    params = _complete_lgbm_params()
-    params.update(_complete_catboost_params())
-    params.update(_complete_xgboost_params())
-    return params
+    """Complete LightGBM params for seed/default-param unit tests."""
+    return _complete_lgbm_params()
 
 
 def _complete_lgbm_params(**overrides) -> dict[str, Any]:
@@ -61,45 +53,20 @@ def _complete_lgbm_params(**overrides) -> dict[str, Any]:
     return params
 
 
-def _complete_catboost_params(**overrides) -> dict[str, Any]:
-    params: dict[str, Any] = {
-        "model_id": "catboost_cluster",
-        "cluster_strategy": "per_cluster",
-        "recursive": False,
-        "shap_select": False,
-        "tune_inline": False,
-        "params_file": None,
-        "loss_function": "RMSE",
-        "iterations": 100,
-        "learning_rate": 0.05,
-        "depth": 5,
-        "l2_leaf_reg": 3.0,
-        "border_count": 32,
-        "max_ctr_complexity": 1,
-    }
-    params.update(overrides)
-    return params
-
-
-def _complete_xgboost_params(**overrides) -> dict[str, Any]:
-    params: dict[str, Any] = {
-        "model_id": "xgboost_cluster",
-        "cluster_strategy": "per_cluster",
-        "recursive": False,
-        "shap_select": False,
-        "tune_inline": False,
-        "params_file": None,
-        "objective": "reg:absoluteerror",
-        "n_estimators": 100,
-        "learning_rate": 0.05,
-        "max_depth": 6,
-        "min_child_weight": 5,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "tree_method": "hist",
-    }
-    params.update(overrides)
-    return params
+def _canonical_pipeline_config(
+    output_dir: Path,
+    *,
+    n_seeds: int | None = None,
+) -> dict[str, Any]:
+    """Load the real five-model contract and isolate mutable test settings."""
+    config = yaml.safe_load(
+        (PROJECT_ROOT / "config/forecasting/forecast_pipeline_config.yaml").read_text()
+    )
+    config["backtest"]["n_timeframes"] = 2
+    config["backtest"]["output_dir"] = str(output_dir)
+    if n_seeds is not None:
+        config["backtest"]["n_seeds"] = n_seeds
+    return config
 
 
 # ── default_params lambda tests ───────────────────────────────────────────────
@@ -110,7 +77,7 @@ class TestDefaultParamsLambda:
 
     @pytest.fixture
     def algo_config(self) -> dict[str, Any]:
-        """Minimal algo config dict matching what algorithm_config.yaml provides."""
+        """Minimal algorithm params matching forecast_pipeline_config.yaml."""
         return _complete_tree_params()
 
     def test_lgbm_default_params_accepts_seed(self, algo_config: dict) -> None:
@@ -118,29 +85,9 @@ class TestDefaultParamsLambda:
         params = MODEL_REGISTRY["lgbm"]["default_params"](algo_config, seed=99)
         assert params["random_state"] == 99
 
-    def test_catboost_default_params_accepts_seed(self, algo_config: dict) -> None:
-        """CatBoost default_params lambda accepts seed parameter."""
-        params = MODEL_REGISTRY["catboost"]["default_params"](algo_config, seed=99)
-        assert params["random_seed"] == 99
-
-    def test_xgboost_default_params_accepts_seed(self, algo_config: dict) -> None:
-        """XGBoost default_params lambda accepts seed parameter."""
-        params = MODEL_REGISTRY["xgboost"]["default_params"](algo_config, seed=99)
-        assert params["random_state"] == 99
-
     def test_lgbm_default_seed_is_42(self, algo_config: dict) -> None:
         """Without seed arg, LGBM defaults to 42 (backward compatible)."""
         params = MODEL_REGISTRY["lgbm"]["default_params"](algo_config)
-        assert params["random_state"] == 42
-
-    def test_catboost_default_seed_is_42(self, algo_config: dict) -> None:
-        """Without seed arg, CatBoost defaults to 42 (backward compatible)."""
-        params = MODEL_REGISTRY["catboost"]["default_params"](algo_config)
-        assert params["random_seed"] == 42
-
-    def test_xgboost_default_seed_is_42(self, algo_config: dict) -> None:
-        """Without seed arg, XGBoost defaults to 42 (backward compatible)."""
-        params = MODEL_REGISTRY["xgboost"]["default_params"](algo_config)
         assert params["random_state"] == 42
 
 
@@ -155,25 +102,24 @@ class TestSeedValues:
         return _complete_tree_params()
 
     @pytest.mark.parametrize("seed_value", [0, 1, 42, 100, 999])
-    @pytest.mark.parametrize("model_name", ["lgbm", "catboost", "xgboost"])
     def test_seed_produces_valid_params(
-        self, algo_config: dict, model_name: str, seed_value: int
+        self, algo_config: dict, seed_value: int
     ) -> None:
         """Each seed value produces a valid dict with the correct seed key."""
+        model_name = "lgbm"
         params = MODEL_REGISTRY[model_name]["default_params"](algo_config, seed=seed_value)
         assert isinstance(params, dict)
         # Verify param dict is non-empty and has expected keys
         assert len(params) > 5
         # Verify seed is set correctly
-        seed_key = "random_seed" if model_name == "catboost" else "random_state"
-        assert params[seed_key] == seed_value
+        assert params["random_state"] == seed_value
 
-    @pytest.mark.parametrize("model_name", ["lgbm", "catboost", "xgboost"])
     def test_different_seeds_produce_different_seed_values(
-        self, algo_config: dict, model_name: str
+        self, algo_config: dict
     ) -> None:
-        """Different seed arguments produce different random_state/random_seed values."""
-        seed_key = "random_seed" if model_name == "catboost" else "random_state"
+        """Different seed arguments produce different random_state values."""
+        model_name = "lgbm"
+        seed_key = "random_state"
         params_0 = MODEL_REGISTRY[model_name]["default_params"](algo_config, seed=0)
         params_1 = MODEL_REGISTRY[model_name]["default_params"](algo_config, seed=1)
         params_42 = MODEL_REGISTRY[model_name]["default_params"](algo_config, seed=42)
@@ -183,12 +129,12 @@ class TestSeedValues:
         assert params_1[seed_key] == 1
         assert params_42[seed_key] == 42
 
-    @pytest.mark.parametrize("model_name", ["lgbm", "catboost", "xgboost"])
     def test_non_seed_params_unchanged_across_seeds(
-        self, algo_config: dict, model_name: str
+        self, algo_config: dict
     ) -> None:
         """All params except the seed key remain identical across different seeds."""
-        seed_key = "random_seed" if model_name == "catboost" else "random_state"
+        model_name = "lgbm"
+        seed_key = "random_state"
         params_0 = MODEL_REGISTRY[model_name]["default_params"](algo_config, seed=0)
         params_42 = MODEL_REGISTRY[model_name]["default_params"](algo_config, seed=42)
         # Remove seed key and compare remaining params
@@ -206,12 +152,18 @@ class TestMultiSeedIntegration:
     @pytest.fixture(autouse=True)
     def _disable_pipeline_config(self):
         """Disable forecast_pipeline_config.yaml so tests use their own config."""
+        tuning_profiles = yaml.safe_load(
+            (PROJECT_ROOT / "config/forecasting/cluster_tuning_profiles.yaml").read_text()
+        )
         with patch(
             "scripts.ml.run_backtest.load_forecast_pipeline_config",
             side_effect=FileNotFoundError,
         ), patch(
             "scripts.ml.run_backtest.get_algorithm_roster",
             side_effect=FileNotFoundError,
+        ), patch(
+            "scripts.ml.run_backtest.load_config",
+            return_value=tuning_profiles,
         ):
             yield
 
@@ -239,14 +191,8 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = _complete_lgbm_params()
-        config_data = {
-            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path), "n_seeds": 1},
-            "algorithms": {"lgbm": algo_config},
-        }
+        config_data = _canonical_pipeline_config(tmp_path, n_seeds=1)
         config_file = tmp_path / "algo_config.yaml"
-        import yaml
-
         with open(config_file, "w") as f:
             yaml.dump(config_data, f)
 
@@ -261,16 +207,17 @@ class TestMultiSeedIntegration:
         # Single seed means exactly one call to run_tree_backtest
         assert mock_backtest.call_count == 1
         call_kwargs = mock_backtest.call_args[1]
+        assert call_kwargs["model_id"] == "lgbm_cluster"
         # With n_seeds=1, seed 0 is used — random_state should be 0
         assert call_kwargs["model_params"]["random_state"] == 0
 
     @patch("scripts.ml.run_backtest.run_tree_backtest")
     @patch("scripts.ml.run_backtest.profiled_section")
     @patch("scripts.ml.run_backtest._import_model_class")
-    def test_model_id_selects_matching_pipeline_config(
+    def test_retired_model_id_override_is_rejected(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
-        """--model-id must read that algorithm section, not the base tree section."""
+        """A custom config cannot re-enable a retired LightGBM variant ID."""
         mock_profiler.return_value.__enter__ = MagicMock()
         mock_profiler.return_value.__exit__ = MagicMock(return_value=False)
         mock_import.return_value = MagicMock
@@ -286,14 +233,13 @@ class TestMultiSeedIntegration:
                     "cluster_strategy": "per_cluster",
                     "params": _complete_lgbm_params(),
                 },
-                "lgbm_cust_enriched": {
+                "retired_tree_variant": {
                     "type": "tree",
                     "enabled": True,
                     "backtest": True,
                     "cluster_strategy": "per_cluster",
                     "params": _complete_lgbm_params(
-                        model_id="lgbm_cust_enriched",
-                        customer_features=True,
+                        model_id="retired_tree_variant",
                         n_estimators=222,
                         learning_rate=0.012,
                     ),
@@ -306,30 +252,26 @@ class TestMultiSeedIntegration:
         with open(config_file, "w") as f:
             yaml.dump(config_data, f)
 
-        with patch(
-            "sys.argv",
-            [
-                "run_backtest.py",
-                "--model",
-                "lgbm",
-                "--model-id",
-                "lgbm_cust_enriched",
-                "--config",
-                str(config_file),
-            ],
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "run_backtest.py",
+                    "--model",
+                    "lgbm",
+                    "--model-id",
+                    "retired_tree_variant",
+                    "--config",
+                    str(config_file),
+                ],
+            ),
+            pytest.raises(SystemExit),
         ):
-            with patch("importlib.import_module") as mock_importlib:
-                mock_importlib.return_value = MagicMock()
-                with patch("scripts.ml.run_backtest.load_dotenv"):
-                    from scripts.ml.run_backtest import main
+            from scripts.ml.run_backtest import main
 
-                    main()
+            main()
 
-        call_kwargs = mock_backtest.call_args[1]
-        assert call_kwargs["model_id"] == "lgbm_cust_enriched"
-        assert call_kwargs["model_params"]["n_estimators"] == 222
-        assert call_kwargs["model_params"]["learning_rate"] == 0.012
-        assert call_kwargs["algo_config"]["customer_features"] is True
+        mock_backtest.assert_not_called()
 
     @patch("scripts.ml.run_backtest.run_tree_backtest")
     @patch("scripts.ml.run_backtest.profiled_section")
@@ -343,14 +285,8 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = _complete_lgbm_params()
-        config_data = {
-            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
-            "algorithms": {"lgbm": algo_config},
-        }
+        config_data = _canonical_pipeline_config(tmp_path)
         config_file = tmp_path / "algo_config.yaml"
-        import yaml
-
         with open(config_file, "w") as f:
             yaml.dump(config_data, f)
 
@@ -396,14 +332,8 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = _complete_lgbm_params()
-        config_data = {
-            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
-            "algorithms": {"lgbm": algo_config},
-        }
+        config_data = _canonical_pipeline_config(tmp_path)
         config_file = tmp_path / "algo_config.yaml"
-        import yaml
-
         with open(config_file, "w") as f:
             yaml.dump(config_data, f)
 
@@ -450,14 +380,8 @@ class TestMultiSeedIntegration:
         mock_profiler.return_value.__exit__ = MagicMock(return_value=False)
         mock_import.return_value = MagicMock
 
-        algo_config = _complete_lgbm_params()
-        config_data = {
-            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
-            "algorithms": {"lgbm": algo_config},
-        }
+        config_data = _canonical_pipeline_config(tmp_path)
         config_file = tmp_path / "algo_config.yaml"
-        import yaml
-
         with open(config_file, "w") as f:
             yaml.dump(config_data, f)
 
@@ -497,14 +421,8 @@ class TestMultiSeedIntegration:
         mock_import.return_value = MagicMock
         mock_backtest.return_value = None
 
-        algo_config = _complete_lgbm_params()
-        config_data = {
-            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path), "n_seeds": 2},
-            "algorithms": {"lgbm": algo_config},
-        }
+        config_data = _canonical_pipeline_config(tmp_path, n_seeds=2)
         config_file = tmp_path / "algo_config.yaml"
-        import yaml
-
         with open(config_file, "w") as f:
             yaml.dump(config_data, f)
 
@@ -528,50 +446,3 @@ class TestMultiSeedIntegration:
                     main()
 
         assert mock_backtest.call_count == 2
-
-    @patch("scripts.ml.run_backtest.run_tree_backtest")
-    @patch("scripts.ml.run_backtest.profiled_section")
-    @patch("scripts.ml.run_backtest._import_model_class")
-    def test_catboost_seed_param_key(
-        self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
-    ) -> None:
-        """CatBoost uses random_seed (not random_state) as the seed parameter key."""
-        mock_profiler.return_value.__enter__ = MagicMock()
-        mock_profiler.return_value.__exit__ = MagicMock(return_value=False)
-        mock_import.return_value = MagicMock
-        mock_backtest.return_value = None
-
-        algo_config = _complete_catboost_params()
-        config_data = {
-            "backtest": {"n_timeframes": 2, "output_dir": str(tmp_path)},
-            "algorithms": {"catboost": algo_config},
-        }
-        config_file = tmp_path / "algo_config.yaml"
-        import yaml
-
-        with open(config_file, "w") as f:
-            yaml.dump(config_data, f)
-
-        model_dir = tmp_path / "catboost_cluster"
-        model_dir.mkdir(parents=True, exist_ok=True)
-
-        def write_meta_side_effect(**kwargs):
-            meta = self._make_metadata(70.0)
-            with open(model_dir / "backtest_metadata.json", "w") as mf:
-                json.dump(meta, mf)
-
-        mock_backtest.side_effect = write_meta_side_effect
-
-        with patch("sys.argv", ["run_backtest.py", "--model", "catboost", "--config", str(config_file), "--n-seeds", "2"]):
-            with patch("importlib.import_module") as mock_importlib:
-                mock_importlib.return_value = MagicMock()
-                with patch("scripts.ml.run_backtest.load_dotenv"):
-                    from scripts.ml.run_backtest import main
-
-                    main()
-
-        # CatBoost should use random_seed key
-        for call_idx, call in enumerate(mock_backtest.call_args_list):
-            params = call[1]["model_params"]
-            assert "random_seed" in params
-            assert params["random_seed"] == call_idx

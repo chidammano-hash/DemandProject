@@ -5,7 +5,7 @@
  * F4.1 Financial Plan, F4.2 S&OP, F4.3 Events, F4.4 Supply Scenarios
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import { buildSearchParams, buildQuerySuffix } from "./helpers";
 
 export const STALE_EVO = { FIVE_MIN: 5 * 60 * 1000, ONE_MIN: 60 * 1000 };

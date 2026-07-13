@@ -59,7 +59,6 @@ export default function StoryboardTab() {
   }, [globalFilters.item, globalFilters.location]);
 
   // Panel action state
-  const [newStatus, setNewStatus] = useState<string>("investigating");
   const [decisionType, setDecisionType] = useState<string>("accept_exception");
   const [rationale, setRationale] = useState<string>("");
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -99,7 +98,8 @@ export default function StoryboardTab() {
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       updateSbStatus(id, status),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sb-"] });
+      queryClient.invalidateQueries({ queryKey: sbKeys.summary() });
+      queryClient.invalidateQueries({ queryKey: sbKeys.lists() });
       queryClient.invalidateQueries({ queryKey: sbKeys.detail(selectedExceptionId ?? "") });
       setActionSuccess("Status updated successfully");
       setTimeout(() => setActionSuccess(null), 3000);
@@ -156,7 +156,8 @@ export default function StoryboardTab() {
           <button
             className="text-xs rounded-md border px-3 py-1.5 hover:bg-muted transition-colors"
             onClick={() => {
-              queryClient.invalidateQueries({ queryKey: ["sb-"] });
+              queryClient.invalidateQueries({ queryKey: sbKeys.summary() });
+              queryClient.invalidateQueries({ queryKey: sbKeys.lists() });
             }}
           >
             Refresh
@@ -215,8 +216,8 @@ export default function StoryboardTab() {
           label="Most Common Type"
           value={EXCEPTION_TYPE_LABELS[topType] ?? topType}
           subtitle={
-            summary?.by_type?.[0]?.count != null
-              ? `${summary.by_type[0].count} occurrences`
+            summary?.by_type?.[0]?.open_count != null
+              ? `${summary.by_type[0].open_count} occurrences`
               : undefined
           }
         />
@@ -346,7 +347,6 @@ export default function StoryboardTab() {
                     isSelected={selectedExceptionId === exc.exception_id}
                     onSelect={() => {
                       setSelectedExceptionId(exc.exception_id);
-                      setNewStatus("investigating");
                     }}
                   />
                 ))}

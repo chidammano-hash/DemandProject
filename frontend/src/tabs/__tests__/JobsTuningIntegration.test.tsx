@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { TestQueryWrapper } from "./test-utils";
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -38,10 +36,10 @@ const mockBacktestJob = {
   error: null,
 };
 
-const mockCatboostTuningJob = {
-  job_id: "cat-456-boost-789",
+const mockSecondLgbmTuningJob = {
+  job_id: "lgbm-456-regularized-789",
   job_type: "model_tuning_run",
-  label: "CatBoost Tuning",
+  label: "LightGBM Tuning",
   status: "running",
   progress_pct: 20,
   progress_message: "Timeframe B/J",
@@ -49,8 +47,8 @@ const mockCatboostTuningJob = {
   completed_at: null,
   params: {
     run_id: 16,
-    model: "catboost",
-    run_label: "Ordered Boosting",
+    model: "lgbm",
+    run_label: "Regularized Leaves",
     config_path: "/tmp/tuning_run_16/algorithm_config.yaml",
   },
   pid: 54322,
@@ -89,7 +87,7 @@ vi.mock("@/api/queries", () => ({
   fetchModelPromotedRun: vi.fn().mockResolvedValue({ promoted: null }),
   fetchModelExperiments: vi.fn().mockResolvedValue({ runs: [], total_count: 0 }),
   fetchModelExperimentLags: vi.fn().mockResolvedValue({ lags: [] }),
-  fetchModelComparison: vi.fn().mockResolvedValue({}),
+  fetchModelComparison: vi.fn().mockResolvedValue({ models: [], oracle_ceiling: null }),
   fetchModelTemplates: vi.fn().mockResolvedValue({ templates: [] }),
   submitModelExperiment: vi.fn().mockResolvedValue({ run_id: 1, job_id: "abc" }),
   promoteModelExperiment: vi.fn().mockResolvedValue({ success: true }),
@@ -147,7 +145,6 @@ vi.mock("@/api/queries", () => ({
   }),
   fetchAbcBreakdown: vi.fn().mockResolvedValue({ classes: [] }),
   fetchMonthlyTrend: vi.fn().mockResolvedValue({ months: [], worst_month: null, best_month: null }),
-  fetchModelComparison: vi.fn().mockResolvedValue({ models: [], oracle_ceiling: null }),
   fetchForecastValue: vi.fn().mockResolvedValue({ baselines: [], ml_model: null, value_added: null }),
   queryKeys: {},
   STALE_INSIGHTS: 300000,
@@ -178,12 +175,10 @@ describe("JobsTuningIntegration", () => {
     // Each tuning job shows a model type badge
     const modelBadgeMap: Record<string, string> = {
       lgbm: "LGBM",
-      catboost: "CatBoost",
-      xgboost: "XGBoost",
     };
 
     expect(modelBadgeMap[mockTuningJob.params.model]).toBe("LGBM");
-    expect(modelBadgeMap[mockCatboostTuningJob.params.model]).toBe("CatBoost");
+    expect(modelBadgeMap[mockSecondLgbmTuningJob.params.model]).toBe("LGBM");
   });
 
   it("shows timeframe progress", async () => {
@@ -199,13 +194,13 @@ describe("JobsTuningIntegration", () => {
 
   it("can filter by model_tuning_run", async () => {
     // The jobs list should be filterable by job_type
-    const allJobs = [mockTuningJob, mockBacktestJob, mockCatboostTuningJob];
+    const allJobs = [mockTuningJob, mockBacktestJob, mockSecondLgbmTuningJob];
 
     // Filter by model_tuning_run type
     const tuningJobs = allJobs.filter((j) => j.job_type === "model_tuning_run");
     expect(tuningJobs).toHaveLength(2);
     expect(tuningJobs[0].params.model).toBe("lgbm");
-    expect(tuningJobs[1].params.model).toBe("catboost");
+    expect(tuningJobs[1].params.model).toBe("lgbm");
 
     // Non-tuning jobs excluded
     const nonTuningJobs = allJobs.filter((j) => j.job_type !== "model_tuning_run");

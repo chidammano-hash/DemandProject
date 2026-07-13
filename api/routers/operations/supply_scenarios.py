@@ -95,7 +95,10 @@ async def list_supply_scenarios(
 @router.post("/scenarios/supply", status_code=201)
 async def create_supply_scenario(body: _ScenarioCreate, request: Request):
     """Create a new disruption scenario (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     import json as _json
     with get_conn() as conn:
@@ -160,7 +163,10 @@ async def get_supply_scenario(scenario_id: int):
 @router.post("/scenarios/supply/{scenario_id}/run")
 async def run_supply_scenario(scenario_id: int, body: _RunRequest, request: Request):
     """Trigger scenario simulation (async; returns 202 Accepted) (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:

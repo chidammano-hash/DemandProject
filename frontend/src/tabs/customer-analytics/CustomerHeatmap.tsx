@@ -35,7 +35,7 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
   const option = useMemo(() => {
     if (!data) return {};
     const items = data.items.map((i) => i.item_desc);
-    let states = [...data.states];
+    const states = [...data.states];
 
     // O(1) item_id -> item_desc lookup, replacing per-cell Array.find.
     const itemDescById = new Map<string, string>(data.items.map((i) => [i.item_id, i.item_desc]));
@@ -51,7 +51,7 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
     }
 
     // Sort items if a row is selected for sorting
-    let sortedItems = [...items];
+    const sortedItems = [...items];
     if (sortRow) {
       const itemValues = new Map<string, number>();
       for (const c of data.cells) {

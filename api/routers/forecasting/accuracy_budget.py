@@ -65,7 +65,7 @@ def _competing_in_clause(extra: tuple[str, ...] = ()) -> tuple[str, list[str]]:
     comparison score over the REAL champion candidate pool (config-driven via
     ``get_competing_model_ids()``) instead of a hardcoded subset. The old
     hardcoded set excluded the FM/statistical champions (nhits/nbeats/mstl/
-    chronos2/seasonal_naive) and named a non-existent ``'chronos'``, so the
+    model-specific variants and a stale identifier, so the
     oracle ceiling and the derived addressable gap were computed over the wrong
     models. ``extra`` appends additional ids (e.g. ``"champion"``).
     """
@@ -135,7 +135,6 @@ def accuracy_budget_decomposition(
             for r in abc_rows:
                 abc_cls = r[0]
                 abc_abs = _safe_float(r[1]) or 0.0
-                abc_fcst = _safe_float(r[2]) or 0.0
                 abc_act = _safe_float(r[3]) or 0.0
                 abc_n = _safe_int(r[4]) or 0
                 abc_acc = _round_or_none(_accuracy(abc_abs, abc_act))

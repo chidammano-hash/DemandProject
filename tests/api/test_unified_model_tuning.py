@@ -898,7 +898,7 @@ async def test_get_templates_lgbm():
                     "id": "production_baseline",
                     "label": "Production Baseline (Run 16)",
                     "description": "Current production parameters",
-                    "source": "algorithm_config",
+                    "source": "pipeline_config",
                 },
                 {
                     "id": "expert_aggressive_depth",
@@ -970,7 +970,7 @@ async def test_get_promoted_run_none():
 
 
 # ---------------------------------------------------------------------------
-# XGBoost compare
+# Promotion history
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

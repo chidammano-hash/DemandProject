@@ -7,7 +7,7 @@
  * approved adjustments write to the same fact_ai_champion_forecast table).
  * Spec: docs/specs/02-forecasting/27-ai-champion-forecast.md
  */
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 /** A previously-saved adjustment row (GET /ai-champion/forecast). */
 export interface AiChampionSavedRow {

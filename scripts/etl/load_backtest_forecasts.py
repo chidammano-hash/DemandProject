@@ -56,15 +56,33 @@ ARCHIVE_COLS = [
 ]
 
 # Index/constraint specs + drop/recreate for both the main forecast table and
-# the archive table live in common/core/etl_helpers.py (US3, shared with
-# load_ext_ml_forecasts.py) — imported above as drop_forecast_*/recreate_forecast_*.
+# the archive table live in common/core/etl_helpers.py (US3) and are imported
+# above as drop_forecast_*/recreate_forecast_*.
 
 
-def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: bool, model_id_filter: str | None, skip_index_ops: bool = False) -> None:
+def _load_archive(
+    db: dict,
+    archive_path: Path,
+    model_ids: list[str],
+    replace: bool,
+    model_id_filter: str | None,
+    skip_index_ops: bool = False,
+    validated_model_ids: list[str] | None = None,
+) -> None:
     """Load all-lags CSV into backtest_lag_archive table."""
     if not archive_path.exists():
         logger.info(f"\nArchive file not found: {archive_path} — skipping archive load")
         return
+
+    archive_model_ids = validated_model_ids or _read_csv_model_ids(
+        archive_path,
+        model_id_filter=model_id_filter,
+    )
+    if set(archive_model_ids) != set(model_ids):
+        raise ValueError(
+            f"Archive file {archive_path} has model IDs {archive_model_ids}, which do not match "
+            f"the execution-lag file model IDs {model_ids}"
+        )
 
     logger.info(f"\n{'='*60}")
     logger.info(f"Loading archive from {archive_path}")
@@ -202,6 +220,53 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
 _AUX_DIR_NAMES = {"logs", "tuning_archive"}
 
 
+def _loadable_model_ids() -> list[str]:
+    """Return the configured models allowed in backtest forecast tables."""
+    return sorted(set(get_forecastable_model_ids()) | set(get_competing_model_ids()))
+
+
+def _validate_model_ids(model_ids: list[str], *, source: str) -> None:
+    """Reject retired or malformed model IDs before any database mutation."""
+    if not model_ids or any(not isinstance(model_id, str) or not model_id for model_id in model_ids):
+        raise ValueError(f"{source} must contain at least one non-empty model_id")
+    valid_models = _loadable_model_ids()
+    unsupported = sorted(set(model_ids) - set(valid_models))
+    if unsupported:
+        raise ValueError(
+            f"{source} contains unsupported backtest model(s) {unsupported}; "
+            f"valid configured models are {valid_models}"
+        )
+
+
+def _read_csv_model_ids(csv_path: Path, *, model_id_filter: str | None = None) -> list[str]:
+    """Read and validate every model ID in a prediction CSV, in bounded chunks."""
+    model_ids: set[str] = set()
+    try:
+        chunks = pd.read_csv(
+            csv_path,
+            usecols=["model_id"],
+            dtype={"model_id": "string"},
+            keep_default_na=False,
+            chunksize=250_000,
+        )
+        for chunk in chunks:
+            model_ids.update(str(value) for value in chunk["model_id"])
+    except (ValueError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(f"Backtest file {csv_path} must contain a model_id column") from exc
+
+    resolved = sorted(model_ids)
+    _validate_model_ids(resolved, source=f"Backtest file {csv_path}")
+    if model_id_filter is not None:
+        _validate_model_ids([model_id_filter], source="--model-id")
+        if model_id_filter not in model_ids:
+            raise ValueError(
+                f"Backtest file {csv_path} does not contain requested model_id "
+                f"'{model_id_filter}'; found {resolved}"
+            )
+        return [model_id_filter]
+    return resolved
+
+
 def _is_auxiliary_dir(name: str) -> bool:
     """True for non-model dirs under data/backtest/ (logs, tuning_archive,
     *_baseline_* snapshots) that --all must never load."""
@@ -224,6 +289,7 @@ def _resolve_input_files(
       --input PATH        → explicit path (backward-compatible)
     """
     if args_models:
+        _validate_model_ids(args_models, source="--models")
         found = []
         for model_id in args_models:
             p = backtest_dir / model_id / "backtest_predictions.csv"
@@ -239,12 +305,12 @@ def _resolve_input_files(
     if args_all:
         # Load every backtested model dir that is in the config roster. The
         # roster is forecastable union competing: forecastable is the superset
-        # that also keeps loaded-but-non-competing models like `chronos`, while
+        # that also keeps loaded-but-non-competing models, while
         # genuine auxiliary dirs (logs, tuning_archive, *_baseline_* stale CSVs
         # that would overwrite real backtest data) are excluded. Driving the
         # include set from config — instead of a hardcoded 4-name allowlist —
         # ensures a newly-backtested model is never silently dropped.
-        roster = set(get_forecastable_model_ids()) | set(get_competing_model_ids())
+        roster = set(_loadable_model_ids())
         candidates = sorted(backtest_dir.glob("*/backtest_predictions.csv"))
         found = [p for p in candidates if p.parent.name in roster]
 
@@ -269,6 +335,7 @@ def _resolve_input_files(
         return found
 
     if args_model:
+        _validate_model_ids([args_model], source="--model")
         p = backtest_dir / args_model / "backtest_predictions.csv"
         if not p.exists():
             available = [d.name for d in backtest_dir.iterdir() if d.is_dir() and
@@ -303,6 +370,8 @@ def _load_one(
     skip_index_ops: bool = False,
     main_only: bool = False,
     archive_only: bool = False,
+    validated_model_ids: list[str] | None = None,
+    validated_archive_model_ids: list[str] | None = None,
 ) -> None:
     """Load one backtest_predictions.csv + its sibling all_lags CSV into Postgres.
 
@@ -312,11 +381,10 @@ def _load_one(
         main_only: Load only fact_external_forecast_monthly, skip archive.
         archive_only: Load only backtest_lag_archive, skip main table.
     """
-    # Peek at CSV to determine model_ids present
-    sample = pd.read_csv(csv_path, nrows=100)
-    csv_model_ids = sample["model_id"].unique().tolist()
-    if model_id_filter:
-        csv_model_ids = [model_id_filter]
+    csv_model_ids = validated_model_ids or _read_csv_model_ids(
+        csv_path,
+        model_id_filter=model_id_filter,
+    )
 
     logger.info(f"\n{'='*60}")
     logger.info(f"Loading {csv_path}")
@@ -327,8 +395,15 @@ def _load_one(
     if archive_only:
         # Skip main table entirely — jump to archive load
         archive_path = csv_path.parent / "backtest_predictions_all_lags.csv"
-        _load_archive(db, archive_path, csv_model_ids, replace, model_id_filter,
-                      skip_index_ops=skip_index_ops)
+        _load_archive(
+            db,
+            archive_path,
+            csv_model_ids,
+            replace,
+            model_id_filter,
+            skip_index_ops=skip_index_ops,
+            validated_model_ids=validated_archive_model_ids,
+        )
         if not skip_index_ops:
             with profiled_section("refresh_archive_views"):
                 refresh_for_tables([_ARCHIVE_TABLE], db_params=db)
@@ -459,8 +534,15 @@ def _load_one(
     # Load archive (sibling file lives in the same model subdirectory)
     if not main_only:
         archive_path = csv_path.parent / "backtest_predictions_all_lags.csv"
-        _load_archive(db, archive_path, csv_model_ids, replace, model_id_filter,
-                      skip_index_ops=skip_index_ops)
+        _load_archive(
+            db,
+            archive_path,
+            csv_model_ids,
+            replace,
+            model_id_filter,
+            skip_index_ops=skip_index_ops,
+            validated_model_ids=validated_archive_model_ids,
+        )
 
     if skip_index_ops:
         logger.info(f"  Done (bulk mode — skipping MV refresh): {csv_path.parent.name}")
@@ -496,7 +578,7 @@ Examples:
     )
     parser.add_argument(
         "--models", nargs="+", default=None, metavar="MODEL_ID",
-        help="Load multiple models: --models lgbm_cluster chronos catboost_cluster",
+        help="Load multiple configured models: --models lgbm_cluster mstl nhits",
     )
     parser.add_argument(
         "--all", action="store_true",
@@ -530,10 +612,41 @@ Examples:
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
-    db = get_db_params()
 
     backtest_dir = ROOT / "data" / "backtest"
-    csv_files = _resolve_input_files(args.input, args.model, args.all, backtest_dir, args.models)
+    try:
+        if args.model_id is not None:
+            _validate_model_ids([args.model_id], source="--model-id")
+        csv_files = _resolve_input_files(
+            args.input,
+            args.model,
+            args.all,
+            backtest_dir,
+            args.models,
+        )
+        preflight_model_ids: dict[Path, list[str]] = {}
+        preflight_archive_model_ids: dict[Path, list[str]] = {}
+        for csv_path in csv_files:
+            preflight_model_ids[csv_path] = _read_csv_model_ids(
+                csv_path,
+                model_id_filter=args.model_id,
+            )
+            archive_path = csv_path.parent / "backtest_predictions_all_lags.csv"
+            if not args.main_only and archive_path.exists():
+                archive_ids = _read_csv_model_ids(
+                    archive_path,
+                    model_id_filter=args.model_id,
+                )
+                if set(archive_ids) != set(preflight_model_ids[csv_path]):
+                    raise ValueError(
+                        f"Archive file {archive_path} has model IDs {archive_ids}, which do not "
+                        f"match the execution-lag file model IDs {preflight_model_ids[csv_path]}"
+                    )
+                preflight_archive_model_ids[csv_path] = archive_ids
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    db = get_db_params()
 
     model_labels = [f.parent.name for f in csv_files]
     logger.info(f"Loading {len(csv_files)} model(s): {model_labels}")
@@ -555,8 +668,17 @@ Examples:
         logger.info("[bulk] Indexes dropped. Loading models without per-model index ops...")
 
         for csv_path in csv_files:
-            _load_one(db, csv_path, args.replace, args.model_id, skip_index_ops=True,
-                      main_only=args.main_only, archive_only=args.archive_only)
+            _load_one(
+                db,
+                csv_path,
+                args.replace,
+                args.model_id,
+                skip_index_ops=True,
+                main_only=args.main_only,
+                archive_only=args.archive_only,
+                validated_model_ids=preflight_model_ids[csv_path],
+                validated_archive_model_ids=preflight_archive_model_ids.get(csv_path),
+            )
 
         logger.info("\n[bulk] Recreating indexes & constraints once for all models...")
         with psycopg.connect(**db) as conn:
@@ -574,8 +696,16 @@ Examples:
             refresh_for_tables(tables, db_params=db)
     else:
         for csv_path in csv_files:
-            _load_one(db, csv_path, args.replace, args.model_id,
-                      main_only=args.main_only, archive_only=args.archive_only)
+            _load_one(
+                db,
+                csv_path,
+                args.replace,
+                args.model_id,
+                main_only=args.main_only,
+                archive_only=args.archive_only,
+                validated_model_ids=preflight_model_ids[csv_path],
+                validated_archive_model_ids=preflight_archive_model_ids.get(csv_path),
+            )
 
     logger.info(f"\n{'='*60}")
     logger.info(f"All done. Loaded: {model_labels}")

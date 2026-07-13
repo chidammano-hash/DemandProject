@@ -26,6 +26,10 @@ describe("queryKeys", () => {
     expect(queryKeys.forecastModels()).toEqual(["forecast-models"]);
   });
 
+  it("namedPipelines returns stable key", () => {
+    expect(queryKeys.namedPipelines()).toEqual(["named-pipelines"]);
+  });
+
   it("accuracySlice includes params", () => {
     const key = queryKeys.accuracySlice({ group_by: "cluster" });
     expect(key[0]).toBe("accuracy-slice");

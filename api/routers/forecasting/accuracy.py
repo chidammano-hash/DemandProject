@@ -33,7 +33,10 @@ def _active_backtest_model_ids(models: str = "") -> list[str]:
     if not models.strip():
         return sorted(active)
     requested = [model.strip() for model in models.split(",") if model.strip()]
-    return list(dict.fromkeys(model for model in requested if model in active))
+    requested = list(dict.fromkeys(requested))
+    if len(requested) > 20:
+        raise HTTPException(status_code=422, detail="models: max 20 values allowed")
+    return [model for model in requested if model in active]
 
 # Dimensions that the per-DFU decomposition can group by. These are exactly the
 # DFU-constant attribute columns carried in agg_accuracy_by_dfu (sql/193);
@@ -822,8 +825,7 @@ def forecast_accuracy_lag_leaderboard(
 ):
     """Per-lag model leaderboard ranked by accuracy (data: agg_accuracy_lag_archive).
 
-    Returns WAPE and bias for each model at fixed forecast lags 0-4. Pinball loss
-    requires quantile forecast rows and is not computed here.
+    Returns WAPE and bias for each model at fixed forecast lags 0-4.
     """
     set_cache(response, max_age=120, stale_while_revalidate=300)
 

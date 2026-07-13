@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
     Replaces the legacy ``@app.on_event("startup")`` / ``@app.on_event("shutdown")``
     decorators (deprecated in FastAPI 0.109+). The scheduler is started lazily
-    via ``JobManager.instance()`` — importing it here guarantees the APScheduler
+    via ``JobManager.start()`` — importing it here guarantees the APScheduler
     BackgroundScheduler is live before the first request.
     """
     # Anyio threadpool: FastAPI offloads sync `def` handlers (which is most of
@@ -97,11 +97,11 @@ async def lifespan(app: FastAPI):
 
     # Scheduler: initialised lazily on demand. Pre-warm it so background jobs
     # start on boot rather than on the first /jobs request.
-    scheduler_started = False
+    job_manager = None
     try:
         from common.services.job_registry import JobManager
-        JobManager.instance()
-        scheduler_started = True
+        job_manager = JobManager()
+        job_manager.start()
         logger.info("APScheduler BackgroundScheduler started on startup")
     except Exception as exc:  # noqa: BLE001 — scheduler init is best-effort; app must still serve API if jobs backend is down
         logger.warning("Scheduler not started on startup: %s", exc)
@@ -109,12 +109,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        if scheduler_started:
+        if job_manager is not None:
             try:
-                from common.services.job_registry import JobManager
-                mgr = JobManager.instance()
-                if hasattr(mgr, "shutdown"):
-                    mgr.shutdown()
+                job_manager.shutdown()
             except Exception as exc:  # noqa: BLE001 — shutdown cleanup
                 logger.warning("Scheduler shutdown raised: %s", exc)
         close_pool()
@@ -250,6 +247,7 @@ from api.routers.intelligence import sku_chat      # noqa: E402  # 06-07 SKU Cha
 from api.routers.intelligence import explain as explain_router  # noqa: E402  # Gen-4 G: forecast explain
 from api.routers.intelligence import copilot as copilot_router  # noqa: E402  # Grounded planning Copilot
 from api.routers.core import dashboard               # noqa: E402
+from api.routers.core import pipeline_readiness      # noqa: E402
 from api.routers.core import jobs                    # noqa: E402
 from api.routers.platform import auth_router         # noqa: E402  # 08-02 RBAC
 from api.routers.platform import users               # noqa: E402  # 08-02 User mgmt
@@ -282,7 +280,6 @@ from api.routers.forecasting import forecast_promotion  # noqa: E402  # Forecast
 from api.routers.forecasting import forecast_release  # noqa: E402  # Planner release readiness
 from api.routers.forecasting import champion_experiments  # noqa: E402  # Champion experiments
 from api.routers.forecasting import champion_sweeps  # noqa: E402  # Champion strategy sweep (tournament)
-from api.routers.forecasting import expsys_accuracy  # noqa: E402  # ExpSys backtest accuracy
 from api.routers.forecasting import sku_features     # noqa: E402  # SKU feature explorer
 from api.routers.forecasting import ai_champion      # noqa: E402  # AI Champion forward adjuster
 from api.routers.intelligence import customer_analytics  # noqa: E402  # Customer Analytics
@@ -298,6 +295,7 @@ app.include_router(analysis.router)
 app.include_router(clusters.router)
 app.include_router(competition.router)
 app.include_router(dashboard.router)
+app.include_router(pipeline_readiness.router)
 app.include_router(intel.router)
 app.include_router(inv_backtest.router)
 app.include_router(inventory.router)
@@ -370,7 +368,6 @@ app.include_router(forecast_promotion.router)
 app.include_router(forecast_release.router)
 app.include_router(champion_experiments.router)
 app.include_router(champion_sweeps.router)
-app.include_router(expsys_accuracy.router)
 app.include_router(sku_features.router)
 app.include_router(ai_champion.router)
 app.include_router(customer_analytics.router)

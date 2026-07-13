@@ -152,7 +152,10 @@ async def get_lead_time_alerts(
 @router.post("/supply/lead-time-review/{trigger_id}/acknowledge")
 async def acknowledge_lt_trigger(trigger_id: int, request: Request):
     """Acknowledge (close) a lead time review trigger (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:

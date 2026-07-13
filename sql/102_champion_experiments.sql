@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS champion_experiment (
     strategy              TEXT NOT NULL,
     strategy_params       JSONB,
     meta_learner_params   JSONB,
-    models                JSONB NOT NULL DEFAULT '["lgbm_cluster","catboost_cluster","xgboost_cluster"]',
+    models                JSONB NOT NULL DEFAULT '["lgbm_cluster","nhits","nbeats","mstl","chronos2_enriched"]',
     metric                TEXT NOT NULL DEFAULT 'accuracy_pct',
     lag_mode              TEXT NOT NULL DEFAULT 'execution',
     min_sku_rows          INTEGER NOT NULL DEFAULT 3,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS champion_experiment (
     n_dfu_months          INTEGER,
     model_distribution    JSONB,
 
-    -- Promotion stage 1: config written to model_competition.yaml
+    -- Promotion stage 1: config written to forecast_pipeline_config.yaml
     is_promoted           BOOLEAN NOT NULL DEFAULT FALSE,
     promoted_at           TIMESTAMPTZ,
 

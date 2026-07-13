@@ -1,7 +1,7 @@
 # 24 — Candidate Forecast & Model Promotion Workflow
 
 **Status:** Implemented
-**Last updated:** 2026-07-10
+**Last updated:** 2026-07-12
 **Related:** 08-production-forecast.md, 07-champion-selection.md, 12-dual-promotion.md
 
 ---
@@ -114,13 +114,37 @@ single-model or snapshot-contender runs.
 A ready champion manifest freezes the sales batch, champion and cluster
 experiment ids, winners-artifact checksum, exact experiment-stamped historical
 champion-results checksum, row/DFU/source-model counts, horizon, and canonical
-forward payload checksum.
+forward payload checksum. Metadata must include
+`generator_contract_version=canonical-five-artifact-lineage-v2`; older or missing
+contracts are non-promotable even if the payload predates this guard with a
+`ready` status.
 
 Migration 203 also extends `model_promotion_log` with `source_run_id`,
 `production_run_id`, `gate_report`, `candidate_checksum`,
 `production_checksum`, `archive_checksum`, `archived_at`, and replacement
 lineage. A partial unique index enforces exactly zero or one active promotion;
 another unique index prevents a source run from being promoted twice.
+
+### 3.5 Canonical model and generator cutover (`sql/205` and `sql/206`)
+
+Migration 205 sets the champion experiment default to exactly LightGBM,
+N-HiTS, N-BEATS, MSTL, and Chronos 2E. Its constraint permits a non-empty subset
+of those five for a deliberate experiment, rejects duplicates and retired ids
+on new or updated rows, and remains `NOT VALID` so historical experiments stay
+auditable.
+
+Migration 206 invalidates every still-`ready` `release_candidate` whose manifest
+does not carry
+`generator_contract_version=canonical-five-real-adapters-v1`. It sets
+`promotion_eligible=FALSE` without deleting the immutable manifest or staging
+payload. It does not rewrite source lineage and does not convert old forecasts
+into canonical output.
+
+Migration 209 advances the required version to
+`canonical-five-artifact-lineage-v2` and applies the same fail-closed retirement
+to both ready release candidates and ready snapshot contenders. New v2 output
+must prove the source-model roster, current artifact lineage, and reconciled
+snapshot payload rather than inheriting trust from the v1 status.
 
 ## 4. API Endpoints
 
@@ -170,7 +194,8 @@ advisory lock:
 1. Lock the `forecast_generation_run` manifest and require purpose
    `release_candidate`, status `ready`, promotion eligibility, requested model
    equality, current planning month, sufficient horizon, and a non-empty
-   checksummed payload.
+   checksummed payload produced by the current canonical-five generator
+   contract.
 2. Recompute the staging checksum and cardinalities and require an exact match
    to the immutable manifest. Reject a newer completed sales batch than the one
    stamped at generation.
@@ -189,19 +214,33 @@ advisory lock:
    an absent prior-year month represents zero demand, so the baseline
    densifies that gap to zero while preserving a materialized zero sale as
    zero.
-4. Evaluate the fixed six-month eligible-DFU forward window. Route gaps are hard
-   failures; coverage must meet policy; quantities and interval ordering must be
-   valid; confidence-interval coverage must meet policy. The gate report stores
-   the historical quality checks, but does not stamp a "candidate WAPE" on the
-   future release rows because they do not yet have actuals.
-5. If a release is active, archive its champion and frozen top-three contender
+4. Evaluate the fixed six-month eligible-DFU forward window. Generation builds
+   from full `(item_id, customer_group, loc)` sales grain; the gate independently
+   aggregates that source universe to production `(item_id, loc)` grain using
+   the same configured minimum history and 12-month active window. Route gaps
+   are hard failures; coverage must meet policy; quantities and interval
+   ordering must be valid; confidence-interval coverage must meet policy. The
+   gate report stores the historical quality checks, but does not stamp a
+   "candidate WAPE" on the future release rows because they do not yet have
+   actuals.
+5. Require the incoming planning month to have one champion roster row and
+   contender ranks 1-3, with all three contender manifests `ready` under the
+   current generator contract. This prevents publishing a plan that cannot be
+   archived during the next release cycle (`snapshot_roster_not_ready`).
+6. If a release is active, archive its champion and frozen top-three contender
    runs for lags 0-5 inside this same transaction. Reconcile the archived
    champion values to the exact outgoing production checksum. Missing roster,
-   lag, run, or value evidence aborts replacement.
-6. Demote the outgoing audit row, insert the incoming audit record, replace
+   lag, run, or value evidence aborts replacement. The sole migration exception
+   is an active row with `source_run_id IS NULL`: after a savepoint-protected
+   normal archive attempt fails, it may be retired without an FVA snapshot only
+   when every live row is linked to that one `legacy_unverified` promotion and
+   production run and its audited row/DFU counts match. The incoming gate report
+   records the exact outgoing checksum and `legacy_retired_unarchived`; no API
+   parameter can request this path, and it is impossible for modern releases.
+7. Demote the outgoing audit row, insert the incoming audit record, replace
    `fact_production_forecast`, and stamp every row with the source run, new
    production run, promotion id, and `lineage_status='verified'`.
-7. Recompute the published payload checksum and require it to equal the
+8. Recompute the published payload checksum and require it to equal the
    candidate checksum. Mark the generation manifest `promoted` and commit.
 
 Any failure rolls back archive, demotion, delete, insert, and manifest changes.
@@ -229,7 +268,7 @@ tables, each with a **Run all** action. The forward release flow is:
 
 > **Auto-load.** When a backtest run completes, `_run_backtest`
 > (`common/services/job_state.py`) chains the load (`_auto_load_backtest` →
-> `load_backtest_forecasts.py`) **before** marking the run `completed`, so the UI's
+> `scripts/etl/load_backtest_forecasts.py`) **before** marking the run `completed`, so the UI's
 > "Loaded" status and `is_loaded_to_db` flag are consistent. The load is best-effort: a
 > failure leaves the run `completed` and logs for manual retry. There is **no Load button**
 > in the grid; a recovery **Load to DB** appears on the detail panel only for a
@@ -258,6 +297,42 @@ polls for that exact run, not merely any older staged rows. Promote is enabled
 only when the same run appears `ready` and `promotion_eligible`, and sends that
 exact id to the promotion endpoint.
 
+Generation preserves the model-training DFU grain
+`(item_id, customer_group, loc)` through sales loading, current-cluster lookup,
+per-month champion routing, and recursive inference. Training and serving both
+use the `production_forecast.lookback_months` closed-month profile window
+(currently 36 months) and a calendar-complete
+monthly spine; absent sparse sales months are zero demand. Every expected
+customer group must produce the complete requested horizon. Only then are the
+group point forecasts summed to the production `(item_id, loc, month)` grain.
+Mixed source algorithms are labeled `ensemble`, a common source retains its
+algorithm lineage, and confidence intervals are calculated once on the
+item/location aggregate rather than repeated for each customer group.
+
+The generator does not use the winners artifact itself as the population. It
+resolves the same original/current sales table used for training and derives
+the full active, non-null type-1-sales population using
+`cold_start_min_months` and `forecast_snapshot.active_window_months`. An
+item/location is eligible only when every active customer group meets the
+history floor. It drops
+stale routes outside that population, and adds an explicit LightGBM route for
+every uncovered eligible DFU. For each production month, routing resolves the
+latest dated single-model or ensemble decision available by the planning
+cutoff; future-only evidence is never used. A route that resolves to MSTL requires its
+configured 25 months of history. Any shorter MSTL route fails generation with
+instructions to rerun the MSTL backtest and champion selection.
+
+Every publish must run and load all five backtests, then complete a governed
+champion refresh before production generation. This is especially important after an
+adapter, population, data, or clustering change, because an older champion
+artifact can be structurally valid but no longer serve the current eligible
+population. The named `model-refresh` pipeline provides that sequence and
+atomically promotes the new experiment/results only after exact five-run
+sales/cluster lineage and winner checksums pass; the
+subsequent `forecast-publish` pipeline final-refits the persisted LightGBM,
+N-HiTS, and N-BEATS families, generates the release candidate, and prepares its
+three snapshot contenders. MSTL and Chronos 2E remain direct adapters.
+
 ### 5.3 Candidates Column
 
 New table column showing loaded candidate DFU count per model.
@@ -284,12 +359,14 @@ exposed counts, with no per-DFU time-series to chart.
 > `fact_candidate_forecast` design described in §2-3 - that table is inert (§4.1).
 
 ```
-┌─────────────┐    Train     ┌─────────────────┐
-│ Raw Sales    │───────────►  │ Model Artifacts  │
-│ History      │              │ (*.pkl files)    │
-└─────────────┘              └────────┬────────┘
-                                      │ Generate (production forecast)
-                                      ▼
+┌─────────────┐   Final fit   ┌────────────────────────────┐
+│ Closed Sales │────────────► │ Immutable active artifacts │
+│ History      │              │ LightGBM + N-HiTS/N-BEATS │
+└──────┬──────┘              └─────────────┬──────────────┘
+       │ MSTL/Chronos direct               │ validated artifact ids
+       └──────────────────────┬─────────────┘
+                              │ Generate (production forecast)
+                              ▼
                              ┌───────────────────────┐
                              │ forecast_generation_run │ ◄── Immutable run manifest
                              │ + production staging    │     and exact payload hash
@@ -314,7 +391,13 @@ Analysis backtest overlay (§5.4) - it does not feed this staging→promotion pi
   tables;
 - `sql/122_create_production_forecast_staging.sql` — forward staging; and
 - `sql/203_create_forecast_generation_run.sql` — run/purpose manifests,
-  immutable staging key, release/archive checksums, and production lineage.
+  immutable staging key, release/archive checksums, and production lineage;
+- `sql/205_enforce_champion_model_roster.sql` — canonical five-model default and
+  no-retired-id/no-duplicate constraint for new champion experiments; and
+- `sql/206_invalidate_pre_canonical_generator_runs.sql` — one-way invalidation
+  of pre-contract ready release candidates while retaining their evidence; and
+- `sql/207_add_forecast_sales_grain_indexes.sql` — full-grain partial indexes
+  for the canonical non-null type-1 sales population/history reads.
 
 Apply migrations in numeric order with `ON_ERROR_STOP=1`. After migration 203,
 all pre-manifest staging is `legacy_invalid`, and pre-migration champion rows
@@ -325,3 +408,6 @@ population as promotable.
 
 Migration 203 is transactional and repairs duplicate historical active audit
 rows deterministically before installing the unique active-promotion index.
+Apply migrations 205 through 207 in numeric order after the schema has reached 204.
+Then rerun the complete five-model backtest roster and champion selection before
+creating the first promotable canonical release candidate.

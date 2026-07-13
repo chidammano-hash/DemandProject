@@ -8,7 +8,6 @@ scripts/forecasting/apply_event_adjustments.py
 scripts/forecasting/compute_bias_corrections.py
 scripts/forecasting/compute_blended_forecast.py
 scripts/forecasting/generate_consensus_plan.py
-scripts/forecasting/generate_quantile_forecasts.py
 scripts/inventory/assign_replenishment_policies.py
 scripts/inventory/classify_abc_xyz.py
 scripts/inventory/compute_demand_signals.py
@@ -29,12 +28,8 @@ scripts/ml/auto_tune.py
 scripts/ml/clean_backtest_models.py
 scripts/ml/clean_forecasts_by_date.py
 scripts/ml/compare_backtest_runs.py
-scripts/ml/expert_panel_route_analysis.py
 scripts/ml/label_clusters.py
-scripts/ml/run_adv_expert_panel.py
 scripts/ml/run_champion_selection.py
-scripts/ml/run_expert_panel.py
-scripts/ml/run_expert_system_backtest.py
 scripts/ml/simulate_champion_strategies.py
 scripts/ml/train_meta_learner.py
 scripts/ml/tune_hyperparams.py

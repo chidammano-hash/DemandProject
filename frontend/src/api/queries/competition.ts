@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Competition queries
@@ -45,8 +45,4 @@ export async function saveCompetitionConfig(config: CompetitionConfig): Promise<
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
   });
-}
-
-export async function runCompetition(): Promise<ChampionSummary> {
-  return fetchJson("/competition/run", { method: "POST" });
 }

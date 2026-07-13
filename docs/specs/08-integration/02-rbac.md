@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Implemented |
-| **UI Tab** | N/A (infrastructure layer) |
+| **UI Tab** | App-level sign-in gate and session identity in the operations bar |
 | **Key Files** | `api/routers/platform/auth_router.py`, `api/routers/platform/users.py`, `common/auth.py`, `api/auth.py`, `config/platform/auth_config.yaml` |
 
 ---
@@ -25,8 +25,14 @@ A JWT-based authentication layer with four hierarchical roles: `viewer` < `plann
 3. Client includes `Authorization: Bearer <token>` on subsequent requests
 4. `require_role(min_role)` (`common/auth.py`) decodes the token via the `get_current_user` dependency, looks up the caller's role level in `role_level` (`config/platform/auth_config.yaml`), and compares it against the minimum level required for the endpoint
 5. If the caller's role level is below the endpoint's minimum, the request is rejected with 403; a missing or invalid token is rejected with 401
-6. Refresh tokens allow seamless token renewal without re-entering credentials
-7. All mutations are written to `fact_audit_log` with user ID, action, resource, and timestamp
+6. The React app stores both tokens in `sessionStorage`; the shared
+   `fetchJson` helper adds the Bearer token to every request and performs one
+   refresh-token rotation after a 401 before asking the user to sign in again
+7. The standard mutation guard in `api/auth.py` accepts planner-or-higher JWTs
+   for interactive use or `X-API-Key` for trusted service automation. The
+   service key is never shipped to browser JavaScript.
+8. Audited domain mutations are written to `fact_audit_log` with user ID,
+   action, resource, and timestamp
 
 ## Data Model
 

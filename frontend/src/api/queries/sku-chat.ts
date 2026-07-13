@@ -1,7 +1,7 @@
 // SKU Chatbot API client — spec docs/specs/06-ai-platform/07-sku-chatbot.md.
 // Streaming is Server-Sent Events; fetchJson can't read a stream, so streamSkuChat
 // uses a ReadableStream reader and yields parsed events.
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types (mirror api/routers/intelligence/sku_chat.py)

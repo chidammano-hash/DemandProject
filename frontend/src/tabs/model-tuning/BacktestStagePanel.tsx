@@ -50,7 +50,7 @@ interface Props {
 // Display order + labels for the model-family groups. The group header conveys
 // the type, so individual rows don't repeat a type badge.
 const TYPE_GROUPS: { type: string; label: string }[] = [
-  { type: "tree", label: "Tree Models" },
+  { type: "tree", label: "LightGBM" },
   { type: "foundation", label: "Foundation" },
   { type: "statistical", label: "Statistical" },
   { type: "deep_learning", label: "Deep Learning" },
@@ -224,15 +224,17 @@ export function BacktestStagePanel({
                   {g.items.length}
                 </Badge>
               </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 gap-1 px-2 text-[11px]"
-                onClick={() => handleRunGroup(g.type, g.label)}
-                title={`Run a backtest for every model in ${g.label}`}
-              >
-                <Play className="h-3 w-3" /> Run all
-              </Button>
+              {g.items.length > 1 ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 gap-1 px-2 text-[11px]"
+                  onClick={() => handleRunGroup(g.type, g.label)}
+                  title={`Run a backtest for every model in ${g.label}`}
+                >
+                  <Play className="h-3 w-3" /> Run all
+                </Button>
+              ) : null}
             </div>
             <Table>
               <TableHeader>

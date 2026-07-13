@@ -3,7 +3,8 @@
 A sweep orchestrates the existing champion-experiment machinery: it fans out a
 grid of candidate champion configs, ranks them globally + per demand segment,
 assembles a per-segment composite, and recommends a winner. Children are ordinary
-``champion_experiment`` rows, so compare/detail/promote all reuse that subsystem.
+``champion_experiment`` rows, so compare/detail reuse that subsystem. Production
+promotion is reserved for the governed model-refresh lifecycle.
 
 All endpoints live under the /champion-sweeps prefix. See spec
 ``docs/specs/02-forecasting/30-champion-strategy-sweep.md``.
@@ -19,8 +20,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.auth import require_api_key
 from api.core import get_conn
+from api.routers.forecasting._champion_promotion_boundary import (
+    raise_manual_champion_promotion_retired,
+)
 from common.core.sql_helpers import parse_db_json as _parse_json
-from common.core.utils import load_forecast_pipeline_config
+from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,70 @@ def _expanded_count(grid_spec: dict[str, Any]) -> int:
     return len(templates) * len(variants) * len(metrics)
 
 
+def _validate_model_set(models: Any, *, location: str) -> None:
+    """Validate one explicit sweep model set against the live competition roster."""
+    if not isinstance(models, list) or any(not isinstance(model_id, str) for model_id in models):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{location} must be a list of model ID strings",
+        )
+
+    valid_models = get_competing_model_ids()
+    unsupported = sorted(set(models) - set(valid_models))
+    if unsupported:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{location} contains unsupported champion model(s): {unsupported}. "
+                f"Valid competing models: {valid_models}"
+            ),
+        )
+
+    duplicates = sorted({model_id for model_id in models if models.count(model_id) > 1})
+    if duplicates:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{location} contains duplicate model(s): {duplicates}",
+        )
+    if len(models) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{location} must contain at least 2 distinct competing models",
+        )
+
+
+def _validate_grid_models(grid_spec: dict[str, Any]) -> None:
+    """Validate every model set explicitly supplied by a sweep request."""
+    configs = grid_spec.get("configs")
+    if configs is not None:
+        if not isinstance(configs, list):
+            raise HTTPException(status_code=422, detail="grid_spec.configs must be a list")
+        for index, config in enumerate(configs):
+            if not isinstance(config, dict):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"grid_spec.configs[{index}] must be an object",
+                )
+            if "models" in config:
+                _validate_model_set(
+                    config["models"],
+                    location=f"grid_spec.configs[{index}].models",
+                )
+
+    variants = grid_spec.get("models_variants")
+    if variants is not None:
+        if not isinstance(variants, list) or not variants:
+            raise HTTPException(
+                status_code=422,
+                detail="grid_spec.models_variants must be a non-empty list of model sets",
+            )
+        for index, models in enumerate(variants):
+            _validate_model_set(
+                models,
+                location=f"grid_spec.models_variants[{index}]",
+            )
+
+
 def _max_candidates() -> int:
     try:
         cfg = load_forecast_pipeline_config() or {}
@@ -106,6 +174,8 @@ def create_sweep(body: CreateSweepBody):
         raise HTTPException(status_code=422, detail=f"Invalid segment_axis '{body.segment_axis}'")
     if body.objective not in _VALID_OBJECTIVES:
         raise HTTPException(status_code=422, detail=f"Invalid objective '{body.objective}'")
+
+    _validate_grid_models(body.grid_spec)
 
     count = _expanded_count(body.grid_spec)
     if count == 0:
@@ -332,45 +402,8 @@ def cancel_sweep(sweep_id: int):
 
 @router.post("/{sweep_id}/promote-winner", dependencies=[Depends(require_api_key)])
 def promote_winner(sweep_id: int):
-    """Promote the sweep's recommended experiment via the existing Stage-1 promote.
-
-    Refuses unless the recommendation passed the gate (gate-eligible). For a
-    per-segment composite, only the demand_class axis yields a promotable winner;
-    diagnostic axes (ml_cluster/abc_xyz) leave composite_experiment_id NULL.
-    """
-    try:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT status, recommended_experiment_id, recommended_gate_eligible "
-                "FROM champion_sweep WHERE sweep_id = %s",
-                (sweep_id,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail=f"Sweep {sweep_id} not found")
-            status, recommended_id, gate_ok = row
-            if status != "completed":
-                raise HTTPException(
-                    status_code=409, detail=f"Sweep status is '{status}' (must be completed)"
-                )
-            if recommended_id is None:
-                raise HTTPException(status_code=409, detail="Sweep produced no recommendation")
-            if not gate_ok:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Recommended config did not pass the promote gate vs current production",
-                )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Failed to read sweep %d for promotion", sweep_id)
-        raise HTTPException(status_code=500, detail="Failed to promote winner") from None
-
-    # Delegate to the experiments router's Stage-1 promotion (writes YAML + audit).
-    from api.routers.forecasting.champion_experiments import promote_experiment
-
-    result = promote_experiment(recommended_id)
-    return {"sweep_id": sweep_id, "promoted_experiment_id": recommended_id, **result}
+    """Retain the legacy path as an authenticated, fail-closed boundary."""
+    raise_manual_champion_promotion_retired()
 
 
 @router.delete("/{sweep_id}", dependencies=[Depends(require_api_key)])

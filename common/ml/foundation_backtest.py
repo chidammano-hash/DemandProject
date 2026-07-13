@@ -1,8 +1,6 @@
-"""
-Shared scaffolding for foundation model backtests.
+"""Shared scaffolding for the Chronos 2 Enriched backtest.
 
-The foundation model backtest scripts (currently chronos2_enriched) share a
->90% identical structure.  This module extracts the common workflow:
+This module owns the reusable backtest workflow:
   - CLI argument parsing
   - Config loading + model enablement check
   - Data loading from Postgres
@@ -13,10 +11,10 @@ The foundation model backtest scripts (currently chronos2_enriched) share a
   - DFU attribute enrichment
   - Post-processing and output saving
 
-Each script becomes a thin wrapper that defines:
+The executable wrapper defines:
   - FoundationModelSpec — model identity and config extraction
-  - Optionally, a pre-timeframe hook (e.g. feature engineering for enriched)
-  - Optionally, a per-timeframe hook (e.g. masking features for enriched)
+  - A pre-timeframe feature-engineering hook
+  - A per-timeframe feature-masking hook
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -37,12 +34,8 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from common.ml.expert_panel.foundation_models import run_foundation_models
 from common.core.db import get_db_params
+from common.core.paths import PROJECT_ROOT
 from common.core.planning_date import get_planning_date
 from common.ml.backtest_framework import (
     BacktestCheckpointer,
@@ -51,6 +44,12 @@ from common.ml.backtest_framework import (
     postprocess_predictions,
     save_backtest_output,
 )
+from common.ml.backtest_config import (
+    BACKTEST_CONFIG_METADATA_KEY,
+    build_backtest_config_snapshot,
+)
+from common.ml.chronos2_enriched import run_chronos2_enriched
+from common.ml.monthly_history import select_bounded_history
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,6 @@ class FoundationModelSpec:
     Attributes:
         model_id: Default model identifier (e.g. "chronos2_enriched").
         config_key: Key under ``algorithms`` in forecast_pipeline_config.yaml.
-        dispatcher_key: Key passed to ``run_foundation_models`` params dict.
         display_name: Human-readable name for log messages.
         extract_params: Callable(cfg_section) -> dict of model-specific params.
         model_params_key: Key name for params in saved metadata JSON.
@@ -83,7 +81,7 @@ class FoundationModelSpec:
             returns arbitrary state passed to per_timeframe_hook.
         per_timeframe_hook: Optional callable invoked per timeframe (sequential
             path only) to produce model predictions.  When set, replaces the
-            default ``run_foundation_models`` call.  Receives a
+            default ``run_chronos2_enriched`` call.  Receives a
             PerTimeframeContext and the state from pre_timeframe_hook, and
             returns a DataFrame of predictions (or empty DataFrame).
         profiler_prefix: Prefix for profiled_section labels (e.g. "c2").
@@ -93,7 +91,6 @@ class FoundationModelSpec:
 
     model_id: str
     config_key: str
-    dispatcher_key: str
     display_name: str
     extract_params: Callable[[dict], dict]
     model_params_key: str
@@ -139,7 +136,6 @@ class PerTimeframeContext:
     train_sales: pd.DataFrame
     predict_months: list
     model_params: dict
-    dispatcher_key: str
     label: str
 
 
@@ -155,7 +151,7 @@ def _process_timeframe_worker(
     all_months_ser: list,
     model_params: dict,
     model_id: str,
-    dispatcher_key: str,
+    history_lookback_months: int,
     worker_log_name: str,
     item_id_map_path: str,
     cg_map_path: str,
@@ -186,7 +182,11 @@ def _process_timeframe_worker(
         return None
 
     sales_df = pd.read_parquet(sales_path)
-    train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
+    train_sales = select_bounded_history(
+        sales_df,
+        history_end=train_end,
+        lookback_months=history_lookback_months,
+    )
     if train_sales.empty:
         wlog.info("  No training data — skipping")
         return None
@@ -201,10 +201,10 @@ def _process_timeframe_worker(
     )
 
     t0 = time.time()
-    preds = run_foundation_models(
+    preds = run_chronos2_enriched(
         train_sales[["sku_ck", "startdate", "qty"]],
         predict_months,
-        {dispatcher_key: model_params},
+        model_params,
     )
 
     if preds.empty:
@@ -286,8 +286,8 @@ def build_argparser(description: str, *, supports_parallel: bool = True) -> argp
     )
     if supports_parallel:
         parser.add_argument(
-            "--workers", type=int, default=1,
-            help="Parallel workers for timeframe processing (default: 1 = sequential)",
+            "--workers", type=int, default=None,
+            help="Override configured parallel workers for timeframe processing",
         )
     parser.add_argument(
         "--resume", action="store_true",
@@ -302,7 +302,7 @@ def run_foundation_backtest(spec: FoundationModelSpec, args: argparse.Namespace)
     This is the shared main() body.  Each script creates a FoundationModelSpec
     and passes it here with the parsed CLI args.
     """
-    load_dotenv(ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ".env")
 
     # ── Load config ─────────────────────────────────────────────────────────
     with profiled_section("load_config"):
@@ -314,34 +314,42 @@ def run_foundation_backtest(spec: FoundationModelSpec, args: argparse.Namespace)
             from common.core.utils import load_forecast_pipeline_config
             cfg = load_forecast_pipeline_config()
 
-        algo_entry = cfg.get("algorithms", {}).get(spec.config_key, {})
-        # Support pipeline config format (params sub-dict) or flat legacy format
-        algo_cfg = algo_entry.get("params", algo_entry)
-        if not algo_entry.get("enabled", True):
+        backtest_config_snapshot = build_backtest_config_snapshot(
+            cfg,
+            spec.config_key,
+        )
+
+        algo_entry = cfg["algorithms"][spec.config_key]
+        algo_cfg = algo_entry["params"]
+        if not algo_entry["enabled"]:
             logger.info("%s is disabled in config; exiting", spec.display_name)
             return
 
-        backtest_cfg = cfg.get("backtest", {})
-        n_timeframes = backtest_cfg.get("n_timeframes", 10)
-        embargo_months = backtest_cfg.get("embargo_months", 0)
+        backtest_cfg = cfg["backtest"]
+        n_timeframes = int(backtest_cfg["n_timeframes"])
+        embargo_months = int(backtest_cfg["embargo_months"])
+        history_lookback_months = int(
+            cfg["production_forecast"]["lookback_months"]
+        )
 
         output_dir = (
             Path(args.output_dir) if args.output_dir
-            else ROOT / backtest_cfg.get("output_dir", "data/backtest")
+            else PROJECT_ROOT / backtest_cfg["output_dir"]
         )
 
-        model_id = algo_entry.get("model_id", algo_cfg.get("model_id", spec.model_id))
+        model_id = spec.model_id
 
         # Extract model-specific params via the spec's callback
         model_params = spec.extract_params(algo_cfg)
 
     # CLI --workers takes priority; fallback to YAML config
-    n_workers = getattr(args, "workers", 1)
     if spec.supports_parallel:
-        if n_workers <= 1:
-            n_workers_cfg = algo_cfg.get("num_workers", 1)
-            if n_workers_cfg > 1:
-                n_workers = n_workers_cfg
+        workers_override = getattr(args, "workers", None)
+        n_workers = (
+            int(workers_override)
+            if workers_override is not None
+            else int(algo_cfg["num_workers"])
+        )
     else:
         n_workers = 1
 
@@ -514,7 +522,7 @@ def run_foundation_backtest(spec: FoundationModelSpec, args: argparse.Namespace)
                     _process_timeframe_worker,
                     stf, ti, len(timeframes),
                     sales_path, all_months_ser, model_params,
-                    model_id, spec.dispatcher_key, worker_log_name,
+                    model_id, history_lookback_months, worker_log_name,
                     item_path, cg_path, loc_path,
                 ): stf
                 for ti, stf in enumerate(pending_tfs)
@@ -566,7 +574,11 @@ def run_foundation_backtest(spec: FoundationModelSpec, args: argparse.Namespace)
                 logger.info("  No predict months -- skipping")
                 continue
 
-            train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
+            train_sales = select_bounded_history(
+                sales_df,
+                history_end=train_end,
+                lookback_months=history_lookback_months,
+            )
             if train_sales.empty:
                 logger.info("  No training data -- skipping")
                 continue
@@ -585,16 +597,16 @@ def run_foundation_backtest(spec: FoundationModelSpec, args: argparse.Namespace)
                 ctx = PerTimeframeContext(
                     tf=tf, ti=ti, n_total=len(timeframes),
                     train_sales=train_sales, predict_months=predict_months,
-                    model_params=model_params, dispatcher_key=spec.dispatcher_key,
+                    model_params=model_params,
                     label=label,
                 )
                 preds = spec.per_timeframe_hook(ctx, hook_state)
             else:
                 with profiled_section(f"{spec.profiler_prefix}_tf_{label}"):
-                    preds = run_foundation_models(
+                    preds = run_chronos2_enriched(
                         train_sales[["sku_ck", "startdate", "qty"]],
                         predict_months,
-                        {spec.dispatcher_key: model_params},
+                        model_params,
                     )
 
             if preds.empty:
@@ -653,7 +665,13 @@ def run_foundation_backtest(spec: FoundationModelSpec, args: argparse.Namespace)
             timeframes=timeframes,
             earliest_month=earliest_month,
             latest_month=latest_month,
-            extra_metadata=spec.extra_metadata,
+            extra_metadata={
+                **spec.extra_metadata,
+                "history_lookback_months": history_lookback_months,
+                BACKTEST_CONFIG_METADATA_KEY: {
+                    model_id: backtest_config_snapshot.as_metadata()
+                },
+            },
             dfu_cohort_map=dfu_cohort_map,
         )
 

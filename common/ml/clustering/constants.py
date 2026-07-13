@@ -9,7 +9,7 @@ Keep this module dependency-free — only stdlib types, no third-party imports.
 from __future__ import annotations
 
 # ── Feature groups ──────────────────────────────────────────────────────────
-# Core features that drive business-meaningful clusters for tree models.
+# Core features that drive business-meaningful clusters for LightGBM routing.
 # Covers volume, trend, seasonality, periodicity, intermittency, and lifecycle.
 CORE_FEATURES = [
     # Volume (log-transformed)

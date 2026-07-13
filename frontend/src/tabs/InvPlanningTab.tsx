@@ -1,7 +1,7 @@
 /**
  * Inventory Planning — 31-panel tab with horizontal group pills + sub-tab strip.
  *
- * IPfeature4–IPfeature14 + F1.1–F4.4 + Expert Panel Enhancements (20 suggestions).
+ * IPfeature4–IPfeature14 + F1.1–F4.4 + cross-domain planning insights.
  * Redesigned: replaced inner sidebar with horizontal navigation (PL-009 v2).
  * Added: Insights group (7 new panels), role-based view presets, progressive disclosure.
  */
@@ -138,7 +138,7 @@ const ReplenishmentPlanPanel = lazy(() =>
 const RebalancingPanel = lazy(() =>
   import("./inv-planning/RebalancingPanel").then((m) => ({ default: m.RebalancingPanel })),
 );
-// Expert panel enhancements — 7 new insight panels
+// Cross-domain planning insights
 const ActionFeedPanel = lazy(() =>
   import("./inv-planning/ActionFeedPanel").then((m) => ({ default: m.ActionFeedPanel })),
 );
@@ -176,7 +176,7 @@ function PanelLoader() {
 }
 
 // ---------------------------------------------------------------------------
-// Role-based view presets (Expert #13 — Rachel Kim)
+// Role-based view presets
 // ---------------------------------------------------------------------------
 type ViewPreset = { id: string; label: string; icon: LucideIcon; groups: string[]; panels?: string[]; description: string };
 
@@ -357,7 +357,7 @@ const PANEL_META: Record<SubTabKey, { title: string; description?: string }> = {
   purchaseorders: { title: "PO History", description: "Comprehensive purchase order history (open + closed) with on-time delivery and lead time analysis." },
   projection:    { title: "Forward Inventory Projection", description: "Day-by-day projected position: no orders, with POs, with planned orders." },
   plannedorders: { title: "Planned Orders", description: "System-generated replenishment proposals awaiting approval." },
-  // Expert insight panels
+  // Cross-domain insight panels
   actionfeed:  { title: "Unified Action Feed", description: "Priority-ranked actions from exceptions, signals, PO risks, and stockouts — your morning starting point." },
   netheatmap:  { title: "Network Balance Heatmap", description: "Location × category DOS matrix — instantly see where inventory is pooling vs depleting." },
   segment:     { title: "Segment Dashboard", description: "Deep-dive into any ABC-XYZ segment: KPIs, policies, exceptions, and recommended actions." },
@@ -389,7 +389,7 @@ export function InvPlanningTab() {
 
   const meta = PANEL_META[activePanel];
 
-  // Progressive disclosure: filter groups by active view preset (Expert #14)
+  // Progressive disclosure: filter groups by active view preset
   // Panel-level presets (with `panels` array) build a single virtual group
   // containing only the specified panels. Group-level presets filter by group id.
   const visibleGroups = useMemo(() => {
@@ -470,7 +470,7 @@ export function InvPlanningTab() {
         )}
       </div>
       {/* ------------------------------------------------------------------ */}
-      {/* Role-based view selector (Expert #13) + header                      */}
+      {/* Role-based view selector + header                                  */}
       {/* ------------------------------------------------------------------ */}
       <div className="flex-shrink-0 flex items-center justify-between px-5 pt-1 pb-2">
         <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
@@ -688,7 +688,7 @@ export function InvPlanningTab() {
           {activePanel === "projection"    && <ProjectionPanel />}
           {activePanel === "plannedorders" && <PlannedOrdersPanel />}
           {activePanel === "rebalancing"  && <RebalancingPanel />}
-          {/* Expert insight panels */}
+          {/* Cross-domain insight panels */}
           {activePanel === "actionfeed"   && <ActionFeedPanel />}
           {activePanel === "netheatmap"   && <NetworkHeatmapPanel />}
           {activePanel === "segment"      && <SegmentDashboardPanel />}

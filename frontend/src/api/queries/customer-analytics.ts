@@ -1,5 +1,5 @@
 import { buildQuerySuffix } from "./helpers";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -253,7 +253,7 @@ export interface ChannelMixPayload {
   tree: SunburstNode[];
 }
 
-export interface TrendPoint {
+export interface CustomerTrendPoint {
   month: string;
   demand_qty: number;
   sales_qty: number;
@@ -266,7 +266,7 @@ export interface SegmentRow {
   total_customers: number;
   fill_rate: number;
   mom_change: number;
-  trend: TrendPoint[];
+  trend: CustomerTrendPoint[];
 }
 
 export interface SegmentTrendsPayload {
@@ -400,7 +400,7 @@ export function fetchCustomerAnalyticsHeatmap(
 
 export function fetchCustomerAnalyticsChannelMix(
   filters?: CustomerAnalyticsFilters,
-): Promise<ChannelMixPayload> {
+): Promise<ChannelMixPayloadExtended> {
   const qs = buildQuerySuffix(filterParams(filters));
   return fetchJson(`/customer-analytics/channel-mix${qs}`);
 }

@@ -1,7 +1,7 @@
 """Tests for the champion sweep API — /champion-sweeps/* endpoints.
 
 Covers create (candidate-count preview + cap), list, detail, leaderboard,
-segments, cancel, promote-winner (gate-passing vs gate-refused), and delete.
+segments, cancel, retired promote-winner containment, and delete.
 """
 
 from unittest.mock import MagicMock, patch
@@ -11,6 +11,15 @@ import pytest
 from httpx import ASGITransport
 
 from tests.api.conftest import make_pool as _make_pool
+
+_MANUAL_PROMOTION_RETIRED_DETAIL = {
+    "code": "manual_champion_promotion_retired",
+    "message": (
+        "Manual champion promotion is retired. Run "
+        "POST /jobs/pipelines/named/model-refresh to create and atomically promote "
+        "a governed champion."
+    ),
+}
 
 # Column order must match champion_sweeps._SWEEP_COLS (22 columns).
 _SWEEP_COLS = [
@@ -61,7 +70,10 @@ async def test_create_sweep_returns_candidate_count():
                     "mode": "both",
                     "grid_spec": {
                         "templates": ["rolling_6m", "ensemble_top3_inverse", "per_segment"],
-                        "models_variants": [["lgbm_cluster", "chronos"], ["lgbm_cluster", "catboost_cluster", "chronos"]],
+                        "models_variants": [
+                            ["lgbm_cluster", "chronos2_enriched"],
+                            ["lgbm_cluster", "mstl", "chronos2_enriched"],
+                        ],
                     },
                 },
             )
@@ -116,6 +128,54 @@ async def test_create_sweep_invalid_mode():
                 json={"label": "x", "mode": "nonsense", "grid_spec": {"templates": ["rolling_6m"]}},
             )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_sweep_rejects_retired_model_variant_before_insert():
+    pool, conn, cursor = _make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/champion-sweeps",
+                json={
+                    "label": "retired",
+                    "grid_spec": {
+                        "templates": ["rolling_6m"],
+                        "models_variants": [["lgbm_cluster", "catboost_cluster"]],
+                    },
+                },
+            )
+
+    assert resp.status_code == 422
+    assert "catboost_cluster" in resp.json()["detail"]
+    assert "Valid competing models" in resp.json()["detail"]
+    cursor.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_sweep_rejects_retired_model_in_explicit_config():
+    pool, conn, cursor = _make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/champion-sweeps",
+                json={
+                    "label": "retired explicit",
+                    "grid_spec": {
+                        "configs": [
+                            {"strategy": "expanding", "models": ["mstl", "prophet"]}
+                        ]
+                    },
+                },
+            )
+
+    assert resp.status_code == 422
+    assert "prophet" in resp.json()["detail"]
+    cursor.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +238,7 @@ async def test_leaderboard():
     cursor.fetchone.return_value = (1,)
     cursor.fetchall.return_value = [
         (7, 1, 86.2, True, False, False, "[sweep] rolling", "rolling",
-         '{"window_months": 6}', '["lgbm_cluster","chronos"]', "wape", 88.0, 90.0, 200.0, "completed"),
+         '{"window_months": 6}', '["lgbm_cluster","chronos2_enriched"]', "wape", 88.0, 90.0, 200.0, "completed"),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -237,24 +297,10 @@ async def test_cancel_running_sweep():
 
 
 @pytest.mark.asyncio
-async def test_promote_winner_gate_refused():
-    pool, conn, cursor = _make_pool()
-    # status, recommended_experiment_id, recommended_gate_eligible
-    cursor.fetchone.return_value = ("completed", 7, False)
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/champion-sweeps/1/promote-winner")
-    assert resp.status_code == 409
-    assert "gate" in resp.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_promote_winner_delegates_when_gate_ok():
+async def test_promote_winner_is_gone_without_db_or_stage_one_delegation():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = ("completed", 7, True)
-    fake_promote = MagicMock(return_value={"promoted": True, "experiment_id": 7})
+    fake_promote = MagicMock()
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("api.routers.forecasting.champion_experiments.promote_experiment", fake_promote),
@@ -263,9 +309,11 @@ async def test_promote_winner_delegates_when_gate_ok():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/champion-sweeps/1/promote-winner")
-    assert resp.status_code == 200
-    assert resp.json()["promoted_experiment_id"] == 7
-    fake_promote.assert_called_once_with(7)
+    assert resp.status_code == 410
+    assert resp.json()["detail"] == _MANUAL_PROMOTION_RETIRED_DETAIL
+    pool.connection.assert_not_called()
+    conn.commit.assert_not_called()
+    fake_promote.assert_not_called()
 
 
 @pytest.mark.asyncio

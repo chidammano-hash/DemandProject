@@ -2,7 +2,7 @@
  * F1.3 — Open Purchase Order API queries
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types

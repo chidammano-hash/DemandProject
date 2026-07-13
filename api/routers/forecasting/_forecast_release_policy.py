@@ -197,9 +197,12 @@ def next_release_action(
     if "sales_freshness" in blocked:
         return {
             "tab": "integration",
-            "pipeline": "forecast-publish",
-            "label": "Open Workflows for forecast publish",
-            "reason": "The active release must be regenerated after the latest sales load.",
+            "pipeline": "model-refresh",
+            "label": "Open Workflows for model refresh",
+            "reason": (
+                "The five governed backtests and champion must be refreshed after "
+                "the latest sales load before a new release is generated."
+            ),
         }
     if "outgoing_archive" in blocked:
         return {

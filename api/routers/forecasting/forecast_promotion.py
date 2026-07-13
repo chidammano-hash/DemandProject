@@ -13,7 +13,11 @@ from api.auth import require_api_key
 from api.core import get_conn
 from common.core.constants import CHAMPION_MODEL_ID
 from common.core.planning_date import get_planning_date
-from common.core.utils import load_forecast_pipeline_config
+from common.core.utils import get_forecastable_model_ids, load_forecast_pipeline_config
+from common.services.forecast_generation import (
+    GENERATOR_CONTRACT_METADATA_KEY,
+    GENERATOR_CONTRACT_VERSION,
+)
 from common.services.forecast_promotion import (
     PromotionConflictError,
     promote_forecast_run,
@@ -27,6 +31,16 @@ from ._forecast_promotion_models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/backtest-management", tags=["backtest-management"])
+
+
+def _validate_forecast_model_id(model_id: str) -> None:
+    """Reject model routes outside the canonical production roster."""
+    valid_models = [CHAMPION_MODEL_ID, *get_forecastable_model_ids()]
+    if model_id not in valid_models:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown forecast model '{model_id}'. Valid models: {valid_models}",
+        )
 
 # ---------------------------------------------------------------------------
 # Promotion & Candidate Endpoints
@@ -128,6 +142,7 @@ def get_staging_summary():
                     FROM forecast_generation_run generation
                     WHERE generation_purpose = 'release_candidate'
                       AND run_status IN ('ready', 'promoted')
+                      AND metadata ->> %s = %s
                 )
                 SELECT generation.requested_model_id,
                        generation.run_id,
@@ -152,7 +167,12 @@ def get_staging_summary():
                          generation.completed_at,
                          generation.candidate_model_count
                 ORDER BY generation.requested_model_id
-            """)
+            """,
+                (
+                    GENERATOR_CONTRACT_METADATA_KEY,
+                    GENERATOR_CONTRACT_VERSION,
+                ),
+            )
             rows = cur.fetchall()
     except psycopg.Error:
         logger.debug("immutable forecast staging schema may not exist yet")
@@ -199,6 +219,8 @@ def submit_generate_forecast(
     ``generate_production_forecasts.py`` — previously they were dropped for
     single-model generation, silently ignoring the panel's controls.
     """
+    _validate_forecast_model_id(model_id)
+
     from common.services.job_registry import JobManager
 
     jm = JobManager()
@@ -268,7 +290,16 @@ def promote_model(
     notes: str | None = None,
     promoted_by: str | None = None,
 ) -> ForecastPromotionResponse:
-    """Atomically promote one explicit, immutable release-candidate run."""
+    """Atomically promote one explicit governed-champion release candidate."""
+    _validate_forecast_model_id(model_id)
+    if model_id != CHAMPION_MODEL_ID:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "champion_release_required: Only the governed champion candidate can be "
+                "promoted to production; single-model candidates are diagnostic evidence."
+            ),
+        )
     try:
         policy = _load_transactional_promotion_policy()
         with get_conn() as conn:

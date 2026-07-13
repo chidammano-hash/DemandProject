@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 
 import {
   fetchPipelineConfig,
+  modelTuningKeys,
   pipelineConfigKeys,
 } from "@/api/queries/unified-model-tuning";
 
@@ -110,6 +111,16 @@ export default function ModelTuningTab() {
   const selectedModel: ModelType = selectedModelInfo.modelType ?? "lgbm";
   const isTunable = selectedModelInfo.tunable;
 
+  const handleStageChange = (nextStage: PipelineStage) => {
+    if (nextStage === "tune" && !isTunable) {
+      const tunableModel = ALL_MODELS.find((model) => model.tunable);
+      if (tunableModel) {
+        dispatch({ type: "SELECT_MODEL", modelId: tunableModel.id });
+      }
+    }
+    setStage(nextStage);
+  };
+
   return (
     <div className="flex flex-col gap-5 p-4 md:p-6">
       {/* ---- Header ---- */}
@@ -132,8 +143,9 @@ export default function ModelTuningTab() {
       <div className="flex gap-1 border-b border-border pb-1">
         {STAGE_TABS.map(({ key, label, icon: Icon }) => (
           <button
+            type="button"
             key={key}
-            onClick={() => setStage(key)}
+            onClick={() => handleStageChange(key)}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors",
               stage === key
@@ -208,8 +220,7 @@ export default function ModelTuningTab() {
             onClose={() => dispatch({ type: "SET_BUILDER", open: false })}
             onSubmitted={() => {
               dispatch({ type: "SET_BUILDER", open: false });
-              queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
-              queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
+              queryClient.invalidateQueries({ queryKey: modelTuningKeys.all });
             }}
           />
         </Suspense>
@@ -237,8 +248,7 @@ export default function ModelTuningTab() {
             onClose={() => dispatch({ type: "SET_PROMOTE", run: null })}
             onPromoted={() => {
               dispatch({ type: "SET_PROMOTE", run: null });
-              queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
-              queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
+              queryClient.invalidateQueries({ queryKey: modelTuningKeys.all });
             }}
           />
         </Suspense>

@@ -40,7 +40,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.db import get_db_params  # noqa: E402 — after sys.path bootstrap
-from common.core.utils import load_config, load_forecast_pipeline_config  # noqa: E402
+from common.core.utils import (  # noqa: E402
+    get_competing_model_ids,
+    load_config,
+    load_forecast_pipeline_config,
+)
 from common.ml.champion import compute_strategy_accuracy  # noqa: E402
 from common.ml.champion.segment import _classify_demand_segments  # noqa: E402
 from scripts.ml.run_champion_experiment import run_experiment  # noqa: E402
@@ -178,10 +182,10 @@ def _load_templates() -> dict[str, dict[str, Any]]:
 def _resolve_template(tpl: dict[str, Any], base_champion: dict[str, Any]) -> dict[str, Any]:
     """Turn a template into a concrete (strategy, params) config.
 
-    ``source: model_competition_config`` templates inherit the live production
+    ``source: pipeline_config`` templates inherit the live production
     champion settings so the baseline always reflects what's running.
     """
-    if tpl.get("source") in ("model_competition_config", "pipeline_config"):
+    if tpl.get("source") == "pipeline_config":
         return {
             "strategy": base_champion.get("strategy", "rolling"),
             "strategy_params": dict(base_champion.get("strategy_params") or {}),
@@ -204,8 +208,8 @@ def expand_grid(
 ) -> list[dict[str, Any]]:
     """Expand a grid_spec into a deduped list of concrete experiment configs.
 
-    Two forms: explicit ``configs`` (full bodies) or ``templates`` × ``models_variants``
-    × ``metric``. Segmentation is NOT an axis — it is post-hoc slicing — so the
+    Two forms: explicit ``configs`` (full bodies) or ``templates`` x ``models_variants``
+    x ``metric``. Segmentation is NOT an axis — it is post-hoc slicing — so the
     candidate count is independent of segment_axis. Raises ValueError above the cap.
     """
     candidates: list[dict[str, Any]] = []
@@ -263,6 +267,28 @@ def expand_grid(
             f"max_candidates cap of {max_candidates}. Reduce templates/variants."
         )
     return deduped
+
+
+def _validate_candidate_models(
+    candidates: list[dict[str, Any]],
+    allowed_models: list[str],
+) -> None:
+    """Fail before creating children when a stored sweep contains retired models."""
+    allowed = set(allowed_models)
+    for index, candidate in enumerate(candidates):
+        models = candidate.get("models")
+        if not isinstance(models, list) or any(not isinstance(model_id, str) for model_id in models):
+            raise ValueError(f"Sweep candidate {index + 1} models must be a list of model ID strings")
+        unsupported = sorted(set(models) - allowed)
+        if unsupported:
+            raise ValueError(
+                f"Sweep candidate {index + 1} contains unsupported champion model(s) "
+                f"{unsupported}; valid competing models are {allowed_models}"
+            )
+        if len(models) < 2 or len(models) != len(set(models)):
+            raise ValueError(
+                f"Sweep candidate {index + 1} must contain at least 2 distinct competing models"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +545,8 @@ def run_sweep(sweep_id: int) -> None:
 
         pipe = load_forecast_pipeline_config() or {}
         base_champion = (pipe.get("champion") or {})
-        default_models = base_champion.get("models") or ["lgbm_cluster", "chronos"]
+        competing_models = get_competing_model_ids()
+        default_models = base_champion.get("models") or competing_models
         default_metric = base_champion.get("metric", "wape")
         default_lag = base_champion.get("lag", "execution")
         default_min_sku = int(base_champion.get("min_sku_rows", 3))
@@ -534,6 +561,7 @@ def run_sweep(sweep_id: int) -> None:
             default_min_sku=default_min_sku,
             max_candidates=cfg["max_candidates"],
         )
+        _validate_candidate_models(candidates, competing_models)
         _set_running(conn, sweep_id, len(candidates))
         logger.info("Expanded to %d candidate configs", len(candidates))
 
@@ -778,7 +806,7 @@ def sweep_keys_models(conn: psycopg.Connection, scored: list[dict[str, Any]]) ->
         if row:
             ms = row[0] if isinstance(row[0], list) else json.loads(row[0] or "[]")
             models.update(ms)
-    return sorted(models) or ["lgbm_cluster", "chronos"]
+    return sorted(models) or get_competing_model_ids()
 
 
 def _assemble_composite(

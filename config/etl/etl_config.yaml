@@ -51,8 +51,7 @@ performance:
                                         # when the table's estimated row count (pg_class.reltuples)
                                         # is >= this. Small dimensions load faster keeping indexes.
                                         # Never-analyzed tables (reltuples=-1) are treated as large.
-  batch_size: 2000000                   # Rows per INSERT batch in the forecast/archive loaders
-                                        # (load_backtest_forecasts, load_ext_ml_forecasts). Default 2,000,000.
+  batch_size: 2000000                   # Rows per INSERT batch in the backtest forecast/archive loader.
   pg_work_mem: "512MB"                  # work_mem for the dataset loader session (load_dataset_postgres).
   pg_maintenance_work_mem: "1GB"        # maintenance_work_mem for the dataset loader (index rebuilds).
   customer_demand_work_mem: "256MB"     # work_mem for the customer-demand loader — intentionally lower

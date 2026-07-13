@@ -48,9 +48,7 @@ const DFU_MODEL_COLORS: Record<string, string> = {
   champion: "#D97706",
   ceiling: "#0891B2",
   external: "#06B6D4",
-  lgbm_global: "#84CC16",
   lgbm_cluster: "#0D9488",
-  lgbm_transfer: "#f97316",
 };
 
 const DFU_MODEL_FALLBACK_COLORS = [

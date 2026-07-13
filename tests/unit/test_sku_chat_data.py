@@ -73,7 +73,7 @@ def test_fetch_sku_accuracy_computes_wape_bias_accuracy():
             ("model_id",), ("lag",), ("sum_forecast",),
             ("sum_actual",), ("sum_abs_error",), ("row_count",),
         ],
-        fetchall=[("lgbm", 1, 120.0, 100.0, 30.0, 12)],
+        fetchall=[("lgbm_cluster", 1, 120.0, 100.0, 30.0, 12)],
     )
     out = sku_data.fetch_sku_accuracy(pool, "100320", "RETAIL", "DC1")
     m = out["metrics"][0]
@@ -88,7 +88,7 @@ def test_fetch_sku_accuracy_handles_zero_actual():
             ("model_id",), ("lag",), ("sum_forecast",),
             ("sum_actual",), ("sum_abs_error",), ("row_count",),
         ],
-        fetchall=[("lgbm", 1, 5.0, 0.0, 5.0, 2)],
+        fetchall=[("lgbm_cluster", 1, 5.0, 0.0, 5.0, 2)],
     )
     out = sku_data.fetch_sku_accuracy(pool, "100320", "RETAIL", "DC1")
     m = out["metrics"][0]

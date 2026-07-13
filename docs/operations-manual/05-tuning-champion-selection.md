@@ -14,8 +14,8 @@ into production-quality forecasts:
 
 ### Purpose
 
-Tuning runs Bayesian (Optuna) hyperparameter search over each tree-family
-algorithm using month-based expanding walk-forward CV. The winning parameter
+Tuning runs Bayesian (Optuna) hyperparameter search over LightGBM using
+month-based expanding walk-forward CV. The winning parameter
 set is written back into `config/forecasting/forecast_pipeline_config.yaml` (or its
 per-cluster sibling, `config/forecasting/cluster_tuning_profiles.yaml`) and is consumed by
 the **next** backtest cycle.
@@ -59,7 +59,7 @@ tuning:
 
 ## 5.2 Run All Tuning — `make tune-all`
 
-Runs Bayesian tuning sequentially for all three core tree algorithms.
+Runs the canonical LightGBM tuning workflow.
 
 | Target | Trials | Notes |
 |---|---|---|
@@ -77,17 +77,7 @@ Use `make tune-lgbm-full` before adopting parameters into a governed production 
 
 ---
 
-## 5.3 Customer-Enriched Tree Models (Removed)
-
-from `make customer-features` were removed from
-`config/forecasting/forecast_pipeline_config.yaml` in the deprecated-model cleanup
-(`5ab8d593`). There is no `backtest-cust-enriched-all` or `tune-cust-enriched-all`
-target, and no algorithm entry sets `customer_features: true`. See Section 4.2 of
-`04-forecasting-backtest.md` for the current state of the customer-features pipeline.
-
----
-
-## 5.4 Per-Cluster Tuning
+## 5.3 Per-Cluster Tuning
 
 Per-cluster tuning runs an independent Optuna study **per `ml_cluster`** and
 writes the resulting overrides into `config/forecasting/cluster_tuning_profiles.yaml`.
@@ -99,7 +89,7 @@ Profiles are matched at backtest time via `resolve_cluster_params()` in
 | Target | Trials | Description |
 |---|---|---|
 | `make tune-lgbm-clusters` | 30 | Per-cluster LGBM (each `ml_cluster` tuned independently) |
-| `make tune-clusters` | 30 each | All three per-cluster tuners sequentially |
+| `make tune-clusters` | 30 | Alias that runs the LightGBM per-cluster tuner |
 
 ### Profile resolution order (`resolve_cluster_params`)
 
@@ -138,10 +128,11 @@ tree-model tuning entirely. See `forecast_pipeline_config.yaml` →
 
 ---
 
-## 5.5 Champion Selection — `make champion-all`
+## 5.4 Champion Selection — `make champion-all`
 
 Champion selection produces a **per-DFU best-model assignment** from the
-candidate forecast pool already loaded into `fact_candidate_forecast`.
+candidate forecast pool already loaded into `fact_external_forecast_monthly` and
+`backtest_lag_archive`.
 
 ### Three-stage pipeline (`make champion-all`)
 
@@ -149,7 +140,7 @@ candidate forecast pool already loaded into `fact_candidate_forecast`.
 |---|---|---|---|
 | 1. Train meta-learner | `champion-train-meta` | `scripts/ml/train_meta_learner.py` | Random-forest classifier predicting per-DFU winning model |
 | 2. Simulate strategies | `champion-simulate` | `scripts/ml/simulate_champion_strategies.py` | Per-strategy accuracy vs ceiling, written to `data/champion/` |
-| 3. Select champion | `champion-select` | `scripts/ml/run_champion_selection.py` | `data/champion/dfu_assignments.csv` and `champion_summary.json` |
+| 3. Refresh champion | `champion-select` | `scripts/ml/run_governed_champion_refresh.py` | New experiment, checksummed winners, and atomic champion/ceiling promotion |
 
 `make champion-all = champion-train-meta + champion-simulate + champion-select`.
 
@@ -184,7 +175,7 @@ champion:
 
 ### Strategies
 
-All strategies live in the `common/ml/champion/` package (9 modules: `bandit`, `basic`, `blend`, `helpers`, `meta`, `regime`, `registry`, `routing`, `segment` — 31 strategies total) and register
+All strategies live in the `common/ml/champion/` package (9 modules: `bandit`, `basic`, `blend`, `helpers`, `meta`, `regime`, `registry`, `routing`, `segment` — 30 strategies total) and register
 themselves via `@register_strategy("name")`. Every strategy is **strictly
 causal** — selection for month `T` uses only data from months
 `< T - execution_lag`. This blocks two leakage paths:
@@ -194,7 +185,7 @@ causal** — selection for month `T` uses only data from months
 
 ---
 
-## 5.6 Champion vs Single Promotion
+## 5.5 Champion vs Single Promotion
 
 Both promotion modes go through the same endpoint:
 
@@ -237,10 +228,16 @@ lookback is configured under `champion.release_readiness`; query parameters
 cannot shorten it. The card shows all blockers through its disclosure and polls
 every 60 seconds while open, including after a green result.
 
-`model-refresh` ends by rewriting the canonical champion rows. After it
-completes, explicitly promote the selected champion experiment's results; the
-readiness gate compares champion `modified_ts` with `results_promoted_at` and
-fails closed if the rows were rewritten later.
+`model-refresh` ends with the governed `governed_champion_refresh` job. It
+requires the latest completed-and-loaded run for every canonical model to carry
+one identical, current sales-batch/hash and promoted-cluster assignment
+lineage. The job creates a new `champion_experiment` from the current production
+strategy, evaluates and checksums its winners without touching the incumbent,
+then replaces champion/ceiling facts and both promotion flags in one database
+transaction. The job result contains the experiment id, five source backtest
+run ids, and result checksums. A failed evaluation, empty load, lineage change,
+or audit failure rolls back before the incumbent is cleared; no separate
+results-promotion click is required for this named workflow.
 
 This is a post-release planner-use scorecard, not yet a transactional database
 constraint on `POST /backtest-management/champion/promote`. Do not proceed to
@@ -262,8 +259,8 @@ cross-model.
 
 ### Champion COPY integrity (2026-06-20 fix)
 
-Champion-winner loads (`competition.py` `/competition/run`, and
-`run_champion_selection.py`) now use `copy.write_row(...)` instead of hand-built
+Champion-winner loads (`run_champion_selection.py`, used only with an exact
+experiment winners artifact) use `copy.write_row(...)` instead of hand-built
 tab-delimited COPY buffers. The old buffers silently routed the **wrong** model
 under `model_id='champion'` (or dropped rows) whenever an `item_id` /
 `customer_group` / `loc` value contained a tab, newline, or backslash. No
@@ -273,31 +270,7 @@ for a DB-backed PR.)
 
 ---
 
-## 5.7 Expert Panel Testing
-
-The Expert Panel evaluates **algorithm-selection quality** end-to-end across a
-sampled DFU population, without modifying production tables. It is the
-preferred sanity check before promoting a new champion or new candidate model.
-
-### Make targets (verified in `Makefile`)
-
-| Target | Scope | Approx Runtime |
-|---|---|---|
-| `make expert-panel` | 5000 DFUs × 5 timeframes | ~30 min |
-| `make expert-panel-quick` | 1000 DFUs × 3 timeframes | ~8 min |
-| `make expert-panel-mini` | 200 DFUs × 2 timeframes | ~2 min |
-| `make expert-panel-loc LOC=<location>` | All DFUs at one location | varies |
-| `make adv-expert-panel` | 5000 DFUs × 10 TFs, execution-lag accuracy, foundation + DL + statistical upgrades | longer |
-| `make adv-expert-panel-quick` | 1000 DFUs × 5 TFs, advanced | medium |
-| `make adv-expert-panel-mini` | 200 DFUs × 2 TFs, advanced | short |
-| `make adv-expert-panel-loc LOC=<location>` | All DFUs at one location, advanced | varies |
-
-Use the `quick` / `mini` variants for iteration; reserve the full `expert-panel`
-and `adv-expert-panel` runs for pre-promotion gates.
-
----
-
-## 5.8 Stale Tuning Invalidation (the closed loop)
+## 5.6 Stale Tuning Invalidation (the closed loop)
 
 Promoting a clustering scenario changes cluster membership, so
 `promote_scenario()` flags every affected row in `cluster_tuning_profile_state`
@@ -338,7 +311,7 @@ so callers (UI buttons, scheduled jobs) can continue uninterrupted.
 
 ---
 
-## 5.9 Frontend Integration
+## 5.7 Frontend Integration
 
 The tuning and champion workflows surface in three React tabs:
 
@@ -356,7 +329,7 @@ interactively. This is the primary surface for ad-hoc tuning debugging.
 
 ---
 
-## 5.9b Unified Model Tuning Studio (Feature 46)
+## 5.8 Unified Model Tuning Studio
 
 Optional — use the UI-driven tuning studio to run experiments interactively instead of CLI-based tuning.
 
@@ -407,7 +380,7 @@ make db-apply-sql    # Includes sql/098_add_promoted_to_tuning.sql
 
 ---
 
-## 5.9c Champion Model Competition API
+## 5.9 Champion Model Competition API
 
 The champion competition strategies also expose a REST surface and a named-strategy
 configuration distinct from the `per_cluster` default documented in 5.5.
@@ -471,108 +444,10 @@ curl -X PUT http://localhost:8000/competition/config \
   -H "Content-Type: application/json" \
   -d '{"metric": "wape", "lag": "execution", "min_dfu_rows": 3,
        "strategy": "rolling", "strategy_params": {"window_months": 6}}'
-curl -X POST http://localhost:8000/competition/run
+curl -X POST http://localhost:8000/competition/run  # returns governed job_id (HTTP 202)
+curl http://localhost:8000/jobs/<job_id>             # poll experiment/result promotion
 curl http://localhost:8000/competition/summary
 ```
-
----
-
-## 5.7b Expert Panel — Detailed Reference (Feature 49)
-
-The Expert Panel tests whether a mix of statistical + ML + deep learning algorithms
-outperforms the current tree-only approach. Runs 14 algorithms (Holt-Winters, Simple
-Syntetos-Boylan ADI × CV² framework.
-
-### Prerequisites
-
-- Phase 5 completed (backtests loaded) — needed for baseline comparison
-- Phase 6 completed (champion selection) — needed for champion baseline
-- `statsmodels` installed (added to `pyproject.toml` dependencies)
-- Optional: `pmdarima` for Auto-ARIMA (`uv pip install pmdarima`)
-
-### Custom-parameter invocations
-
-The `make` targets in 5.7 cover the common cases. For custom DFU counts, timeframes,
-seeds, or location scoping, invoke the orchestrator directly:
-
-```bash
-# Custom parameters
-uv run python -m algorithm_testing.run_expert_panel \
-    --n-dfus 2000 --n-timeframes 4 --seed 123
-
-# Location + fewer timeframes
-uv run python -m algorithm_testing.run_expert_panel \
-    --loc 1401-BULK --n-timeframes 3
-```
-
-### What It Does
-
-1. **Builds a golden set** — stratified sample from `dim_sku` by cluster, or all DFUs at a specified location (`--loc`)
-2. **Classifies demand** — Syntetos-Boylan: smooth, erratic, intermittent, lumpy × high/low volume (8 archetypes)
-3. **Runs 12 algorithms** per timeframe — statistical models fit per-DFU (parallel or sequential depending on set size), tree models fit per-cluster
-4. **Builds affinity matrix** — segment × algorithm accuracy heatmap
-5. **Optimizes portfolio** — assigns best algorithm per segment (max 6 algorithms)
-
-### Output
-
-All results written to `algorithm_testing/results/` (or `adv_algorithm_testing/results/`):
-
-| File | Content |
-|------|---------|
-| `experiment_report.txt` | Human-readable summary with lift numbers |
-| `comparison.json` | Portfolio vs baselines (the key result) |
-| `affinity_matrix.csv` | Segment × algorithm accuracy heatmap |
-| `assignments.csv` | Best algorithm per demand segment |
-| `classification.csv` | Per-DFU archetype classification |
-| `affinity_detail.csv` | Per-segment accuracy detail |
-| `all_predictions.parquet` | All model predictions (large) |
-| `metadata.json` | Runtime, DFU count, loc_filter, algorithm counts |
-
-### Interpreting Results
-
-The key metric is **lift in basis points (bps)** in `comparison.json`:
-
-- `lift.vs_external_bps` — improvement over ERP forecast (target: positive)
-- `lift.vs_champion_bps` — improvement over current tree champion (the money number)
-
-A positive `vs_champion_bps` means the algorithm mix outperforms the tree-only approach. Each 100 bps ≈ 1% accuracy improvement ≈ ~1% safety stock reduction.
-
-### Configuration
-
-All parameters in `algorithm_testing/config.yaml` (or `adv_algorithm_testing/config.yaml`):
-
-- `experiment.n_dfus` — golden set size (default: 5000; ignored when `loc_filter` is set)
-- `experiment.n_timeframes` — backtest depth (default: 5, production uses 10)
-- `experiment.loc_filter` — run on all DFUs at a specific location instead of sampling (e.g. `1401-BULK`); also settable via `--loc` CLI flag
-- `experiment.n_workers` — parallel worker count (default: 8; sets auto auto-switch to sequential when DFU count ≤ 200)
-- `statistical_models.*` — enable/disable each statistical method
-- `portfolio_optimizer.max_algorithms` — complexity budget (default: 6)
-
-### Execution Mode
-
-Statistical models auto-select between two execution paths:
-
-| DFU count | Mode | Reason |
-|-----------|------|--------|
-| ≤ 200 | **Sequential** | Process-pool startup overhead exceeds model runtime for small sets |
-| > 200 | **Parallel** (`ProcessPoolExecutor`) | `enabled_models` and `predict_months` serialized once per worker via initializer; each task carries only compact numpy arrays |
-
-When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used automatically.
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `algorithm_testing/run_expert_panel.py` | Main orchestrator |
-| `algorithm_testing/golden_set.py` | Golden set sampling + loc-based selection |
-| `algorithm_testing/config.yaml` | Experiment configuration |
-| `algorithm_testing/demand_classifier.py` | Syntetos-Boylan classification |
-| `algorithm_testing/statistical_models.py` | HW, ES, Croston, ARIMA, Theta (DFU-first, all models per DFU) |
-| `algorithm_testing/affinity_matrix.py` | Segment × algorithm matrix |
-| `algorithm_testing/portfolio_optimizer.py` | Greedy + constrained optimizer |
-| `algorithm_testing/comparison.py` | Portfolio vs baselines |
-| `adv_algorithm_testing/run_adv_expert_panel.py` | Advanced panel orchestrator (+ DL, foundation models) |
-| `docs/specs/02-forecasting/15-expert-panel-algorithm-selection.md` | Full design spec |
 
 ---
 
@@ -585,7 +460,7 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 | New monthly sales data loaded (`make pipeline-refresh`) | Re-run `make tune-clusters` only if cluster fingerprints have shifted; otherwise rely on existing profiles |
 | Significant data drift detected (re-run `scripts/ml/compute_sku_features.py` and review `dim_sku` distributions; `detect_drift.py` was deleted on 2026-05-06) | `make tune-all` then `make tune-clusters` |
 | New features added to `dim_sku` | `make tune-all` (search space sees new feature distributions) |
-| New algorithm added to roster | Tune that algorithm in isolation: `uv run python scripts/tune_hyperparams.py --model <id>` |
+| Canonical LightGBM parameters need a full governed retune | Run `uv run python scripts/ml/tune_hyperparams.py --model lgbm_cluster` (or `make tune-lgbm-full`) |
 | Schema migration touching `cluster_tuning_profile` | `POST /admin/tuning/invalidate-stale`, then re-run `make tune-clusters` |
 | Ad-hoc strategy exploration | `make lgbm-auto-tune RUNS=N` (uses `tune_strategies.yaml`) |
 
@@ -594,9 +469,9 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 | Trigger | Recommended Action |
 |---|---|
 | Completion of a `make backtest-all` cycle | `make champion-all` (refreshes meta-learner + assignments) |
-| New candidate model loaded into `fact_candidate_forecast` | `make champion-all` to re-evaluate; verify with `make expert-panel-quick` before promoting |
+| New candidate model loaded into `fact_candidate_forecast` | `make champion-all` to re-evaluate, then inspect the champion experiment before promoting |
 | Champion promote gate blocks a promotion | Inspect `model_promotion_log` and the gate thresholds in `forecast_pipeline_config.yaml` → `champion.promote_gate`; consider a `bypass_token` only after manual sign-off |
-| Production accuracy regression observed | `make adv-expert-panel-quick` to diagnose, then `make champion-all` |
+| Production accuracy regression observed | Review the accuracy decomposition and retained-model backtests, then run `make champion-all` |
 | Cluster boundaries changed (re-clustering) | `make champion-all` (per-DFU assignments depend on cluster strategy) |
 
 ### Verification checklist after re-tune / re-champion
@@ -612,8 +487,7 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
    `model_promotion_log` row.
 7. Require `GET /forecast-release/readiness` to return `ready=true` before
    inventory planning consumes the release.
-8. Run `make expert-panel-quick` to validate selection quality before opening
-   the gate to a full `make expert-panel`.
+8. Require the promoted champion experiment and release-readiness evidence before publish.
 
 ---
 
@@ -623,7 +497,7 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 |---|---|
 | `common/ml/tuning.py` | CV splits, stabilised WAPE objective, Optuna helpers |
 | `common/ml/tuning_tracker.py` | Tuning-run registry + leaderboard |
-| `common/ml/champion/` (package: `registry.py` + 8 strategy modules) | Strategy registry (causal, exec-lag aware) — 31 strategies across `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment` |
+| `common/ml/champion/` (package: `registry.py` + 8 strategy modules) | Strategy registry (causal, exec-lag aware) — 30 strategies across `bandit`, `basic`, `blend`, `meta`, `regime`, `routing`, `segment` |
 | `common/ml/backtest_framework.py` | `resolve_cluster_params()` Phase 1/Phase 2 matcher |
 | `scripts/ml/tune_hyperparams.py` | Global per-algorithm tuning |
 | `scripts/ml/tune_cluster_hyperparams.py` | Per-cluster tuning |

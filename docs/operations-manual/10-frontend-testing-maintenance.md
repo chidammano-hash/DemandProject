@@ -323,7 +323,7 @@ The `170-185` SQL range and the supporting code paths cover this session's perf 
 | Streaming ETL | `stream_query_in_chunks`, `read_sql_chunked` for bounded-memory loads | `common/core/sql_helpers.py` (see Section 02 §2.3) |
 | Weekly partition cutover prep | DDL prepared; `auto_create_partitions.py` extended for weekly intervals | `sql/184`, `sql/185`, `scripts/db/auto_create_partitions.py` |
 | Frontend chart consolidation | Recharts is the default engine; `EChartContainer` removed and `ForecastTrendChart` ported to Recharts. ECharts retained only for the 8 heavy customer-analytics panels via `ModularReactECharts` (tree-shaken `echarts-modular`). `LazyPanel.tsx` IntersectionObserver wrapper added; `HeatmapGrid` extended with compact mode + clickable headers | `frontend/src/components/echarts-modular.tsx`, `frontend/src/components/LazyPanel.tsx`, `frontend/src/components/HeatmapGrid` |
-| Tab splits + dead-file cleanup | Large tabs split into subpanel dirs (`command-center/`, `data-quality/`, `aggregate-analysis/`, `storyboard/`, `forecast/`, `item-analysis/`). Removed dead frontend files: `AlertPanel`, `ItemDetailPanel`, `PipelineConfigPanel`, `expsys`, `useTabVisibility` | `frontend/src/tabs/` |
+| Tab splits + dead-file cleanup | Large tabs split into subpanel dirs (`command-center/`, `data-quality/`, `aggregate-analysis/`, `storyboard/`, `forecast/`, `item-analysis/`); obsolete tab implementations were removed. | `frontend/src/tabs/` |
 | Scale tests | New `tests/scale/` directory with `make scale-test` (synthetic 100K rows by default; `SCALE=10000000` for nightly) | `tests/scale/`, `tests/unit/test_pg_queue.py`, `tests/unit/test_auto_create_partitions.py` |
 
 ---

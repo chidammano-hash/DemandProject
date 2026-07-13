@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Route registry audit — checks consistency between API routers and Vite proxy.
+"""Route registry audit — checks API router, Vite, and Nginx consistency.
 
 Detects:
 1. Router files not mounted in main.py
-2. API prefixes missing from vite.config.ts proxy
-3. domains.py not mounted last
+2. API prefixes missing from Vite or Nginx proxies
+3. Nginx proxy matching bare collection paths as well as child paths
+4. domains.py not mounted last
 """
 import ast
 import re
 import sys
 from pathlib import Path
 
-from common.core.paths import PROJECT_ROOT as ROOT
+ROOT = Path.cwd()
+if not (ROOT / "api" / "main.py").exists():
+    raise RuntimeError("Run audit_routes.py from the DemandProject repository root")
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _collect_package_subrouters(init_file: Path) -> set[str]:
@@ -83,12 +88,21 @@ def get_mounted_routers():
     pattern = re.compile(r'app\.include_router\(([^,)]+)')
     return pattern.findall(text)
 
-def get_api_prefixes():
-    """Extract API path prefixes from main.py include_router calls."""
-    main_py = ROOT / "api" / "main.py"
-    text = main_py.read_text()
-    pattern = re.compile(r'prefix\s*=\s*["\'](/[^"\']+)["\']')
-    return sorted(set(pattern.findall(text)))
+def get_api_prefixes() -> list[str]:
+    """Return concrete top-level prefixes from the assembled FastAPI app."""
+    from api.main import app
+
+    ignored = {"/docs", "/openapi.json", "/redoc", "/"}
+    prefixes: set[str] = set()
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path or path.rstrip("/") in {value.rstrip("/") for value in ignored}:
+            continue
+        first_segment = path.strip("/").split("/", 1)[0]
+        if not first_segment or first_segment.startswith("{") or first_segment == "docs":
+            continue
+        prefixes.add(f"/{first_segment}")
+    return sorted(prefixes)
 
 def get_vite_proxies():
     """Extract proxy entries from vite.config.ts.
@@ -111,6 +125,21 @@ def get_vite_proxies():
     # Legacy fallback
     pattern = re.compile(r'["\'](/[^"\']+)["\']:\s*\{')
     return sorted(set(pattern.findall(text)))
+
+
+def get_nginx_proxies() -> tuple[list[str], bool]:
+    """Extract top-level API prefixes and boundary safety from Nginx config."""
+    nginx_config = ROOT / "frontend" / "nginx.conf"
+    if not nginx_config.exists():
+        return [], False
+    text = nginx_config.read_text()
+    match = re.search(r"location\s+~\s+\^/\(([^)]+)\)([^\s{]*)", text)
+    if not match:
+        return [], False
+    prefixes = sorted({f"/{value}" for value in match.group(1).split("|")})
+    suffix = match.group(2)
+    matches_bare_prefix = "$" in suffix
+    return prefixes, matches_bare_prefix
 
 def check_domains_last():
     """Verify domains.py is mounted last in main.py."""
@@ -167,17 +196,30 @@ def main():
         issues += len(unmounted)
     print()
 
-    # 2. Check Vite proxy coverage
+    # 2. Check development and production proxy coverage.
     api_prefixes = get_api_prefixes()
     vite_proxies = get_vite_proxies()
-    missing_proxies = [p for p in api_prefixes if p not in vite_proxies and not p.startswith("/domains")]
-    if missing_proxies:
-        print(f"API prefixes MISSING from vite.config.ts proxy ({len(missing_proxies)}):")
-        for p in missing_proxies:
+    nginx_proxies, nginx_matches_bare = get_nginx_proxies()
+    dynamic_prefixes = {"/domains"}
+    missing_vite = [p for p in api_prefixes if p not in vite_proxies and p not in dynamic_prefixes]
+    missing_nginx = [p for p in api_prefixes if p not in nginx_proxies and p not in dynamic_prefixes]
+    if missing_vite:
+        print(f"API prefixes MISSING from vite.config.ts proxy ({len(missing_vite)}):")
+        for p in missing_vite:
             print(f"  - {p}")
-        issues += len(missing_proxies)
+        issues += len(missing_vite)
     else:
         print("All API prefixes have Vite proxy entries.")
+    if missing_nginx:
+        print(f"API prefixes MISSING from nginx.conf proxy ({len(missing_nginx)}):")
+        for p in missing_nginx:
+            print(f"  - {p}")
+        issues += len(missing_nginx)
+    else:
+        print("All API prefixes have Nginx proxy entries.")
+    if not nginx_matches_bare:
+        print("WARNING: Nginx API matcher does not cover bare collection paths.")
+        issues += 1
     print()
 
     # 3. Check domains.py mounted last

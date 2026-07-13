@@ -1,7 +1,7 @@
 """
 Per-cluster hyperparameter tuning using Optuna.
 
-Tunes LGBM/CatBoost/XGBoost independently per ml_cluster, then writes
+Tunes LightGBM independently per ml_cluster, then writes
 best params into config/forecasting/cluster_tuning_profiles.yaml with cluster_name-based
 matching.
 
@@ -157,7 +157,7 @@ def make_cluster_objective(
 
 
 def fetch_stale_clusters(db: dict[str, Any]) -> list[str]:
-    """Cluster names flagged stale by a cluster promotion, [] if table absent."""
+    """Return current stale cluster names, failing closed if state is unreadable."""
     try:
         with psycopg.connect(**db) as conn, conn.cursor() as cur:
             cur.execute(
@@ -172,10 +172,7 @@ def fetch_stale_clusters(db: dict[str, Any]) -> list[str]:
             )
             return [row[0] for row in cur.fetchall()]
     except psycopg.Error as exc:
-        logger.warning(
-            "cluster_tuning_profile_state unavailable (%s) — treating as no stale rows", exc
-        )
-        return []
+        raise RuntimeError("stale tuning profiles could not be queried") from exc
 
 
 def clear_stale_flags(db: dict[str, Any], cluster_names: list[str]) -> None:
@@ -190,10 +187,15 @@ def clear_stale_flags(db: dict[str, Any], cluster_names: list[str]) -> None:
                    WHERE cluster_name = ANY(%s)""",
                 (cluster_names,),
             )
+            cleared = int(cur.rowcount or 0)
+            if cleared != len(cluster_names):
+                raise RuntimeError(
+                    f"Tuning completed but cleared {cleared} of {len(cluster_names)} stale profiles"
+                )
             conn.commit()
-            logger.info("Cleared stale flag on %d tuning profile(s)", cur.rowcount)
+            logger.info("Cleared stale flag on %d tuning profile(s)", cleared)
     except psycopg.Error as exc:
-        logger.warning("Could not clear stale flags (%s)", exc)
+        raise RuntimeError("Stale tuning profile flags could not be cleared") from exc
 
 
 def fetch_promoted_cluster_experiment(db: dict[str, Any]) -> tuple[int | None, str | None]:
@@ -308,9 +310,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Per-cluster hyperparameter tuning using Optuna")
     parser.add_argument(
         "--model",
-        choices=["lgbm", "catboost", "xgboost"],
-        required=True,
-        help="Model to tune",
+        choices=["lgbm"],
+        default="lgbm",
+        help="Model to tune (the canonical tree model)",
     )
     parser.add_argument(
         "--trials",
@@ -382,8 +384,7 @@ def main() -> None:
     n_trials = args.trials
     min_rows = args.min_rows
 
-    # CatBoost uses str dtype for categoricals; LGBM and XGBoost use "category"
-    cat_dtype = "str" if model_name == "catboost" else "category"
+    cat_dtype = "category"
 
     logger.info(
         "Per-cluster tuning: %s | %d trials/cluster | min_rows=%d",

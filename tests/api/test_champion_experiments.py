@@ -1,15 +1,25 @@
 """Tests for the champion experiments API — /champion-experiments/* endpoints.
 
-Tests CRUD lifecycle, comparison, promotion (config + results), templates,
+Tests CRUD lifecycle, comparison, retired manual promotion boundaries, templates,
 promoted experiment, audit trail, cancel, delete, and logs.
 """
 
-import json
-import pytest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import MagicMock, mock_open, patch
+
 import httpx
+import pytest
 from httpx import ASGITransport
+
 from tests.api.conftest import make_pool as _make_pool
+
+_MANUAL_PROMOTION_RETIRED_DETAIL = {
+    "code": "manual_champion_promotion_retired",
+    "message": (
+        "Manual champion promotion is retired. Run "
+        "POST /jobs/pipelines/named/model-refresh to create and atomically promote "
+        "a governed champion."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +40,7 @@ def _experiment_row(
     strategy: str = "expanding",
     strategy_params: str | None = '{"min_prior_months": 3}',
     meta_learner_params: str | None = None,
-    models: str = '["lgbm_cluster", "catboost_cluster", "xgboost_cluster"]',
+    models: str = '["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"]',
     metric: str = "accuracy_pct",
     lag_mode: str = "execution",
     min_sku_rows: int = 3,
@@ -39,7 +49,7 @@ def _experiment_row(
     gap_bps: float | None = 670.0,
     n_champions: int | None = 5000,
     n_dfu_months: int | None = 60000,
-    model_distribution: str | None = '{"lgbm_cluster": 45.2, "catboost_cluster": 30.1, "xgboost_cluster": 24.7}',
+    model_distribution: str | None = '{"lgbm_cluster": 45.2, "mstl": 30.1, "nhits": 24.7}',
     is_promoted: bool = False,
     promoted_at: str | None = None,
     is_results_promoted: bool = False,
@@ -174,7 +184,7 @@ async def test_create_experiment():
                     "label": "New Exp",
                     "strategy": "rolling",
                     "strategy_params": {"window_months": 6},
-                    "models": ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"],
+                    "models": ["lgbm_cluster", "mstl", "chronos2_enriched"],
                 },
             )
 
@@ -198,7 +208,7 @@ async def test_create_experiment_invalid_strategy():
                 json={
                     "label": "Bad Strategy",
                     "strategy": "invalid_strategy",
-                    "models": ["lgbm_cluster", "catboost_cluster"],
+                    "models": ["lgbm_cluster", "mstl"],
                 },
             )
 
@@ -224,7 +234,29 @@ async def test_create_experiment_insufficient_models():
             )
 
     assert resp.status_code == 400
-    assert "2 models" in resp.json()["detail"]
+    assert "2 distinct models" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_rejects_retired_model_before_insert():
+    pool, conn, cursor = _make_pool()
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/champion-experiments",
+                json={
+                    "label": "Retired model",
+                    "models": ["lgbm_cluster", "catboost_cluster"],
+                },
+            )
+
+    assert resp.status_code == 400
+    assert "catboost_cluster" in resp.json()["detail"]
+    assert "Valid competing models" in resp.json()["detail"]
+    cursor.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -377,76 +409,50 @@ async def test_compare_not_found():
 
 
 # ---------------------------------------------------------------------------
-# 8. Promote experiment (Stage 1)
+# 8. Retired manual promotion boundaries
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_promote_experiment():
+async def test_manual_config_promotion_is_gone_without_config_or_db_mutation(tmp_path):
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [
         _experiment_row(experiment_id=1, status="completed"),  # fetch
         None,  # previous promoted
     ]
-
-    yaml_content = "competition:\n  strategy: expanding\n  models:\n    - lgbm_cluster\n"
+    config_path = tmp_path / "forecast_pipeline_config.yaml"
+    original_config = b"champion:\n  strategy: governed\n"
+    config_path.write_bytes(original_config)
 
     with (
         patch("api.core._get_pool", return_value=pool),
-        patch("builtins.open", mock_open(read_data=yaml_content)),
-        patch("pathlib.Path.exists", return_value=True),
-        patch("shutil.copy2"),
-        patch("common.core.utils.reset_config"),
+        patch(
+            "api.routers.forecasting.champion_experiments._PIPELINE_CONFIG_PATH",
+            config_path,
+            create=True,
+        ),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/champion-experiments/1/promote")
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["promoted"] is True
-    assert data["experiment_id"] == 1
+    assert resp.status_code == 410
+    assert resp.json()["detail"] == _MANUAL_PROMOTION_RETIRED_DETAIL
+    assert config_path.read_bytes() == original_config
+    pool.connection.assert_not_called()
+    conn.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_promote_experiment_not_completed():
+async def test_manual_results_promotion_is_gone_without_job_or_db_mutation():
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = _experiment_row(experiment_id=1, status="running")
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/champion-experiments/1/promote")
-
-    assert resp.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_promote_experiment_not_found():
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = None
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/champion-experiments/999/promote")
-
-    assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# 9. Promote results (Stage 2)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_promote_results():
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("completed", True, False)  # status, promoted, results_promoted
-
+    cursor.fetchone.return_value = (
+        "completed",
+        True,
+        False,
+        '["lgbm_cluster", "mstl"]',
+    )
     mock_jm = MagicMock()
-    mock_jm.return_value.submit_job.return_value = "job-load-999"
 
     with (
         patch("api.core._get_pool", return_value=pool),
@@ -457,38 +463,26 @@ async def test_promote_results():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/champion-experiments/1/promote-results")
 
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["job_id"] == "job-load-999"
+    assert resp.status_code == 410
+    assert resp.json()["detail"] == _MANUAL_PROMOTION_RETIRED_DETAIL
+    pool.connection.assert_not_called()
+    conn.commit.assert_not_called()
+    mock_jm.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_promote_results_not_promoted():
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("completed", False, False)
-
+@pytest.mark.parametrize("route", ["promote", "promote-results"])
+async def test_stale_or_unknown_experiment_cannot_bypass_governed_promotion(route):
+    pool, _conn, _cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/champion-experiments/1/promote-results")
+            resp = await client.post(f"/champion-experiments/999/{route}")
 
-    assert resp.status_code == 400
-    assert "promoted" in resp.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_promote_results_already_loaded():
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("completed", True, True)
-
-    with patch("api.core._get_pool", return_value=pool):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/champion-experiments/1/promote-results")
-
-    assert resp.status_code == 409
+    assert resp.status_code == 410
+    assert resp.json()["detail"] == _MANUAL_PROMOTION_RETIRED_DETAIL
+    pool.connection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -771,7 +765,7 @@ async def test_get_experiment_detail_with_exec_lag():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [
         _experiment_row(experiment_id=5, champion_accuracy=71.5),
-        (69.0, 76.0, 700.0, 11000, '{"catboost_cluster": 60}'),  # lag row
+        (69.0, 76.0, 700.0, 11000, '{"mstl": 60}'),  # lag row
     ]
 
     with patch("api.core._get_pool", return_value=pool):

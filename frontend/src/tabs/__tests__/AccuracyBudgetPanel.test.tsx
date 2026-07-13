@@ -54,8 +54,8 @@ vi.mock("@/api/queries", () => ({
   fetchModelComparison: vi.fn().mockResolvedValue({
     models: [
       { model_id: "lgbm_cluster", accuracy_pct: 69.3, wape: 30.7, bias: -0.012, n_dfus: 50602 },
-      { model_id: "catboost_global", accuracy_pct: 67.1, wape: 32.9, bias: 0.008, n_dfus: 50602 },
-      { model_id: "xgb_global", accuracy_pct: 66.5, wape: 33.5, bias: -0.015, n_dfus: 50602 },
+      { model_id: "nhits", accuracy_pct: 67.1, wape: 32.9, bias: 0.008, n_dfus: 50602 },
+      { model_id: "chronos2_enriched", accuracy_pct: 66.5, wape: 33.5, bias: -0.015, n_dfus: 50602 },
     ],
     oracle_ceiling: { accuracy: 85.0, wape: 15.0 },
   }),
@@ -194,8 +194,8 @@ describe("AccuracyBudgetPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("lgbm_cluster")).toBeInTheDocument();
     });
-    expect(screen.getByText("catboost_global")).toBeInTheDocument();
-    expect(screen.getByText("xgb_global")).toBeInTheDocument();
+    expect(screen.getByText("N-HiTS")).toBeInTheDocument();
+    expect(screen.getByText("Chronos 2E")).toBeInTheDocument();
     expect(screen.getByText("Best")).toBeInTheDocument();
   });
 

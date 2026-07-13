@@ -2,7 +2,7 @@
  * Purchase Orders API queries — comprehensive PO history
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types

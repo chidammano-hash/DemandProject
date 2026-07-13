@@ -1,7 +1,7 @@
 /**
  * F1.2 — Forward Inventory Projection query functions
  */
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 export interface ProjectionKeyDate {
   reorder_trigger_date: string | null;

@@ -257,6 +257,82 @@ def register_timeframes(run_id: int, metadata_path: str | Path) -> None:
     logger.info("Registered %d timeframes for run %d", len(timeframes), run_id)
 
 
+def register_lag_breakdowns(run_id: int, predictions_path: str | Path) -> int:
+    """Persist lag 0-4 metrics from a completed run's real all-lag artifact."""
+    import pandas as pd
+
+    csv_path = Path(predictions_path)
+    if not csv_path.exists():
+        logger.warning("All-lag predictions not found at %s — skipping lag breakdowns", csv_path)
+        return 0
+
+    required = [
+        "item_id",
+        "customer_group",
+        "loc",
+        "lag",
+        FORECAST_QTY_COL,
+        "tothist_dmd",
+    ]
+    frame = pd.read_csv(csv_path, usecols=required)
+    frame = frame.dropna(subset=["lag", FORECAST_QTY_COL, "tothist_dmd"])
+    frame["lag"] = pd.to_numeric(frame["lag"], errors="coerce")
+    frame = frame[frame["lag"].between(0, 4, inclusive="both")]
+    if frame.empty:
+        return 0
+
+    rows: list[tuple[Any, ...]] = []
+    for lag, group in frame.groupby("lag", sort=True):
+        forecast_sum = float(group[FORECAST_QTY_COL].sum())
+        actual_sum = float(group["tothist_dmd"].sum())
+        absolute_error = float(
+            (group[FORECAST_QTY_COL] - group["tothist_dmd"]).abs().sum()
+        )
+        if abs(actual_sum) < 1e-9:
+            accuracy_pct = None
+            wape = None
+            bias = None
+        else:
+            wape = round(100.0 * absolute_error / abs(actual_sum), 2)
+            accuracy_pct = round(max(0.0, 100.0 - wape), 2)
+            bias = round(forecast_sum / actual_sum - 1.0, 4)
+        n_dfus = int(
+            group[["item_id", "customer_group", "loc"]].drop_duplicates().shape[0]
+        )
+        rows.append(
+            (
+                run_id,
+                int(lag),
+                len(group),
+                n_dfus,
+                accuracy_pct,
+                wape,
+                bias,
+            )
+        )
+
+    with psycopg.connect(**get_db_params()) as conn:
+        with conn.cursor() as cur:
+            for row in rows:
+                cur.execute(
+                    """INSERT INTO lgbm_tuning_lag
+                           (run_id, exec_lag, n_predictions, n_dfus,
+                            accuracy_pct, wape, bias)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (run_id, exec_lag) DO UPDATE SET
+                           n_predictions = EXCLUDED.n_predictions,
+                           n_dfus = EXCLUDED.n_dfus,
+                           accuracy_pct = EXCLUDED.accuracy_pct,
+                           wape = EXCLUDED.wape,
+                           bias = EXCLUDED.bias""",
+                    row,
+                )
+        conn.commit()
+
+    logger.info("Registered %d lag breakdowns for run %d", len(rows), run_id)
+    return len(rows)
+
+
 def register_cluster_month_breakdowns(
     run_id: int,
     predictions_path: str | Path,

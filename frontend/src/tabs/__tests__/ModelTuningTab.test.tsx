@@ -140,9 +140,7 @@ vi.mock("../lgbm-tuning/FeatureLabPanel", () => ({
   FeatureLabPanel: () => <div data-testid="feature-lab-panel">FeatureLabPanel</div>,
 }));
 vi.mock("../model-tuning/LagFilterBar", () => ({
-  LagFilterBar: ({ value, onChange }: { value?: number; onChange: (v?: number) => void }) => (
-    <div data-testid="lag-filter-bar">LagFilterBar</div>
-  ),
+  LagFilterBar: () => <div data-testid="lag-filter-bar">LagFilterBar</div>,
 }));
 vi.mock("../model-tuning/EnhancedComparisonPanel", () => ({
   EnhancedComparisonPanel: () => <div>EnhancedComparisonPanel</div>,
@@ -267,6 +265,29 @@ describe("ModelTuningTab", () => {
         expect.anything()
       );
     });
+  });
+
+  it("returns to LightGBM when Tune is opened from a direct-inference model", async () => {
+    const ModelTuningTab = (await import("../ModelTuningTab")).default;
+    render(
+      <TestQueryWrapper>
+        <ModelTuningTab />
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("MSTL")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("MSTL"));
+    await waitFor(() => {
+      expect(screen.getByTestId("backtest-detail-panel")).toHaveTextContent("mstl");
+    });
+    fireEvent.click(screen.getByText("Tune"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Best Accuracy")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("MSTL")).not.toBeInTheDocument();
   });
 
   it("renders KPI summary cards on tune stage", async () => {

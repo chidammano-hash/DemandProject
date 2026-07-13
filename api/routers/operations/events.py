@@ -105,7 +105,10 @@ async def get_event_calendar(
 @router.post("/events/calendar", status_code=201)
 async def create_event(body: _EventCreate, request: Request):
     """Create a new promotion / event (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     import json as _json
     with get_conn() as conn:
@@ -171,7 +174,10 @@ async def get_event(event_id: int):
 @router.put("/events/calendar/{event_id}/approve")
 async def approve_event(event_id: int, request: Request):
     """Approve an event (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:

@@ -2,7 +2,7 @@
 Unit tests for global training strategy in backtest scripts.
 
 Tests cover:
-- train_and_predict_global (LGBM, CatBoost, XGBoost):
+- train_and_predict_global (LightGBM):
   - ml_cluster is excluded from feature_cols and used only as metadata
   - val split uses 15% of rows (vs 20% for per-cluster)
   - result DataFrame has the expected output columns
@@ -143,9 +143,8 @@ class TestClusterStrategyDispatch:
 
     def _dispatch(self, cluster_strategy: str, per_cluster_fn, global_fn) -> tuple:
         if cluster_strategy == "global":
-            return global_fn, "lgbm_global"
-        else:
-            return per_cluster_fn, "lgbm_cluster"
+            return global_fn, "lgbm_cluster"
+        return per_cluster_fn, "lgbm_cluster"
 
     def test_per_cluster_strategy(self):
         per_fn = MagicMock(name="per_cluster")
@@ -159,83 +158,12 @@ class TestClusterStrategyDispatch:
         glob_fn = MagicMock(name="global")
         fn, model_id = self._dispatch("global", per_fn, glob_fn)
         assert fn is glob_fn
-        assert model_id == "lgbm_global"
+        assert model_id == "lgbm_cluster"
 
     def test_default_is_per_cluster_when_key_missing(self):
         algo_cfg = {}  # no cluster_strategy key
         strategy = algo_cfg.get("cluster_strategy", "per_cluster")
         assert strategy == "per_cluster"
-
-    def test_model_id_override_from_cli(self):
-        """--model-id CLI arg should take precedence over config default."""
-        cli_model_id = "lgbm_global_v2"
-        default_model_id = "lgbm_global"
-        # Simulates: model_id = args.model_id or algo.get("model_id", default_model_id)
-        args_model_id = cli_model_id
-        resolved = args_model_id or default_model_id
-        assert resolved == "lgbm_global_v2"
-
-    def test_model_id_falls_back_to_default_when_cli_none(self):
-        default_model_id = "lgbm_global"
-        args_model_id = None  # not provided
-        resolved = args_model_id or default_model_id
-        assert resolved == "lgbm_global"
-
-
-class TestCatBoostGlobalCatIndices:
-    """CatBoost global uses integer indices computed from feature_cols (not stripped)."""
-
-    def test_cat_indices_exclude_ml_cluster(self):
-        """ml_cluster is in METADATA_COLS, so it should not be in feature_cols or cat_cols."""
-        feature_cols = ["qty_lag_1", "qty_rolling_3", "region"]
-        cat_cols = ["region"]
-        cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-        assert cat_indices == [2]
-        assert "ml_cluster" not in feature_cols
-
-    def test_cat_indices_with_other_cat_cols(self):
-        feature_cols = ["region", "qty_lag_1", "brand", "qty_rolling_3"]
-        cat_cols = ["region", "brand"]
-        cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-        assert cat_indices == [0, 2]
-
-
-class TestXGBoostGlobalCategoryDtype:
-    """XGBoost global applies category dtype only to model categorical features."""
-
-    def test_category_dtype_applied_to_non_metadata_cat_feature(self):
-        df = _make_grid(20)
-        df["region"] = ["north" if i % 2 == 0 else "south" for i in range(len(df))]
-        feature_cols = ["qty_lag_1", "qty_rolling_3", "region"]
-        cat_cols = ["region"]
-        cat_cols_in_features = [c for c in cat_cols if c in feature_cols]
-
-        X = df[feature_cols].copy()
-        for col in cat_cols_in_features:
-            X[col] = X[col].astype("category")
-
-        assert X["region"].dtype.name == "category"
-        # Non-cat cols remain numeric
-        assert pd.api.types.is_numeric_dtype(X["qty_lag_1"])
-
-    def test_predict_df_also_gets_category_dtype(self):
-        df_train = _make_grid(100)
-        df_pred = _make_grid(20)
-        df_train["region"] = ["north" if i % 2 == 0 else "south" for i in range(len(df_train))]
-        df_pred["region"] = ["north" if i % 2 == 0 else "south" for i in range(len(df_pred))]
-        feature_cols = ["qty_lag_1", "region"]
-        cat_cols = ["region"]
-        cat_cols_in_features = [c for c in cat_cols if c in feature_cols]
-
-        X_train = df_train[feature_cols].copy()
-        X_pred = df_pred[feature_cols].copy()
-        for col in cat_cols_in_features:
-            X_train[col] = X_train[col].astype("category")
-            X_pred[col] = X_pred[col].astype("category")
-
-        assert X_train["region"].dtype.name == "category"
-        assert X_pred["region"].dtype.name == "category"
-
 
 class TestGlobalFinalRefit:
     """Global tree backtests use validation only to select rounds, then refit."""

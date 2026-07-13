@@ -1,19 +1,17 @@
 """User authentication and RBAC for Supply Chain Command Center.
 
 Provides JWT-based user identity, role-based access control, and audit
-logging. Complements (does not replace) :mod:`api.auth`, which gates
-mutation endpoints with a service-level API key. The two layers compose:
-the API key answers "is this an authorized client?", JWT answers
-"WHO is making this request and what may they do?".
+logging. :mod:`api.auth` composes this identity with the service API-key path
+for mutation endpoints: browser users send JWTs and automation sends an API
+key.
 """
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-
-import logging
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
@@ -71,7 +69,7 @@ def _jwt_secret() -> str:
 
 def create_access_token(user_id: str, email: str, role: str) -> str:
     cfg = _load_config()
-    expire = datetime.now(timezone.utc) + timedelta(
+    expire = datetime.now(UTC) + timedelta(
         minutes=cfg["jwt"]["access_token_expire_minutes"]
     )
     payload = {
@@ -86,7 +84,7 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
 
 def create_refresh_token(user_id: str) -> str:
     cfg = _load_config()
-    expire = datetime.now(timezone.utc) + timedelta(
+    expire = datetime.now(UTC) + timedelta(
         days=cfg["jwt"]["refresh_token_expire_days"]
     )
     payload = {
@@ -103,9 +101,9 @@ def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, _jwt_secret(), algorithms=[cfg["jwt"]["algorithm"]])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="Token expired") from None
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
 # ---------------------------------------------------------------------------
@@ -203,20 +201,16 @@ def require_role(min_role: str):
 
 
 # ---------------------------------------------------------------------------
-# Legacy compatibility — drop-in replacement for api/auth.py
+# Legacy compatibility for modules that import from common.auth
 # ---------------------------------------------------------------------------
-async def require_api_key(x_api_key: str | None = Header(default=None)):
-    """Backward-compatible auth dependency.
+async def require_api_key(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> None:
+    """Authorize a mutation through the canonical API dependency."""
+    from api.auth import require_api_key as require_write_access
 
-    When JWT is configured, delegates to get_current_user.
-    When only API_KEY is set, behaves like the original api/auth.py.
-    When neither is set, auth is disabled (dev mode).
-    """
-    expected = os.getenv("API_KEY", "")
-    if not expected:
-        return  # Auth disabled
-    if not x_api_key or not hmac.compare_digest(x_api_key, expected):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    await require_write_access(x_api_key=x_api_key, authorization=authorization)
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +229,7 @@ def log_audit(
     """Write an audit log entry. Best-effort — does not raise on failure."""
     try:
         import json
+
         from api.core import get_conn
 
         user_id = user.user_id if user else None

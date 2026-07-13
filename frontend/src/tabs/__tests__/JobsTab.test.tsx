@@ -11,11 +11,13 @@ vi.mock("@/api/queries", () => ({
     activeJobs: () => ["active-jobs"],
     jobStats: () => ["job-stats"],
     jobSchedules: () => ["job-schedules"],
+    namedPipelines: () => ["named-pipelines"],
     jobLogs: (id: string) => ["job-logs", id],
     competitionConfig: () => ["competition-config"],
     competitionSummary: () => ["competition-summary"],
     clusteringDefaults: () => ["clustering-defaults"],
   },
+  pipelineReadinessKeys: { readiness: ["dashboard", "pipeline-readiness"] },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchJobTypes: vi.fn().mockResolvedValue({
     types: [
@@ -31,17 +33,32 @@ vi.mock("@/api/queries", () => ({
     last_24h: { submitted: 3, completed: 2, failed: 1 },
   }),
   fetchJobSchedules: vi.fn().mockResolvedValue({ schedules: [] }),
+  fetchNamedPipelines: vi.fn().mockResolvedValue({
+    pipelines: [
+      {
+        name: "model-refresh",
+        description: "Run the retained five-model roster.",
+        steps: ["backtest_lgbm"],
+      },
+    ],
+  }),
+  fetchPipelineReadiness: vi.fn().mockResolvedValue({ ready: true, checks: [] }),
   fetchJobDetail: vi.fn(),
   submitJob: vi.fn(),
   cancelJob: vi.fn(),
   deleteJob: vi.fn(),
   createSchedule: vi.fn(),
   deleteSchedule: vi.fn(),
-  submitPipeline: vi.fn(),
+  runNamedPipeline: vi.fn().mockResolvedValue({
+    pipeline_id: "pipe_test",
+    name: "model-refresh",
+    status: "running",
+    steps: 1,
+  }),
   fetchJobLogs: vi.fn().mockResolvedValue({ job_id: "test", log: "", total_length: 0, offset: 0 }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue({
-    config: { models: ["lgbm_cluster", "catboost_cluster"], metric: "wape", lag: "execution", min_dfu_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
-    available_models: ["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "external"],
+    config: { models: ["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"], metric: "wape", lag: "execution", min_dfu_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
+    available_models: ["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"],
   }),
   saveCompetitionConfig: vi.fn().mockResolvedValue(undefined),
   CompetitionConfig: {},
@@ -142,6 +159,35 @@ describe("JobsTab", () => {
     );
     await waitFor(() => {
       expect(screen.getByText(/Automate, schedule, and monitor/)).toBeDefined();
+    });
+  });
+
+  it("renders the server-managed forecast workflow", async () => {
+    render(
+      <TestQueryWrapper>
+        <JobNotificationProvider>
+          <JobsTab />
+        </JobNotificationProvider>
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("2. Refresh Five-Model Roster")).toBeDefined();
+      expect(screen.getByText("Run the retained five-model roster.")).toBeDefined();
+    });
+  });
+
+  it("loads unfiltered job history for pipeline status reconciliation", async () => {
+    const { fetchJobs } = await import("@/api/queries");
+    render(
+      <TestQueryWrapper>
+        <JobNotificationProvider>
+          <JobsTab />
+        </JobNotificationProvider>
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(fetchJobs).toHaveBeenCalledWith({ limit: 200, offset: 0 });
     });
   });
 
@@ -249,38 +295,4 @@ describe("JobsTab", () => {
     });
   });
 
-  it("renders Pipeline Builder section", async () => {
-    render(
-      <TestQueryWrapper>
-        <JobNotificationProvider>
-          <JobsTab />
-        </JobNotificationProvider>
-      </TestQueryWrapper>,
-    );
-    await waitFor(() => {
-      expect(screen.getByText("Pipeline Builder")).toBeDefined();
-    });
-  });
-
-  it("renders pre-built pipeline template names when expanded", async () => {
-    const { fireEvent } = await import("@testing-library/react");
-    render(
-      <TestQueryWrapper>
-        <JobNotificationProvider>
-          <JobsTab />
-        </JobNotificationProvider>
-      </TestQueryWrapper>,
-    );
-    await waitFor(() => {
-      expect(screen.getByText("Pipeline Builder")).toBeDefined();
-    });
-    // Expand the panel
-    fireEvent.click(screen.getByText("Pipeline Builder").closest("button")!);
-    await waitFor(() => {
-      expect(screen.getByText("Delta Data Load")).toBeDefined();
-      expect(screen.getByText("Full Data Load")).toBeDefined();
-      expect(screen.getByText("Inventory Refresh")).toBeDefined();
-      expect(screen.getByText("Weekly Data Refresh")).toBeDefined();
-    });
-  });
 });

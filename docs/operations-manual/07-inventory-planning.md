@@ -40,8 +40,8 @@ setup-inv-planning   = eoq-all policy-all ss-all exceptions-generate fill-rate-a
                        health-all supplier-perf-all investment-all intramonth-all
                        control-tower-all rebalancing-all
 
-setup-demand-planning = forecast-prod-all projection-all po-all quantile-all
-                        consensus-all planned-orders-all replplan-all bias-all
+setup-demand-planning = forecast-prod-all projection-all po-all consensus-all
+                        planned-orders-all replplan-all bias-all
                         blended-all service-level-all lead-time-all echelon-all
 ```
 

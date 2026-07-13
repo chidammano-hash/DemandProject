@@ -28,7 +28,6 @@ from typing import Any
 
 import pandas as pd
 import psycopg
-import yaml
 from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
@@ -94,7 +93,7 @@ def _load_config_from_pipeline() -> dict[str, Any] | None:
         "min_dfu_rows": champion.get("min_dfu_rows", 3),
         "min_sku_rows": champion.get("min_sku_rows", 3),
         "champion_model_id": champion.get("champion_model_id", "champion"),
-        "fallback_model_id": champion.get("fallback_model_id", "seasonal_naive"),
+        "fallback_model_id": champion.get("fallback_model_id", "lgbm_cluster"),
         "meta_learner": champion.get("meta_learner", {}),
     }
     return cfg
@@ -114,27 +113,12 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
     for k, v in _DEFAULTS.items():
         cfg.setdefault(k, v)
-    # Validate
-    # Gen-4 Stream G (AI-2 P1): probabilistic metrics are accepted but
-    # currently fall back to WAPE when quantile data is absent. Full
-    # CRPS/pinball selection requires per-DFU quantile rows in
-    # fact_candidate_forecast.
-    if cfg["metric"] not in ("wape", "accuracy_pct", "crps", "pinball"):
+    # Only implemented deterministic metrics are selectable. Silently mapping
+    # an unsupported metric to WAPE would mislabel the governed experiment.
+    if cfg["metric"] not in ("wape", "accuracy_pct"):
         raise ValueError(
-            f"Invalid metric '{cfg['metric']}'; must be wape, accuracy_pct, crps, or pinball"
+            f"Invalid metric '{cfg['metric']}'; must be wape or accuracy_pct"
         )
-    if cfg["metric"] in ("crps", "pinball"):
-        # TODO(gen-4): Wire compute_crps/compute_pinball_loss once candidate
-        # quantile columns (forecast_qty_p10/p50/p90) are consistently populated
-        # by the champion FM for every DFU. For now we log & fall back so the
-        # pipeline doesn't fail silently on partially-quantiled data.
-        import logging as _log
-        _log.getLogger(__name__).warning(
-            "champion.metric=%s requested; falling back to WAPE because per-DFU "
-            "quantile data is not yet guaranteed. See common.ml.crps.",
-            cfg["metric"],
-        )
-        cfg["metric"] = "wape"
     valid_lags = {"execution", "0", "1", "2", "3", "4"}
     if str(cfg["lag"]) not in valid_lags:
         raise ValueError(f"Invalid lag '{cfg['lag']}'; must be one of {sorted(valid_lags)}")
@@ -685,8 +669,8 @@ def insert_fallback_champions(
     # the source ATTRIBUTION only — it does not by itself change which model
     # generates the go-forward production forecast, because the consumer's
     # _resolve_artifact still substitutes the production fallback for pkl-less
-    # statistical sources (seasonal_naive/rolling_mean). That production-routing
-    # gap is tracked separately (BACKLOG F-11).
+    # non-tree sources. Production generation owns the corresponding canonical
+    # non-tree routing.
     if lag_mode == "execution":
         lag_cond = "lag::text = execution_lag::text"
         params: list[Any] = [

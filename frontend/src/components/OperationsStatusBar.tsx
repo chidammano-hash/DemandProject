@@ -6,7 +6,9 @@ import {
   CalendarDays,
   CheckCircle2,
   Loader2,
+  LogOut,
   PlayCircle,
+  UserRound,
 } from "lucide-react";
 
 import {
@@ -17,6 +19,7 @@ import {
 import { queryKeys } from "@/api/queries/core";
 import { fetchActiveJobs } from "@/api/queries/jobs";
 import { useJobNotification } from "@/context/JobNotificationContext";
+import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "./AppSidebar";
 
@@ -77,6 +80,7 @@ export function OperationsStatusBar({
   onNavigate,
 }: OperationsStatusBarProps): JSX.Element {
   const { activeJobCount: localActiveJobCount } = useJobNotification();
+  const { user, logout } = useAuth();
 
   const planningDateQuery = useQuery({
     queryKey: queryKeys.planningDate(),
@@ -176,6 +180,25 @@ export function OperationsStatusBar({
             <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.7} />
             Syncing
           </span>
+        )}
+
+        {user && user.user_id !== "anonymous" && (
+          <div className={cn("ml-auto flex items-center gap-1.5", isSyncing && "sm:ml-0")}>
+            <StatusPill title={`Signed in as ${user.email}`}>
+              <UserRound className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
+              <span className="hidden max-w-40 truncate lg:inline">{user.display_name || user.email}</span>
+              <span className="capitalize text-muted-foreground">{user.role}</span>
+            </StatusPill>
+            <button
+              type="button"
+              onClick={logout}
+              title="Sign out"
+              aria-label="Sign out"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
+            </button>
+          </div>
         )}
       </div>
     </div>

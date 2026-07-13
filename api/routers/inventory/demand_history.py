@@ -273,8 +273,8 @@ def demand_comparison(
     cfg = _cfg()
     set_cache(response, max_age=cfg.get("cache_ttl_seconds", 120))
     cutoff = _date_cutoff(months)
-    hier_ids = cfg.get("hierarchical_model_ids", ["bolt_hierarchical"])
-    td_ids = cfg.get("top_down_model_ids", ["chronos_bolt"])
+    hier_ids = cfg.get("hierarchical_model_ids", [])
+    td_ids = cfg.get("top_down_model_ids", [])
 
     sql_actual = """
         SELECT TO_CHAR(f.startdate, 'YYYY-MM') AS month,
@@ -305,12 +305,15 @@ def demand_comparison(
         actual_rows = cur.fetchall()
 
         all_model_ids = hier_ids + td_ids
-        try:
-            cur.execute(sql_predictions, [item_id, loc, cutoff, all_model_ids])
-            pred_rows = cur.fetchall()
-        except psycopg.Error:
-            logger.debug("fact_external_forecast_monthly not yet populated for this DFU")
+        if not all_model_ids:
             pred_rows = []
+        else:
+            try:
+                cur.execute(sql_predictions, [item_id, loc, cutoff, all_model_ids])
+                pred_rows = cur.fetchall()
+            except psycopg.Error:
+                logger.debug("fact_external_forecast_monthly not yet populated for this DFU")
+                pred_rows = []
 
     pred_map: dict[tuple[str, str], float] = {}
     for r in pred_rows:

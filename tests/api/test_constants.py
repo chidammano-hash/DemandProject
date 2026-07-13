@@ -55,15 +55,24 @@ TS_2026_03_25_10_05_COMPLETED = "2026-03-25T10:05:00+00:00"
 # ---------------------------------------------------------------------------
 
 MODEL_LGBM = "lgbm_cluster"
-MODEL_CATBOOST = "catboost_cluster"
-MODEL_XGBOOST = "xgboost_cluster"
+MODEL_NHITS = "nhits"
+MODEL_NBEATS = "nbeats"
+MODEL_MSTL = "mstl"
+MODEL_CHRONOS2_ENRICHED = "chronos2_enriched"
 MODEL_EXTERNAL = "external"
-MODEL_LGBM_GLOBAL = "lgbm_global"
 
-ALL_TREE_MODELS = [MODEL_LGBM, MODEL_CATBOOST, MODEL_XGBOOST]
+FORECAST_MODELS = [
+    MODEL_LGBM,
+    MODEL_NHITS,
+    MODEL_NBEATS,
+    MODEL_MSTL,
+    MODEL_CHRONOS2_ENRICHED,
+]
 
 # Model IDs as JSON string (for champion experiments row)
-ALL_TREE_MODELS_JSON = '["lgbm_cluster", "catboost_cluster", "xgboost_cluster"]'
+FORECAST_MODELS_JSON = (
+    '["lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"]'
+)
 
 
 # ---------------------------------------------------------------------------

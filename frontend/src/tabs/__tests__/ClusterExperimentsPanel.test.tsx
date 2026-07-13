@@ -190,7 +190,13 @@ vi.mock("@/api/queries", () => ({
   promoteClusterExperiment: (...args: unknown[]) => mockPromoteClusterExperiment(...args),
 
   // Scenario fetchers (used by ClustersTab overview)
-  fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_runtime_seconds: 120, total_dfus: 50602 }),
+  fetchScenarioEstimate: vi.fn().mockResolvedValue({
+    estimated_seconds: 120,
+    sku_count: 50602,
+    training_sample: 50602,
+    sampled: false,
+    k_range: 10,
+  }),
   fetchClusterCoreFeatures: vi.fn().mockResolvedValue({ features: ["mean_demand", "cv_demand"] }),
   fetchClusteringDefaults: vi.fn().mockResolvedValue({
     feature_params: { time_window_months: 24, min_months_history: 1 },

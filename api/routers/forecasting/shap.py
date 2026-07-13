@@ -14,21 +14,35 @@ Endpoints:
     GET /forecast/shap/{model_id}/timeframe/{idx}
     GET /forecast/shap/{model_id}/dfu
 """
+
 from __future__ import annotations
 
-import os
-import pickle
-import re
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
+from psycopg import sql
 
 from api.core import get_conn
 from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.core.paths import PROJECT_ROOT
+from common.core.planning_date import get_planning_date
+from common.core.utils import load_forecast_pipeline_config
+from common.ml.feature_engineering import compute_ts_profile_from_values
+from common.ml.tree_artifact_lineage import ProductionTreeArtifactLineage
+from common.ml.tree_artifacts import (
+    LoadedTreeArtifactSet,
+    build_tree_artifact_spec,
+    build_tree_model_config_payload,
+    load_active_tree_artifact_set,
+)
+from common.services.cluster_lineage import load_promoted_cluster_population
+from common.services.forecast_population import resolve_forecast_sales_table
+from common.services.sales_lineage import load_completed_sales_lineage
 
 router = APIRouter(tags=["shap"])
 logger = logging.getLogger(__name__)
@@ -36,8 +50,15 @@ logger = logging.getLogger(__name__)
 # Root of the model-scoped backtest output directories
 _BACKTEST_DATA_DIR = Path(os.environ.get("BACKTEST_DATA_DIR", "data/backtest"))
 
-# Root of persisted model artifacts (written by generate_production_forecasts.py)
-_MODELS_DIR = Path(os.environ.get("MODEL_REGISTRY_DIR", "data/models"))
+_SHAP_MODEL_ID = "lgbm_cluster"
+
+
+def _validate_shap_model_id(model_id: str) -> None:
+    if model_id != _SHAP_MODEL_ID:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SHAP is available only for '{_SHAP_MODEL_ID}'.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -156,15 +177,10 @@ def _timeframe_csv(model_id: str, idx: int) -> Path:
 
 @router.get("/forecast/shap/models")
 async def shap_models() -> dict:
-    """List model IDs that have SHAP outputs available."""
-    if not _BACKTEST_DATA_DIR.exists():
+    """List the canonical LightGBM model when its SHAP output exists."""
+    if not _summary_csv(_SHAP_MODEL_ID).exists():
         return {"models": []}
-    models = [
-        d.name
-        for d in sorted(_BACKTEST_DATA_DIR.iterdir())
-        if d.is_dir() and _summary_csv(d.name).exists()
-    ]
-    return {"models": models}
+    return {"models": [_SHAP_MODEL_ID]}
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +204,7 @@ async def shap_summary(
     When global filter params are provided, resolves matching DFU clusters
     and re-aggregates SHAP from per-cluster data in timeframe CSVs.
     """
+    _validate_shap_model_id(model_id)
     filter_clusters = _resolve_filter_clusters(item, location, brand, category, market)
 
     # When filters are active and clusters resolved, re-compute summary from
@@ -228,7 +245,9 @@ async def shap_summary(
             .reset_index()
         )
         summary["n_timeframes"] = len(filtered_dfs)
-        summary = summary.sort_values("mean_abs_shap_across_timeframes", ascending=False).reset_index(drop=True)
+        summary = summary.sort_values(
+            "mean_abs_shap_across_timeframes", ascending=False
+        ).reset_index(drop=True)
         features = summary.head(top_n).to_dict(orient="records")
         return {
             "model_id": model_id,
@@ -242,7 +261,7 @@ async def shap_summary(
         raise HTTPException(
             status_code=404,
             detail=f"No SHAP summary found for model '{model_id}'. "
-                   f"Run backtest with --shap-select first.",
+            f"Run backtest with --shap-select first.",
         )
     df = pd.read_csv(csv_path)
     features = df.head(top_n).to_dict(orient="records")
@@ -261,6 +280,7 @@ async def shap_summary(
 @router.get("/forecast/shap/{model_id}/timeframes")
 async def shap_timeframes(model_id: str) -> dict:
     """List all timeframes for which SHAP outputs exist for a model."""
+    _validate_shap_model_id(model_id)
     shap_d = _shap_dir(model_id)
     if not shap_d.exists():
         raise HTTPException(
@@ -275,11 +295,13 @@ async def shap_timeframes(model_id: str) -> dict:
             idx = int(df["timeframe"].iloc[0])
             cutoff = df["cutoff_date"].iloc[0]
             label = chr(ord("A") + idx)
-            timeframes.append({
-                "index": idx,
-                "label": label,
-                "cutoff_date": str(cutoff),
-            })
+            timeframes.append(
+                {
+                    "index": idx,
+                    "label": label,
+                    "cutoff_date": str(cutoff),
+                }
+            )
         except (ValueError, TypeError, KeyError, IndexError):
             continue
     return {"model_id": model_id, "timeframes": timeframes}
@@ -309,6 +331,7 @@ async def shap_timeframe_detail(
     When global filter params are provided, resolves matching DFU clusters
     and re-aggregates SHAP from per-cluster data.
     """
+    _validate_shap_model_id(model_id)
     csv_path = _timeframe_csv(model_id, idx)
     if not csv_path.exists():
         raise HTTPException(
@@ -339,7 +362,9 @@ async def shap_timeframe_detail(
 
     # List available clusters from the full CSV
     full_df = pd.read_csv(csv_path)
-    available_clusters = sorted(full_df["cluster"].unique().tolist()) if "cluster" in full_df.columns else ["all"]
+    available_clusters = (
+        sorted(full_df["cluster"].unique().tolist()) if "cluster" in full_df.columns else ["all"]
+    )
 
     return {
         "model_id": model_id,
@@ -360,6 +385,7 @@ async def shap_clusters(model_id: str) -> dict:
     Scans all timeframe CSVs for cluster column values.
     Returns ["all"] if no per-cluster data exists.
     """
+    _validate_shap_model_id(model_id)
     shap_d = _shap_dir(model_id)
     if not shap_d.exists():
         raise HTTPException(
@@ -383,123 +409,277 @@ async def shap_clusters(model_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _build_cat_encoders_from_distinct(conn) -> dict[str, dict]:
-    """Build int label encoders from sorted unique values in dim_sku.
+def _latest_closed_month() -> date:
+    planning_month = pd.Timestamp(get_planning_date()).normalize().replace(day=1)
+    return (planning_month - pd.DateOffset(months=1)).date()
 
-    Replicates build_cat_encoders() in generate_production_forecasts.py so
-    inference uses the same encoding that was applied during training.
 
-    NOTE: Training used pandas Categorical codes from the training grid, which
-    contains only DFUs with sales. Inference builds from ALL dim_sku rows.
-    If dim_sku has brands/regions with no historical sales, their insertion into
-    the sorted list shifts codes for other values. The correct long-term fix is to
-    persist encoders in the pkl artifact. For now, we match generate_production_forecasts.py
-    which also uses all dim_sku rows — so SHAP and production inference are consistent.
-    """
+def _model_registry_base_path(config: dict) -> Path:
+    production = config.get("production_forecast")
+    if not isinstance(production, dict):
+        raise RuntimeError("Forecast configuration is missing production_forecast")
+    registry = production.get("model_registry")
+    if not isinstance(registry, dict):
+        raise RuntimeError("Forecast configuration is missing model_registry")
+    raw_path = registry.get("base_path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise RuntimeError("Forecast model_registry.base_path must be configured")
+    base_path = Path(raw_path)
+    return base_path if base_path.is_absolute() else PROJECT_ROOT / base_path
+
+
+def _load_active_lgbm_artifact_set(conn) -> LoadedTreeArtifactSet:
+    """Load the exact active LightGBM set under the production lineage contract."""
+    config = load_forecast_pipeline_config()
+    clustering = config.get("clustering")
+    if not isinstance(clustering, dict):
+        raise RuntimeError("Forecast configuration is missing clustering settings")
+    clustering_enabled = clustering.get("enabled")
+    if not isinstance(clustering_enabled, bool):
+        raise RuntimeError("clustering.enabled must be explicitly true or false")
+
+    sales_lineage = load_completed_sales_lineage(conn)
+    promoted_clusters = load_promoted_cluster_population(conn) if clustering_enabled else None
+    lineage = ProductionTreeArtifactLineage(
+        source_sales_batch_id=sales_lineage.batch_id,
+        data_checksum=sales_lineage.source_hash,
+        history_end=_latest_closed_month(),
+        cluster_experiment_id=(promoted_clusters.experiment_id if promoted_clusters else None),
+        cluster_assignment_count=(
+            promoted_clusters.assignment_count if promoted_clusters else None
+        ),
+        cluster_assignment_checksum=(
+            promoted_clusters.assignment_checksum if promoted_clusters else None
+        ),
+    )
+    cluster_strategy = "per_cluster" if clustering_enabled else "global"
+    cluster_labels = (
+        promoted_clusters.cluster_labels if promoted_clusters else frozenset({"global"})
+    )
+    model_config = build_tree_model_config_payload(
+        config,
+        model_id=_SHAP_MODEL_ID,
+        project_root=PROJECT_ROOT,
+    )
+    expected_spec = build_tree_artifact_spec(
+        model_id=_SHAP_MODEL_ID,
+        model_config=model_config,
+        lineage=lineage,
+        cluster_strategy=cluster_strategy,
+        cluster_labels=cluster_labels,
+    )
+    return load_active_tree_artifact_set(
+        model_id=_SHAP_MODEL_ID,
+        expected_spec=expected_spec,
+        base_dir=_model_registry_base_path(config),
+    )
+
+
+def _resolve_dfu_context(
+    conn,
+    *,
+    item_id: str,
+    loc: str,
+    customer_group: str | None,
+) -> tuple:
+    """Resolve one exact training-grain DFU; never choose a group implicitly."""
     with conn.cursor() as cur:
-        # Query each column independently to get ALL unique values per column
-        # (not just combinations) — same as build_cat_encoders() in generate_production_forecasts.py
-        cur.execute("""
-            SELECT ca.ml_cluster, d.region, d.brand, d.abc_vol
-            FROM dim_sku d
-            LEFT JOIN current_sku_cluster_assignment ca
-                   ON ca.sku_ck = d.sku_ck
-        """)
+        cur.execute(
+            """
+            WITH item_location_dfus AS (
+                SELECT d.sku_ck, ca.ml_cluster, d.execution_lag, d.total_lt,
+                       d.brand, d.region, d.abc_vol, d.customer_group,
+                       i.bpc, i.item_proof, i.case_weight,
+                       COUNT(*) OVER () AS item_location_dfu_count
+                FROM dim_sku d
+                LEFT JOIN current_sku_cluster_assignment ca
+                       ON ca.sku_ck = d.sku_ck
+                LEFT JOIN dim_item i ON i.item_id = d.item_id
+                WHERE d.item_id = %s AND d.loc = %s
+            )
+            SELECT *
+            FROM item_location_dfus
+            WHERE (%s IS NULL OR customer_group = %s)
+            ORDER BY customer_group, sku_ck
+            """,
+            (item_id, loc, customer_group, customer_group),
+        )
         rows = cur.fetchall()
 
     if not rows:
-        return {}
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"DFU not found: item_id={item_id!r}, loc={loc!r}, "
+                f"customer_group={customer_group!r}"
+            ),
+        )
+    if len(rows) > 1 and customer_group is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This item/location has multiple customer_group values; provide "
+                "customer_group to select one exact DFU."
+            ),
+        )
+    if len(rows) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="The requested DFU resolves to multiple dimension rows.",
+        )
+    return rows[0]
 
-    df = pd.DataFrame(rows, columns=["ml_cluster", "region", "brand", "abc_vol"])
-    encoders: dict[str, dict] = {}
-    for col in CAT_FEATURES:
-        if col in df.columns:
-            cats = sorted(df[col].fillna("__unknown__").astype(str).unique())
-            encoders[col] = {v: i for i, v in enumerate(cats)}
-    return encoders
+
+def _resolve_artifact_for_dfu(
+    loaded: LoadedTreeArtifactSet,
+    ml_cluster: object,
+) -> tuple[str, dict]:
+    strategy = loaded.ref.metadata.get("cluster_strategy")
+    if strategy == "global":
+        cluster_label = "global"
+    elif strategy == "per_cluster":
+        if ml_cluster is None or not str(ml_cluster).strip():
+            raise RuntimeError("The DFU has no promoted cluster assignment")
+        cluster_label = str(ml_cluster).strip()
+    else:
+        raise RuntimeError("The active LightGBM artifact has an invalid cluster strategy")
+
+    artifact = loaded.artifacts.get(cluster_label)
+    if not isinstance(artifact, dict):
+        raise RuntimeError(
+            f"The active LightGBM artifact has no exact model for cluster {cluster_label!r}"
+        )
+    return cluster_label, artifact
 
 
-def _detect_model_framework(model, model_id: str) -> str:
-    """Detect underlying ML framework from model object type.
+def _artifact_history_lookback(loaded: LoadedTreeArtifactSet) -> int:
+    model_config = loaded.ref.metadata.get("model_config")
+    feature_history = (
+        model_config.get("feature_history") if isinstance(model_config, dict) else None
+    )
+    lookback = feature_history.get("lookback_months") if isinstance(feature_history, dict) else None
+    if not isinstance(lookback, int) or isinstance(lookback, bool) or lookback <= 0:
+        raise RuntimeError("The active LightGBM artifact has no valid history lookback")
+    return lookback
 
-    Uses the object's module name so 'champion', 'ceiling', and other
-    derived model_ids are handled correctly (not just string prefix checks).
 
-    Returns: 'catboost', 'lgbm', or 'xgboost'
-    """
-    module = type(model).__module__.split(".")[0].lower()
-    if module == "catboost" or model_id.startswith("catboost"):
-        return "catboost"
-    if module == "lightgbm" or model_id.startswith("lgbm"):
-        return "lgbm"
-    # xgboost, sklearn wrappers, and anything else
-    return "xgboost"
+def _load_shap_sales_history(
+    conn,
+    *,
+    item_id: str,
+    customer_group: str,
+    loc: str,
+    lookback_months: int,
+) -> tuple[list[tuple[date, float]], date, date]:
+    """Load the canonical source on the same latest-closed window as generation."""
+    history_end = _latest_closed_month()
+    history_start = (pd.Timestamp(history_end) - pd.DateOffset(months=lookback_months - 1)).date()
+    with conn.cursor() as cur:
+        sales_table = resolve_forecast_sales_table(cur)
+        table = sql.Identifier(sales_table)
+        cur.execute(
+            sql.SQL(
+                """SELECT MAX(startdate)
+                   FROM {}
+                   WHERE type = 1 AND qty IS NOT NULL AND startdate <= %s"""
+            ).format(table),
+            (history_end,),
+        )
+        latest_row = cur.fetchone()
+        latest_month = latest_row[0] if latest_row else None
+        normalized_latest = (
+            pd.Timestamp(latest_month).normalize().date() if latest_month is not None else None
+        )
+        if normalized_latest != history_end:
+            raise RuntimeError("The canonical sales source is not latest-closed complete")
+
+        cur.execute(
+            sql.SQL(
+                """SELECT startdate, SUM(qty) AS qty
+                   FROM {}
+                   WHERE item_id = %s
+                     AND customer_group = %s
+                     AND loc = %s
+                     AND type = 1
+                     AND qty IS NOT NULL
+                     AND startdate >= %s
+                     AND startdate <= %s
+                   GROUP BY startdate
+                   ORDER BY startdate"""
+            ).format(table),
+            (item_id, customer_group, loc, history_start, history_end),
+        )
+        rows = [(row[0], float(row[1])) for row in cur.fetchall()]
+    return rows, history_start, history_end
+
+
+def _load_future_forecast_rows(
+    conn,
+    *,
+    item_id: str,
+    loc: str,
+    history_end: date,
+) -> list[tuple[date, float, str]]:
+    """Load the active aggregate plan used only as an approximate future lag source."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT forecast_month, forecast_qty, model_id
+               FROM fact_production_forecast
+               WHERE item_id = %s AND loc = %s
+                 AND forecast_month > %s
+                 AND plan_version = (
+                     SELECT MAX(plan_version)
+                     FROM fact_production_forecast
+                     WHERE item_id = %s AND loc = %s
+                 )
+               ORDER BY forecast_month""",
+            (item_id, loc, history_end, item_id, loc),
+        )
+        return [(row[0], float(row[1] or 0), str(row[2])) for row in cur.fetchall()]
 
 
 def _extract_model_feature_names(model, model_id: str) -> list[str] | None:
-    """Extract the actual feature names the model was trained on.
+    """Extract the feature names from a LightGBM artifact.
 
     Returns None if the framework doesn't expose feature names or if the
     returned value is not a valid list of strings.
     """
-    framework = _detect_model_framework(model, model_id)
+    if model_id != _SHAP_MODEL_ID:
+        return None
     try:
-        names = None
-        if framework == "catboost":
-            names = getattr(model, "feature_names_", None)
-        elif framework == "lgbm":
-            names = getattr(model, "feature_name_", None)
-            if names is None and hasattr(model, "booster_"):
-                booster = getattr(model, "booster_", None)
-                if booster is not None and hasattr(booster, "feature_name"):
-                    names = booster.feature_name()
-        else:
-            # XGBoost: get_booster().feature_names
-            booster = model.get_booster() if hasattr(model, "get_booster") else model
-            names = getattr(booster, "feature_names", None)
+        names = getattr(model, "feature_name_", None)
+        if names is None and hasattr(model, "booster_"):
+            booster = getattr(model, "booster_", None)
+            if booster is not None and hasattr(booster, "feature_name"):
+                names = booster.feature_name()
         # Validate: must be a real list of strings (not a MagicMock or other proxy)
-        if names is not None and isinstance(names, (list, tuple)) and len(names) > 0 and isinstance(names[0], str):
+        if (
+            names is not None
+            and isinstance(names, (list, tuple))
+            and len(names) > 0
+            and isinstance(names[0], str)
+        ):
             return list(names)
         return None
     except (AttributeError, TypeError):
         return None
 
 
-def _compute_shap_full(model, X: pd.DataFrame, model_id: str, feature_cols: list[str]) -> tuple[np.ndarray, np.ndarray]:
-    """Compute SIGNED SHAP values + per-row base values.
+def _compute_shap_full(
+    model, X: pd.DataFrame, model_id: str, feature_cols: list[str]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute signed LightGBM SHAP values and per-row base values.
 
     Returns:
         shap_vals: shape (n_rows, n_features) — signed per-feature contributions
         base_vals: shape (n_rows,) — expected value (base prediction) per row
     """
-    framework = _detect_model_framework(model, model_id)
-
-    if framework == "catboost":
-        import catboost as cb
-        # Use column NAMES (not integer indices) so Pool is robust to column reordering
-        # caused by SHAP feature selection. Exclude ml_cluster (trained as numeric,
-        # not categorical; constant within cluster so irrelevant for SHAP).
-        cat_cols = [c for c in CAT_FEATURES if c in X.columns and c != "ml_cluster"]
-        pool = cb.Pool(X, cat_features=cat_cols)
-        full = model.get_feature_importance(data=pool, type="ShapValues")
-        return full[:, :-1], full[:, -1]
-    elif framework == "lgbm":
-        # Pass as numpy array to bypass LightGBM's categorical_feature dtype validation
-        # (which triggers "train and valid dataset categorical_feature do not match"
-        # when the input has int64 cols that were pd.Categorical during training).
-        # The integer-encoded values match training codes so splits are still correct.
-        full = model.predict(X.to_numpy(), pred_contrib=True)
-        return full[:, :-1], full[:, -1]
-    else:
-        # XGBoost: use native pred_contribs to bypass shap library issues.
-        # XGBRegressor has get_booster(); native Booster already has predict().
-        # pred_contribs=True returns (n_samples, n_features + 1) where the
-        # last column is the per-row base value (same convention as LGBM).
-        import xgboost as xgb
-        booster = model.get_booster() if hasattr(model, "get_booster") else model
-        dmatrix = xgb.DMatrix(X)
-        full = booster.predict(dmatrix, pred_contribs=True)
-        return full[:, :-1], full[:, -1]
+    if model_id != _SHAP_MODEL_ID:
+        raise ValueError(f"SHAP is available only for {_SHAP_MODEL_ID}")
+    # Pass as numpy to bypass LightGBM categorical dtype validation. The
+    # integer-encoded category values match the production artifact encoders.
+    full = model.predict(X.to_numpy(), pred_contrib=True)
+    return full[:, :-1], full[:, -1]
 
 
 @router.get("/forecast/shap/{model_id}/dfu")
@@ -507,183 +687,148 @@ async def shap_dfu(
     model_id: str,
     item_id: str = Query(..., description="Item number (item_id)"),
     loc: str = Query(..., description="Location code"),
+    customer_group: str | None = Query(
+        default=None,
+        description="Customer group required when item/location is ambiguous",
+    ),
     top_n: int = Query(default=10, ge=1, le=30),
     lookback_months: int = Query(default=48, ge=12, le=60),
 ) -> dict:
-    """Compute per-DFU per-month SHAP feature contributions on demand.
-
-    Loads the persisted pkl model for this DFU's cluster (requires F1.1
-    make forecast-generate to have been run), reconstructs the feature matrix
-    from historical sales + future production forecast data, and computes
-    signed SHAP values for each month.
-
-    Falls back to 404 if model artifacts are not available (F1.1 not run).
-    """
-    # Validate model_id to prevent path traversal attacks
-    if not re.fullmatch(r"[a-zA-Z0-9_\-]+", model_id):
-        raise HTTPException(status_code=400, detail="Invalid model_id")
-
-    # -- Step 1: check model dir exists --
-    model_dir = _MODELS_DIR / model_id
-    if not model_dir.exists() or not any(model_dir.glob("cluster_*.pkl")):
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"No model artifacts found for '{model_id}'. "
-                f"Run 'make forecast-generate' to persist model weights."
-            ),
-        )
+    """Explain one exact DFU with its lineage-valid active production model."""
+    _validate_shap_model_id(model_id)
 
     with get_conn() as conn:
-        # -- Step 2: look up DFU cluster --
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT ca.ml_cluster, d.execution_lag, d.total_lt,
-                       d.brand, d.region, d.abc_vol,
-                       d.customer_group,
-                       i.bpc, i.item_proof, i.case_weight
-                FROM dim_sku d
-                LEFT JOIN current_sku_cluster_assignment ca
-                       ON ca.sku_ck = d.sku_ck
-                LEFT JOIN dim_item i ON i.item_id = d.item_id
-                WHERE d.item_id = %s AND d.loc = %s
-                ORDER BY d.customer_group ASC
-                LIMIT 1
-                """,
-                (item_id, loc),
-            )
-            dfu_row = cur.fetchone()
+        dfu_row = _resolve_dfu_context(
+            conn,
+            item_id=item_id,
+            loc=loc,
+            customer_group=customer_group,
+        )
+        (
+            _sku_ck,
+            ml_cluster,
+            execution_lag,
+            total_lt,
+            brand,
+            region,
+            abc_vol,
+            resolved_customer_group,
+            bpc,
+            item_proof,
+            case_weight,
+            item_location_dfu_count,
+        ) = dfu_row
 
-        if dfu_row is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"DFU not found: item_id={item_id!r}, loc={loc!r}",
-            )
-
-        ml_cluster, execution_lag, total_lt, brand, region, abc_vol, customer_group, bpc, item_proof, case_weight = dfu_row
-
-        # -- Step 3: load pkl for this cluster --
-        cluster_str = str(ml_cluster) if ml_cluster is not None else "__unknown__"
-        pkl_path = model_dir / f"cluster_{cluster_str}.pkl"
-        if not pkl_path.exists():
-            # Try integer form
-            try:
-                int_cluster = int(cluster_str)
-                pkl_path = model_dir / f"cluster_{int_cluster}.pkl"
-            except (ValueError, TypeError):
-                pass
-        if not pkl_path.exists():
+        try:
+            loaded_set = _load_active_lgbm_artifact_set(conn)
+        except FileNotFoundError:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    f"No pkl artifact for cluster '{cluster_str}' in model '{model_id}'. "
-                    f"Re-run 'make forecast-generate' to rebuild model registry."
+                    "No active LightGBM production artifact is published. Run "
+                    "'make train-production MODEL=lgbm_cluster'."
                 ),
+            ) from None
+        except (RuntimeError, ValueError):
+            logger.exception("Active LightGBM production artifact is stale or invalid")
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The active LightGBM production artifact is stale or invalid. "
+                    "Run 'make train-production MODEL=lgbm_cluster'."
+                ),
+            ) from None
+
+        try:
+            cluster_str, artifact = _resolve_artifact_for_dfu(
+                loaded_set,
+                ml_cluster,
             )
+            artifact_lookback_months = _artifact_history_lookback(loaded_set)
+        except RuntimeError:
+            logger.exception("Resolving the exact LightGBM cluster artifact failed")
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The active LightGBM production artifact does not match this "
+                    "DFU's promoted cluster assignment. Retrain the production model."
+                ),
+            ) from None
 
-        with open(pkl_path, "rb") as f:
-            artifact = pickle.load(f)
-
-        model = artifact["model"]
-        feature_cols: list[str] = artifact["feature_cols"]
-        # Per-cluster models exclude ml_cluster from features (mirrors train_fn)
-        effective_feature_cols = [c for c in feature_cols if c != "ml_cluster"]
-
-        # If SHAP feature selection (Feature 42) was active, the model was retrained
-        # on a subset of features but the pkl's feature_cols may still list the full
-        # pre-selection set.  Extract the model's actual trained feature names to avoid
-        # a feature_names mismatch error at SHAP computation time.
+        model = artifact.get("model")
+        feature_cols = artifact.get("feature_cols")
+        if not callable(getattr(model, "predict", None)) or not isinstance(feature_cols, list):
+            raise HTTPException(
+                status_code=409,
+                detail="The active LightGBM production artifact is invalid.",
+            )
+        if (
+            not feature_cols
+            or any(not isinstance(name, str) for name in feature_cols)
+            or len(set(feature_cols)) != len(feature_cols)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="The active LightGBM production artifact has invalid features.",
+            )
+        if "ml_cluster" in feature_cols:
+            raise HTTPException(
+                status_code=409,
+                detail="The active LightGBM artifact improperly uses cluster metadata as a feature.",
+            )
         model_feature_names = _extract_model_feature_names(model, model_id)
-        if model_feature_names is not None:
-            model_feature_set = set(model_feature_names)
-            if model_feature_set != set(effective_feature_cols):
-                # Model was trained on fewer features; use the model's own list
-                effective_feature_cols = [c for c in model_feature_names if c != "ml_cluster"]
-
-        # -- Step 4: load historical sales --
-        # Filter by customer_group to match backtest training data exactly.
-        # The backtest (backtest_framework.py) joins dim_sku ON item_id + customer_group + loc,
-        # so training used only the DFU's specific customer group — NOT a sum of all groups.
-        # Summing across all customer groups would give 2-3× larger qty, making all lag
-        # features different from training and causing SHAP values to be "way off".
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT startdate, SUM(COALESCE(qty, 0)) AS qty
-                FROM fact_sales_monthly
-                WHERE item_id = %s AND customer_group = %s AND loc = %s
-                GROUP BY startdate
-                ORDER BY startdate DESC
-                LIMIT %s
-                """,
-                (item_id, customer_group, loc, lookback_months),
+        if model_feature_names is not None and model_feature_names != feature_cols:
+            raise HTTPException(
+                status_code=409,
+                detail="The active LightGBM artifact feature contract is inconsistent.",
             )
-            sales_rows = list(reversed(cur.fetchall()))
 
-        # -- Step 5: build categorical encoders --
-        cat_encoders = _build_cat_encoders_from_distinct(conn)
-
-        # -- Step 6: load future production forecasts (if any) --
-        # Filter to latest plan_version to avoid mixing forecasts from different runs.
-        # Config keeps last 3 plan_versions; without this filter, dict overwrite is non-deterministic.
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT forecast_month, forecast_qty, model_id
-                FROM fact_production_forecast
-                WHERE item_id = %s AND loc = %s
-                  AND plan_version = (
-                      SELECT MAX(plan_version)
-                      FROM fact_production_forecast
-                      WHERE item_id = %s AND loc = %s
-                  )
-                ORDER BY forecast_month
-                """,
-                (item_id, loc, item_id, loc),
+        try:
+            sales_rows, history_start, history_end = _load_shap_sales_history(
+                conn,
+                item_id=item_id,
+                customer_group=str(resolved_customer_group),
+                loc=loc,
+                lookback_months=artifact_lookback_months,
             )
-            future_rows = cur.fetchall()
-
-    # -- Step 7: build feature matrix --
-    # Historical sales series
-    if len(sales_rows) < max(LAG_RANGE):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Insufficient sales history for DFU ({len(sales_rows)} months; need ≥{max(LAG_RANGE)}).",
+        except RuntimeError:
+            logger.exception("Loading latest-closed canonical SHAP sales history failed")
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The canonical sales source is not ready through the latest "
+                    "closed month. Complete the sales load before requesting SHAP."
+                ),
+            ) from None
+        if not sales_rows:
+            raise HTTPException(
+                status_code=422,
+                detail="The requested DFU has no canonical sales history to explain.",
+            )
+        # The published plan is aggregated to item/location. It is a valid lag
+        # source only when that item/location contains this one customer group;
+        # otherwise attributing the aggregate to one constituent DFU is false.
+        future_rows = (
+            _load_future_forecast_rows(
+                conn,
+                item_id=item_id,
+                loc=loc,
+                history_end=history_end,
+            )
+            if int(item_location_dfu_count) == 1
+            else []
         )
 
-    # Fill calendar gaps with qty=0 so lag indices align with calendar months.
-    # fact_sales_monthly only stores months that have sales records; missing months
-    # would compress the series and shift all lag/rolling indices vs training, which
-    # uses a full cartesian grid with missing months filled to 0.
-    import datetime as _dt
-    raw_date_qty: dict = {r[0]: float(r[1]) for r in sales_rows}
-    if raw_date_qty:
-        # Sort dates so first_month/last_month are order-independent of SQL result set
-        sorted_months = sorted(raw_date_qty.keys())
-        first_month = sorted_months[0]
-        last_month = sorted_months[-1]
-        # Walk the calendar month-by-month and fill missing entries with 0
-        cur_month = first_month
-        filled_dates = []
-        filled_qtys = []
-        while cur_month <= last_month:
-            filled_dates.append(cur_month)
-            filled_qtys.append(raw_date_qty.get(cur_month, 0.0))
-            # Advance one calendar month
-            year, month = cur_month.year, cur_month.month
-            if month == 12:
-                cur_month = _dt.date(year + 1, 1, 1)
-            else:
-                cur_month = _dt.date(year, month + 1, 1)
-        date_series = filled_dates
-        qty_series = filled_qtys
-    else:
-        qty_series = []
-        date_series = []
+    # Match production's shared calendar: every DFU is completed from the
+    # configured lookback boundary through the latest closed month, including
+    # post-sale zero months for intermittent demand.
+    raw_date_qty = {pd.Timestamp(row[0]).date(): float(row[1]) for row in sales_rows}
+    date_series = [
+        timestamp.date() for timestamp in pd.date_range(history_start, history_end, freq="MS")
+    ]
+    qty_series = [raw_date_qty.get(month, 0.0) for month in date_series]
 
     attrs = {
-        "ml_cluster": cluster_str,
         "execution_lag": float(execution_lag or 0),
         "total_lt": float(total_lt or 14),
         "brand": str(brand or "__unknown__"),
@@ -700,6 +845,7 @@ async def shap_dfu(
     # model SHAP for future months uses the champion's quantities as lag source.
     future_lag_model_id: str | None = future_rows[0][2] if future_rows else None
     future_months_sorted = sorted(future_map.keys())
+    ts_profile = compute_ts_profile_from_values(qty_series)
 
     def _build_row(month_date, qty_hist: list[float]) -> dict:
         n = len(qty_hist)
@@ -708,19 +854,18 @@ async def shap_dfu(
             idx = n - lag_n
             row[f"qty_lag_{lag_n}"] = qty_hist[idx] if idx >= 0 else 0.0
         for w in ROLLING_WINDOWS:
-            window_vals = qty_hist[max(0, n - w):n]
+            window_vals = qty_hist[max(0, n - w) : n]
             if window_vals:
                 row[f"rolling_mean_{w}m"] = float(np.mean(window_vals))
                 # ddof=1 matches pandas rolling.std() used during backtest training
-                row[f"rolling_std_{w}m"] = float(np.std(window_vals, ddof=1)) if len(window_vals) > 1 else 0.0
+                row[f"rolling_std_{w}m"] = (
+                    float(np.std(window_vals, ddof=1)) if len(window_vals) > 1 else 0.0
+                )
             else:
                 row[f"rolling_mean_{w}m"] = 0.0
                 row[f"rolling_std_{w}m"] = 0.0
-        try:
-            month_num = month_date.month
-        except AttributeError:
-            import pandas as _pd
-            month_num = _pd.Timestamp(month_date).month
+        month_timestamp = pd.Timestamp(month_date)
+        month_num = month_timestamp.month
         row["month"] = month_num
         row["quarter"] = (month_num - 1) // 3 + 1
         # Fourier seasonal terms (replaces legacy month_sin/cos)
@@ -738,16 +883,24 @@ async def shap_dfu(
         # Derived features matching common/feature_engineering.py
         lag1 = row.get("qty_lag_1", 0.0)
         lag2 = row.get("qty_lag_2", 0.0)
+        lag12 = row.get("qty_lag_12", 0.0)
         row["mom_growth"] = max(-2.0, min(2.0, (lag1 - lag2) / (abs(lag2) + 1.0)))
         rm3 = row.get("rolling_mean_3m", 0.0)
         rm6 = row.get("rolling_mean_6m", 0.0)
+        rm12 = row.get("rolling_mean_12m", 0.0)
         rs3 = row.get("rolling_std_3m", 0.0)
         row["demand_accel"] = rm3 - rm6
         row["volatility_ratio"] = rs3 / (abs(rm3) + 1.0)
+        row["lag_ratio_yoy"] = max(-10.0, min(10.0, lag1 / (abs(lag12) + 1.0)))
+        row["lag_ratio_mom"] = max(-10.0, min(10.0, lag1 / (abs(lag2) + 1.0)))
+        row["lag_ratio_3v12"] = max(-10.0, min(10.0, rm3 / (abs(rm12) + 1.0)))
+        row["n_zero_last_6m"] = sum(
+            1.0 for lag in range(1, 7) if row.get(f"qty_lag_{lag}", 0.0) == 0.0
+        )
+        row.update(ts_profile)
         row["is_quarter_end"] = 1 if month_num in (3, 6, 9, 12) else 0
         row["is_year_end"] = 1 if month_num == 12 else 0
-        import calendar as _cal
-        row["days_in_month"] = float(_cal.monthrange(month_date.year if hasattr(month_date, "year") else 2025, month_num)[1])
+        row["days_in_month"] = float(month_timestamp.days_in_month)
         return row
 
     all_rows = []
@@ -757,7 +910,8 @@ async def shap_dfu(
     # Use qty_series[:i] (not [:i+1]) so lag_1 = previous month's actual, matching
     # the backtest which predicts month i from data available BEFORE month i.
     max_lag = max(LAG_RANGE)
-    for i in range(max_lag, len(date_series)):
+    first_display_index = max(max_lag, len(date_series) - lookback_months)
+    for i in range(first_display_index, len(date_series)):
         row = _build_row(date_series[i], qty_series[:i])
         all_rows.append(row)
         months_meta.append({"month": str(date_series[i])[:10], "is_future": False})
@@ -772,35 +926,47 @@ async def shap_dfu(
         future_qty_series.append(future_map[fm])
 
     if not all_rows:
-        raise HTTPException(status_code=422, detail="No data rows could be built for SHAP computation.")
+        raise HTTPException(
+            status_code=422, detail="No data rows could be built for SHAP computation."
+        )
 
     X = pd.DataFrame(all_rows)
 
-    # Select only feature columns known to model
-    avail = [c for c in effective_feature_cols if c in X.columns]
-
-    # Build X_model with the correct categorical representation for each framework:
-    #
-    # CatBoost: was trained on raw STRING category labels (pandas Categorical → string
-    #   labels extracted by CatBoost). Pass strings so CatBoost hashes "NE"/"A"/etc.
-    #   the same way it did during training. Integer-encoding would hash "3"/"0" instead.
-    #
-    # LightGBM / XGBoost: was trained on integer category codes (pandas Categorical
-    #   codes, alphabetically sorted → 0-based int). Encode via cat_encoders which
-    #   uses the same sorted-unique mapping.
-    framework = _detect_model_framework(model, model_id)
-    if framework == "catboost":
-        X_model = X[avail].copy()
-        # Coerce only non-categorical numeric columns (leave cat cols as strings)
-        non_cat = [c for c in avail if c not in CAT_FEATURES]
-        X_model[non_cat] = X_model[non_cat].apply(pd.to_numeric, errors="coerce").fillna(0)
-    else:
-        # Encode cat features to integers, then coerce everything to float64
-        X_model = X[avail].copy()
-        for col in CAT_FEATURES:
-            if col in X_model.columns and col in cat_encoders:
-                X_model[col] = X_model[col].map(cat_encoders[col]).fillna(0).astype(int)
-        X_model = X_model.apply(pd.to_numeric, errors="coerce").fillna(0)
+    # Production inference zero-fills only genuinely unavailable numeric model
+    # features. Categorical codes must come from the immutable fitted artifact;
+    # rebuilding against today's dimension universe changes LightGBM split paths.
+    for feature_name in feature_cols:
+        if feature_name not in X.columns:
+            X[feature_name] = 0.0
+    avail = list(feature_cols)
+    X_model = X[avail].copy()
+    categorical_features = [name for name in avail if name in CAT_FEATURES]
+    raw_encoders = artifact.get("categorical_encoders")
+    if categorical_features and not isinstance(raw_encoders, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="The active LightGBM artifact is missing its categorical encoders.",
+        )
+    for column in categorical_features:
+        mapping = raw_encoders.get(column) if isinstance(raw_encoders, dict) else None
+        if not isinstance(mapping, dict):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"The active LightGBM artifact is missing the categorical encoder for {column}."
+                ),
+            )
+        values = X_model[column].fillna("__unknown__").astype(str)
+        if not set(values).issubset(mapping):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The active LightGBM categorical encoder is incompatible with "
+                    f"this DFU's {column}. Retrain the production model."
+                ),
+            )
+        X_model[column] = values.map(mapping).astype(int)
+    X_model = X_model.apply(pd.to_numeric, errors="coerce").fillna(0)
 
     # -- Step 8: compute SHAP --
     try:
@@ -809,10 +975,21 @@ async def shap_dfu(
         logger.exception("SHAP computation failed for model %s", model_id)
         raise HTTPException(status_code=500, detail="SHAP computation failed") from None
 
+    expected_shape = (len(X_model), len(avail))
+    if shap_values.shape != expected_shape or base_values.shape != (len(X_model),):
+        logger.error(
+            "SHAP result shape mismatch for %s: values=%s base=%s expected=%s",
+            model_id,
+            shap_values.shape,
+            base_values.shape,
+            expected_shape,
+        )
+        raise HTTPException(status_code=500, detail="SHAP computation failed")
+
     # shap_values shape: (n_rows, n_avail_features)
     # Select top_n features by mean absolute SHAP across all rows
     mean_abs = np.abs(shap_values).mean(axis=0)
-    top_indices = np.argsort(mean_abs)[::-1][: top_n]
+    top_indices = np.argsort(mean_abs)[::-1][:top_n]
     top_features = [avail[i] for i in top_indices]
     top_indices_set = set(top_indices.tolist())
 
@@ -824,24 +1001,31 @@ async def shap_dfu(
             for j in range(len(top_features))
         ]
         # Sum of contributions from features NOT in top_n
-        other_shap = float(np.sum([
-            shap_values[i, k] for k in range(shap_values.shape[1]) if k not in top_indices_set
-        ]))
-        points.append({
-            "month": meta["month"],
-            "is_future": meta["is_future"],
-            "base_value": round(float(base_values[i]), 6),
-            "other_shap": round(other_shap, 6),
-            "features": feat_contribs,
-        })
+        other_shap = float(
+            np.sum(
+                [shap_values[i, k] for k in range(shap_values.shape[1]) if k not in top_indices_set]
+            )
+        )
+        points.append(
+            {
+                "month": meta["month"],
+                "is_future": meta["is_future"],
+                "base_value": round(float(base_values[i]), 6),
+                "other_shap": round(other_shap, 6),
+                "features": feat_contribs,
+            }
+        )
 
     return {
         "item_id": item_id,
+        "customer_group": str(resolved_customer_group),
         "loc": loc,
         "model_id": model_id,
         "cluster_id": cluster_str,
+        "artifact_set_id": loaded_set.ref.artifact_set_id,
+        "history_end": history_end.isoformat(),
         "top_n": len(top_features),
-        "computed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "computed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         # future_lag_model_id: model whose stored forecasts were used as lag source for
         # future months. Differs from model_id when the requested model is not the
         # production champion — the SHAP interpretation for future months is approximate.

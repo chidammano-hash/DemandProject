@@ -1,89 +1,90 @@
-"""Forecast confidence interval (CI) band computation.
+"""Model-aware confidence-interval calibration for production forecasts.
 
-Derives per-DFU forecast uncertainty (sigma) from champion model backtest
-residuals stored in backtest_lag_archive. Applies Z-score-based CI bands
-with configurable horizon scaling (sqrt, linear, none).
+Residuals are calibrated at the same ``(item_id, loc, startdate)`` grain as
+the production plan.  Customer-group forecasts and actuals are summed before
+the monthly error is computed; summing already-computed group errors would
+overstate uncertainty whenever group errors offset one another.
 
-Three-level sigma fallback:
-  1. DFU-level RMSE (when n_months >= min_residual_months)
-  2. Cluster-level pooled sigma (weighted mean across DFUs in cluster)
-  3. Global median sigma (final fallback)
+Explicit model runs use only that model's backtest residuals.  Champion runs
+use the exact rows tied to the single active, results-promoted champion
+experiment.  Missing lineage or evidence fails closed instead of silently
+pooling residuals from unrelated models.
 """
 
-import math
 import logging
-import pandas as pd
+import math
+
 import numpy as np
+import pandas as pd
 
 from common.core.constants import FORECAST_QTY_COL
 
 logger = logging.getLogger(__name__)
 
+CALIBRATED_MODEL_IDS = frozenset({"lgbm_cluster", "chronos2_enriched", "mstl", "nbeats", "nhits"})
+_SUPPORTED_INTERVAL_MODEL_IDS = CALIBRATED_MODEL_IDS | {"champion"}
+_SIGMA_COLUMNS = ["item_id", "loc", "sigma", "n_months"]
 
-def load_champion_residuals(conn, source_model_ids: list[str], lag: int = 0) -> pd.DataFrame:
-    """
-    Load backtest residuals for specified models at the given lag.
 
-    Queries backtest_lag_archive for rows where:
-      - model_id IN source_model_ids
-      - lag = lag param
-      - both basefcst_pref (forecast) and tothist_dmd (actual) are NOT NULL
+def _empty_sigma_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=_SIGMA_COLUMNS)
 
-    Returns DataFrame with columns:
-      item_id (str), loc (str), startdate, basefcst_pref (float), tothist_dmd (float), model_id (str)
 
-    Uses psycopg3 %s placeholders.
-    """
-    if not source_model_ids:
-        return pd.DataFrame(columns=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd", "model_id"])
-
-    placeholders = ", ".join(["%s"] * len(source_model_ids))
-    sql = f"""
-        SELECT item_id, loc, startdate, basefcst_pref, tothist_dmd, model_id
-        FROM backtest_lag_archive
-        WHERE model_id IN ({placeholders})
-          AND lag = %s
-          AND basefcst_pref IS NOT NULL
-          AND tothist_dmd IS NOT NULL
-          AND tothist_dmd > 0
-    """
-    params = source_model_ids + [lag]
-    with conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-
-    if not rows:
-        return pd.DataFrame(columns=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd", "model_id"])
-
-    return pd.DataFrame(rows, columns=["item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd", "model_id"])
+def _validate_interval_model_id(requested_model_id: str) -> None:
+    if requested_model_id not in _SUPPORTED_INTERVAL_MODEL_IDS:
+        supported = ", ".join(sorted(_SUPPORTED_INTERVAL_MODEL_IDS))
+        raise ValueError(
+            "unsupported confidence-interval model "
+            f"'{requested_model_id}'; expected one of: {supported}"
+        )
 
 
 def compute_dfu_sigma(residuals: pd.DataFrame) -> pd.DataFrame:
-    """
-    Compute RMSE per DFU from backtest residuals.
+    """Compute item/location RMSE after monthly customer-group aggregation.
 
-    residual_i = basefcst_pref_i - tothist_dmd_i
-    sigma_dfu = sqrt(mean(residual_i^2))
+    ``residuals`` must retain ``startdate`` so every customer group's forecast
+    and actual can first be summed to the production month grain.
 
     Args:
-        residuals: DataFrame with [item_id, loc, basefcst_pref, tothist_dmd]
+        residuals: DataFrame with item_id, loc, startdate, basefcst_pref,
+            and tothist_dmd. customer_group may be present but is not grouped.
 
     Returns:
         DataFrame with [item_id, loc, sigma, n_months]
     """
+    required = {"item_id", "loc", "startdate", FORECAST_QTY_COL, "tothist_dmd"}
+    missing = required - set(residuals.columns)
+    if missing:
+        raise ValueError(
+            f"residual calibration is missing required columns: {', '.join(sorted(missing))}"
+        )
     if residuals.empty:
-        return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
+        return _empty_sigma_frame()
 
-    df = residuals.copy()
-    df["residual_sq"] = (df[FORECAST_QTY_COL] - df["tothist_dmd"]) ** 2
+    monthly = residuals.groupby(["item_id", "loc", "startdate"], as_index=False).agg(
+        forecast_qty=(FORECAST_QTY_COL, "sum"),
+        actual_qty=("tothist_dmd", "sum"),
+        forecast_count=(FORECAST_QTY_COL, "count"),
+        actual_count=("tothist_dmd", "count"),
+        row_count=(FORECAST_QTY_COL, "size"),
+    )
+    monthly = monthly.loc[
+        (monthly["forecast_count"] == monthly["row_count"])
+        & (monthly["actual_count"] == monthly["row_count"])
+    ].copy()
+    monthly["residual_sq"] = (monthly["forecast_qty"] - monthly["actual_qty"]) ** 2
 
-    grouped = df.groupby(["item_id", "loc"]).agg(
-        rmse_sum=("residual_sq", "sum"),
-        n_months=("residual_sq", "count"),
-    ).reset_index()
+    grouped = (
+        monthly.groupby(["item_id", "loc"])
+        .agg(
+            rmse_sum=("residual_sq", "sum"),
+            n_months=("residual_sq", "count"),
+        )
+        .reset_index()
+    )
 
     grouped["sigma"] = np.sqrt(grouped["rmse_sum"] / grouped["n_months"])
-    return grouped[["item_id", "loc", "sigma", "n_months"]]
+    return grouped[_SIGMA_COLUMNS]
 
 
 def compute_cluster_sigma(dfu_sigma: pd.DataFrame, cluster_map: dict) -> dict[str, float]:
@@ -101,7 +102,7 @@ def compute_cluster_sigma(dfu_sigma: pd.DataFrame, cluster_map: dict) -> dict[st
         return {}
 
     df = dfu_sigma.copy()
-    keys = list(zip(df["item_id"], df["loc"]))
+    keys = list(zip(df["item_id"], df["loc"], strict=True))
     df["cluster"] = pd.Series(keys).map(cluster_map).fillna("unknown").values
 
     result = {}
@@ -117,51 +118,147 @@ def compute_cluster_sigma(dfu_sigma: pd.DataFrame, cluster_map: dict) -> dict[st
     return result
 
 
-def _load_dfu_sigma_aggregated(conn, source_model_ids: list[str], lag: int = 0) -> pd.DataFrame:
-    """
-    Compute per-DFU RMSE (sigma) and month count directly via SQL aggregation.
-
-    Avoids loading millions of raw residual rows by pushing GROUP BY to the DB.
-    Returns DataFrame with columns: [item_id, loc, sigma, n_months].
-
-    Uses psycopg3 %s placeholders.
-    """
-    if not source_model_ids:
-        return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
-
-    placeholders = ", ".join(["%s"] * len(source_model_ids))
-    sql = f"""
-        SELECT
-            item_id,
-            loc,
-            SQRT(SUM(POWER(basefcst_pref - tothist_dmd, 2.0)) / COUNT(*)) AS sigma,
-            COUNT(*)::int AS n_months
-        FROM backtest_lag_archive
-        WHERE model_id IN ({placeholders})
-          AND lag = %s
-          AND basefcst_pref IS NOT NULL
-          AND tothist_dmd IS NOT NULL
-          AND tothist_dmd > 0
-        GROUP BY item_id, loc
-    """
-    params = source_model_ids + [lag]
+def _load_active_champion_route(conn) -> tuple[int, str]:
+    """Return the single active results-promoted experiment and its lag mode."""
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        cur.execute(
+            """SELECT experiment_id, lag_mode
+               FROM champion_experiment
+               WHERE is_promoted = TRUE
+                 AND is_results_promoted = TRUE
+               ORDER BY promoted_at DESC NULLS LAST, experiment_id DESC"""
+        )
         rows = cur.fetchall()
 
+    if len(rows) != 1:
+        raise RuntimeError(
+            "confidence-interval calibration requires exactly one active promoted "
+            f"champion result; found {len(rows)}"
+        )
+    experiment_id, raw_lag_mode = rows[0]
+    lag_mode = str(raw_lag_mode).strip().lower()
+    if lag_mode not in {"execution", "all", "0", "1", "2", "3", "4"}:
+        raise RuntimeError(
+            f"active champion experiment {experiment_id} has unsupported lag mode '{raw_lag_mode}'"
+        )
+    return int(experiment_id), lag_mode
+
+
+def _load_explicit_model_sigma(conn, requested_model_id: str, lag: int) -> list[tuple]:
+    """Load one model's residual RMSE after production-grain aggregation."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """WITH item_location_month AS (
+                   SELECT item_id,
+                          loc,
+                          startdate,
+                          SUM(basefcst_pref) AS forecast_qty,
+                          SUM(tothist_dmd) AS actual_qty
+                   FROM backtest_lag_archive
+                   WHERE model_id = %s
+                     AND lag = %s
+                   GROUP BY item_id, loc, startdate
+                   HAVING COUNT(*) = COUNT(basefcst_pref)
+                      AND COUNT(*) = COUNT(tothist_dmd)
+               )
+               SELECT item_id,
+                      loc,
+                      SQRT(AVG(POWER(forecast_qty - actual_qty, 2.0))) AS sigma,
+                      COUNT(*)::int AS n_months
+               FROM item_location_month
+               GROUP BY item_id, loc""",
+            (requested_model_id, lag),
+        )
+        return cur.fetchall()
+
+
+def _load_champion_sigma(conn, experiment_id: int, lag_mode: str, lag: int) -> list[tuple]:
+    """Load residuals for the active champion's exact persisted routes."""
+    if lag_mode == "execution":
+        with conn.cursor() as cur:
+            cur.execute(
+                """WITH item_location_month AS (
+                       SELECT item_id,
+                              loc,
+                              startdate,
+                              SUM(basefcst_pref) AS forecast_qty,
+                              SUM(tothist_dmd) AS actual_qty
+                       FROM fact_external_forecast_monthly
+                       WHERE model_id = 'champion'
+                         AND champion_experiment_id = %s
+                         AND lag = execution_lag
+                       GROUP BY item_id, loc, startdate
+                       HAVING COUNT(*) = COUNT(basefcst_pref)
+                          AND COUNT(*) = COUNT(tothist_dmd)
+                   )
+                   SELECT item_id,
+                          loc,
+                          SQRT(AVG(POWER(forecast_qty - actual_qty, 2.0))) AS sigma,
+                          COUNT(*)::int AS n_months
+                   FROM item_location_month
+                   GROUP BY item_id, loc""",
+                (experiment_id,),
+            )
+            return cur.fetchall()
+
+    selected_lag = lag if lag_mode == "all" else int(lag_mode)
+    with conn.cursor() as cur:
+        cur.execute(
+            """WITH item_location_month AS (
+                   SELECT item_id,
+                          loc,
+                          startdate,
+                          SUM(basefcst_pref) AS forecast_qty,
+                          SUM(tothist_dmd) AS actual_qty
+                   FROM fact_external_forecast_monthly
+                   WHERE model_id = 'champion'
+                     AND champion_experiment_id = %s
+                     AND lag = %s
+                   GROUP BY item_id, loc, startdate
+                   HAVING COUNT(*) = COUNT(basefcst_pref)
+                      AND COUNT(*) = COUNT(tothist_dmd)
+               )
+               SELECT item_id,
+                      loc,
+                      SQRT(AVG(POWER(forecast_qty - actual_qty, 2.0))) AS sigma,
+                      COUNT(*)::int AS n_months
+               FROM item_location_month
+               GROUP BY item_id, loc""",
+            (experiment_id, selected_lag),
+        )
+        return cur.fetchall()
+
+
+def _load_dfu_sigma_aggregated(
+    conn,
+    requested_model_id: str,
+    lag: int = 0,
+) -> pd.DataFrame:
+    """Load model/routing-specific RMSE at the production item/location grain."""
+    _validate_interval_model_id(requested_model_id)
+    if requested_model_id == "champion":
+        experiment_id, lag_mode = _load_active_champion_route(conn)
+        rows = _load_champion_sigma(conn, experiment_id, lag_mode, lag)
+    else:
+        rows = _load_explicit_model_sigma(conn, requested_model_id, lag)
+
     if not rows:
-        return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
+        return _empty_sigma_frame()
+    return pd.DataFrame(rows, columns=_SIGMA_COLUMNS)
 
-    return pd.DataFrame(rows, columns=["item_id", "loc", "sigma", "n_months"])
 
-
-def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, float]:
-    """
-    Build {(item_id, loc): sigma} lookup with three-level fallback.
+def build_sigma_lookup(
+    conn,
+    config: dict,
+    cluster_map: dict,
+    *,
+    requested_model_id: str,
+) -> dict[tuple, float]:
+    """Build a model-aware ``{(item_id, loc): sigma}`` lookup.
 
     Level 1: DFU-level RMSE (when n_months >= min_residual_months)
     Level 2: Cluster-level pooled sigma
-    Level 3: Global median of all cluster sigmas
+    Level 3: Global median of observed DFU sigmas
 
     Applies sigma_floor and sigma_cap (cap_multiplier * median(cluster_sigmas)).
 
@@ -169,30 +266,73 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
 
     Args:
         conn: psycopg3 connection
-        config: dict with key 'confidence_interval' containing all CI params
+        config: dict with key ``confidence_interval`` containing all CI params
         cluster_map: {(item_id, loc): cluster_label}
+        requested_model_id: explicit active model or ``champion``
 
     Returns:
         {(item_id, loc): capped_sigma}
     """
-    ci_cfg = config.get("confidence_interval", {})
-    source_model_ids = ci_cfg.get("source_model_ids", ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"])
+    _validate_interval_model_id(requested_model_id)
+    ci_cfg = config["confidence_interval"]
+    configured_models = set(ci_cfg["source_model_ids"])
+    if requested_model_id != "champion" and requested_model_id not in configured_models:
+        raise ValueError(
+            f"confidence-interval model '{requested_model_id}' is not enabled in "
+            "confidence_interval.source_model_ids"
+        )
     residual_lag = ci_cfg.get("residual_lag", 0)
     min_months = ci_cfg.get("min_residual_months", 6)
     sigma_floor = ci_cfg.get("sigma_floor", 1.0)
     cap_multiplier = ci_cfg.get("sigma_cap_multiplier", 3.0)
 
-    logger.info("Loading aggregated DFU sigma for models: %s at lag %d", source_model_ids, residual_lag)
-    dfu_sigma_df = _load_dfu_sigma_aggregated(conn, source_model_ids, residual_lag)
+    logger.info(
+        "Loading production-grain residual sigma for %s at lag %d",
+        requested_model_id,
+        residual_lag,
+    )
+    dfu_sigma_df = _load_dfu_sigma_aggregated(
+        conn,
+        requested_model_id,
+        residual_lag,
+    )
+    if dfu_sigma_df.empty:
+        raise RuntimeError(
+            f"{requested_model_id} has no residual evidence for confidence-interval "
+            f"calibration at lag {residual_lag}"
+        )
     logger.info("Loaded sigma for %d DFUs", len(dfu_sigma_df))
+
+    # psycopg returns NUMERIC aggregates as Decimal, which leaves pandas with
+    # object dtype. Normalize at the database boundary before NumPy finite
+    # checks or weighted cluster calculations.
+    dfu_sigma_df = dfu_sigma_df.copy()
+    dfu_sigma_df["sigma"] = pd.to_numeric(dfu_sigma_df["sigma"], errors="coerce")
+    dfu_sigma_df["n_months"] = pd.to_numeric(
+        dfu_sigma_df["n_months"], errors="coerce"
+    )
+    valid_evidence = (
+        np.isfinite(dfu_sigma_df["sigma"].to_numpy(dtype=float))
+        & np.isfinite(dfu_sigma_df["n_months"].to_numpy(dtype=float))
+        & (dfu_sigma_df["n_months"].to_numpy(dtype=float) > 0)
+    )
+    invalid_count = int((~valid_evidence).sum())
+    if invalid_count:
+        logger.warning("Discarded %d invalid residual sigma rows", invalid_count)
+    dfu_sigma_df = dfu_sigma_df.loc[valid_evidence].reset_index(drop=True)
+    if dfu_sigma_df.empty:
+        raise RuntimeError(
+            f"{requested_model_id} residual evidence contains no finite sigma values"
+        )
 
     cluster_sigmas = compute_cluster_sigma(dfu_sigma_df, cluster_map)
 
-    # Global fallback: median of all cluster sigmas
-    if cluster_sigmas:
-        global_sigma = float(np.median(list(cluster_sigmas.values())))
-    else:
-        global_sigma = max(sigma_floor, 10.0)  # absolute fallback
+    finite_sigmas = dfu_sigma_df.loc[np.isfinite(dfu_sigma_df["sigma"]), "sigma"].astype(float)
+    if finite_sigmas.empty:
+        raise RuntimeError(
+            f"{requested_model_id} residual evidence contains no finite sigma values"
+        )
+    global_sigma = float(np.median(finite_sigmas))
 
     # Sigma cap: cap_multiplier * median of cluster sigmas (must not be below floor)
     sigma_cap = max(cap_multiplier * global_sigma, sigma_floor)
@@ -203,10 +343,16 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
     # Pre-index dfu_sigma_df for O(1) per-DFU lookup (avoids O(N²) DataFrame scans)
     sigma_index: dict[tuple, tuple] = {}
     if not dfu_sigma_df.empty:
-        sigma_index = dict(zip(
-            zip(dfu_sigma_df["item_id"], dfu_sigma_df["loc"]),
-            zip(dfu_sigma_df["sigma"].astype(float), dfu_sigma_df["n_months"].astype(int)),
-        ))
+        sigma_index = {
+            (item_id, loc): (float(sigma), int(n_months))
+            for item_id, loc, sigma, n_months in zip(
+                dfu_sigma_df["item_id"],
+                dfu_sigma_df["loc"],
+                dfu_sigma_df["sigma"],
+                dfu_sigma_df["n_months"],
+                strict=True,
+            )
+        }
 
     lookup: dict[tuple, float] = {}
     n_dfu_level = 0
@@ -232,7 +378,10 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
 
     logger.info(
         "Sigma lookup built: %d DFUs (%d DFU-level, %d cluster-fallback, %d global-fallback)",
-        len(lookup), n_dfu_level, n_cluster_level, n_global_level,
+        len(lookup),
+        n_dfu_level,
+        n_cluster_level,
+        n_global_level,
     )
     return lookup
 

@@ -76,11 +76,12 @@ production forecast generation, or accuracy/FVA endpoints.
 - **Fail loud, don't zero-fill**: a failed recursive prediction in
   `generate_production_forecasts.py` re-raises (logged) — never substitute a zero column
   (reads downstream as "no demand" and corrupts the plan/safety stock).
-- **Never write synthetic/random forecast data to fact tables.**
-  `generate_quantile_forecasts.py` trains on `rng.uniform` (MVP stub) and refuses the
-  `fact_demand_plan` write unless `--dry-run`/`--allow-synthetic`.
-- **`POST /{model_id}/train` 400** → only `type === "tree"` supports production training;
-  foundation/`deep_learning` rejected by design.
+- **Never write synthetic/random forecast data to fact tables.** The retired standalone
+  quantile stub was removed; production uncertainty comes from residual CI bands or native
+  quantile output from a retained model.
+- **`POST /{model_id}/train` 400** → only the persisted production families support final
+  refitting: LightGBM (`lgbm_cluster`), N-HiTS (`nhits`), and N-BEATS (`nbeats`). MSTL and
+  Chronos 2E infer directly and must not be submitted to the training endpoint.
 
 ## Libraries & data grain
 - Clustering lives in `common/ml/clustering/` (`features/training/labeling/scenario`);

@@ -7,8 +7,6 @@ this module the logic was copy-pasted across:
   drop/recreate (the canonical, table-agnostic approach).
 * ``scripts/etl/load_backtest_forecasts.py`` — hardcoded forecast/archive
   index + constraint specs.
-* ``scripts/etl/load_ext_ml_forecasts.py`` — a byte-identical copy of the
-  forecast/archive specs.
 
 This module hosts both flavours so a schema or perf fix is made once.
 
@@ -248,7 +246,7 @@ def recreate_unique_constraints(cur, table: str,
 
 # ---------------------------------------------------------------------------
 # Forecast / archive table index + constraint specs
-# (shared by load_backtest_forecasts.py and load_ext_ml_forecasts.py)
+# (used by load_backtest_forecasts.py)
 # ---------------------------------------------------------------------------
 
 FORECAST_TABLE = "fact_external_forecast_monthly"

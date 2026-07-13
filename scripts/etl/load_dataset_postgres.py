@@ -127,8 +127,8 @@ def _resolve_forecast_execution_lag(cur, stg_table: str) -> int:
 
 # NOTE: external forecasts intentionally do NOT populate backtest_lag_archive
 # (see load_domain — "External forecasts skip archive"). The archive is owned by
-# load_backtest_forecasts.py / load_ext_ml_forecasts.py, which stream rows in
-# BATCH_SIZE chunks and use the ON-CONFLICT fast-path. A prior dead
+# load_backtest_forecasts.py, which streams rows in BATCH_SIZE chunks and uses
+# the ON-CONFLICT fast-path. A prior dead
 # _load_forecast_archive() here implied a dual-load that never ran — removed (US9).
 
 
@@ -236,10 +236,33 @@ def _post_load_sourcing(cur) -> None:
 # Main load function
 # ---------------------------------------------------------------------------
 
+
+def _refresh_original_sales(
+    cur,
+    *,
+    source_table: str,
+    columns: list[str],
+    expected_rows: int,
+) -> None:
+    """Replace the uncorrected sales mirror and require exact row parity."""
+    projection = ", ".join(qident(column) for column in columns)
+    cur.execute("TRUNCATE TABLE fact_sales_monthly_original")
+    cur.execute(
+        f"INSERT INTO fact_sales_monthly_original ({projection}) "
+        f"SELECT {projection} FROM {qident(source_table)}"
+    )
+    mirrored_rows = int(cur.rowcount or 0)
+    if mirrored_rows != expected_rows:
+        raise RuntimeError(
+            "Immutable original sales mirror row count does not match "
+            f"the canonical load ({mirrored_rows} != {expected_rows})"
+        )
+
 def load_domain(spec: DomainSpec, csv_path: Path,
                 replace_mode: bool = False,
                 skip_archive: bool = False,
-                incremental_delete: str | None = None) -> dict:
+                incremental_delete: str | None = None,
+                source_hash_override: str | None = None) -> dict:
     """Load CSV directly into main table. Single transaction, minimal overhead.
 
     Returns summary dict: {domain, rows_in, rows_loaded}.
@@ -254,8 +277,12 @@ def load_domain(spec: DomainSpec, csv_path: Path,
         logger.info("SKIPPED — %s not found. Run 'make normalize-all' first.", csv_path.name)
         return {"domain": spec.name, "skipped": True}
 
+    if spec.name == "sales" and incremental_delete is not None:
+        raise ValueError(
+            "Sales reloads must replace the full raw/current dual-track population"
+        )
     db = get_db_params()
-    src_hash = file_hash(csv_path)
+    src_hash = source_hash_override or file_hash(csv_path)
     is_forecast = spec.name == "forecast"
     stg_table = f"_stg_{spec.name}"
     stg_alias = "d"
@@ -590,6 +617,15 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     logger.info("  %s rows inserted (%s, %s rows/s)",
                                 f"{row_count:,}", _elapsed(t0), f"{rate:,.0f}")
 
+            if spec.name == "sales":
+                with profiled_section("refresh_original_sales"):
+                    _refresh_original_sales(
+                        cur,
+                        source_table=spec.table,
+                        columns=target_cols,
+                        expected_rows=row_count,
+                    )
+
             # Phase 3b: Post-load hooks
             with profiled_section("post_load_hooks"):
                 if spec.name == "purchase_order":
@@ -617,7 +653,7 @@ def load_domain(spec: DomainSpec, csv_path: Path,
             complete_batch(cur, batch_id, stg_rows, row_count)
             conn.commit()
 
-        except (psycopg.Error, OSError, ValueError, KeyError) as exc:
+        except (psycopg.Error, OSError, ValueError, KeyError, RuntimeError) as exc:
             conn.rollback()
             try:
                 with psycopg.connect(**db) as err_conn, err_conn.cursor() as err_cur:

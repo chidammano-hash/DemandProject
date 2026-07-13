@@ -20,7 +20,11 @@ import { fetchPipelineConfig, pipelineConfigKeys } from "@/api/queries/unified-m
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingElement } from "@/components/LoadingElement";
-import { modelLabel, MODEL_TYPE_COLORS } from "@/lib/model-labels";
+import {
+  FORECAST_MODEL_IDS,
+  isForecastModelId,
+  modelLabel,
+} from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
 const TYPE_BADGE_COLORS: Record<string, string> = {
@@ -73,7 +77,6 @@ const STRATEGY_DEFAULTS: Record<string, Record<string, unknown>> = {
   per_segment: { min_prior_months: 3, adi_threshold: 1.32, cv2_threshold: 0.49 },
   per_cluster: { min_prior_months: 3 },
   seasonal: { min_prior_months: 2, fallback_strategy: "expanding" },
-  hybrid_meta_router: { min_prior_months: 3, confidence_threshold: 0.6, blend_top_k: 3 },
   diverse_ensemble: { min_prior_months: 3, top_k: 3, correlation_penalty: 0.5 },
   uncertainty_aware: { min_prior_months: 3, uncertainty_weight: 0.3 },
   cascade_ensemble: {
@@ -105,7 +108,7 @@ const META_DEFAULTS = {
 };
 
 /** Fallback model IDs used before pipeline config loads */
-const DEFAULT_MODELS = ["lgbm_cluster", "chronos2_enriched", "mstl", "nbeats", "nhits"];
+const DEFAULT_MODELS: string[] = [...FORECAST_MODEL_IDS];
 
 const STRATEGY_LABELS: Record<string, string> = {
   // Core
@@ -129,7 +132,6 @@ const STRATEGY_LABELS: Record<string, string> = {
   per_cluster: "Per-Cluster Champion",
   seasonal: "Seasonal (Same-Quarter)",
   // Advanced
-  hybrid_meta_router: "Hybrid Meta-Router",
   diverse_ensemble: "Diverse Ensemble",
   uncertainty_aware: "Uncertainty-Aware",
   cascade_ensemble: "Cascade Ensemble",
@@ -170,8 +172,8 @@ const ADVANCED_STRATEGIES = [
   "seasonal",
   "ensemble_rolling",
 ];
-// Everything else is "Expert"
-const EXPERT_STRATEGIES = Object.keys(STRATEGY_LABELS).filter(
+// Keep the long tail available without presenting it as a separate model tier.
+const OTHER_STRATEGIES = Object.keys(STRATEGY_LABELS).filter(
   (k) => !RECOMMENDED_STRATEGIES.includes(k) && !ADVANCED_STRATEGIES.includes(k)
 );
 
@@ -280,7 +282,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
   // All algorithms from pipeline config (show all, pre-select competing ones)
   const ALL_MODELS = useMemo(() => {
     if (!pipelineConfig?.algorithms) return DEFAULT_MODELS;
-    const all = Object.keys(pipelineConfig.algorithms);
+    const all = Object.keys(pipelineConfig.algorithms).filter(isForecastModelId);
     return all.length > 0 ? all : DEFAULT_MODELS;
   }, [pipelineConfig]);
 
@@ -288,7 +290,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
   const COMPETING_MODELS = useMemo(() => {
     if (!pipelineConfig?.algorithms) return DEFAULT_MODELS;
     return Object.entries(pipelineConfig.algorithms)
-      .filter(([, algo]) => algo.enabled && algo.compete)
+      .filter(([id, algo]) => isForecastModelId(id) && algo.enabled && algo.compete)
       .map(([id]) => id);
   }, [pipelineConfig]);
 
@@ -308,7 +310,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
 
   // Strategy tier collapse state
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showExpert, setShowExpert] = useState(false);
+  const [showAllStrategies, setShowAllStrategies] = useState(false);
 
   // Model editing state — collapsed by default to show pipeline config summary
   const [modelsExpanded, setModelsExpanded] = useState(false);
@@ -411,7 +413,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
     setLagMode("execution");
     setMinSkuRows(3);
     setShowAdvanced(false);
-    setShowExpert(false);
+    setShowAllStrategies(false);
     setModelsExpanded(false);
   }
 
@@ -430,7 +432,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
         ...(tmpl.meta_learner_params as typeof META_DEFAULTS),
       });
     }
-    if (tmpl.models) setModels([...tmpl.models]);
+    if (tmpl.models) setModels(tmpl.models.filter(isForecastModelId));
     if (tmpl.metric) setMetric(tmpl.metric);
     if (tmpl.lag_mode) setLagMode(tmpl.lag_mode);
     if (tmpl.min_sku_rows) setMinSkuRows(tmpl.min_sku_rows);
@@ -615,12 +617,12 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                   onSelect={setStrategy}
                 />
 
-                {/* Expert tier — collapsed */}
+                {/* Remaining strategies — collapsed */}
                 <StrategyTier
                   label="Show all strategies"
-                  strategies={EXPERT_STRATEGIES}
-                  expanded={showExpert}
-                  onToggle={() => setShowExpert((p) => !p)}
+                  strategies={OTHER_STRATEGIES}
+                  expanded={showAllStrategies}
+                  onToggle={() => setShowAllStrategies((previous) => !previous)}
                   selected={strategy}
                   onSelect={setStrategy}
                 />
@@ -760,10 +762,10 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
             <CardContent className="pb-3 space-y-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <label className="text-xs font-medium">Models (min 2)</label>
+                  <label className="text-xs font-medium">Base forecast models (min 2)</label>
                   {!modelsExpanded && (
                     <span className="text-[11px] text-muted-foreground">
-                      Using {models.length} models from pipeline config
+                      Using {models.length} of the five retained models
                     </span>
                   )}
                   <button

@@ -1,9 +1,19 @@
 """Tests for job scheduler API endpoints (Feature 39)."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import httpx
+import pytest
 from httpx import ASGITransport
+
+_MANUAL_PROMOTION_RETIRED_DETAIL = {
+    "code": "manual_champion_promotion_retired",
+    "message": (
+        "Manual champion promotion is retired. Run "
+        "POST /jobs/pipelines/named/model-refresh to create and atomically promote "
+        "a governed champion."
+    ),
+}
 
 
 @pytest.fixture
@@ -100,6 +110,100 @@ async def test_submit_job_invalid_type(mock_pool, mock_manager):
                     json={"job_type": "nonexistent_type", "params": {}},
                 )
                 assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/jobs",
+            {"job_type": "champion_results_load", "params": {"experiment_id": 41}},
+        ),
+        (
+            "/jobs/schedule",
+            {
+                "job_type": "champion_results_load",
+                "params": {"experiment_id": 41},
+                "cron": "0 2 * * *",
+            },
+        ),
+        (
+            "/jobs/pipeline",
+            {
+                "steps": [
+                    {"job_type": "champion_results_load", "params": {"experiment_id": 41}},
+                ],
+                "label": "Legacy champion load",
+            },
+        ),
+    ],
+)
+async def test_retired_champion_results_job_cannot_be_submitted_directly(
+    mock_pool,
+    mock_manager,
+    path,
+    payload,
+):
+    """Generic job APIs cannot bypass governed champion promotion."""
+    pool, _, _ = mock_pool
+    mock_manager.submit_job.return_value = "legacy-job"
+    mock_manager.schedule_recurring.return_value = "legacy-schedule"
+    mock_manager.submit_pipeline.return_value = "legacy-pipeline"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.core.jobs._get_manager", return_value=mock_manager),
+        patch(
+            "common.services.job_registry.JOB_TYPE_REGISTRY",
+            {"champion_results_load": MagicMock()},
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(path, json=payload)
+
+    assert response.status_code == 410
+    assert response.json()["detail"] == _MANUAL_PROMOTION_RETIRED_DETAIL
+    mock_manager.submit_job.assert_not_called()
+    mock_manager.schedule_recurring.assert_not_called()
+    mock_manager.submit_pipeline.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retired_champion_results_job_is_hidden_from_launch_catalog(
+    mock_pool,
+    mock_manager,
+):
+    """Jobs UI cannot discover a manual results-load launch action."""
+    pool, _, _ = mock_pool
+    mock_manager.get_types.return_value.append(
+        {
+            "type_id": "champion_results_load",
+            "label": "Load Champion Results",
+            "description": "Legacy production mutation",
+            "group": "champion",
+            "params_schema": {"experiment_id": None},
+        }
+    )
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.core.jobs._get_manager", return_value=mock_manager),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/jobs/types")
+
+    assert response.status_code == 200
+    assert all(
+        job_type["type_id"] != "champion_results_load"
+        for job_type in response.json()["types"]
+    )
 
 
 @pytest.mark.asyncio
@@ -358,6 +462,45 @@ async def test_submit_pipeline(mock_pool, mock_manager):
             data = response.json()
             assert data["pipeline_id"] == "pipe_xyz789"
             assert data["steps"] == 2
+
+
+@pytest.mark.asyncio
+async def test_named_pipeline_returns_existing_active_run(mock_pool, mock_manager):
+    """Repeated clicks return the existing pipeline without enqueueing a duplicate."""
+    pool, _, _ = mock_pool
+    mock_manager.submit_named_pipeline.return_value = ("pipe_existing", False)
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.core.jobs._get_manager", return_value=mock_manager),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/jobs/pipelines/named/model-refresh")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "already_running"
+    assert response.json()["pipeline_id"] == "pipe_existing"
+
+
+@pytest.mark.asyncio
+async def test_named_pipeline_returns_accepted_for_new_run(mock_pool, mock_manager):
+    pool, _, _ = mock_pool
+    mock_manager.submit_named_pipeline.return_value = ("pipe_new", True)
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.core.jobs._get_manager", return_value=mock_manager),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/jobs/pipelines/named/forecast-publish")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "running"
+    assert response.json()["pipeline_id"] == "pipe_new"
 
 
 @pytest.mark.asyncio

@@ -12,12 +12,12 @@
 #   id:                  Unique identifier (used as template reference)
 #   label:               Human-readable display name in the UI
 #   description:         Brief explanation of when/why to use this strategy
-#   strategy:            Champion selection strategy name (must match common/ml/champion_strategies.py)
+#   strategy:            Champion selection strategy name (must match the common/ml/champion/ registry)
 #   strategy_params:     Strategy-specific parameters (see each strategy's docstring)
-#   source:              Special marker — "model_competition_config" or "pipeline_config" means
+#   source:              Special marker — "pipeline_config" means
 #                        this template's params are loaded live from forecast_pipeline_config.yaml
 #                        champion section (so it always reflects current production settings)
-#   meta_learner_params: Only for meta_learner and hybrid_meta_router strategies
+#   meta_learner_params: Only for the meta_learner strategy
 #
 # Common strategy_params across most strategies:
 #   min_prior_months:    Minimum months of backtest history before a model can be evaluated
@@ -29,8 +29,8 @@ templates:
   # champion section. Always reflects whatever is currently running in production.
   - id: production_baseline
     label: "Production Baseline"
-    description: "Current production strategy from model_competition.yaml"
-    source: model_competition_config    # Marker: enriched at load time with live pipeline config champion settings
+    description: "Current production strategy from forecast_pipeline_config.yaml"
+    source: pipeline_config             # Enriched from the live champion settings
 
   # ═══ WINDOW-BASED STRATEGIES ════════════════════════════════════════════════
   # These strategies select the best model based on accuracy over a defined
@@ -210,8 +210,8 @@ templates:
   # ═══ DIVERSITY-PROMOTING ENSEMBLES ═════════════════════════════════════════
 
   # ─── Diverse Ensemble ──────────────────────────────────────────────────────
-  # Blends models with a penalty for model family overlap. Prevents selecting
-  # 3 tree models — promotes mixing trees + foundation + statistical.
+  # Blends models with a penalty for model family overlap. Prevents one family
+  # from dominating and promotes diversity across the canonical roster.
   - id: diverse_ensemble_top3
     label: "Diverse Ensemble (Top-3)"
     description: "Family-penalized ensemble for model diversity"
@@ -222,23 +222,6 @@ templates:
       correlation_penalty: 0.5         # Penalty for same-family models (0.0 = no penalty, 1.0 = full penalty)
 
   # ═══ HYBRID / ROUTER STRATEGIES ════════════════════════════════════════════
-
-  # ─── Hybrid Meta-Router ────────────────────────────────────────────────────
-  # If meta-learner is confident (above threshold), use its single-model pick.
-  # Otherwise, fall back to inverse-WAPE blend of top-K models.
-  - id: hybrid_meta_router_06
-    label: "Hybrid Meta-Router (0.6 threshold)"
-    description: "High-confidence meta prediction OR inverse-WAPE blend"
-    strategy: hybrid_meta_router        # Confidence-gated meta-learner with ensemble fallback
-    strategy_params:
-      min_prior_months: 3              # Minimum months for evaluation
-      confidence_threshold: 0.6        # Meta-learner confidence threshold (above = use prediction, below = blend)
-      blend_top_k: 3                   # Number of models in fallback blend
-    meta_learner_params:                # Random Forest classifier settings (same as meta_learner_rf)
-      model_type: random_forest        # Classifier type
-      n_estimators: 200                # Number of trees
-      max_depth: 15                    # Max tree depth
-      performance_window: 6            # Rolling months for performance features
 
   # ─── Per-Cluster Champion ──────────────────────────────────────────────────
   # Selects the single best model per ML cluster and applies it to ALL DFUs

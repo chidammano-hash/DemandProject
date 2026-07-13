@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import type {
   ShapModelsPayload,
   ShapSummaryPayload,
@@ -59,11 +59,13 @@ export async function fetchSkuShap(
   itemNo: string,
   loc: string,
   topN = 10,
+  customerGroup?: string,
 ): Promise<SkuShapPayload> {
   const qs = new URLSearchParams({
     item_id: itemNo,
     loc,
     top_n: String(topN),
   });
-  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/sku?${qs}`);
+  if (customerGroup) qs.set("customer_group", customerGroup);
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/dfu?${qs}`);
 }

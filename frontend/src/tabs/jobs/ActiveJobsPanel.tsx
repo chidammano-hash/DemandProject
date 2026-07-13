@@ -17,11 +17,20 @@ import { StatusBadge } from "./StatusBadge";
 // ActiveJobCard — single live job card
 // ---------------------------------------------------------------------------
 
-function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => void }) {
+function ActiveJobCard({
+  job,
+  onCancel,
+  isCancelling,
+}: {
+  job: Job;
+  onCancel: (id: string) => void;
+  isCancelling: boolean;
+}) {
   const [elapsed, setElapsed] = useState("");
   const [showLogs, setShowLogs] = useState(false);
   const [confirmKill, setConfirmKill] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const groupKey = getGroupKey(job.job_type);
   const cfg = GROUP_CONFIG[groupKey] || GROUP_CONFIG.clustering;
 
@@ -56,20 +65,32 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
   }, [logLines.length, showLogs]);
 
   const handleKill = useCallback(() => {
+    if (isCancelling) return;
     if (confirmKill) {
       onCancel(job.job_id);
       setConfirmKill(false);
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
     } else {
       setConfirmKill(true);
       // Auto-reset confirmation after 3s
-      setTimeout(() => setConfirmKill(false), 3000);
+      confirmTimerRef.current = setTimeout(() => setConfirmKill(false), 3000);
     }
-  }, [confirmKill, onCancel, job.job_id]);
+  }, [confirmKill, isCancelling, onCancel, job.job_id]);
+
+  useEffect(
+    () => () => {
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    },
+    []
+  );
 
   // Many long jobs (e.g. backtests) stream log messages but never report a
   // numeric percentage, so progress_pct stays 0 the whole run. Show an
   // animated "working" bar in that case instead of a frozen 0% bar.
   const indeterminate = job.status === "running" && (job.progress_pct ?? 0) <= 0;
+  const isPipelineJob = typeof job.params?.__pipeline_label === "string";
+  const cancelLabel = isPipelineJob ? "Cancel workflow" : "Cancel job";
+  const cancellingLabel = isPipelineJob ? "Cancelling workflow" : "Cancelling job";
 
   return (
     <div className={cn("rounded-xl border-2 p-4 transition-all", cfg.borderColor, cfg.bgColor)}>
@@ -134,18 +155,31 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
           {(job.status === "running" || job.status === "queued") && (
             <button
               onClick={handleKill}
+              disabled={isCancelling}
+              aria-label={isCancelling ? cancellingLabel : confirmKill ? "Confirm cancel" : cancelLabel}
+              title={
+                isPipelineJob
+                  ? "Cancel the current job; remaining pipeline steps will not start."
+                  : "Cancel this job and wait for its worker to stop."
+              }
               className={cn(
-                "rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                "rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                 confirmKill
                   ? "border-destructive bg-destructive/20 text-destructive animate-pulse"
                   : "border-destructive/30 text-destructive hover:bg-destructive/10",
               )}
             >
-              {confirmKill ? "Confirm Kill" : "Kill"}
+              {isCancelling ? "Cancelling…" : confirmKill ? "Confirm cancel" : cancelLabel}
             </button>
           )}
         </div>
       </div>
+
+      {isCancelling && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300" role="status">
+          Cancellation requested; waiting for the worker to stop…
+        </p>
+      )}
 
       {/* Log panel — persistent logs from backend */}
       {showLogs && (
@@ -170,9 +204,14 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
 export interface ActiveJobsPanelProps {
   activeJobs: Job[];
   onCancel: (jobId: string) => void;
+  cancellingJobId?: string | null;
 }
 
-export function ActiveJobsPanel({ activeJobs, onCancel }: ActiveJobsPanelProps) {
+export function ActiveJobsPanel({
+  activeJobs,
+  onCancel,
+  cancellingJobId = null,
+}: ActiveJobsPanelProps) {
   if (activeJobs.length === 0) return null;
 
   return (
@@ -183,7 +222,12 @@ export function ActiveJobsPanel({ activeJobs, onCancel }: ActiveJobsPanelProps) 
       </h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {activeJobs.map((job) => (
-          <ActiveJobCard key={job.job_id} job={job} onCancel={onCancel} />
+          <ActiveJobCard
+            key={job.job_id}
+            job={job}
+            onCancel={onCancel}
+            isCancelling={cancellingJobId === job.job_id}
+          />
         ))}
       </div>
     </section>

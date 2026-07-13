@@ -119,7 +119,8 @@ that every segment is individually representative.
 | Champion-results lineage | Active promotion's experiment is the sole results-promoted experiment, with no champion row modified after `results_promoted_at` | Detect canonical champion rewrites that invalidate the explicit results promotion |
 | Cluster lineage | Exactly one promoted cluster experiment matching the champion experiment | Prevent mixed assignments or routing trained under superseded clusters |
 | Cluster assignments | At least one current promoted assignment | Prevent per-cluster generation from silently collapsing |
-| Generation freshness | Oldest active release row generated at or after latest completed sales load | Prevent an older generated release from looking fresh because it was promoted later |
+| Sales-source lineage | Populated immutable-original mirror; latest positive completed audit is a canonical dual-track reload (not `safe_upsert`); mirror row count matches the batch and mirror `MAX(load_ts) >= batch.started_at` | Prevent current/original divergence or an audit timestamp written after its rows from being treated as synchronized evidence |
+| Generation freshness | Oldest active release row generated at or after the latest accepted synchronized sales load | Prevent an older generated release from looking fresh because it was promoted later |
 | Tuning freshness | Zero stale profiles for labels in the current promoted assignment generation | Current clusters require current per-cluster tuning without historical labels blocking release |
 | Current plan version | Equals the planning month | Make release cadence explicit |
 | Current plan coverage | At least 95% of active DFUs with 3+ history months and all six calendar months | Ensure the plan is operationally usable |
@@ -207,6 +208,18 @@ The follow-on transactional phase is implemented by migration
 read-only, **post-release** planner scorecard described above; promotion now has
 a separate fail-closed, **pre-release** contract:
 
+The Forecast stage exposes that pre-release contract through two focused reads:
+`GET /backtest-management/training-status` validates persisted model artifacts
+against current sales, history, generator, cohort/runtime, configuration, and
+cluster lineage, while `GET /backtest-management/snapshot-roster-readiness`
+deeply validates the current champion plus exact top-three contender evidence.
+The UI never treats artifact self-metadata or a staging count as sufficient.
+Promotion remains disabled until both reads and the current champion candidate
+are ready. Its **Prepare Release** action launches the named `forecast-publish`
+pipeline and polls its exact pipeline id; integrity-corrupt evidence fails
+closed for operator investigation instead of advertising a rebuild that cannot
+safely replace it.
+
 1. Every generation has one immutable `forecast_generation_run` manifest and a
    purpose: `release_candidate`, `snapshot_contender`, or `legacy_invalid`.
    Normal champion generation produces one coherent `release_candidate` run.
@@ -253,11 +266,15 @@ silently attributed to an experiment. A new results-promotion job loads the
 cached winners with `champion_experiment_id`, hashes the resulting historical
 rows, and only then marks the experiment results promoted. The post-release
 scorecard also retains its `modified_ts <= results_promoted_at` freshness fence.
-After `model-refresh` rewrites canonical champion results, the operator must
-explicitly promote those experiment results and generate a new release
-candidate before promotion can succeed. The transaction proves that the exact
-current candidate is what was published; it does not prove model-training data
-cutoff beyond persisted latest-sales batch lineage.
+The final `model-refresh` step is a governed champion refresh. Before creating
+an experiment it requires the latest completed-and-loaded backtest for each of
+the five models to share the current sales batch/hash and promoted cluster
+experiment/assignment checksum. It evaluates the current production strategy
+while leaving the incumbent active, then loads the exact winners artifact,
+records checksums, and swaps champion facts plus configuration/results
+promotion flags in one transaction. A failure cannot erase the incumbent.
+The operator can proceed directly to generating a new release candidate; a
+separate experiment-results promotion is not required for the named workflow.
 
 ## Tests
 

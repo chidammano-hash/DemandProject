@@ -76,10 +76,6 @@ script_presets:
     args: []
   run_backtest:
     args: ["--model", "lgbm", "--n-timeframes", "1"]
-  run_backtest_catboost:
-    args: ["--n-timeframes", "1"]
-  run_backtest_xgboost:
-    args: ["--n-timeframes", "1"]
   run_ss_simulation:
     args: []
   run_sop_cycle:

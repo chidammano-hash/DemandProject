@@ -50,6 +50,7 @@ export function FillRatePanel() {
     queryFn: () => fetchFillRateGapAnalysis(gf as { month?: string; abc_vol?: string }),
     staleTime: STALE.FIVE_MIN,
   });
+  const trendMonths = trendData?.months ?? [];
 
   return (
     <div className="space-y-4">
@@ -60,8 +61,8 @@ export function FillRatePanel() {
           value={formatPct((summary?.portfolio_fill_rate ?? 0) * 100)}
           severity={(summary?.portfolio_fill_rate ?? 0) >= 0.98 ? "best" : (summary?.portfolio_fill_rate ?? 0) < 0.90 ? "warning" : "neutral"}
           sublabel="Target: 98%"
-          sparkline={trendData?.months?.length
-            ? trendData.months.slice(-6).map((m: { fill_rate: number }) => m.fill_rate * 100)
+          sparkline={trendMonths.length
+            ? trendMonths.slice(-6).map((month) => (month.fill_rate ?? 0) * 100)
             : undefined}
         />
         <KpiCard className={PANEL_KPI} label="Total Ordered" value={formatInt(summary?.total_ordered)} />
@@ -69,7 +70,7 @@ export function FillRatePanel() {
         <KpiCard className={PANEL_KPI} label="Partial Fulfillment Events" value={formatInt(summary?.partial_fulfillment_events)} />
       </div>
       {isLoading && <p className="text-xs text-muted-foreground">Loading fill rate data...</p>}
-      {!isLoading && (!trendData?.months || trendData.months.length === 0) && (
+      {!isLoading && trendMonths.length === 0 && (
         <EmptyState
           icon={TrendingUp}
           title="No fill rate data available"
@@ -80,11 +81,11 @@ export function FillRatePanel() {
           ]}
         />
       )}
-      {trendData?.months?.length > 0 && (
+      {trendMonths.length > 0 && (
         <div>
           <p className="text-xs font-medium mb-2">Monthly Fill Rate Trend (Target: 98%)</p>
           <ResponsiveContainer width="100%" height={160}>
-            <ComposedChart data={trendData.months}>
+            <ComposedChart data={trendMonths}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month_start" tick={{ fontSize: 10 }} />
               <YAxis tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} domain={[0, 1]} tick={{ fontSize: 10 }} />

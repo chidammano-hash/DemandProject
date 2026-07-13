@@ -46,14 +46,14 @@ Compare realized accuracy to `1 − demand_mad/demand_mean` (best any point fore
 vs **intrinsic noise** (realized ≈ floor → no point model helps → item 5). This decides which volatile
 work is worth doing. Read-only; ~1 query. **Do this first.**
 
-### 1. ⬜ Fine-tune the foundation models on our own demand history  - *highest leverage*
-The only remaining foundation model, `chronos2_enriched`, runs **zero-shot** today (`tune: false` in
-`forecast_pipeline_config.yaml`). It already beats trees on low-volume zero-shot; fine-tuning / LoRA on
-the 41M-row history should raise the ceiling, esp. for low-volume. **Not started** - an earlier
-Earlier fine-tuning experiments were retired during the lite-roster consolidation.
+### 1. ⬜ Fine-tune Chronos 2E on our own demand history  - *highest leverage*
+`chronos2_enriched` uses pretrained weights today (`tune: false` in
+`forecast_pipeline_config.yaml`) plus the canonical historical, calendar, and categorical covariates.
+Fine-tuning / LoRA on the 41M-row history may raise the ceiling, especially for low-volume demand,
+but must earn its place through the same causal holdout gate. **Not started.**
 - **Test:** fine-tune on the train window, backtest the hard clusters on the holdout, check oracle
   ceiling movement. GPU via `DEMAND_GPU`. **Retrain-scale.**
-- **Where:** `common/ml/foundation_backtest.py`, foundation loaders; new `fine_tune` params per algo.
+- **Where:** `common/ml/chronos2_enriched.py` and its backtest wrapper; new `fine_tune` parameters under the existing model entry.
 
 ### 2. ⬜ Hierarchical / temporal aggregation for low-volume
 Model where signal is denser, then disaggregate retained-model forecasts without adding another
@@ -72,9 +72,10 @@ intermittent/volatile (not MAE), longer early-stopping for sparse. Good warm-up 
 - **Test:** tune the hard clusters, backtest the holdout.
 
 ### 5. ⬜ Quantile / distribution forecasting for *irreducibly* volatile SKUs — *change the goal*
-If item 0 shows these are noise-floored, no point model wins. The stack has quantile forecasting
-(`quantile-train` / `quantile-all`). The win is **hitting service levels at lower inventory**, not a
-higher accuracy %. Reframe the KPI/SLA for these SKUs (ties to dual-metric reporting).
+If item 0 shows these are noise-floored, no point model wins. Use residual confidence intervals or
+native quantiles from the retained five-model stack; do not introduce a separate synthetic quantile
+model. The win is **hitting service levels at lower inventory**, not a higher accuracy %. Reframe the
+KPI/SLA for these SKUs (ties to dual-metric reporting).
 
 ### 6. ⬜ Quick win — override champion on the 2 mis-routed high-CV clusters
 Causally validated: champion mis-routes `medium_volume_moderate` (static→mstl beats champion 14.3% vs

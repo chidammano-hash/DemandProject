@@ -24,7 +24,12 @@ import {
   type ModelParams,
   type LabelParams,
 } from "@/api/queries";
-import { fetchScenarioEstimate, fetchClusterCoreFeatures, STALE } from "@/api/queries";
+import {
+  fetchScenarioEstimate,
+  fetchClusterCoreFeatures,
+  STALE,
+} from "@/api/queries";
+import { queryKeys } from "@/api/queries/core";
 import { ClusterParamsForm } from "./ClusterParamsForm";
 
 // ---------------------------------------------------------------------------
@@ -117,11 +122,14 @@ export function ClusterExperimentBuilder({
     enabled: open,
   });
 
-  const templates: ClusterExperimentTemplate[] = templatesData?.templates ?? [];
+  const templates = useMemo<ClusterExperimentTemplate[]>(
+    () => templatesData?.templates ?? [],
+    [templatesData],
+  );
 
   // ---- Fetch core features (fallback handled in ClusterParamsForm) -----------
   const { data: coreFeaturesData } = useQuery({
-    queryKey: ["clustering", "core-features"],
+    queryKey: queryKeys.clusteringCoreFeatures(),
     queryFn: fetchClusterCoreFeatures, // fetchJson query fetcher — U6.10
     staleTime: 5 * 60 * 1000, // 5 min — rarely changes
     enabled: open,
@@ -133,7 +141,10 @@ export function ClusterExperimentBuilder({
 
   // ---- Fetch estimate -------------------------------------------------------
   const { data: estimate } = useQuery({
-    queryKey: ["scenario-estimate", modelParams.k_range[0], modelParams.k_range[1]],
+    queryKey: queryKeys.scenarioEstimate({
+      k_min: modelParams.k_range[0],
+      k_max: modelParams.k_range[1],
+    }),
     queryFn: () =>
       fetchScenarioEstimate({
         k_min: modelParams.k_range[0],
@@ -343,16 +354,16 @@ export function ClusterExperimentBuilder({
                 <Clock className="h-3.5 w-3.5" />
                 <span>Est. runtime: </span>
                 <span className="font-medium text-foreground">
-                  {estimate.estimated_runtime_seconds != null
-                    ? `~${Math.ceil(estimate.estimated_runtime_seconds / 60)}min`
+                  {estimate.estimated_seconds != null
+                    ? `~${Math.ceil(estimate.estimated_seconds / 60)}min`
                     : "--"}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Users className="h-3.5 w-3.5" />
-                <span>DFUs: </span>
+                <span>SKUs: </span>
                 <span className="font-medium text-foreground">
-                  {estimate.total_dfus?.toLocaleString() ?? "--"}
+                  {estimate.sku_count.toLocaleString()}
                 </span>
               </div>
             </div>

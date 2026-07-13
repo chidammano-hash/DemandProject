@@ -4,14 +4,16 @@ Tests summary listing, model runs, current metadata, run submission,
 and load submission.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from unittest.mock import ANY, MagicMock, patch
+from uuid import UUID
 
 import httpx
+import pytest
 from httpx import ASGITransport
-from tests.api.conftest import make_pool as _make_pool
 
+from tests.api.conftest import make_pool as _make_pool
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,7 +32,34 @@ def _no_real_mv_refresh():
         yield refresh
 
 
-_NOW = datetime(2026, 4, 6, 10, 0, 0, tzinfo=timezone.utc)
+@pytest.fixture(autouse=True)
+def _stable_neural_training_cohort():
+    """Keep API readiness tests on one deterministic current neural cohort."""
+    identity = SimpleNamespace(checksum="f" * 64, dfu_count=12_476)
+    with (
+        patch(
+            f"{_ROUTER_MOD}.resolve_forecast_sales_table",
+            return_value="fact_sales_monthly_original",
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_neural_training_cohort_identity",
+            return_value=identity,
+        ),
+    ):
+        yield identity
+
+
+@pytest.fixture(autouse=True)
+def _stable_governed_champion_readiness():
+    """Keep snapshot tests focused unless they explicitly exercise champion lineage."""
+    with patch(
+        f"{_ROUTER_MOD}.validate_active_champion_readiness",
+        return_value={"experiment_id": 77},
+    ):
+        yield
+
+
+_NOW = datetime(2026, 4, 6, 10, 0, 0, tzinfo=UTC)
 _NOW_ISO = _NOW.isoformat()
 
 
@@ -93,10 +122,10 @@ def _mock_roster():
 
 @pytest.mark.asyncio
 async def test_get_summary_returns_all_models():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         _run_row(run_id=1, model_id="lgbm_cluster", accuracy_pct=72.5),
-            _run_row(run_id=2, model_id="mstl", accuracy_pct=70.0),
+        _run_row(run_id=2, model_id="mstl", accuracy_pct=70.0),
     ]
 
     with (
@@ -124,6 +153,860 @@ async def test_get_summary_returns_all_models():
     assert data["lgbm_cluster"]["latest_run"]["accuracy_pct"] == 72.5
 
 
+@pytest.mark.asyncio
+async def test_training_status_reads_validated_neural_artifact_metadata(tmp_path):
+    pool, conn, _cursor = _make_pool()
+    sales_lineage = SimpleNamespace(batch_id=91, source_hash="c" * 64)
+    artifact = SimpleNamespace(
+        artifact_id="a" * 64,
+        metadata={
+            "trained_at": "2026-07-12T08:00:00+00:00",
+            "training_dfu_count": 12_476,
+            "history_end": "2026-06-01",
+        },
+    )
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "nhits": {
+                    "type": "deep_learning",
+                    "forecast": True,
+                    "params": {"h": 6, "min_history": 12},
+                }
+            },
+        ),
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=sales_lineage,
+        ) as load_sales,
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(f"{_ROUTER_MOD}.read_active_neural_artifact_ref", return_value=artifact) as read,
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    assert resp.json()["nhits"] == {
+        "model_id": "nhits",
+        "type": "deep_learning",
+        "trained": True,
+        "ready": True,
+        "trained_at": "2026-07-12T08:00:00+00:00",
+        "training_mode": "production",
+        "n_dfus": 12_476,
+        "planning_date": "2026-06-01",
+        "artifact_id": "a" * 64,
+    }
+    read.assert_called_once_with(
+        model_id="nhits",
+        base_dir=tmp_path,
+        expected_params={"h": 6, "min_history": 12},
+        expected_source_sales_batch_id=91,
+        expected_data_checksum="c" * 64,
+        expected_history_end=date(2026, 6, 1),
+        expected_training_cohort_checksum="f" * 64,
+        expected_training_dfu_count=12_476,
+        generator_contract_version=ANY,
+    )
+    load_sales.assert_called_once_with(conn)
+
+
+@pytest.mark.asyncio
+async def test_training_status_marks_invalid_neural_artifact_not_ready(tmp_path):
+    pool, _conn, _cursor = _make_pool()
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "nbeats": {
+                    "type": "deep_learning",
+                    "forecast": True,
+                    "params": {"h": 6, "min_history": 12},
+                }
+            },
+        ),
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=SimpleNamespace(batch_id=91, source_hash="c" * 64),
+        ),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.read_active_neural_artifact_ref",
+            side_effect=RuntimeError("checksum mismatch"),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    assert resp.json()["nbeats"] == {
+        "model_id": "nbeats",
+        "type": "deep_learning",
+        "trained": False,
+        "ready": False,
+        "trained_at": None,
+        "training_mode": None,
+        "n_dfus": None,
+        "planning_date": None,
+        "stale_reason": "The active nbeats production artifact is invalid. Run Forecast Publish to rebuild current production artifacts.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_training_status_reads_validated_lightgbm_bundle_metadata(tmp_path):
+    pool, conn, _cursor = _make_pool()
+    sales_lineage = SimpleNamespace(batch_id=91, source_hash="c" * 64)
+    cluster_population = SimpleNamespace(
+        experiment_id=44,
+        assignment_count=12_476,
+        assignment_checksum="d" * 64,
+        cluster_labels=frozenset({"steady", "intermittent"}),
+    )
+    artifact = SimpleNamespace(
+        artifact_set_id="b" * 32,
+        metadata={
+            "trained_at": "2026-07-12T08:00:00+00:00",
+            "lineage": {"history_end": "2026-06-01"},
+            "training_metadata": {"n_dfus": 12_476},
+        },
+    )
+    expected_config = {"algorithm": "lgbm", "clustering": {"enabled": True}}
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "lgbm_cluster": {
+                    "type": "tree",
+                    "forecast": True,
+                    "params": {"n_estimators": 2000},
+                }
+            },
+        ),
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": True},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=sales_lineage,
+        ) as load_sales,
+        patch(
+            f"{_ROUTER_MOD}.load_promoted_cluster_population",
+            return_value=cluster_population,
+        ) as load_clusters,
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.build_tree_model_config_payload",
+            return_value=expected_config,
+        ) as build_config,
+        patch(
+            f"{_ROUTER_MOD}.read_active_tree_artifact_ref",
+            return_value=artifact,
+        ) as read,
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    assert resp.json()["lgbm_cluster"] == {
+        "model_id": "lgbm_cluster",
+        "type": "tree",
+        "trained": True,
+        "ready": True,
+        "trained_at": "2026-07-12T08:00:00+00:00",
+        "training_mode": "production",
+        "n_dfus": 12_476,
+        "planning_date": "2026-06-01",
+        "artifact_id": "b" * 32,
+    }
+    build_config.assert_called_once()
+    read.assert_called_once_with(
+        model_id="lgbm_cluster",
+        base_dir=tmp_path,
+        expected_spec=ANY,
+    )
+    expected_spec = read.call_args.kwargs["expected_spec"]
+    assert expected_spec.model_config == expected_config
+    assert expected_spec.cluster_strategy == "per_cluster"
+    assert expected_spec.cluster_labels == ("intermittent", "steady")
+    assert expected_spec.lineage.source_sales_batch_id == 91
+    assert expected_spec.lineage.data_checksum == "c" * 64
+    assert expected_spec.lineage.history_end == date(2026, 6, 1)
+    assert expected_spec.lineage.cluster_experiment_id == 44
+    assert expected_spec.lineage.cluster_assignment_count == 12_476
+    assert expected_spec.lineage.cluster_assignment_checksum == "d" * 64
+    load_sales.assert_called_once_with(conn)
+    load_clusters.assert_called_once_with(conn)
+
+
+@pytest.mark.asyncio
+async def test_training_status_rejects_invalid_lightgbm_bundle_even_with_loose_pickle(
+    tmp_path,
+):
+    pool, _conn, _cursor = _make_pool()
+    legacy_dir = tmp_path / "lgbm_cluster"
+    legacy_dir.mkdir()
+    (legacy_dir / "cluster_0.pkl").write_bytes(b"legacy")
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "lgbm_cluster": {
+                    "type": "tree",
+                    "forecast": True,
+                    "params": {"n_estimators": 2000},
+                }
+            },
+        ),
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=SimpleNamespace(batch_id=91, source_hash="c" * 64),
+        ),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.build_tree_model_config_payload",
+            return_value={"algorithm": "lgbm"},
+        ),
+        patch(
+            f"{_ROUTER_MOD}.read_active_tree_artifact_ref",
+            side_effect=RuntimeError("checksum mismatch"),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    assert resp.json()["lgbm_cluster"] == {
+        "model_id": "lgbm_cluster",
+        "type": "tree",
+        "trained": False,
+        "ready": False,
+        "trained_at": None,
+        "training_mode": None,
+        "n_dfus": None,
+        "planning_date": None,
+        "stale_reason": "The active lgbm_cluster production artifact is invalid. Run Forecast Publish to rebuild current production artifacts.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_training_status_marks_stale_neural_artifact_with_retrain_reason(tmp_path):
+    from common.ml.neural_artifacts import NeuralArtifactLineageMismatchError
+
+    pool, _conn, _cursor = _make_pool()
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "nbeats": {
+                    "type": "deep_learning",
+                    "forecast": True,
+                    "params": {"h": 6, "min_history": 12},
+                }
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=SimpleNamespace(batch_id=92, source_hash="e" * 64),
+        ),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.read_active_neural_artifact_ref",
+            side_effect=NeuralArtifactLineageMismatchError(
+                "active artifact does not match current lineage"
+            ),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    status = resp.json()["nbeats"]
+    assert status["trained"] is False
+    assert status["ready"] is False
+    assert "retrain nbeats" in status["stale_reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_training_status_marks_stale_lightgbm_bundle_with_retrain_reason(tmp_path):
+    from common.ml.tree_artifacts import TreeArtifactLineageMismatchError
+
+    pool, _conn, _cursor = _make_pool()
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "lgbm_cluster": {
+                    "type": "tree",
+                    "forecast": True,
+                    "params": {"n_estimators": 2000},
+                }
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=SimpleNamespace(batch_id=92, source_hash="e" * 64),
+        ),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.build_tree_model_config_payload",
+            return_value={"algorithm": "lgbm"},
+        ),
+        patch(
+            f"{_ROUTER_MOD}.read_active_tree_artifact_ref",
+            side_effect=TreeArtifactLineageMismatchError(
+                "active artifact does not match current lineage"
+            ),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    status = resp.json()["lgbm_cluster"]
+    assert status["trained"] is False
+    assert status["ready"] is False
+    assert "retrain lgbm_cluster" in status["stale_reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_training_status_preflights_direct_models_against_current_lineage(tmp_path):
+    lineage = SimpleNamespace(
+        history_end=date(2026, 6, 1),
+        sales=SimpleNamespace(batch_id=92, source_hash="e" * 64),
+    )
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "mstl": {"type": "statistical", "forecast": True},
+                "chronos2_enriched": {"type": "foundation", "forecast": True},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": True},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(f"{_ROUTER_MOD}._load_current_training_lineage", return_value=lineage),
+        patch(
+            f"{_ROUTER_MOD}.build_backtest_config_snapshot",
+            side_effect=lambda _config, model_id: SimpleNamespace(
+                checksum=f"{1 if model_id == 'mstl' else 2}" * 64
+            ),
+        ),
+        patch(
+            f"{_ROUTER_MOD}.direct_model_runtime_contract",
+            side_effect=lambda model_id: {"adapter": f"{model_id}-runtime"},
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    assert resp.json()["mstl"] == {
+        "model_id": "mstl",
+        "type": "statistical",
+        "trained": False,
+        "ready": True,
+        "trained_at": None,
+        "training_mode": "direct_inference",
+        "n_dfus": None,
+        "planning_date": "2026-06-01",
+        "source_sales_batch_id": 92,
+        "config_checksum": "1" * 64,
+        "runtime_contract": {"adapter": "mstl-runtime"},
+    }
+    assert resp.json()["chronos2_enriched"] == {
+        "model_id": "chronos2_enriched",
+        "type": "foundation",
+        "trained": False,
+        "ready": True,
+        "trained_at": None,
+        "training_mode": "direct_inference",
+        "n_dfus": None,
+        "planning_date": "2026-06-01",
+        "source_sales_batch_id": 92,
+        "config_checksum": "2" * 64,
+        "runtime_contract": {"adapter": "chronos2_enriched-runtime"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_training_status_fails_closed_when_direct_runtime_is_missing(tmp_path):
+    lineage = SimpleNamespace(
+        history_end=date(2026, 6, 1),
+        sales=SimpleNamespace(batch_id=92, source_hash="e" * 64),
+    )
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={"mstl": {"type": "statistical", "forecast": True}},
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": True},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(f"{_ROUTER_MOD}._load_current_training_lineage", return_value=lineage),
+        patch(
+            f"{_ROUTER_MOD}.build_backtest_config_snapshot",
+            return_value=SimpleNamespace(checksum="1" * 64),
+        ),
+        patch(
+            f"{_ROUTER_MOD}.direct_model_runtime_contract",
+            side_effect=RuntimeError("statsforecast missing"),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    status = resp.json()["mstl"]
+    assert status["ready"] is False
+    assert "forecast publish" in status["stale_reason"].lower()
+    assert "statsforecast missing" not in status["stale_reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_training_status_marks_missing_artifact_actionable(tmp_path):
+    pool, _conn, _cursor = _make_pool()
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "nhits": {
+                    "type": "deep_learning",
+                    "forecast": True,
+                    "params": {"h": 6, "min_history": 12},
+                }
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=SimpleNamespace(batch_id=92, source_hash="e" * 64),
+        ),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.read_active_neural_artifact_ref",
+            side_effect=FileNotFoundError,
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    status = resp.json()["nhits"]
+    assert status["trained"] is False
+    assert status["ready"] is False
+    assert "run forecast publish" in status["stale_reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_neural_readiness_does_not_depend_on_promoted_clustering(tmp_path):
+    pool, _conn, _cursor = _make_pool()
+    artifact = SimpleNamespace(
+        artifact_id="a" * 64,
+        metadata={
+            "trained_at": "2026-07-12T08:00:00+00:00",
+            "training_dfu_count": 12_476,
+            "history_end": "2026-06-01",
+        },
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "nhits": {
+                    "type": "deep_learning",
+                    "forecast": True,
+                    "params": {"h": 6, "min_history": 12},
+                }
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": True},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=SimpleNamespace(batch_id=92, source_hash="e" * 64),
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_promoted_cluster_population",
+            side_effect=RuntimeError("cluster assignments unavailable"),
+        ),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(f"{_ROUTER_MOD}.read_active_neural_artifact_ref", return_value=artifact),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    assert resp.json()["nhits"]["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_snapshot_roster_readiness_validates_exact_champion_and_top_three():
+    run_ids = [
+        UUID("00000000-0000-0000-0000-000000000001"),
+        UUID("00000000-0000-0000-0000-000000000002"),
+        UUID("00000000-0000-0000-0000-000000000003"),
+    ]
+    pool, _conn, cursor = _make_pool(
+        fetchall_return=[
+            ("champion", "champion", None, None, None),
+            ("lgbm_cluster", "contender", 1, 101, run_ids[0]),
+            ("nhits", "contender", 2, 102, run_ids[1]),
+            ("mstl", "contender", 3, 104, run_ids[2]),
+        ]
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.validate_ready_snapshot_contender",
+            return_value=SimpleNamespace(row_count=100),
+        ) as validate,
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/snapshot-roster-readiness")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "planning_month": "2026-07-01",
+        "ready": True,
+        "champion_ready": True,
+        "roster_model_count": 4,
+        "ready_contender_count": 3,
+        "required_contender_count": 3,
+        "contenders": [
+            {"model_id": "lgbm_cluster", "rank": 1, "ready": True, "stale_reason": None},
+            {"model_id": "nhits", "rank": 2, "ready": True, "stale_reason": None},
+            {"model_id": "mstl", "rank": 3, "ready": True, "stale_reason": None},
+        ],
+        "stale_reason": None,
+        "action_pipeline": None,
+    }
+    cursor.execute.assert_called()
+    assert validate.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_snapshot_roster_readiness_returns_recovery_action_when_incomplete():
+    pool, _conn, _cursor = _make_pool(
+        fetchall_return=[("champion", "champion", None, None, None)]
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(f"{_ROUTER_MOD}.validate_ready_snapshot_contender") as validate,
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/snapshot-roster-readiness")
+
+    assert resp.status_code == 200
+    status = resp.json()
+    assert status["ready"] is False
+    assert status["champion_ready"] is True
+    assert status["ready_contender_count"] == 0
+    assert status["action_pipeline"] == "forecast-publish"
+    assert "forecast publish" in status["stale_reason"].lower()
+    validate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_readiness_routes_missing_governed_champion_to_model_refresh():
+    pool, _conn, _cursor = _make_pool(
+        fetchall_return=[("champion", "champion", None, None, None)]
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.validate_active_champion_readiness",
+            side_effect=RuntimeError("routing artifact missing"),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/snapshot-roster-readiness")
+
+    assert resp.status_code == 200
+    status = resp.json()
+    assert status["ready"] is False
+    assert status["champion_ready"] is False
+    assert status["action_pipeline"] == "model-refresh"
+    assert "named model refresh" in status["stale_reason"].lower()
+    assert "routing artifact missing" not in status["stale_reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_roster_readiness_reports_stale_contender_without_500():
+    from common.services.forecast_snapshot_validation import SnapshotContenderStaleError
+
+    run_ids = [
+        UUID("00000000-0000-0000-0000-000000000011"),
+        UUID("00000000-0000-0000-0000-000000000012"),
+        UUID("00000000-0000-0000-0000-000000000013"),
+    ]
+    pool, _conn, _cursor = _make_pool(
+        fetchall_return=[
+            ("champion", "champion", None, None, None),
+            ("lgbm_cluster", "contender", 1, 101, run_ids[0]),
+            ("nhits", "contender", 2, 102, run_ids[1]),
+            ("mstl", "contender", 3, 104, run_ids[2]),
+        ]
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+        patch(
+            f"{_ROUTER_MOD}.validate_ready_snapshot_contender",
+            side_effect=[
+                SimpleNamespace(row_count=100),
+                SnapshotContenderStaleError("N-HiTS artifact is stale"),
+                SimpleNamespace(row_count=100),
+            ],
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/snapshot-roster-readiness")
+
+    assert resp.status_code == 200
+    status = resp.json()
+    assert status["ready"] is False
+    assert status["ready_contender_count"] == 2
+    assert status["contenders"][1]["stale_reason"] == "N-HiTS artifact is stale"
+
+
+def test_training_status_lineage_loads_sales_and_clusters_from_one_connection():
+    from api.routers.forecasting.backtest_management import _load_current_training_lineage
+
+    pool, conn, cursor = _make_pool()
+    sales_lineage = SimpleNamespace(batch_id=91, source_hash="c" * 64)
+    cluster_population = SimpleNamespace(
+        experiment_id=44,
+        assignment_count=12_476,
+        assignment_checksum="d" * 64,
+        cluster_labels=frozenset({"steady", "intermittent"}),
+    )
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            f"{_ROUTER_MOD}.load_completed_sales_lineage",
+            return_value=sales_lineage,
+        ) as load_sales,
+        patch(
+            f"{_ROUTER_MOD}.load_promoted_cluster_population",
+            return_value=cluster_population,
+        ) as load_clusters,
+        patch(
+            f"{_ROUTER_MOD}.load_neural_training_cohort_identity",
+            return_value=SimpleNamespace(checksum="f" * 64, dfu_count=12_476),
+        ) as load_neural_cohort,
+        patch(f"{_ROUTER_MOD}.get_planning_date", return_value=date(2026, 7, 12)),
+    ):
+        lineage = _load_current_training_lineage(
+            {"clustering": {"enabled": True}},
+            neural_min_history_values=(12, 12),
+        )
+
+    assert lineage.sales is sales_lineage
+    assert lineage.history_end == date(2026, 6, 1)
+    assert lineage.clusters is cluster_population
+    pool.connection.assert_called_once_with()
+    cursor.execute.assert_called_once_with(
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+    )
+    load_sales.assert_called_once_with(conn)
+    load_clusters.assert_called_once_with(conn)
+    load_neural_cohort.assert_called_once_with(
+        conn,
+        sales_table="fact_sales_monthly_original",
+        history_end=date(2026, 6, 1),
+        min_history=12,
+    )
+    assert lineage.neural_cohorts[12].dfu_count == 12_476
+
+
+def test_direct_readiness_rejects_sales_missing_latest_closed_month():
+    from api.routers.forecasting._training_readiness import load_latest_closed_sales_month
+
+    _pool, conn, cursor = _make_pool(fetchone_return=(date(2026, 5, 1),))
+
+    with pytest.raises(RuntimeError, match="missing the latest closed month"):
+        load_latest_closed_sales_month(
+            conn,
+            sales_table="fact_sales_monthly_original",
+            expected_history_end=date(2026, 6, 1),
+        )
+
+    assert cursor.execute.call_args.args[1] == (date(2026, 6, 1),)
+
+
+@pytest.mark.asyncio
+async def test_training_status_returns_opaque_500_when_configuration_cannot_load():
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={"nhits": {"type": "deep_learning", "forecast": True}},
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            side_effect=ValueError("sensitive configuration detail"),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "production training readiness check failed"}
+
+
+@pytest.mark.asyncio
+async def test_training_status_fails_closed_when_current_lineage_is_not_ready(tmp_path):
+    with (
+        patch(
+            f"{_ROUTER_MOD}.get_algorithm_roster",
+            return_value={
+                "nhits": {
+                    "type": "deep_learning",
+                    "forecast": True,
+                    "params": {"h": 6, "min_history": 12},
+                }
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}.load_forecast_pipeline_config",
+            return_value={
+                "clustering": {"enabled": False},
+                "production_forecast": {"model_registry": {"base_path": str(tmp_path)}},
+            },
+        ),
+        patch(
+            f"{_ROUTER_MOD}._load_current_training_lineage",
+            side_effect=RuntimeError("no canonical sales load"),
+        ),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/training-status")
+
+    assert resp.status_code == 200
+    status = resp.json()["nhits"]
+    assert status["trained"] is False
+    assert "canonical sales load" in status["stale_reason"].lower()
+    assert "no canonical sales load" not in status["stale_reason"].lower()
+
+
 # ---------------------------------------------------------------------------
 # 2. GET /backtest-management/{model_id}/runs
 # ---------------------------------------------------------------------------
@@ -131,7 +1014,7 @@ async def test_get_summary_returns_all_models():
 
 @pytest.mark.asyncio
 async def test_get_model_runs_returns_list():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         _run_row(run_id=10, model_id="lgbm_cluster", status="completed"),
         _run_row(run_id=9, model_id="lgbm_cluster", status="running", accuracy_pct=None),
@@ -154,7 +1037,7 @@ async def test_get_model_runs_returns_list():
 
 @pytest.mark.asyncio
 async def test_get_model_runs_empty():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = []
 
     with patch("api.core._get_pool", return_value=pool):
@@ -216,7 +1099,7 @@ async def test_get_current_metadata_not_found():
 
 @pytest.mark.asyncio
 async def test_submit_run_success():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     # fetchone order: (1) duplicate-check -> None (no dup), (2) INSERT RETURNING id -> 42
     cursor.fetchone.side_effect = [None, (42,)]
 
@@ -253,7 +1136,7 @@ async def test_submit_run_already_running_is_informational():
     The endpoint returns 200 with status="already_running" and the existing job,
     and does NOT submit a duplicate job — concurrency never blocks the user.
     """
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [("job-bt-existing",)]  # in-flight check finds a run
 
     mock_jm = MagicMock()
@@ -283,7 +1166,7 @@ async def test_submit_run_releases_row_when_submit_fails():
     """If submit_job fails, the queued tracking row is marked failed so the model
     is not permanently locked out of future runs (the in-flight check keys on
     status IN ('queued','running'))."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [None, (44,)]  # in-flight None, INSERT RETURNING 44
 
     mock_jm = MagicMock()
@@ -309,7 +1192,7 @@ async def test_submit_run_releases_row_when_submit_fails():
 @pytest.mark.asyncio
 async def test_submit_run_parallel_uses_per_family_group():
     """parallel=true -> submit_job gets the per-job-type group so families run concurrently."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [None, (43,)]
 
     mock_jm = MagicMock()
@@ -332,7 +1215,7 @@ async def test_submit_run_parallel_uses_per_family_group():
 
 @pytest.mark.asyncio
 async def test_submit_run_invalid_model():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, _cursor = _make_pool()
 
     with (
         patch("api.core._get_pool", return_value=pool),
@@ -355,7 +1238,7 @@ async def test_submit_run_invalid_model():
 
 @pytest.mark.asyncio
 async def test_submit_load_success():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, _cursor = _make_pool()
 
     mock_jm = MagicMock()
     mock_jm.return_value.submit_job.return_value = "job-load-555"
@@ -386,7 +1269,7 @@ async def test_submit_load_success():
 
 @pytest.mark.asyncio
 async def test_submit_load_no_predictions():
-    pool, conn, cursor = _make_pool()
+    pool, _conn, _cursor = _make_pool()
 
     mock_pred_path = MagicMock()
     mock_pred_path.exists.return_value = False
@@ -409,6 +1292,69 @@ async def test_submit_load_no_predictions():
 
 
 # ---------------------------------------------------------------------------
+# 6. POST /backtest-management/{model_id}/train
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_id", ["lgbm_cluster", "nhits", "nbeats"])
+async def test_submit_training_accepts_every_persisted_model(model_id: str):
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-train-1"
+
+    with (
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(f"/backtest-management/{model_id}/train")
+
+    assert resp.status_code == 201
+    _, kwargs = mock_jm.return_value.submit_job.call_args
+    assert kwargs["params"] == {"model_id": model_id, "all_models": False}
+
+
+@pytest.mark.asyncio
+async def test_submit_training_all_uses_one_bulk_job():
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-train-all"
+
+    with patch("common.services.job_registry.JobManager", mock_jm):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/all/train")
+
+    assert resp.status_code == 201
+    _, kwargs = mock_jm.return_value.submit_job.call_args
+    assert kwargs["params"] == {"model_id": "", "all_models": True}
+    assert kwargs["label"] == "Train Production: Required Models"
+
+
+@pytest.mark.asyncio
+async def test_submit_training_rejects_direct_inference_model():
+    mock_jm = MagicMock()
+
+    with (
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/mstl/train")
+
+    assert resp.status_code == 400
+    assert "LightGBM, N-HiTS, and N-BEATS" in resp.json()["detail"]
+    mock_jm.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # 7. POST /backtest-management/{model_id}/generate — horizon + CI threading
 # ---------------------------------------------------------------------------
 
@@ -420,7 +1366,7 @@ async def test_generate_threads_horizon_and_confidence_intervals():
     Regression: these were previously dropped for single-model generation, so
     the Forecast panel's horizon input and CI toggle silently had no effect.
     """
-    pool, conn, cursor = _make_pool()
+    pool, _conn, _cursor = _make_pool()
     mock_jm = MagicMock()
     mock_jm.return_value.submit_job.return_value = "job-gen-1"
     source_run_id = "00000000-0000-0000-0000-000000000091"
@@ -452,8 +1398,8 @@ async def test_generate_threads_horizon_and_confidence_intervals():
 
 @pytest.mark.asyncio
 async def test_generate_omits_unset_params_for_config_default():
-    """Without query params, only model_id is passed (script/config defaults apply)."""
-    pool, conn, cursor = _make_pool()
+    """Without query params, only the retained model and run metadata are passed."""
+    pool, _conn, _cursor = _make_pool()
     mock_jm = MagicMock()
     mock_jm.return_value.submit_job.return_value = "job-gen-2"
     source_run_id = "00000000-0000-0000-0000-000000000092"
@@ -467,21 +1413,39 @@ async def test_generate_omits_unset_params_for_config_default():
 
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            resp = await ac.post("/backtest-management/catboost_cluster/generate")
+            resp = await ac.post("/backtest-management/mstl/generate")
 
     assert resp.status_code == 201
     _, kwargs = mock_jm.return_value.submit_job.call_args
     assert kwargs["params"] == {
-        "model_id": "catboost_cluster",
+        "model_id": "mstl",
         "run_id": source_run_id,
         "generation_purpose": "release_candidate",
     }
 
 
 @pytest.mark.asyncio
+async def test_generate_rejects_retired_model_before_job_submission():
+    pool, _, _ = _make_pool()
+    mock_jm = MagicMock()
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/catboost_cluster/generate")
+
+    assert resp.status_code == 404
+    mock_jm.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_generate_threads_confidence_intervals_false():
     """confidence_intervals=false threads an explicit False (force CI off)."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, _cursor = _make_pool()
     mock_jm = MagicMock()
     mock_jm.return_value.submit_job.return_value = "job-gen-3"
     source_run_id = "00000000-0000-0000-0000-000000000093"

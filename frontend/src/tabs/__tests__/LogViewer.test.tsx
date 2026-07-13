@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import { TestQueryWrapper } from "./test-utils";
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -34,8 +32,6 @@ const mockLogResponseCompleted = {
 // Mocks
 // ---------------------------------------------------------------------------
 const mockFetchExperimentLogs = vi.fn().mockResolvedValue(mockLogResponse);
-const mockScrollIntoView = vi.fn();
-
 // Mock clipboard API
 const mockWriteText = vi.fn().mockResolvedValue(undefined);
 Object.defineProperty(navigator, "clipboard", {
@@ -73,7 +69,6 @@ vi.mock("@/api/queries", () => ({
   fetchModelPromotedRun: vi.fn().mockResolvedValue({ promoted: null }),
   fetchModelExperiments: vi.fn().mockResolvedValue({ runs: [], total_count: 0 }),
   fetchModelExperimentLags: vi.fn().mockResolvedValue({ lags: [] }),
-  fetchModelComparison: vi.fn().mockResolvedValue({}),
   fetchModelTemplates: vi.fn().mockResolvedValue({ templates: [] }),
   submitModelExperiment: vi.fn().mockResolvedValue({ run_id: 1, job_id: "abc" }),
   promoteModelExperiment: vi.fn().mockResolvedValue({ success: true }),
@@ -181,7 +176,6 @@ describe("LogViewer", () => {
 
   it("polls for new logs", async () => {
     // Log viewer should poll at intervals for new log content
-    const pollInterval = 2000; // 2 seconds
     let pollCount = 0;
     const pollFn = () => {
       pollCount++;

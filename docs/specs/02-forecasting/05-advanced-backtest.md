@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy (SHAP panel) |
-| **Key Files** | `scripts/tune_hyperparams.py`, `common/ml/tuning.py`, `common/ml/shap_selector.py`, `common/ml/feature_engineering.py`, `api/routers/forecasting/shap.py`, `config/forecasting/hyperparameter_tuning.yaml` |
+| **Key Files** | `scripts/ml/tune_hyperparams.py`, `common/ml/tuning.py`, `common/ml/shap_selector.py`, `common/ml/feature_engineering.py`, `api/routers/forecasting/shap.py`, `config/forecasting/hyperparameter_tuning.yaml` |
 
 ---
 
@@ -85,9 +85,26 @@ See [spec 28 — Feature Selection Pipeline](28-feature-selection-pipeline.md) f
 | GET | `/forecast/shap/{model_id}/summary` | Cross-timeframe feature importance |
 | GET | `/forecast/shap/{model_id}/timeframes` | Available timeframes with labels |
 | GET | `/forecast/shap/{model_id}/timeframe/{idx}` | Per-timeframe feature detail |
-| GET | `/forecast/shap/{model_id}/sku` | Per-DFU signed SHAP values for Item Analysis tab |
+| GET | `/forecast/shap/{model_id}/dfu` | Per-DFU signed SHAP values for Item Analysis tab |
 
 The SHAP panel in the Accuracy tab shows a horizontal bar chart with indigo bars for selected features and gray bars for dropped features.
+
+The per-DFU endpoint explains only `lgbm_cluster` and uses the same immutable
+active production artifact-set loader as forecast generation. It validates the
+current sales batch/hash, latest-closed history month, promoted cluster
+assignment checksum, complete cluster roster, model configuration, and file
+checksums before deserializing a model. Categorical values use the encoders
+persisted with that fitted cluster model; the API never rebuilds codes from the
+live dimension universe. The history query uses the canonical forecast sales
+source at `(item_id, customer_group, loc)` grain and the artifact's fitted
+lookback window. `customer_group` is optional only when item/location resolves
+to exactly one group; ambiguous requests return `422` instead of selecting the
+first row. A missing active set returns `404`; stale or invalid lineage returns
+`409`. Recovery is `make train-production MODEL=lgbm_cluster`, not forecast
+generation or manual artifact-file replacement. Future points may use the
+published item/location plan as recursive lag evidence only when that
+item/location contains one customer group; for a multi-group item/location the
+aggregate plan is omitted rather than misattributed to one constituent DFU.
 
 ### Algorithm-Specific SHAP
 

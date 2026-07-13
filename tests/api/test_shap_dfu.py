@@ -1,322 +1,468 @@
-"""API tests for GET /forecast/shap/{model_id}/dfu endpoint."""
+"""API tests for the production-bound per-DFU LightGBM SHAP endpoint."""
+
+from __future__ import annotations
 
 import datetime
-import numpy as np
-import pytest
-from pathlib import Path
+from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
+import numpy as np
+import pandas as pd
+import pytest
 from httpx import ASGITransport
 
-from tests.api.conftest import make_pool as _make_pool
+from tests.api.conftest import make_pool
 
-# ---------------------------------------------------------------------------
-# Shared fixtures/helpers
-# ---------------------------------------------------------------------------
+_HISTORY_END = datetime.date(2024, 5, 1)
+_HISTORY_START = datetime.date(2023, 1, 1)
+_FEATURE_COLS = [
+    "qty_lag_1",
+    "qty_lag_2",
+    "rolling_mean_3m",
+    "rolling_std_3m",
+    "month",
+    "quarter",
+]
+_ARTIFACT = {
+    "model": MagicMock(),
+    "feature_cols": _FEATURE_COLS,
+    "categorical_encoders": {},
+}
 
-_FEATURE_COLS = ["qty_lag_1", "qty_lag_2", "rolling_mean_3m", "rolling_std_3m", "month", "quarter"]
-_ARTIFACT = {"model": MagicMock(), "feature_cols": _FEATURE_COLS}
+# sku_ck, ml_cluster, execution_lag, total_lt, brand, region, abc_vol,
+# customer_group, bpc, item_proof, case_weight, item_location_dfu_count
+_DFU_ROW = (
+    "sku-1",
+    "0",
+    0,
+    14,
+    "brand_a",
+    "NE",
+    "A",
+    "grp1",
+    12.0,
+    40.0,
+    15.0,
+    1,
+)
 
-# 5 history rows × 6 features (after excluding ml_cluster)
-_MOCK_SHAP = np.array([
-    [10.0, -5.0, 3.0, 1.0, -0.5, 0.2],
-    [8.0, -4.0, 2.5, 0.8, -0.4, 0.1],
-    [9.0, -4.5, 2.8, 0.9, -0.45, 0.15],
-    [11.0, -5.5, 3.2, 1.1, -0.55, 0.25],
-    [10.5, -5.2, 3.1, 1.05, -0.52, 0.22],
-])
-_MOCK_BASE = np.full(5, 120.0)  # base value per row
-
-# DFU row: (ml_cluster, execution_lag, total_lt, brand, region, abc_vol, customer_group, bpc, item_proof, case_weight)
-_DFU_ROW = ("0", 0, 14, "brand_a", "NE", "A", "grp1", 12.0, 40.0, 15.0)
-
-# 17 consecutive months in DESC order (simulates SQL ORDER BY startdate DESC)
-# After list(reversed(...)) in the endpoint: Jan 2023 → May 2024 (ascending)
-# Calendar fill: 17 contiguous months; range(12, 17) → 5 historical SHAP points
-_SALES_ROWS = [
-    (datetime.date(2024, 5, 1), 117.0),
-    (datetime.date(2024, 4, 1), 116.0),
-    (datetime.date(2024, 3, 1), 115.0),
-    (datetime.date(2024, 2, 1), 114.0),
-    (datetime.date(2024, 1, 1), 113.0),
-    (datetime.date(2023, 12, 1), 112.0),
-    (datetime.date(2023, 11, 1), 111.0),
-    (datetime.date(2023, 10, 1), 110.0),
-    (datetime.date(2023, 9, 1), 109.0),
-    (datetime.date(2023, 8, 1), 108.0),
-    (datetime.date(2023, 7, 1), 107.0),
-    (datetime.date(2023, 6, 1), 106.0),
-    (datetime.date(2023, 5, 1), 105.0),
-    (datetime.date(2023, 4, 1), 104.0),
-    (datetime.date(2023, 3, 1), 103.0),
-    (datetime.date(2023, 2, 1), 102.0),
-    (datetime.date(2023, 1, 1), 101.0),
+_SALES_ROWS = [(datetime.date(2023, month, 1), float(100 + month)) for month in range(1, 13)] + [
+    (datetime.date(2024, month, 1), float(112 + month)) for month in range(1, 6)
 ]
 
-# Distinct dim_sku rows for cat encoding
-_DISTINCT_ROWS = [("0", "NE", "brand_a", "A")]
+_MOCK_SHAP = np.asarray(
+    [
+        [10.0, -5.0, 3.0, 1.0, -0.5, 0.2],
+        [8.0, -4.0, 2.5, 0.8, -0.4, 0.1],
+        [9.0, -4.5, 2.8, 0.9, -0.45, 0.15],
+        [11.0, -5.5, 3.2, 1.1, -0.55, 0.25],
+        [10.5, -5.2, 3.1, 1.05, -0.52, 0.22],
+    ]
+)
 
-# No future forecast rows
-_FUTURE_ROWS: list = []
 
-
-def _make_app_client(pool, tmp_path, model_id="lgbm_cluster", shap_override=None):
-    """Helper: returns httpx client with mocked DB and model dir."""
-    # Create model dir + fake pkl file so Path checks pass
-    model_dir = tmp_path / model_id
-    model_dir.mkdir(exist_ok=True)
-    cluster_label = _DFU_ROW[0]  # "0"
-    pkl_path = model_dir / f"cluster_{cluster_label}.pkl"
-    pkl_path.write_bytes(b"placeholder")
-
-    shap_vals = shap_override if shap_override is not None else _MOCK_SHAP[:5]
-    base_vals = np.full(len(shap_vals), 120.0)
-
-    return (
-        patch("api.core._get_pool", return_value=pool),
-        patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path),
-        patch("pickle.load", return_value=_ARTIFACT),
-        patch("api.routers.forecasting.shap._compute_shap_full", return_value=(shap_vals, base_vals)),
+def _loaded_set(
+    artifact: dict | None = None,
+    *,
+    cluster_label: str = "0",
+    cluster_strategy: str = "per_cluster",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        artifacts={cluster_label: artifact or _ARTIFACT},
+        ref=SimpleNamespace(
+            artifact_set_id="artifact-set-1",
+            metadata={
+                "cluster_strategy": cluster_strategy,
+                "model_config": {"feature_history": {"lookback_months": 17}},
+            },
+        ),
     )
 
 
-# ---------------------------------------------------------------------------
-# Test: 200 — happy path for lgbm model
-# ---------------------------------------------------------------------------
+def _client_patches(
+    pool,
+    *,
+    loaded_set: SimpleNamespace | None = None,
+    sales_rows: list[tuple[datetime.date, float]] | None = None,
+    future_rows: list[tuple[datetime.date, float, str]] | None = None,
+    shap_values: np.ndarray | None = None,
+):
+    history = sales_rows if sales_rows is not None else _SALES_ROWS
+    future = future_rows if future_rows is not None else []
+    values = shap_values if shap_values is not None else _MOCK_SHAP
+    return (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.shap._load_active_lgbm_artifact_set",
+            return_value=loaded_set or _loaded_set(),
+        ),
+        patch(
+            "api.routers.forecasting.shap._load_shap_sales_history",
+            return_value=(history, _HISTORY_START, _HISTORY_END),
+        ),
+        patch(
+            "api.routers.forecasting.shap._load_future_forecast_rows",
+            return_value=future,
+        ),
+        patch(
+            "api.routers.forecasting.shap._compute_shap_full",
+            return_value=(values, np.full(len(values), 120.0)),
+        ),
+    )
+
+
+async def _get(params: dict[str, object]) -> httpx.Response:
+    from api.main import app
+
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get("/forecast/shap/lgbm_cluster/dfu", params=params)
+
 
 @pytest.mark.asyncio
-async def test_dfu_shap_200_lgbm(tmp_path):
-    """Valid DFU + model → 200 with correct response structure."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = _DFU_ROW
-    cursor.fetchall.side_effect = [_SALES_ROWS, _DISTINCT_ROWS, _FUTURE_ROWS]
+async def test_dfu_shap_uses_active_production_artifact() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
 
-    patches = _make_app_client(pool, tmp_path)
-    with patches[0], patches[1], patches[2], patches[3]:
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "100320", "loc": "1401-BULK", "top_n": 6},
-            )
+    with ExitStack() as stack:
+        for context in _client_patches(pool):
+            stack.enter_context(context)
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+                "top_n": 6,
+            }
+        )
 
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["item_id"] == "100320"
-    assert data["loc"] == "1401-BULK"
-    assert data["model_id"] == "lgbm_cluster"
-    assert data["cluster_id"] == "0"
-    assert data["top_n"] <= 6
-    assert "computed_at" in data
-    assert "future_lag_model_id" in data  # may be None when no future rows
-    assert isinstance(data["points"], list)
-    assert len(data["points"]) > 0
-    # Each point has correct structure
-    pt = data["points"][0]
-    assert "month" in pt
-    assert "is_future" in pt
-    assert "base_value" in pt
-    assert "other_shap" in pt
-    assert "features" in pt
-    assert isinstance(pt["features"], list)
-    for f in pt["features"]:
-        assert "name" in f
-        assert "value" in f
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["item_id"] == "100320"
+    assert payload["customer_group"] == "grp1"
+    assert payload["loc"] == "1401-BULK"
+    assert payload["model_id"] == "lgbm_cluster"
+    assert payload["cluster_id"] == "0"
+    assert payload["artifact_set_id"] == "artifact-set-1"
+    assert payload["history_end"] == "2024-05-01"
+    assert payload["top_n"] == 6
+    assert len(payload["points"]) == 5
 
-
-# ---------------------------------------------------------------------------
-# Test: 404 — model directory not found
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dfu_shap_404_no_model_dir(tmp_path):
-    """Model directory does not exist → 404."""
-    pool, conn, cursor = _make_pool()
+async def test_dfu_shap_rejects_ambiguous_customer_group() -> None:
+    pool, _conn, cursor = make_pool()
+    first_group = (*_DFU_ROW[:-1], 2)
+    second_group = (*_DFU_ROW[:7], "grp2", *_DFU_ROW[8:-1], 2)
+    cursor.fetchall.return_value = [first_group, second_group]
 
-    # Do NOT create the model dir → exists() returns False
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "100320", "loc": "1401-BULK"},
-            )
+    with patch("api.core._get_pool", return_value=pool):
+        response = await _get({"item_id": "100320", "loc": "1401-BULK"})
 
-    assert resp.status_code == 404
-    assert "model artifacts" in resp.json()["detail"].lower()
+    assert response.status_code == 422
+    assert "customer_group" in response.json()["detail"]
 
-
-# ---------------------------------------------------------------------------
-# Test: 404 — DFU not found in dim_sku
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dfu_shap_404_dfu_not_found(tmp_path):
-    """DFU not in dim_sku → 404."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = None  # DFU not found
+async def test_dfu_shap_filters_exact_customer_group() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
 
-    # Create model dir so directory check passes
-    model_dir = tmp_path / "lgbm_cluster"
-    model_dir.mkdir()
-    (model_dir / "cluster_0.pkl").write_bytes(b"placeholder")
+    with ExitStack() as stack:
+        for context in _client_patches(pool):
+            stack.enter_context(context)
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "UNKNOWN", "loc": "NOWHERE"},
-            )
+    assert response.status_code == 200, response.text
+    _query, params = cursor.execute.call_args_list[0].args
+    assert "customer_group" in str(_query)
+    assert params == ("100320", "1401-BULK", "grp1", "grp1")
 
-    assert resp.status_code == 404
-    assert "not found" in resp.json()["detail"].lower()
-
-
-# ---------------------------------------------------------------------------
-# Test: 404 — pkl file missing for cluster
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dfu_shap_404_pkl_missing(tmp_path):
-    """Model dir exists but no pkl for this DFU's cluster → 404."""
-    pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = _DFU_ROW  # cluster "0"
+async def test_dfu_shap_returns_404_when_dfu_is_missing() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = []
 
-    # Create model dir but NO pkl for cluster_0
-    model_dir = tmp_path / "lgbm_cluster"
-    model_dir.mkdir()
-    # Write a pkl for a different cluster to satisfy the glob check
-    (model_dir / "cluster_9.pkl").write_bytes(b"placeholder")
+    with patch("api.core._get_pool", return_value=pool):
+        response = await _get(
+            {
+                "item_id": "UNKNOWN",
+                "loc": "NOWHERE",
+                "customer_group": "grp1",
+            }
+        )
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "100320", "loc": "1401-BULK"},
-            )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
 
-    assert resp.status_code == 404
-    assert "pkl" in resp.json()["detail"].lower() or "artifact" in resp.json()["detail"].lower()
-
-
-# ---------------------------------------------------------------------------
-# Test: top_n clamped to max (30)
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dfu_shap_top_n_clamped(tmp_path):
-    """top_n above 30 is rejected with 422 (FastAPI validation)."""
-    pool, conn, cursor = _make_pool()
+async def test_dfu_shap_reports_missing_active_artifact() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
 
-    # Build model dir
-    model_dir = tmp_path / "lgbm_cluster"
-    model_dir.mkdir()
-    (model_dir / "cluster_0.pkl").write_bytes(b"placeholder")
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.shap._load_active_lgbm_artifact_set",
+            side_effect=FileNotFoundError("active.json"),
+        ),
+    ):
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "100320", "loc": "1401-BULK", "top_n": 999},
-            )
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert "active LightGBM production artifact" in detail
+    assert "train-production MODEL=lgbm_cluster" in detail
 
-    assert resp.status_code == 422  # FastAPI rejects out-of-range Query
-
-
-# ---------------------------------------------------------------------------
-# Test: future months included in response
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dfu_shap_includes_future_months(tmp_path):
-    """Future production forecast months appear in points with is_future=True."""
-    pool, conn, cursor = _make_pool()
-    future_rows = [
-        (datetime.date(2026, 4, 1), 150.0, "lgbm_cluster"),
-        (datetime.date(2026, 5, 1), 155.0, "lgbm_cluster"),
+async def test_dfu_shap_reports_stale_active_artifact() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.shap._load_active_lgbm_artifact_set",
+            side_effect=RuntimeError("lineage mismatch"),
+        ),
+    ):
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "stale or invalid" in detail
+    assert "lineage mismatch" not in detail
+
+
+@pytest.mark.asyncio
+async def test_dfu_shap_uses_persisted_categorical_encoder_codes() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
+    artifact = {
+        "model": MagicMock(),
+        "feature_cols": ["qty_lag_1", "region", "brand", "abc_vol"],
+        # Deliberately not alphabetical: a live-universe rebuild would assign
+        # different values and explain a different decision path.
+        "categorical_encoders": {
+            "region": {"SW": 0, "NE": 1},
+            "brand": {"brand_z": 0, "brand_a": 1},
+            "abc_vol": {"C": 0, "A": 1},
+        },
+    }
+    captured: dict[str, pd.DataFrame] = {}
+
+    def _capture(_model, matrix, _model_id, _feature_cols):
+        captured["matrix"] = matrix.copy()
+        return _MOCK_SHAP[:, :4], np.full(len(_MOCK_SHAP), 120.0)
+
+    with ExitStack() as stack:
+        for context in _client_patches(
+            pool,
+            loaded_set=_loaded_set(artifact),
+            shap_values=_MOCK_SHAP[:, :4],
+        ):
+            stack.enter_context(context)
+        stack.enter_context(
+            patch("api.routers.forecasting.shap._compute_shap_full", side_effect=_capture)
+        )
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
+
+    assert response.status_code == 200, response.text
+    matrix = captured["matrix"]
+    assert matrix[["region", "brand", "abc_vol"]].drop_duplicates().to_dict("records") == [
+        {"region": 1, "brand": 1, "abc_vol": 1}
     ]
-    cursor.fetchone.return_value = _DFU_ROW
-    cursor.fetchall.side_effect = [_SALES_ROWS, _DISTINCT_ROWS, future_rows]
 
-    model_dir = tmp_path / "lgbm_cluster"
-    model_dir.mkdir()
-    (model_dir / "cluster_0.pkl").write_bytes(b"placeholder")
-
-    # Extend mock SHAP to cover future rows (5 hist + 2 future = 7 rows)
-    extended_shap = np.vstack([_MOCK_SHAP[:5], _MOCK_SHAP[:2]])
-    extended_base = np.full(7, 120.0)
-
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path), \
-         patch("pickle.load", return_value=_ARTIFACT), \
-         patch("api.routers.forecasting.shap._compute_shap_full", return_value=(extended_shap, extended_base)):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "100320", "loc": "1401-BULK"},
-            )
-
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    future_pts = [p for p in data["points"] if p["is_future"]]
-    hist_pts = [p for p in data["points"] if not p["is_future"]]
-    assert len(future_pts) == 2
-    assert len(hist_pts) > 0
-    assert data["future_lag_model_id"] == "lgbm_cluster"
-
-
-# ---------------------------------------------------------------------------
-# Test: future_lag_model_id differs from model_id (non-champion model SHAP)
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dfu_shap_future_lag_model_mismatch(tmp_path):
-    """When future forecast rows come from a different champion model, response
-    exposes the mismatch via future_lag_model_id != model_id."""
-    pool, conn, cursor = _make_pool()
-    # Future rows stored for catboost_cluster (the champion), but SHAP is requested
-    # for lgbm_cluster (a non-champion model).
+async def test_dfu_shap_rejects_category_absent_from_persisted_encoder() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
+    artifact = {
+        "model": MagicMock(),
+        "feature_cols": ["qty_lag_1", "brand"],
+        "categorical_encoders": {"brand": {"brand_z": 0}},
+    }
+
+    with ExitStack() as stack:
+        for context in _client_patches(pool, loaded_set=_loaded_set(artifact)):
+            stack.enter_context(context)
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
+
+    assert response.status_code == 409
+    assert "categorical encoder" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_dfu_shap_loads_artifact_history_window_not_display_window() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.shap._load_active_lgbm_artifact_set",
+            return_value=_loaded_set(),
+        ),
+        patch(
+            "api.routers.forecasting.shap._load_shap_sales_history",
+            return_value=(_SALES_ROWS, _HISTORY_START, _HISTORY_END),
+        ) as history_loader,
+        patch(
+            "api.routers.forecasting.shap._load_future_forecast_rows",
+            return_value=[],
+        ),
+        patch(
+            "api.routers.forecasting.shap._compute_shap_full",
+            return_value=(_MOCK_SHAP, np.full(len(_MOCK_SHAP), 120.0)),
+        ),
+    ):
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+                "lookback_months": 12,
+            }
+        )
+
+    assert response.status_code == 200, response.text
+    assert history_loader.call_args.kwargs["lookback_months"] == 17
+
+
+@pytest.mark.asyncio
+async def test_dfu_shap_rejects_dimension_row_without_sales_history() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
+
+    with ExitStack() as stack:
+        for context in _client_patches(pool, sales_rows=[]):
+            stack.enter_context(context)
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
+
+    assert response.status_code == 422
+    assert "no canonical sales history" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_dfu_shap_top_n_validation_runs_before_database_access() -> None:
+    pool, _conn, _cursor = make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+                "top_n": 999,
+            }
+        )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_dfu_shap_includes_future_plan_rows() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [_DFU_ROW]
     future_rows = [
-        (datetime.date(2026, 4, 1), 150.0, "catboost_cluster"),
+        (datetime.date(2024, 6, 1), 150.0, "lgbm_cluster"),
+        (datetime.date(2024, 7, 1), 155.0, "lgbm_cluster"),
     ]
-    cursor.fetchone.return_value = _DFU_ROW
-    cursor.fetchall.side_effect = [_SALES_ROWS, _DISTINCT_ROWS, future_rows]
+    shap_values = np.vstack([_MOCK_SHAP, _MOCK_SHAP[:2]])
 
-    model_dir = tmp_path / "lgbm_cluster"
-    model_dir.mkdir()
-    (model_dir / "cluster_0.pkl").write_bytes(b"placeholder")
+    with ExitStack() as stack:
+        for context in _client_patches(
+            pool,
+            future_rows=future_rows,
+            shap_values=shap_values,
+        ):
+            stack.enter_context(context)
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
 
-    extended_shap = np.vstack([_MOCK_SHAP[:5], _MOCK_SHAP[:1]])
-    extended_base = np.full(6, 120.0)
+    assert response.status_code == 200, response.text
+    future_points = [point for point in response.json()["points"] if point["is_future"]]
+    assert len(future_points) == 2
+    assert response.json()["future_lag_model_id"] == "lgbm_cluster"
 
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path), \
-         patch("pickle.load", return_value=_ARTIFACT), \
-         patch("api.routers.forecasting.shap._compute_shap_full", return_value=(extended_shap, extended_base)):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_id": "100320", "loc": "1401-BULK"},
-            )
 
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["model_id"] == "lgbm_cluster"
-    assert data["future_lag_model_id"] == "catboost_cluster"  # mismatch exposed
+@pytest.mark.asyncio
+async def test_dfu_shap_does_not_use_aggregate_future_for_one_of_many_groups() -> None:
+    pool, _conn, cursor = make_pool()
+    cursor.fetchall.return_value = [(*_DFU_ROW[:-1], 2)]
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.shap._load_active_lgbm_artifact_set",
+            return_value=_loaded_set(),
+        ),
+        patch(
+            "api.routers.forecasting.shap._load_shap_sales_history",
+            return_value=(_SALES_ROWS, _HISTORY_START, _HISTORY_END),
+        ),
+        patch(
+            "api.routers.forecasting.shap._load_future_forecast_rows",
+        ) as future_loader,
+        patch(
+            "api.routers.forecasting.shap._compute_shap_full",
+            return_value=(_MOCK_SHAP, np.full(len(_MOCK_SHAP), 120.0)),
+        ),
+    ):
+        response = await _get(
+            {
+                "item_id": "100320",
+                "loc": "1401-BULK",
+                "customer_group": "grp1",
+            }
+        )
+
+    assert response.status_code == 200, response.text
+    future_loader.assert_not_called()
+    assert response.json()["future_lag_model_id"] is None
+    assert not any(point["is_future"] for point in response.json()["points"])

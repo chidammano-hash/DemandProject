@@ -193,9 +193,9 @@ def cmd_register(args: argparse.Namespace) -> int:
     wape = acc_block.get("wape")
     bias = acc_block.get("bias")
 
-    # Extract params — check lgbm_params, catboost_params, xgboost_params
+    # Extract the retained LightGBM parameter snapshot.
     params = None
-    for key in ("lgbm_params", "catboost_params", "xgboost_params"):
+    for key in ("lgbm_params",):
         if key in meta:
             params = meta[key]
             break

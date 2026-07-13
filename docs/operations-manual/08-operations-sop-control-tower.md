@@ -16,7 +16,7 @@ the current `restructure` branch.
 | Module | API router | UI tab | Primary Make target |
 |---|---|---|---|
 | S&OP | `api/routers/operations/sop.py` (mounted at `/sop`) | `frontend/src/tabs/SopTab.tsx` | `make sop-all` |
-| Control Tower | `api/routers/operations/control_tower.py` (mounted at `/control-tower`) | `frontend/src/tabs/ControlTowerTab.tsx` | `make control-tower-all` |
+| Control Tower | `api/routers/operations/control_tower.py` (mounted at `/control-tower`) | `frontend/src/tabs/CommandCenterTab.tsx` | `make control-tower-all` |
 | Promotion / Event Planning | `api/routers/operations/events.py` (mounted at `/events`) | `EventCalendarPanel` inside `InvPlanningTab` | `make events-all` |
 | Planner Storyboard | `api/routers/intelligence/storyboard.py` (mounted at `/storyboard`) | `frontend/src/tabs/StoryboardTab.tsx` | `make storyboard-all` |
 | Data Quality | `api/routers/platform/data_quality.py` + `common/engines/dq_engine.py` | DQ surfaced inside ControlTower / Storyboard | `make dq-all` |
@@ -130,7 +130,7 @@ run `make refresh-mvs-tiered`. Do **not** strip the warning — the UI surfaces
 it to planners.
 
 When writing tests for any tab that consumes the Control Tower payload, mock
-the full nested structure (see `frontend/src/tabs/__tests__/ControlTowerTab.test.tsx`
+the full nested structure (see `frontend/src/tabs/__tests__/CommandCenterTab.test.tsx`
 for the canonical mock).
 
 ### 8.3.3 UI tab

@@ -91,7 +91,11 @@ function JobHistoryRow({
               onDelete(job.job_id);
             }}
             className="rounded-md p-1 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
-            title="Delete"
+            title={
+              job.recovery_quarantine_reason
+                ? "Acknowledge quarantine, delete history, and release the blocked job group"
+                : "Delete"
+            }
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -132,6 +136,20 @@ function JobHistoryRow({
                   <pre className="text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg p-2 overflow-x-auto text-[10px] font-mono">
                     {job.error}
                   </pre>
+                </div>
+              )}
+
+              {job.recovery_quarantine_reason && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+                >
+                  <span className="font-semibold block mb-1">Recovery quarantine</span>
+                  <p>{job.recovery_quarantine_reason}</p>
+                  <p className="mt-1 text-[11px] opacity-80">
+                    Review the job logs, then delete this single history row to acknowledge the
+                    quarantine and release its blocked execution group.
+                  </p>
                 </div>
               )}
 

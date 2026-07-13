@@ -2,7 +2,7 @@
  * LightGBM model-tuning API.
  * Reuses the same types as lgbm-tuning but points at model-specific prefixes.
  */
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import type {
   TuningRun,
   TuningComparison,

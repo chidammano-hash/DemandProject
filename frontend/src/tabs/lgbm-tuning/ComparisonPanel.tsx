@@ -170,7 +170,7 @@ function ComparisonBarChart({
   baselineRef,
   height = 280,
 }: {
-  data: Array<Record<string, unknown>>;
+  data: object[];
   xKey: string;
   baselineLabel: string;
   candidateLabel: string;

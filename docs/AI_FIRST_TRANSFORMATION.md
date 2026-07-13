@@ -57,9 +57,9 @@ The transformation is not "add AI to the app." It is "connect the AI we already 
 ### 1.4 — ML/Forecasting Legacy
 
 - **Once-a-month batch champion regeneration.** Cron `0 6 2 * *` in `forecast_pipeline_config.yaml`. The whole 5-stage pipeline (`cluster → backtest → load → champion → forecast`) is offline batch.
-- **Champion-by-historical-WAPE-only.** `champion_strategies.py` registers 17 strategies — every one ranks on `cum_abs_err / cum_actual`. No signal from forecast *uncertainty*, residual autocorrelation, or downstream cost.
-- **Foundation models stubbed.** `model_registry.py` lines 304-326 return `_FoundationStub` for Chronos/Bolt/N-BEATS. The `chronos2_enriched` declaration exists, the loader is a TODO.
-- **Single-point forecasts in production.** `fact_production_forecast` writes one number. `fact_quantile_forecast` is parallel and ignored downstream.
+- **Champion selection is still mostly historical-error driven.** The strategies under `common/ml/champion/` primarily rank causal prior errors; uncertainty and downstream inventory cost remain secondary signals.
+- **Non-tree execution is adapter-based.** `common/ml/chronos2_enriched.py`, `common/ml/neural_forecast.py`, and `common/ml/mstl.py` own the maintained non-tree paths; `model_registry.py` deliberately delegates those model types instead of constructing tree estimators.
+- **Limited production uncertainty.** `fact_production_forecast` persists a point forecast plus residual lower/upper bands, not a full predictive distribution.
 - **Static feature lists.** `shap_selector.py` runs once per backtest, then frozen for weeks.
 - **Exogenous signals as post-hoc adjustments.** `apply_event_adjustments.py` patches a finished forecast with multipliers. Promo/weather/macro never enter the model as features.
 - **Cluster strategy hard-coded as `per_cluster`.** Every algorithm in YAML uses the same strategy.
@@ -111,15 +111,14 @@ A new table `fact_decision_class` maps `(decision_type, scope)` → autonomy lev
 
 ### 2.3 — Probabilistic, Continuous, Self-Explaining Forecasts
 
-- **Foundation-model-first with tree fallback.** Promote `chronos2_enriched` to default; route only sparse/idiosyncratic clusters to LGBM. Replace `_FoundationStub` with real loader supporting zero-shot + LoRA per cluster.
-- **Distributions, not points.** Collapse `fact_production_forecast` and `fact_quantile_forecast` into a single distributional table (`p05, p25, p50, p75, p95` + sample paths). Downstream consumers (`compute_safety_stock.py`, exception engine) take a distribution.
-- **CRPS as primary champion metric, alongside WAPE.** `common/ml/crps.py` already exists.
+- **Foundation-model-first with tree fallback.** Evaluate `chronos2_enriched` as the default where it wins causally; route sparse/idiosyncratic clusters to LightGBM and explore optional fine-tuning through the existing Chronos adapter.
+- **Distributions, not points.** Evolve the point/lower/upper production contract into one distributional record (`p05, p25, p50, p75, p95` + sample paths). Downstream consumers (`compute_safety_stock.py`, exception engine) take a distribution.
 - **Continuous online retraining triggered by drift.** `scripts/ml/detect_drift.py` exists; wire into APScheduler as daily trigger calling partial-fit when CUSUM on residuals breaks threshold. Replace monthly cron with drift-event topic.
 - **Causal AI for promo/event lift.** Replace `apply_event_adjustments.py` with causal forest / DML estimating lift conditional on baseline + price + competitor state, feed *uplift* as covariate.
 - **LLM-driven feature discovery loop.** LLM reads SHAP report after each backtest, proposes new transformations, auto-generates pandas code, A/B tests in `champion-experiments`.
 - **Cost-aware champion.** Augment `champion_strategies.py` with `cost_aware` strategy weighting each error by holding cost vs stockout cost. The "best" model minimizes inventory $$, not abstract accuracy.
 - **Hierarchical reconciliation by default.** Apply reconciliation as a post-processing step to the retained five-model roster.
-- **Shadow mode mandatory.** Every new champion runs N weeks against live; auto-promote only when CRPS + business-cost both improve.
+- **Shadow mode mandatory.** Every new champion runs N weeks against live; auto-promote only when governed accuracy and business-cost measures both improve.
 
 ### 2.4 — Inventory Planning, Reimagined
 

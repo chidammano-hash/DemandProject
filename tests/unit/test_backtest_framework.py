@@ -12,23 +12,34 @@ from common.ml.backtest_framework import (
     compute_cluster_demand_stats,
     generate_timeframes,
     resolve_cluster_params,
-    warn_if_profiles_stale,
+    validate_cluster_tuning_profiles,
 )
 
 
-def test_stale_profile_warning_counts_current_cluster_labels_only():
+def test_tuning_profile_validation_reads_current_cluster_labels_only():
     connection = MagicMock()
     cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
-    cursor.fetchone.side_effect = [(0,), (7,)]
+    cursor.fetchall.side_effect = [[("steady",)], [], [(7,)]]
+    profiles = {
+        "enabled": True,
+        "metadata": {"cluster_experiment_id": 7},
+        "cluster_profiles": {
+            "steady": {
+                "match_criteria": {"cluster_name": "steady"},
+                "overrides": {},
+            }
+        },
+    }
 
     with (
-        patch("common.ml.backtest_framework.load_config", return_value={"enabled": True}),
+        patch("common.ml.backtest_framework.load_config", return_value=profiles),
         patch("common.ml.backtest_framework.psycopg.connect", return_value=connection),
     ):
-        warn_if_profiles_stale({})
+        validate_cluster_tuning_profiles({})
 
-    stale_sql = str(cursor.execute.call_args_list[0].args[0])
-    assert "current_sku_cluster_assignment" in stale_sql
+    current_labels_sql = str(cursor.execute.call_args_list[0].args[0])
+    stale_sql = str(cursor.execute.call_args_list[1].args[0])
+    assert "current_sku_cluster_assignment" in current_labels_sql
     assert "assignment.ml_cluster = tuning.cluster_name" in stale_sql
 
 
@@ -208,6 +219,7 @@ class TestPlanningDateCap:
         source = inspect.getsource(load_backtest_data)
         assert "planning_cutoff" in source
         assert "get_planning_date" in source
+        assert "s.type = 1" in source
 
     def test_run_tree_backtest_caps_latest_month(self):
         """run_tree_backtest must cap latest_month at planning date."""

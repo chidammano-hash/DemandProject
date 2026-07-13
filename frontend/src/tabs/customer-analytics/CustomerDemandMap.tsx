@@ -143,7 +143,7 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
     placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
-  const locations = data?.locations ?? [];
+  const locations = useMemo(() => data?.locations ?? [], [data]);
   const maxVal = useMemo(() => {
     if (!locations.length) return 0;
     return Math.max(...locations.map((l) => l[metric] ?? l.demand_qty));

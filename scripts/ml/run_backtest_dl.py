@@ -28,17 +28,21 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.ml.expert_panel.dl_models import run_dl_models
-from common.core.db import get_db_params
-from common.core.planning_date import get_planning_date
-from common.ml.backtest_framework import (
+from common.core.db import get_db_params  # noqa: E402 — after CLI path bootstrap
+from common.core.planning_date import get_planning_date  # noqa: E402 — after CLI path bootstrap
+from common.ml.backtest_framework import (  # noqa: E402 — after CLI path bootstrap
     BacktestCheckpointer,
     generate_timeframes,
     load_backtest_data,
     postprocess_predictions,
     save_backtest_output,
 )
-from common.services.perf_profiler import profiled_section
+from common.ml.backtest_config import (  # noqa: E402 — after CLI path bootstrap
+    BACKTEST_CONFIG_METADATA_KEY,
+    build_backtest_config_snapshot,
+)
+from common.ml.neural_forecast import run_neural_models  # noqa: E402 — after CLI path bootstrap
+from common.services.perf_profiler import profiled_section  # noqa: E402 — after CLI path bootstrap
 
 logger = logging.getLogger(__name__)
 
@@ -85,31 +89,37 @@ def main() -> None:
             from common.core.utils import load_forecast_pipeline_config
             cfg = load_forecast_pipeline_config()
 
-        algo_entry = cfg.get("algorithms", {}).get(model_name, {})
-        # Support pipeline config format (params sub-dict) or flat legacy format
-        dl_cfg = algo_entry.get("params", algo_entry)
-        if not algo_entry.get("enabled", True):
+        backtest_config_snapshot = build_backtest_config_snapshot(cfg, model_name)
+
+        algo_entry = cfg["algorithms"][model_name]
+        dl_cfg = algo_entry["params"]
+        if not algo_entry["enabled"]:
             logger.info("%s is disabled in config; exiting", model_name)
             return
 
-        backtest_cfg = cfg.get("backtest", {})
-        n_timeframes = backtest_cfg.get("n_timeframes", 10)
-        embargo_months = backtest_cfg.get("embargo_months", 0)
+        backtest_cfg = cfg["backtest"]
+        n_timeframes = int(backtest_cfg["n_timeframes"])
+        embargo_months = int(backtest_cfg["embargo_months"])
 
         output_dir = (
             Path(args.output_dir) if args.output_dir
-            else ROOT / backtest_cfg.get("output_dir", "data/backtest")
+            else ROOT / backtest_cfg["output_dir"]
         )
 
-        model_id = algo_entry.get("model_id", dl_cfg.get("model_id", model_name))
+        model_id = model_name
         dl_params = {
-            "h": dl_cfg.get("h", 6),
-            "input_size": dl_cfg.get("input_size", 24),
-            "max_steps": dl_cfg.get("max_steps", 500),
-            "batch_size": dl_cfg.get("batch_size", 32),
-            "learning_rate": dl_cfg.get("learning_rate", 0.001),
-            "scaler_type": dl_cfg.get("scaler_type", "standard"),
-            "early_stop_patience_steps": dl_cfg.get("early_stop_patience_steps", -1),
+            "h": dl_cfg["h"],
+            "input_size": dl_cfg["input_size"],
+            "max_steps": dl_cfg["max_steps"],
+            "batch_size": dl_cfg["batch_size"],
+            "learning_rate": dl_cfg["learning_rate"],
+            "scaler_type": dl_cfg["scaler_type"],
+            "early_stop_patience_steps": dl_cfg["early_stop_patience_steps"],
+            "min_history": dl_cfg["min_history"],
+            "random_seed": dl_cfg["random_seed"],
+            "start_padding_enabled": dl_cfg["start_padding_enabled"],
+            "val_size": dl_cfg["val_size"],
+            "deterministic": dl_cfg["deterministic"],
         }
 
     logger.info(
@@ -230,7 +240,7 @@ def main() -> None:
         )
 
         with profiled_section(f"{model_name}_tf_{label}"):
-            preds = run_dl_models(
+            preds = run_neural_models(
                 train_sales[["sku_ck", "startdate", "qty"]],
                 predict_months,
                 {model_name: dl_params},
@@ -299,6 +309,9 @@ def main() -> None:
                 "model_type": "deep_learning",
                 "architecture": model_name,
                 "global_model": True,
+                BACKTEST_CONFIG_METADATA_KEY: {
+                    model_id: backtest_config_snapshot.as_metadata()
+                },
             },
             dfu_cohort_map=dfu_cohort_map,
         )

@@ -8,19 +8,19 @@ from __future__ import annotations
 
 import signal
 from threading import Event
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from common.services.job_state import (
+    _append_log,
+    _clear_pid,
     _run_subprocess,
     _store_pid,
-    _clear_pid,
-    _append_log,
     get_job_log,
     get_job_pid,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,6 +120,21 @@ class TestGetJobPid:
 # ---------------------------------------------------------------------------
 
 class TestRunSubprocess:
+    @pytest.fixture(autouse=True)
+    def _process_identity(self):
+        identity = {
+            "start_marker": "Sun Jul 12 03:00:00 2026",
+            "command_marker": "test-command",
+        }
+        with (
+            patch(
+                "common.services.job_state.capture_process_identity",
+                return_value=identity,
+            ),
+            patch("common.services.job_state._store_process_identity"),
+        ):
+            yield
+
     def test_success_returns_stdout(self):
         """A successful subprocess should return its output and store/clear PID."""
         mock_proc = MagicMock()
@@ -472,6 +487,140 @@ class TestGenerateProductionForecastCmd:
         assert cmd[cmd.index("--generation-purpose") + 1] == "snapshot_contender"
         assert result["run_id"] == fixed
 
+    def test_uses_configured_production_generation_timeout(self):
+        from common.services.job_state import _run_generate_production_forecast
+
+        with (
+            patch(
+                "common.services.job_state._subprocess_timeout_seconds",
+                return_value=28_800,
+            ) as timeout,
+            patch("common.services.job_state._run_subprocess", return_value="ok") as run,
+        ):
+            _run_generate_production_forecast({})
+
+        timeout.assert_called_once_with("production_generation")
+        assert run.call_args.kwargs["timeout_seconds"] == 28_800
+
+    def test_isolates_mixed_lightgbm_and_pytorch_openmp_threads(self):
+        from common.services.job_state import _run_generate_production_forecast
+
+        with patch(
+            "common.services.job_state._run_subprocess", return_value="ok"
+        ) as run:
+            _run_generate_production_forecast({})
+
+        assert run.call_args.kwargs["env_overrides"] == {"OMP_NUM_THREADS": "1"}
+
+
+class TestTrainProductionModelCmd:
+    """Production training must always choose a valid CLI mode."""
+
+    def test_empty_params_train_all_forecastable_tree_models(self):
+        from common.services.job_state import _run_train_production_model
+
+        with patch(
+            "common.services.job_state._run_subprocess", return_value="ok"
+        ) as m_sub:
+            result = _run_train_production_model({})
+
+        cmd = m_sub.call_args[0][0]
+        assert "--all" in cmd
+        assert "--model" not in cmd
+        assert result["all_models"] is True
+
+    def test_explicit_model_uses_single_model_mode(self):
+        from common.services.job_state import _run_train_production_model
+
+        with patch(
+            "common.services.job_state._run_subprocess", return_value="ok"
+        ) as m_sub:
+            result = _run_train_production_model({"model_id": "lgbm_cluster"})
+
+        cmd = m_sub.call_args[0][0]
+        assert cmd[cmd.index("--model") + 1] == "lgbm_cluster"
+        assert "--all" not in cmd
+        assert result["all_models"] is False
+
+    def test_uses_configured_production_training_timeout(self):
+        from common.services.job_state import _run_train_production_model
+
+        with (
+            patch(
+                "common.services.job_state._subprocess_timeout_seconds",
+                return_value=28_800,
+            ) as timeout,
+            patch("common.services.job_state._run_subprocess", return_value="ok") as run,
+        ):
+            _run_train_production_model({})
+
+        timeout.assert_called_once_with("production_training")
+        assert run.call_args.kwargs["timeout_seconds"] == 28_800
+
+
+def test_completed_backtest_run_cannot_be_reopened() -> None:
+    from common.services.job_state import _mark_backtest_run_running
+
+    conn = MagicMock()
+    conn.__enter__.return_value = conn
+    conn.execute.return_value.fetchone.return_value = None
+    with patch("common.services.job_state._get_conn", return_value=conn):
+        with pytest.raises(RuntimeError, match="not eligible to start"):
+            _mark_backtest_run_running(72)
+
+    sql = conn.execute.call_args.args[0]
+    assert "status IN ('queued', 'failed', 'running')" in sql
+
+
+def test_snapshot_contender_preparation_uses_configured_timeout():
+    from common.services.job_state import _run_prepare_forecast_snapshot_contenders
+
+    with (
+        patch(
+            "common.services.job_state._subprocess_timeout_seconds",
+            return_value=28_800,
+        ) as timeout,
+        patch("common.services.job_state._run_subprocess", return_value="ok") as run,
+    ):
+        _run_prepare_forecast_snapshot_contenders({})
+
+    timeout.assert_called_once_with("snapshot_contenders")
+    assert run.call_args.kwargs["timeout_seconds"] == 28_800
+
+
+def test_stale_cluster_tuning_uses_configured_timeout():
+    from common.services.job_state import _run_tune_stale_clusters
+
+    with (
+        patch(
+            "common.services.job_state._subprocess_timeout_seconds",
+            return_value=28_800,
+        ) as timeout,
+        patch("common.services.job_state._run_subprocess", return_value="ok") as run,
+        patch("common.core.utils.reset_config") as reset_config,
+    ):
+        _run_tune_stale_clusters({})
+
+    timeout.assert_called_once_with("stale_cluster_tuning")
+    assert run.call_args.kwargs["timeout_seconds"] == 28_800
+    reset_config.assert_called_once_with("cluster_tuning_profiles.yaml")
+
+
+def test_failed_stale_cluster_tuning_keeps_cached_last_good_config():
+    from common.services.job_state import _run_tune_stale_clusters
+
+    with (
+        patch(
+            "common.services.job_state._run_subprocess",
+            side_effect=RuntimeError("tuning failed"),
+        ),
+        patch("common.core.utils.reset_config") as reset_config,
+        pytest.raises(RuntimeError, match="tuning failed"),
+    ):
+        _run_tune_stale_clusters({})
+
+    reset_config.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Tests: auto-load after a successful backtest (no manual Load needed)
@@ -502,7 +651,7 @@ class TestAutoLoadBacktest:
             patch(f"{_MOD}._run_load_backtest_model") as m_load,
         ):
             with pytest.raises(RuntimeError, match="predictions file is missing"):
-                _auto_load_backtest("catboost", 3)
+                _auto_load_backtest("unknown_model", 3)
         m_load.assert_not_called()
 
     def test_propagates_loader_errors(self):
@@ -534,6 +683,8 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         with (
             patch(f"{_MOD}._run_subprocess", return_value="ok"),
             patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}.record_backtest_artifact_identity"),
+            patch(f"{_MOD}.verify_backtest_artifact_identity"),
             patch(f"{_MOD}._auto_load_backtest") as m_auto,
             patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
         ):
@@ -549,6 +700,37 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         names = [c[0] for c in manager.mock_calls]
         assert names.index("auto") < names.index("update")
 
+    def test_pipeline_backtest_creates_tracking_run_and_loads_results(self):
+        """Jobs submitted by named pipelines must be tracked and auto-loaded."""
+        from common.services.job_state import _run_backtest
+
+        with (
+            patch(f"{_MOD}._run_subprocess", return_value="ok"),
+            patch(f"{_MOD}._reserve_backtest_run", return_value=71) as reserve,
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}.record_backtest_artifact_identity"),
+            patch(f"{_MOD}.verify_backtest_artifact_identity"),
+            patch(f"{_MOD}._auto_load_backtest") as auto_load,
+            patch(f"{_MOD}._update_backtest_run_on_completion") as update_run,
+        ):
+            result = _run_backtest("mstl", {}, job_id="job_pipeline_1")
+
+        reserve.assert_called_once_with("mstl", "job_pipeline_1")
+        auto_load.assert_called_once_with(
+            "mstl", 71, None, None, "job_pipeline_1"
+        )
+        update_run.assert_called_once_with(71, "mstl")
+        assert result["backtest_run_id"] == 71
+
+    def test_unknown_model_is_rejected_before_creating_tracking_run(self):
+        from common.services.job_state import _run_backtest
+
+        with patch(f"{_MOD}._reserve_backtest_run") as reserve:
+            with pytest.raises(ValueError, match="Unknown backtest model"):
+                _run_backtest("retired_model", {}, job_id="job_bad")
+
+        reserve.assert_not_called()
+
     def test_auto_load_failure_marks_backtest_failed(self):
         from common.services.job_state import _run_backtest
 
@@ -558,6 +740,8 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
         with (
             patch(f"{_MOD}._run_subprocess", return_value="ok"),
             patch(f"{_MOD}._get_conn", return_value=conn),
+            patch(f"{_MOD}.record_backtest_artifact_identity"),
+            patch(f"{_MOD}.verify_backtest_artifact_identity"),
             patch(f"{_MOD}._auto_load_backtest", side_effect=RuntimeError("load failed")),
             patch(f"{_MOD}._update_backtest_run_on_completion") as m_update,
         ):
@@ -572,9 +756,86 @@ class TestRunBacktestAutoLoadsBeforeCompletion:
 
         with (
             patch(f"{_MOD}._run_subprocess", return_value="ok") as run,
+            patch(f"{_MOD}._reserve_backtest_run", return_value=72),
+            patch(f"{_MOD}.record_backtest_artifact_identity"),
+            patch(f"{_MOD}.verify_backtest_artifact_identity"),
+            patch(f"{_MOD}._auto_load_backtest"),
+            patch(f"{_MOD}._update_backtest_run_on_completion"),
             patch("pathlib.Path.unlink") as unlink,
         ):
             _run_backtest("mstl", {})
 
         assert run.call_args.args[0][1:4] == ["run", "--extra", "statistical"]
         assert unlink.call_count == 3
+
+    def test_governed_backtest_stamps_one_stable_source_lineage(self):
+        from common.services.job_state import _run_backtest
+
+        lineage = {
+            "source_sales_batch_id": 301,
+            "data_checksum": "a" * 64,
+            "cluster_experiment_id": 35,
+            "cluster_assignment_count": 13_968,
+            "cluster_assignment_checksum": "b" * 64,
+        }
+        with (
+            patch(f"{_MOD}._load_governed_backtest_lineage", side_effect=[lineage, lineage]),
+            patch(f"{_MOD}._run_subprocess", return_value="ok"),
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}.record_backtest_artifact_identity") as record,
+            patch(f"{_MOD}.verify_backtest_artifact_identity"),
+            patch(f"{_MOD}._auto_load_backtest"),
+            patch(f"{_MOD}._update_backtest_run_on_completion"),
+        ):
+            _run_backtest("lgbm", {"backtest_run_id": 5, "governed": True})
+
+        assert record.call_args.kwargs["governed_lineage"] == lineage
+
+    def test_governed_lineage_uses_transaction_for_server_cursor(self):
+        from common.services.job_state import _load_governed_backtest_lineage
+
+        conn = _make_mock_conn()
+        with (
+            patch(f"{_MOD}._get_conn", return_value=conn),
+            patch(
+                "common.services.sales_lineage.load_completed_sales_lineage",
+                return_value=SimpleNamespace(batch_id=301, source_hash="a" * 64),
+            ),
+            patch(
+                "common.services.cluster_lineage.load_promoted_cluster_population",
+                return_value=SimpleNamespace(
+                    experiment_id=35,
+                    assignment_count=13_968,
+                    assignment_checksum="b" * 64,
+                ),
+            ),
+        ):
+            lineage = _load_governed_backtest_lineage()
+
+        conn.transaction.assert_called_once_with()
+        assert lineage["source_sales_batch_id"] == 301
+        assert lineage["cluster_assignment_count"] == 13_968
+
+    def test_governed_backtest_rejects_lineage_change_before_auto_load(self):
+        from common.services.job_state import _run_backtest
+
+        before = {
+            "source_sales_batch_id": 301,
+            "data_checksum": "a" * 64,
+            "cluster_experiment_id": 35,
+            "cluster_assignment_count": 13_968,
+            "cluster_assignment_checksum": "b" * 64,
+        }
+        after = {**before, "source_sales_batch_id": 302}
+        with (
+            patch(f"{_MOD}._load_governed_backtest_lineage", side_effect=[before, after]),
+            patch(f"{_MOD}._run_subprocess", return_value="ok"),
+            patch(f"{_MOD}._get_conn"),
+            patch(f"{_MOD}._auto_load_backtest") as auto_load,
+            patch(f"{_MOD}._mark_backtest_run_failed") as mark_failed,
+        ):
+            with pytest.raises(RuntimeError, match="lineage changed"):
+                _run_backtest("lgbm", {"backtest_run_id": 5, "governed": True})
+
+        auto_load.assert_not_called()
+        mark_failed.assert_called_once_with(5)

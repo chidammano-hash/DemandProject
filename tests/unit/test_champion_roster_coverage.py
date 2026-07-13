@@ -32,41 +32,36 @@ class TestPreChampionCoverageAssertion:
         return cur
 
     def test_raises_when_a_competing_model_has_zero_rows(self):
-        models = ["lgbm_cluster", "catboost_cluster", "lgbm_cust_enriched"]
-        # lgbm_cust_enriched is absent from the fact table entirely (never loaded).
-        cur = self._cursor_with_counts({"lgbm_cluster": 100, "catboost_cluster": 80})
-        with pytest.raises(RuntimeError, match="lgbm_cust_enriched"):
+        models = ["lgbm_cluster", "mstl", "nhits"]
+        cur = self._cursor_with_counts({"lgbm_cluster": 100, "mstl": 80})
+        with pytest.raises(RuntimeError, match="nhits"):
             assert_competing_models_covered(cur, models)
 
     def test_raises_when_a_competing_model_has_zero_count_row(self):
-        models = ["lgbm_cluster", "catboost_cluster"]
+        models = ["lgbm_cluster", "mstl"]
         # Present in the result set but with a 0 count (e.g. all-NULL load).
-        cur = self._cursor_with_counts({"lgbm_cluster": 100, "catboost_cluster": 0})
-        with pytest.raises(RuntimeError, match="catboost_cluster"):
+        cur = self._cursor_with_counts({"lgbm_cluster": 100, "mstl": 0})
+        with pytest.raises(RuntimeError, match="mstl"):
             assert_competing_models_covered(cur, models)
 
     def test_error_lists_every_missing_model(self):
-        models = ["lgbm_cluster", "lgbm_cust_enriched", "xgboost_cust_enriched"]
+        models = ["lgbm_cluster", "nbeats", "chronos2_enriched"]
         cur = self._cursor_with_counts({"lgbm_cluster": 100})
         with pytest.raises(RuntimeError) as exc:
             assert_competing_models_covered(cur, models)
         msg = str(exc.value)
-        assert "lgbm_cust_enriched" in msg
-        assert "xgboost_cust_enriched" in msg
+        assert "nbeats" in msg
+        assert "chronos2_enriched" in msg
 
     def test_passes_when_all_competing_models_present(self):
-        models = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"]
-        cur = self._cursor_with_counts(
-            {"lgbm_cluster": 100, "catboost_cluster": 80, "xgboost_cluster": 90}
-        )
+        models = ["lgbm_cluster", "mstl", "nhits"]
+        cur = self._cursor_with_counts({"lgbm_cluster": 100, "mstl": 80, "nhits": 90})
         # No raise == coverage satisfied (function returns None).
         assert assert_competing_models_covered(cur, models) is None
 
     def test_query_is_parameterised_and_scoped_to_the_models(self):
-        models = ["lgbm_cluster", "catboost_cluster"]
-        cur = self._cursor_with_counts(
-            {"lgbm_cluster": 100, "catboost_cluster": 80}
-        )
+        models = ["lgbm_cluster", "mstl"]
+        cur = self._cursor_with_counts({"lgbm_cluster": 100, "mstl": 80})
         assert_competing_models_covered(cur, models)
         sql, params = cur.execute.call_args[0]
         # psycopg3 placeholders only — never $1 / f-string value interpolation.
@@ -78,25 +73,10 @@ class TestPreChampionCoverageAssertion:
 class TestBacktestAllRosterParity:
     """backtest-all must cover every sequentially-produced compete:true model."""
 
-    # Competing models intentionally NOT chained into backtest-all because they are
-    # operator-gated / slow / experimental baselines run on demand, not on a clean
-    # rebuild. Keep this list explicit so a NEW compete:true model can't quietly slip
-    # the coverage net — adding one forces a conscious decision here.
-    _GATED_OUT = {
-        "bolt_hierarchical",   # hierarchical bolt — operator-gated (backtest-bolt-hier)
-        "mstl",                # statistical baseline — backtest-mstl on demand
-        "nbeats",              # deep-learning baseline — backtest-nbeats on demand
-        "nhits",               # deep-learning baseline — backtest-nhits on demand
-        "rolling_mean",        # cheap baseline — backtest-rolling-mean on demand
-        "rolling_median",      # cheap baseline — backtest-rolling-median on demand
-        "seasonal_naive",      # cheap baseline — backtest-seasonal-naive on demand
-    }
-
     def _backtest_all_recipe(self) -> str:
         """Return the transitive prerequisite text of the backtest-all target.
 
-        Resolves the prerequisite chain one level deep so cust-enriched-all's
-        members (lgbm/catboost/xgboost cust) count as covered.
+        Resolves aggregate prerequisites one level deep.
         """
         from common.core.paths import PROJECT_ROOT
 
@@ -118,29 +98,13 @@ class TestBacktestAllRosterParity:
         """Map backtest-* prerequisite target names to the model_id they produce."""
         return {
             "backtest-lgbm": "lgbm_cluster",
-            "backtest-catboost": "catboost_cluster",
-            "backtest-xgboost": "xgboost_cluster",
-            "backtest-chronos": "chronos",
-            "backtest-bolt": "chronos_bolt",
-            "backtest-chronos2": "chronos2",
             "backtest-chronos2e": "chronos2_enriched",
-            "backtest-lgbm-cust": "lgbm_cust_enriched",
-            "backtest-catboost-cust": "catboost_cust_enriched",
-            "backtest-xgboost-cust": "xgboost_cust_enriched",
-            "backtest-rolling-median": "rolling_median",
+            "backtest-mstl": "mstl",
+            "backtest-nhits": "nhits",
+            "backtest-nbeats": "nbeats",
         }
 
-    def test_gated_competing_models_have_explicit_make_targets(self):
-        from common.core.paths import PROJECT_ROOT
-
-        text = (PROJECT_ROOT / "Makefile").read_text()
-        for model in sorted(self._GATED_OUT):
-            if model == "bolt_hierarchical":
-                continue
-            target = f"backtest-{model.replace('_', '-')}:"
-            assert target in text, f"{model} is gated out but has no explicit {target}"
-
-    def test_backtest_all_covers_every_non_gated_competing_model(self):
+    def test_backtest_all_covers_every_competing_model(self):
         from common.core.utils import get_competing_model_ids
 
         recipe = self._backtest_all_recipe()
@@ -149,20 +113,20 @@ class TestBacktestAllRosterParity:
             for target, model in self._target_to_model().items()
             if target in recipe.split()
         }
-        required = set(get_competing_model_ids()) - self._GATED_OUT
+        required = set(get_competing_model_ids())
         missing = required - produced
         assert not missing, (
             f"backtest-all does not produce compete:true models {sorted(missing)} — "
             "a clean rebuild can never select them as champion"
         )
 
-    def test_cust_enriched_and_chronos2e_in_backtest_all(self):
-        # Loop-3 regression: these 4 compete:true models were omitted from the chain.
+    def test_canonical_five_are_in_backtest_all(self):
         recipe = self._backtest_all_recipe().split()
         for target in (
-            "backtest-lgbm-cust",
-            "backtest-catboost-cust",
-            "backtest-xgboost-cust",
+            "backtest-lgbm",
             "backtest-chronos2e",
+            "backtest-mstl",
+            "backtest-nhits",
+            "backtest-nbeats",
         ):
             assert target in recipe, f"{target} missing from backtest-all chain"

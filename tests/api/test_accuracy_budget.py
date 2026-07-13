@@ -132,7 +132,7 @@ async def test_decomposition_returns_200():
 
 @pytest.mark.asyncio
 async def test_decomposition_custom_model():
-    """GET /accuracy-budget/decomposition?model_id=catboost_cluster uses correct model."""
+    """GET /accuracy-budget/decomposition?model_id=mstl uses correct model."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [
         (100.0, 500.0, 600.0, 10),
@@ -151,11 +151,11 @@ async def test_decomposition_custom_model():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/accuracy-budget/decomposition",
-                params={"model_id": "catboost_cluster"},
+                params={"model_id": "mstl"},
             )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["model_id"] == "catboost_cluster"
+    assert data["model_id"] == "mstl"
 
 
 @pytest.mark.asyncio
@@ -239,9 +239,9 @@ async def test_model_comparison_returns_200():
     pool, conn, cursor = _make_pool()
     # Two queries: per-model, oracle
     cursor.fetchall.return_value = [
-        ("catboost_cluster", 300000.0, 1800000.0, 2000000.0),
+        ("chronos2_enriched", 300000.0, 1800000.0, 2000000.0),
         ("lgbm_cluster", 250000.0, 1850000.0, 2000000.0),
-        ("xgboost_cluster", 280000.0, 1820000.0, 2000000.0),
+        ("mstl", 280000.0, 1820000.0, 2000000.0),
     ]
     cursor.fetchone.return_value = (200000.0, 2000000.0)  # oracle
     with patch("api.core._get_pool", return_value=pool):
@@ -253,7 +253,7 @@ async def test_model_comparison_returns_200():
     data = resp.json()
     assert "models" in data
     assert len(data["models"]) == 3
-    assert data["models"][0]["model_id"] == "catboost_cluster"
+    assert data["models"][0]["model_id"] == "chronos2_enriched"
     assert data["models"][0]["accuracy"] is not None
     assert data["models"][0]["wape"] is not None
     assert data["models"][0]["bias"] is not None

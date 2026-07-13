@@ -27,7 +27,7 @@ def mock_pool():
 @pytest.mark.asyncio
 async def test_forecast_models_endpoint(mock_pool):
     pool, _, cursor = mock_pool
-    cursor.fetchall.return_value = [("external",), ("lgbm_global",)]
+    cursor.fetchall.return_value = [("external",), ("lgbm_cluster",)]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -177,10 +177,10 @@ async def test_accuracy_slice_common_dfus_path(mock_pool):
     cursor.fetchall.side_effect = [
         # main query: (bucket, model_id, dfu_count, sum_forecast, sum_actual,
         #              sum_abs_error, total_buckets)
-        [("ClusterA", "lgbm", 10, 1000.0, 900.0, 100.0, 1),
-         ("ClusterA", "catboost", 10, 1050.0, 900.0, 150.0, 1)],
+        [("ClusterA", "lgbm_cluster", 10, 1000.0, 900.0, 100.0, 1),
+         ("ClusterA", "mstl", 10, 1050.0, 900.0, 150.0, 1)],
         # per-model DFU counts
-        [("lgbm", 15), ("catboost", 12)],
+        [("lgbm_cluster", 15), ("mstl", 12)],
     ]
     cursor.fetchone.return_value = (8,)  # common DFU count
     with patch("api.core._get_pool", return_value=pool):
@@ -190,7 +190,7 @@ async def test_accuracy_slice_common_dfus_path(mock_pool):
             response = await client.get(
                 "/forecast/accuracy/slice"
                 "?group_by=cluster_assignment"
-                "&models=lgbm,catboost"
+                "&models=lgbm_cluster,mstl"
                 "&common_dfus=true"
             )
     assert response.status_code == 200
@@ -200,8 +200,8 @@ async def test_accuracy_slice_common_dfus_path(mock_pool):
     assert "dfu_counts" in data
     assert len(data["rows"]) == 1
     assert "ClusterA" == data["rows"][0]["bucket"]
-    assert "lgbm" in data["rows"][0]["by_model"]
-    assert "catboost" in data["rows"][0]["by_model"]
+    assert "lgbm_cluster" in data["rows"][0]["by_model"]
+    assert "mstl" in data["rows"][0]["by_model"]
 
 
 @pytest.mark.asyncio
@@ -237,7 +237,7 @@ async def test_accuracy_slice_returns_pivoted_data(mock_pool):
     cursor.fetchall.return_value = [
         # (bucket, model_id, n_rows, sum_forecast, sum_actual, sum_abs_error, total_buckets)
         ("ClusterX", "external", 100, 5000.0, 4800.0, 200.0, 2),
-        ("ClusterX", "lgbm", 100, 5100.0, 4800.0, 300.0, 2),
+        ("ClusterX", "lgbm_cluster", 100, 5100.0, 4800.0, 300.0, 2),
         ("ClusterY", "external", 50, 2000.0, 2100.0, 100.0, 2),
     ]
     with patch("api.core._get_pool", return_value=pool):
@@ -256,7 +256,7 @@ async def test_accuracy_slice_returns_pivoted_data(mock_pool):
     assert rows[1]["bucket"] == "ClusterY"
     # ClusterX has 2 models
     assert "external" in rows[0]["by_model"]
-    assert "lgbm" in rows[0]["by_model"]
+    assert "lgbm_cluster" in rows[0]["by_model"]
     # ClusterY has 1 model
     assert "external" in rows[1]["by_model"]
 
@@ -274,7 +274,7 @@ async def test_lag_curve_returns_by_lag_structure(mock_pool):
         # (model_id, lag, n_rows, sum_forecast, sum_actual, sum_abs_error)
         ("external", 0, 100, 5000.0, 4800.0, 200.0),
         ("external", 1, 90, 4500.0, 4300.0, 200.0),
-        ("lgbm", 0, 100, 5100.0, 4800.0, 300.0),
+        ("lgbm_cluster", 0, 100, 5100.0, 4800.0, 300.0),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -289,7 +289,7 @@ async def test_lag_curve_returns_by_lag_structure(mock_pool):
     assert len(by_lag) == 2  # lag 0 and lag 1
     assert by_lag[0]["lag"] == 0
     assert "external" in by_lag[0]["by_model"]
-    assert "lgbm" in by_lag[0]["by_model"]
+    assert "lgbm_cluster" in by_lag[0]["by_model"]
     assert by_lag[1]["lag"] == 1
     assert "external" in by_lag[1]["by_model"]
 
@@ -299,8 +299,8 @@ async def test_lag_curve_common_dfus(mock_pool):
     """common_dfus in lag-curve triggers archive CTE path."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
-        ("lgbm", 0, 10, 1000.0, 900.0, 100.0),
-        ("catboost", 0, 10, 1050.0, 900.0, 150.0),
+        ("lgbm_cluster", 0, 10, 1000.0, 900.0, 100.0),
+        ("mstl", 0, 10, 1050.0, 900.0, 150.0),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -308,7 +308,7 @@ async def test_lag_curve_common_dfus(mock_pool):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 "/forecast/accuracy/lag-curve"
-                "?models=lgbm,catboost"
+                "?models=lgbm_cluster,mstl"
                 "&common_dfus=true"
             )
     assert response.status_code == 200

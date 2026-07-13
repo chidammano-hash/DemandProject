@@ -28,12 +28,6 @@ function formatMonth(s: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 }
 
-function formatWeek(s: string | null): string {
-  if (!s) return "—";
-  const d = new Date(s + "T00:00:00");
-  return `W${d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" })}`;
-}
-
 const HORIZON_OPTIONS = [
   { label: "3M", value: 3 },
   { label: "6M", value: 6 },
@@ -212,25 +206,24 @@ export function DemandPlanPanel() {
           description="The demand plan shows monthly forecast quantiles (P10/P50/P90) and weekly disaggregation for a single DFU. It combines the statistical baseline with any approved demand overrides."
           steps={[
             { label: "Enter Item No and Location in the fields above", command: "e.g. Item: 100320 | Loc: 1401-BULK" },
-            { label: "Generate demand plans if no data appears", command: "make demand-plan-compute" },
           ]}
         />
       ) : planQ.isLoading ? (
         <div className="text-xs text-muted-foreground py-4 text-center">Loading demand plan...</div>
       ) : planQ.isError ? (
-        <div className="text-xs text-red-600 py-4 text-center">
-          No demand plan found for this item/location. Run{" "}
-          <code className="font-mono">make quantile-train</code> to generate.
-        </div>
+        <EmptyState
+          variant="error"
+          icon={ClipboardList}
+          title="Demand plan could not be loaded"
+          description="Retry after checking the API connection. This panel reads existing demand-plan versions and does not generate forecasts."
+          onAction={() => planQ.refetch()}
+          actionLabel="Retry"
+        />
       ) : !plan?.rows?.length ? (
         <EmptyState
           icon={ClipboardList}
-          title="Enter an item and location to view the demand plan"
-          description="The demand plan shows monthly forecast quantiles (P10/P50/P90) and weekly disaggregation for a single DFU. It combines the statistical baseline with any approved demand overrides."
-          steps={[
-            { label: "Enter Item No and Location in the fields above", command: "e.g. Item: 100320 | Loc: 1401-BULK" },
-            { label: "Generate demand plans if no data appears", command: "make demand-plan-compute" },
-          ]}
+          title="No saved demand plan for this item and location"
+          description="This read-only panel displays previously loaded demand-plan versions. Use the Forecast view for the current production forecast and uncertainty bands."
         />
       ) : (
         <div className="rounded-lg border overflow-auto">

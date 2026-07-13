@@ -288,7 +288,10 @@ async def list_overrides(
 @router.post("/forecast/overrides", status_code=201)
 async def submit_override(body: OverrideSubmitRequest, request: Request):
     """Submit a new planner forecast override."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     impact_units, impact_value = _compute_impact(
         stat_qty=body.statistical_qty,
@@ -369,7 +372,10 @@ async def submit_override(body: OverrideSubmitRequest, request: Request):
 @router.put("/forecast/overrides/{override_id}/approve")
 async def approve_override(override_id: int, body: ApproveRequest, request: Request):
     """Manager approves a pending override."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     sql = """
         UPDATE fact_forecast_overrides
@@ -420,7 +426,10 @@ async def approve_override(override_id: int, body: ApproveRequest, request: Requ
 @router.put("/forecast/overrides/{override_id}/reject")
 async def reject_override(override_id: int, body: RejectRequest, request: Request):
     """Manager rejects a pending override."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     sql = """
         UPDATE fact_forecast_overrides
@@ -451,7 +460,10 @@ async def reject_override(override_id: int, body: RejectRequest, request: Reques
 @router.delete("/forecast/overrides/{override_id}")
 async def delete_override(override_id: int, request: Request):
     """Soft-delete: sets override status to 'superseded'."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     sql = """
         UPDATE fact_forecast_overrides

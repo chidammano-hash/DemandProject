@@ -164,7 +164,7 @@ async def test_integrated_targets_detail_200():
             120.0, 8.0, -60.0, True,                   # 18-21: current pos
             5.63, 3.23, 8.85, 2.50, 11.35,            # 22-26: cost metrics
             14.0, 2.8,                                 # 27-28: lead time
-            "v1", "champion", "lgbm",                  # 29-31: metadata
+            "v1", "champion", "lgbm_cluster",          # 29-31: metadata
             _dt.datetime(2026, 4, 1, 12, 0, 0),       # 32: computed_at
             82,                                        # 33: stockout_risk_score
             0.0, 0.0, 0.0,                            # 34-36: excess_qty, value, holding
@@ -203,7 +203,7 @@ async def test_integrated_targets_detail_row_keys():
             110.0, 12.0, 20.0, False,
             2.81, 1.56, 4.38, 1.67, 6.04,
             21.0, 3.5,
-            "v1", "champion", "catboost",
+            "v1", "champion", "mstl",
             _dt.datetime(2026, 4, 1, 12, 0, 0),
             37,                                        # stockout_risk_score
             50.0, 600.0, 12.5,                         # excess_qty, value, holding

@@ -10,6 +10,10 @@ import {
   fetchPlanningDate,
 } from "../../api/queries/dashboard";
 
+vi.mock("../../context/AuthContext", () => ({
+  useAuth: () => ({ user: null, loading: false, login: vi.fn(), logout: vi.fn() }),
+}));
+
 vi.mock("../../api/queries/dashboard", () => ({
   fetchPlanningDate: vi.fn(),
   fetchPipelineReadiness: vi.fn(),

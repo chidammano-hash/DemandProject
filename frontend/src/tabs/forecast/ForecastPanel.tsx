@@ -17,7 +17,7 @@ import { fetchPipelineConfig, pipelineConfigKeys } from "@/api/queries/unified-m
 import {
   fetchBacktestSummary,
   fetchTrainingStatus,
-  submitTraining,
+  fetchSnapshotRosterReadiness,
   fetchStagingSummary,
   submitGenerateForecast,
   fetchPromotionStatus,
@@ -37,7 +37,7 @@ import {
 } from "@/api/queries/champion-experiments";
 import { fetchJobs } from "@/api/queries/jobs";
 import type { Job } from "@/types/jobs";
-import { modelLabel } from "@/lib/model-labels";
+import { isForecastModelId, modelLabel } from "@/lib/model-labels";
 import { toast } from "@/components/Toaster";
 import { formatApiError } from "@/lib/formatApiError";
 
@@ -56,16 +56,55 @@ import { ModelReadinessCard } from "./ModelReadinessCard";
 import { AlgorithmSelectionCard } from "./AlgorithmSelectionCard";
 import { GenerateForecastCard } from "./GenerateForecastCard";
 import { RecentJobsCard } from "./RecentJobsCard";
+import { useForecastPublishPreparation } from "./useForecastPublishPreparation";
+import { useForecastTraining } from "./useForecastTraining";
+
+const EMPTY_JOBS: Job[] = [];
 
 export function isExpectedStagingRunReady(
   candidate: { source_run_id: string; run_status: string } | undefined,
   expectedRunId: string | undefined
 ): boolean {
   return Boolean(
-    expectedRunId &&
-    candidate?.source_run_id === expectedRunId &&
-    candidate.run_status === "ready"
+    expectedRunId && candidate?.source_run_id === expectedRunId && candidate.run_status === "ready"
   );
+}
+
+export function resolveConfidenceIntervals(
+  configEnabled: boolean | undefined,
+  override: boolean | undefined
+): boolean {
+  return override ?? configEnabled ?? true;
+}
+
+export function buildForecastGenerationOptions(
+  horizon: number,
+  confidenceIntervalsOverride: boolean | undefined
+): { horizon: number; confidenceIntervals?: boolean } {
+  return confidenceIntervalsOverride === undefined
+    ? { horizon }
+    : { horizon, confidenceIntervals: confidenceIntervalsOverride };
+}
+
+export function findFailedGenerationModels(
+  jobs: Job[],
+  pendingRunIds: Record<string, string>,
+  modelIds: string[]
+): Array<{ modelId: string; job: Job }> {
+  return modelIds.flatMap((modelId) => {
+    const expectedRunId = pendingRunIds[modelId];
+    if (!expectedRunId) return [];
+    const failedJob = jobs.find(
+      (job) =>
+        (job.status === "failed" || job.status === "cancelled") &&
+        job.params.run_id === expectedRunId
+    );
+    return failedJob ? [{ modelId, job: failedJob }] : [];
+  });
+}
+
+export function generationFailureMessage(modelId: string): string {
+  return `${modelLabel(modelId)} generation failed. Open Jobs for details.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,13 +117,16 @@ export function ForecastPanel() {
   // -- State ---------------------------------------------------------------
   const [selectedModel, setSelectedModel] = useState<string>("champion");
   const [horizon, setHorizon] = useState<number | null>(null); // null = use config default
-  const [includeCI, setIncludeCI] = useState(false);
+  const [confidenceIntervalsOverride, setConfidenceIntervalsOverride] = useState<
+    boolean | undefined
+  >(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isTraining, setIsTraining] = useState(false);
-  const [trainingModelId, setTrainingModelId] = useState<string | null>(null);
   const [generatingModelId, setGeneratingModelId] = useState<string | null>(null);
   const [pendingRunIds, setPendingRunIds] = useState<Record<string, string>>({});
+  const [pendingBatchModelIds, setPendingBatchModelIds] = useState<string[]>([]);
   const [promotingModelId, setPromotingModelId] = useState<string | null>(null);
+  const { isTraining, trainingModelId, train, trainAll } = useForecastTraining();
+  const { isPreparingPublish, preparePublish } = useForecastPublishPreparation();
 
   const isGenerating = generatingModelId !== null;
 
@@ -112,6 +154,12 @@ export function ForecastPanel() {
     refetchInterval: isTraining ? 5_000 : false,
   });
 
+  const { data: snapshotReadiness } = useQuery({
+    queryKey: backtestMgmtKeys.snapshotRosterReadiness,
+    queryFn: fetchSnapshotRosterReadiness,
+    staleTime: 60_000,
+  });
+
   // Staging summary (generated forecast staging data per model)
   const { data: stagingData } = useQuery({
     queryKey: backtestMgmtKeys.stagingSummary,
@@ -132,7 +180,7 @@ export function ForecastPanel() {
     queryKey: forecastPanelKeys.jobs(0),
     queryFn: () => fetchJobs({ job_type: "generate_production_forecast", limit: 10 }),
     staleTime: STALE.JOBS,
-    refetchInterval: isSubmitting ? 5_000 : false,
+    refetchInterval: isSubmitting || isGenerating ? 5_000 : false,
   });
 
   // Promoted champion experiment (to know which models are in the active champion)
@@ -154,6 +202,14 @@ export function ForecastPanel() {
 
   const prodConfig = pipelineConfig?.production_forecast;
   const effectiveHorizon = horizon ?? prodConfig?.horizon_months ?? 24;
+  const includeCI = resolveConfidenceIntervals(
+    prodConfig?.confidence_interval?.enabled,
+    confidenceIntervalsOverride
+  );
+  const generationOptions = buildForecastGenerationOptions(
+    effectiveHorizon,
+    confidenceIntervalsOverride
+  );
   const promotedModel = promotionData?.promoted ?? null;
   const staging: StagingSummaryMap = stagingData ?? {};
 
@@ -165,32 +221,31 @@ export function ForecastPanel() {
   const versions: ProductionForecastVersion[] = versionsData?.versions ?? [];
   const latestVersion = versions.length > 0 ? versions[0] : null;
 
-  const recentJobs: Job[] = jobsData?.jobs ?? [];
+  const recentJobs = jobsData?.jobs ?? EMPTY_JOBS;
   const isForecastRunning = recentJobs.some((j) => j.status === "running" || j.status === "queued");
 
-  // Tree models that are forecastable
-  const treeAlgos = forecastAlgos.filter((a) => requiresTraining(a.type));
+  const trainableAlgos = useMemo(
+    () => forecastAlgos.filter((algo) => requiresTraining(algo.type)),
+    [forecastAlgos]
+  );
+  const trainedArtifactCount = trainableAlgos.filter((algo) => {
+    const status = trainingStatus?.[algo.id];
+    return status?.ready === true;
+  }).length;
+  const allRequiredArtifactsReady =
+    trainableAlgos.length > 0 && trainedArtifactCount === trainableAlgos.length;
 
-  // Models ready to generate right now: non-tree models (zero-shot) plus tree
-  // models that are production-trained. Drives the "Generate All" button.
+  // MSTL and Chronos 2E infer directly. LightGBM, N-HiTS, and N-BEATS become
+  // generatable after their immutable production artifacts are ready.
   const generatableAlgos = useMemo(
     () =>
       forecastAlgos.filter((a) => {
         if (!requiresTraining(a.type)) return true;
         const st = trainingStatus?.[a.id];
-        return Boolean(st?.trained && st?.training_mode === "production");
+        return st?.ready === true;
       }),
     [forecastAlgos, trainingStatus]
   );
-
-  // Count of tree models that are production-trained
-  const trainedTreeCount = treeAlgos.filter((a) => {
-    const status = trainingStatus?.[a.id];
-    return status?.trained && status?.training_mode === "production";
-  }).length;
-
-  // Are all tree models production-ready?
-  const allTreesTrained = treeAlgos.length > 0 && trainedTreeCount === treeAlgos.length;
 
   // Promoted champion experiment — use its model list for the champion display
   const promotedExperiment = promotedData?.promoted ?? null;
@@ -199,7 +254,7 @@ export function ForecastPanel() {
   // If no promoted experiment, fall back to all algos with compete: true
   const championCompetingAlgos = useMemo(() => {
     const allAlgos = pipelineConfig?.algorithms ?? {};
-    const promotedModelIds = new Set(promotedExperiment?.models ?? []);
+    const promotedModelIds = new Set((promotedExperiment?.models ?? []).filter(isForecastModelId));
     if (promotedModelIds.size > 0) {
       return Array.from(promotedModelIds).map((id) => {
         const a = allAlgos[id];
@@ -220,14 +275,15 @@ export function ForecastPanel() {
 
   // Champion generation needs current production artifacts; promotion needs one
   // completed immutable champion candidate run returned by the generation API.
-  const championConstituents: string[] = promotedExperiment?.models ?? [];
+  const championConstituents: string[] = (promotedExperiment?.models ?? []).filter(
+    isForecastModelId
+  );
   const championMissingModels = championConstituents.filter((id) => {
     const algorithm = pipelineConfig?.algorithms?.[id];
     if (!algorithm || !requiresTraining(algorithm.type)) return false;
     const status = trainingStatus?.[id];
-    return !(status?.trained && status.training_mode === "production");
+    return status?.ready !== true;
   });
-  const championCanGenerate = promotedExperiment != null && championMissingModels.length === 0;
   const championCandidate = staging.champion;
   const championReady =
     championCandidate?.run_status === "ready" && championCandidate.promotion_eligible;
@@ -239,43 +295,10 @@ export function ForecastPanel() {
 
   // -- Handlers ------------------------------------------------------------
 
-  async function handleTrain(modelId: string) {
-    setIsTraining(true);
-    setTrainingModelId(modelId);
-    try {
-      await submitTraining(modelId);
-      // Polling via refetchInterval will pick up completion
-    } catch (err) {
-      console.error("Training failed:", err);
-      setIsTraining(false);
-      setTrainingModelId(null);
-    }
-  }
-
-  async function handleTrainAll() {
-    setIsTraining(true);
-    setTrainingModelId("__all__");
-    try {
-      // Submit training for all untrained tree models sequentially
-      for (const algo of treeAlgos) {
-        const status = trainingStatus?.[algo.id];
-        if (!status?.trained || status?.training_mode !== "production") {
-          await submitTraining(algo.id);
-        }
-      }
-    } catch (err) {
-      console.error("Train All failed:", err);
-    }
-    // Keep polling — will auto-clear when all trained
-  }
-
   async function handleGenerate(modelId: string) {
     setGeneratingModelId(modelId);
     try {
-      const submitted = await submitGenerateForecast(modelId, {
-        horizon: effectiveHorizon,
-        confidenceIntervals: includeCI,
-      });
+      const submitted = await submitGenerateForecast(modelId, generationOptions);
       setPendingRunIds((current) => ({
         ...current,
         [modelId]: submitted.source_run_id,
@@ -292,36 +315,41 @@ export function ForecastPanel() {
   // all models have staged rows.
   async function handleGenerateAll() {
     if (generatableAlgos.length === 0) {
-      toast.info("No models are ready to generate — train the tree models first.");
+      toast.info("No models are ready to generate — train the required production models first.");
       return;
     }
     setGeneratingModelId("__all__");
+    setPendingBatchModelIds([]);
     toast.info(
       `Generating forecasts for ${generatableAlgos.length} model${generatableAlgos.length === 1 ? "" : "s"}…`
     );
-    let failures = 0;
     const submittedRuns: Record<string, string> = {};
     for (const algo of generatableAlgos) {
       try {
-        const submitted = await submitGenerateForecast(algo.id, {
-          horizon: effectiveHorizon,
-          confidenceIntervals: includeCI,
-        });
+        const submitted = await submitGenerateForecast(algo.id, generationOptions);
         submittedRuns[algo.id] = submitted.source_run_id;
       } catch (err) {
-        failures += 1;
         toast.error(`${modelLabel(algo.id)}: ${formatApiError(err)}`);
       }
     }
     setPendingRunIds((current) => ({ ...current, ...submittedRuns }));
+    const submittedModelIds = Object.keys(submittedRuns);
+    setPendingBatchModelIds(submittedModelIds);
     queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
-    if (failures === generatableAlgos.length) {
+    if (submittedModelIds.length === 0) {
       // Nothing was queued — clear the spinner now (poll effect won't fire).
       setGeneratingModelId(null);
     }
   }
 
   async function handlePromote(modelId: string) {
+    if (snapshotReadiness?.ready !== true) {
+      toast.error(
+        snapshotReadiness?.stale_reason ??
+          "Prepare the current champion plus exact top-three evidence before promoting."
+      );
+      return;
+    }
     const candidate = staging[modelId];
     if (
       !candidate?.source_run_id ||
@@ -351,72 +379,59 @@ export function ForecastPanel() {
     }
   }
 
-  // Generate champion forecasts via the legacy production forecast job — routes
-  // per-DFU using champion assignments.
-  async function handleGenerateChampion() {
-    setGeneratingModelId("champion");
-    try {
-      await submitChampionJob();
-      toast.success("Champion forecast generation queued.");
-      queryClient.invalidateQueries({ queryKey: forecastPanelKeys.jobs(0) });
-      queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
-    } catch (err) {
-      toast.error(formatApiError(err));
-      setGeneratingModelId(null);
-    }
-  }
-
-  // Effect: stop polling once training completes
-  // Check if training is done when trainingStatus updates
-  useEffect(() => {
-    if (!isTraining || !trainingStatus) return;
-
-    if (trainingModelId === "__all__") {
-      // All tree models — check if every one is now production-trained
-      const allDone = treeAlgos.every((a) => {
-        const st = trainingStatus[a.id];
-        return st?.trained && st?.training_mode === "production";
-      });
-      if (allDone) {
-        setIsTraining(false);
-        setTrainingModelId(null);
-      }
-    } else if (trainingModelId) {
-      const st = trainingStatus[trainingModelId];
-      if (st?.trained && st?.training_mode === "production") {
-        setIsTraining(false);
-        setTrainingModelId(null);
-      }
-    }
-  }, [trainingStatus, isTraining, trainingModelId, treeAlgos]);
-
   // Effect: stop polling once generate completes (staging row appears)
   useEffect(() => {
     if (!generatingModelId || !stagingData) return;
     if (generatingModelId === "__all__") {
       // Clear only when each newly submitted run—not an older staged run—is ready.
       const allGenerated =
-        generatableAlgos.length > 0 &&
-        generatableAlgos.every((a) => {
-          const expectedRun = pendingRunIds[a.id];
-          const current = stagingData[a.id];
+        pendingBatchModelIds.length > 0 &&
+        pendingBatchModelIds.every((modelId) => {
+          const expectedRun = pendingRunIds[modelId];
+          const current = stagingData[modelId];
           return isExpectedStagingRunReady(current, expectedRun);
         });
-      if (allGenerated) setGeneratingModelId(null);
+      if (allGenerated) {
+        setGeneratingModelId(null);
+        setPendingBatchModelIds([]);
+      }
       return;
     }
     const s = stagingData[generatingModelId];
     if (isExpectedStagingRunReady(s, pendingRunIds[generatingModelId])) {
       setGeneratingModelId(null);
     }
-  }, [stagingData, generatingModelId, generatableAlgos, pendingRunIds]);
+  }, [stagingData, generatingModelId, pendingBatchModelIds, pendingRunIds]);
+
+  // A failed/cancelled job never produces a ready staging row. Stop waiting for
+  // that exact run and keep a Generate All batch polling only its successful
+  // submissions, so one failure cannot leave the UI spinning forever.
+  useEffect(() => {
+    if (!generatingModelId) return;
+    const activeModelIds =
+      generatingModelId === "__all__" ? pendingBatchModelIds : [generatingModelId];
+    const failures = findFailedGenerationModels(recentJobs, pendingRunIds, activeModelIds);
+    if (failures.length === 0) return;
+
+    failures.forEach(({ modelId }) => {
+      toast.error(generationFailureMessage(modelId));
+    });
+
+    if (generatingModelId === "__all__") {
+      const failedModelIds = new Set(failures.map(({ modelId }) => modelId));
+      const remainingModelIds = pendingBatchModelIds.filter(
+        (modelId) => !failedModelIds.has(modelId)
+      );
+      setPendingBatchModelIds(remainingModelIds);
+      if (remainingModelIds.length === 0) setGeneratingModelId(null);
+    } else {
+      setGeneratingModelId(null);
+    }
+  }, [generatingModelId, pendingBatchModelIds, pendingRunIds, recentJobs]);
 
   /** Submit a run-scoped champion job using the promoted DFU routing artifact. */
   async function submitChampionJob(): Promise<string> {
-    const submitted = await submitGenerateForecast("champion", {
-      horizon: effectiveHorizon,
-      confidenceIntervals: includeCI,
-    });
+    const submitted = await submitGenerateForecast("champion", generationOptions);
     setPendingRunIds((current) => ({
       ...current,
       champion: submitted.source_run_id,
@@ -433,10 +448,7 @@ export function ForecastPanel() {
       } else {
         // For a specific model: use the new generate endpoint, threading the
         // panel's horizon + CI toggle (previously dropped here).
-        const submitted = await submitGenerateForecast(selectedModel, {
-          horizon: effectiveHorizon,
-          confidenceIntervals: includeCI,
-        });
+        const submitted = await submitGenerateForecast(selectedModel, generationOptions);
         setPendingRunIds((current) => ({
           ...current,
           [selectedModel]: submitted.source_run_id,
@@ -498,30 +510,29 @@ export function ForecastPanel() {
         forecastAlgos={forecastAlgos}
         trainingStatus={trainingStatus}
         staging={staging}
-        treeAlgos={treeAlgos}
-        trainedTreeCount={trainedTreeCount}
-        allTreesTrained={allTreesTrained}
+        trainableAlgos={trainableAlgos}
+        trainedArtifactCount={trainedArtifactCount}
+        allRequiredArtifactsReady={allRequiredArtifactsReady}
         isTraining={isTraining}
         trainingModelId={trainingModelId}
         generatingModelId={generatingModelId}
         isGenerating={isGenerating}
         promotingModelId={promotingModelId}
-        isSubmitting={isSubmitting}
-        promotedModel={promotedModel}
         promotedExperiment={promotedExperiment}
         championConstituents={championConstituents}
         championMissingModels={championMissingModels}
-        championCanGenerate={championCanGenerate}
         championReady={championReady}
         championDfuCount={championDfuCount}
         isChampionPromoted={isChampionPromoted}
-        onTrain={handleTrain}
-        onTrainAll={handleTrainAll}
+        snapshotReadiness={snapshotReadiness}
+        isPreparingPublish={isPreparingPublish}
+        onTrain={train}
+        onTrainAll={trainAll}
         onGenerate={handleGenerate}
         onGenerateAll={handleGenerateAll}
         generatableCount={generatableAlgos.length}
         onPromote={handlePromote}
-        onGenerateChampion={handleGenerateChampion}
+        onPreparePublish={preparePublish}
       />
 
       {/* ══════ STEP 2: Algorithm Selection ══════ */}
@@ -545,7 +556,7 @@ export function ForecastPanel() {
           effectiveHorizon={effectiveHorizon}
           onHorizonChange={setHorizon}
           includeCI={includeCI}
-          onIncludeCIChange={setIncludeCI}
+          onIncludeCIChange={setConfidenceIntervalsOverride}
           isSubmitting={isSubmitting}
           isForecastRunning={isForecastRunning}
           onGenerateForecast={handleGenerateForecast}

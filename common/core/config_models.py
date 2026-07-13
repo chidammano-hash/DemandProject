@@ -17,10 +17,7 @@ The registry is imported by ``common/utils.py`` at validation time.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -47,33 +44,6 @@ def register_config_model(name: str, model: type[BaseModel]) -> None:
 # ---------------------------------------------------------------------------
 
 
-class AlgorithmModelConfig(BaseModel):
-    """Validates a single algorithm entry inside ``algorithm_config.yaml``."""
-
-    enabled: bool = True
-    model_id: str = ""
-    cluster_strategy: str = Field(
-        default="per_cluster", pattern=r"^(per_cluster|global)$"
-    )
-    shap_select: bool = False
-    shap_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
-    shap_top_n: Optional[int] = None
-    shap_sample_size: int = Field(default=500, ge=1)
-    recursive: bool = False
-    tune_inline: bool = False
-    params_file: Optional[str] = None
-
-    class Config:
-        extra = "allow"  # allow model-specific hyper-params
-
-
-class AlgorithmConfig(BaseModel):
-    """Top-level schema for ``algorithm_config.yaml``."""
-
-    backtest: dict = Field(default_factory=dict)
-    algorithms: dict[str, AlgorithmModelConfig] = Field(default_factory=dict)
-
-
 class PlanningConfig(BaseModel):
     """Validates ``planning_config.yaml``."""
 
@@ -83,7 +53,7 @@ class PlanningConfig(BaseModel):
 class PlanningInner(BaseModel):
     """Inner ``planning:`` block of ``planning_config.yaml``."""
 
-    planning_date: Optional[str] = None
+    planning_date: str | None = None
     use_system_date: bool = True
 
 
@@ -176,6 +146,5 @@ class SafetyStockConfig(BaseModel):
 # Register models
 # ---------------------------------------------------------------------------
 
-# algorithm_config.yaml consolidated into forecast_pipeline_config.yaml
 register_config_model("planning_config.yaml", PlanningConfig)
 register_config_model("safety_stock_config.yaml", SafetyStockConfig)

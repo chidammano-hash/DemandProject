@@ -98,7 +98,7 @@ export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {
     placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
-  const customers = data?.customers ?? [];
+  const customers = useMemo(() => data?.customers ?? [], [data]);
   const maxDemand = useMemo(
     () => Math.max(...customers.map((c) => c.demand_qty), 1),
     [customers],
@@ -117,7 +117,7 @@ export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Customer Ranking</CardTitle>
-          <ExportButtons panelId="ranking" getData={() => customers as unknown as Record<string, unknown>[]} />
+          <ExportButtons panelId="ranking" getData={() => customers} />
         </div>
         <div className="flex gap-2 mt-1 items-center flex-wrap">
           <div className="flex gap-1">

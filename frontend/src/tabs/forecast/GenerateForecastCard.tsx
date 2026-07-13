@@ -67,7 +67,9 @@ export function GenerateForecastCard({
           <div className="text-xs text-muted-foreground">
             Model:{" "}
             <span className="font-medium text-foreground">
-              {selectedModel === "champion" ? "Champion (meta-learner)" : modelLabel(selectedModel)}
+              {selectedModel === "champion"
+                ? "Champion (promoted DFU routing)"
+                : modelLabel(selectedModel)}
             </span>
           </div>
 
@@ -78,10 +80,7 @@ export function GenerateForecastCard({
               checked={includeCI}
               onCheckedChange={(checked) => onIncludeCIChange(checked === true)}
             />
-            <label
-              htmlFor="include-ci"
-              className="text-xs cursor-pointer select-none"
-            >
+            <label htmlFor="include-ci" className="text-xs cursor-pointer select-none">
               Include Confidence Intervals (P10/P90)
             </label>
           </div>
@@ -108,7 +107,8 @@ export function GenerateForecastCard({
 
           {isForecastRunning && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
-              A forecast generation job is currently running. Wait for it to complete before submitting another.
+              A forecast generation job is currently running. Wait for it to complete before
+              submitting another.
             </p>
           )}
         </CardContent>
@@ -122,7 +122,7 @@ export function GenerateForecastCard({
           </CardHeader>
           <CardContent className="space-y-1 text-sm">
             <ConfigRow label="Version" value={latestVersion.plan_version} />
-            <ConfigRow label="DFUs" value={(latestVersion.sku_count ?? latestVersion.dfu_count)?.toLocaleString() ?? "--"} />
+            <ConfigRow label="DFUs" value={latestVersion.dfu_count.toLocaleString()} />
             <ConfigRow label="Rows" value={latestVersion.total_rows?.toLocaleString() ?? "--"} />
             <ConfigRow
               label="Generated"

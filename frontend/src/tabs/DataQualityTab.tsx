@@ -77,7 +77,7 @@ export default function DataQualityTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dqKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: dqKeys.checks });
-      queryClient.invalidateQueries({ queryKey: ["dq", "history"] });
+      queryClient.invalidateQueries({ queryKey: dqKeys.history() });
       setShowSuccess(true);
     },
   });
@@ -90,7 +90,7 @@ export default function DataQualityTab() {
 
   /* ---- derived data ---- */
   const domains = dashboard?.domains ?? [];
-  const checkList: DQCheck[] = checks?.checks ?? [];
+  const checkList = useMemo<DQCheck[]>(() => checks?.checks ?? [], [checks]);
   const historyEntries = history?.entries ?? [];
 
   /* ---- domain filter ---- */
@@ -154,7 +154,7 @@ export default function DataQualityTab() {
           </p>
         </div>
         <button
-          onClick={() => runChecksMutation.mutate()}
+          onClick={() => runChecksMutation.mutate(undefined)}
           disabled={runChecksMutation.isPending}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >

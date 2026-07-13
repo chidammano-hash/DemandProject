@@ -616,7 +616,7 @@ async def test_used_by():
     pool, conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         (10, "LGBM Run A", "lgbm_cluster", "completed", 72.5, "2026-03-20T10:00:00"),
-        (11, "CatBoost Run B", "catboost_cluster", "running", None, "2026-03-21T10:00:00"),
+        (11, "MSTL Run B", "mstl", "running", None, "2026-03-21T10:00:00"),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -631,7 +631,7 @@ async def test_used_by():
     assert len(data["runs"]) == 2
     assert data["runs"][0]["run_id"] == 10
     assert data["runs"][0]["accuracy_pct"] == 72.5
-    assert data["runs"][1]["run_label"] == "CatBoost Run B"
+    assert data["runs"][1]["run_label"] == "MSTL Run B"
 
 
 @pytest.mark.asyncio

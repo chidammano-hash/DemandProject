@@ -29,9 +29,9 @@ load_dotenv(ROOT / ".env")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.core.db import get_db_params
+from common.core.db import get_db_params  # noqa: E402 — after CLI path bootstrap
 from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
-from common.core.utils import _ts
+from common.core.utils import _ts  # noqa: E402 — after CLI path bootstrap
 
 VALID_DATE_COLUMNS = ("startdate", "fcstdate")
 
@@ -196,7 +196,7 @@ def main() -> None:
 
     parser.add_argument(
         "--model", type=str, metavar="MODEL",
-        help="Filter by model_id (e.g., external, lgbm_global). Omit for all models.",
+        help="Filter by model_id (e.g., external, lgbm_cluster). Omit for all models.",
     )
     parser.add_argument(
         "--date-column", type=str, choices=["startdate", "fcstdate"],

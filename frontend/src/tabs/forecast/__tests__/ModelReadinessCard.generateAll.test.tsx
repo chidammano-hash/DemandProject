@@ -2,7 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ModelReadinessCard } from "../ModelReadinessCard";
 import type { ForecastAlgorithm } from "../forecastPanelShared";
-import type { PromotionStatus, StagingSummary } from "@/api/queries/backtest-management";
+import type {
+  SnapshotRosterReadiness,
+  StagingSummary,
+} from "@/api/queries/backtest-management";
 
 const treeAlgo: ForecastAlgorithm = {
   id: "lgbm_cluster",
@@ -12,6 +15,16 @@ const treeAlgo: ForecastAlgorithm = {
   compete: true,
   hasPredictions: true,
   accuracy: 92,
+};
+
+const neuralAlgo: ForecastAlgorithm = {
+  id: "nhits",
+  type: "deep_learning",
+  enabled: true,
+  forecast: true,
+  compete: true,
+  hasPredictions: true,
+  accuracy: 88,
 };
 
 const readyCandidate: StagingSummary = {
@@ -29,29 +42,26 @@ const readyCandidate: StagingSummary = {
   max_forecast_month: "2026-12-01",
 };
 
-function promotion(sourceRunId: string): PromotionStatus {
-  return {
-    id: 1,
-    model_id: "lgbm_cluster",
-    promotion_type: "single",
-    champion_experiment_id: null,
-    plan_version: "2026-07",
-    promoted_at: "2026-07-10T12:00:00Z",
-    dfu_count: 1,
-    total_rows: 6,
-    promoted_by: "test",
-    notes: null,
-    source_run_id: sourceRunId,
-    production_run_id: "production-run",
-    candidate_checksum: null,
-    production_checksum: null,
-    archive_checksum: null,
-    archived_at: null,
-  };
-}
+const readySnapshotRoster: SnapshotRosterReadiness = {
+  planning_month: "2026-07-01",
+  ready: true,
+  champion_ready: true,
+  roster_model_count: 4,
+  ready_contender_count: 3,
+  required_contender_count: 3,
+  contenders: [
+    { model_id: "lgbm_cluster", rank: 1, ready: true, stale_reason: null },
+    { model_id: "nhits", rank: 2, ready: true, stale_reason: null },
+    { model_id: "mstl", rank: 3, ready: true, stale_reason: null },
+  ],
+  stale_reason: null,
+  action_pipeline: "forecast-publish",
+};
 
 function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCard>> = {}) {
   const onGenerateAll = vi.fn();
+  const onTrainAll = vi.fn();
+  const onPreparePublish = vi.fn();
   const base: React.ComponentProps<typeof ModelReadinessCard> = {
     forecastAlgos: [treeAlgo],
     trainingStatus: {
@@ -59,6 +69,7 @@ function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCar
         model_id: "lgbm_cluster",
         type: "tree",
         trained: true,
+        ready: true,
         trained_at: null,
         training_mode: "production",
         n_dfus: 1,
@@ -66,33 +77,32 @@ function renderCard(props: Partial<React.ComponentProps<typeof ModelReadinessCar
       },
     },
     staging: {},
-    treeAlgos: [treeAlgo],
-    trainedTreeCount: 1,
-    allTreesTrained: true,
+    trainableAlgos: [treeAlgo],
+    trainedArtifactCount: 1,
+    allRequiredArtifactsReady: true,
     isTraining: false,
     trainingModelId: null,
     generatingModelId: null,
     isGenerating: false,
     promotingModelId: null,
-    isSubmitting: false,
-    promotedModel: null,
     promotedExperiment: null,
     championConstituents: [],
     championMissingModels: [],
-    championCanGenerate: false,
     championReady: false,
     championDfuCount: 0,
     isChampionPromoted: false,
+    snapshotReadiness: readySnapshotRoster,
+    isPreparingPublish: false,
     onTrain: () => {},
-    onTrainAll: () => {},
+    onTrainAll,
     onGenerate: () => {},
     onGenerateAll,
     generatableCount: 1,
     onPromote: () => {},
-    onGenerateChampion: () => {},
+    onPreparePublish,
   };
   render(<ModelReadinessCard {...base} {...props} />);
-  return { onGenerateAll };
+  return { onGenerateAll, onTrainAll, onPreparePublish };
 }
 
 describe("ModelReadinessCard — Generate All", () => {
@@ -117,21 +127,89 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.getByText(/Generating All/)).toBeDefined();
   });
 
-  it("allows a new run for the currently promoted model to be promoted", () => {
-    renderCard({
-      staging: { lgbm_cluster: readyCandidate },
-      promotedModel: promotion("old-run"),
+  it("offers one bulk training action when required artifacts are missing", () => {
+    const { onTrainAll } = renderCard({
+      trainedArtifactCount: 0,
+      allRequiredArtifactsReady: false,
     });
-
-    expect(screen.getByRole("button", { name: "Promote" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /Train Production Models/ }));
+    expect(onTrainAll).toHaveBeenCalledTimes(1);
   });
 
-  it("marks only the exact published source run as promoted", () => {
+  it("blocks neural generation until its final-refit artifact is ready", () => {
     renderCard({
-      staging: { lgbm_cluster: readyCandidate },
-      promotedModel: promotion("new-run"),
+      forecastAlgos: [neuralAlgo],
+      trainableAlgos: [neuralAlgo],
+      trainedArtifactCount: 0,
+      allRequiredArtifactsReady: false,
+      generatableCount: 0,
+      trainingStatus: {
+        nhits: {
+          model_id: "nhits",
+          type: "deep_learning",
+          trained: false,
+          ready: false,
+          trained_at: null,
+          training_mode: null,
+          n_dfus: null,
+          planning_date: null,
+        },
+      },
     });
 
-    expect(screen.getByRole("button", { name: "Promoted" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
   });
+
+  it("keeps individual model candidates diagnostic-only", () => {
+    renderCard({
+      staging: { lgbm_cluster: readyCandidate },
+    });
+
+    expect(screen.getByText("Diagnostic only")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+  });
+
+  it("disables promotion and offers one canonical preparation action when the roster is stale", () => {
+    const { onPreparePublish } = renderCard({
+      staging: { lgbm_cluster: readyCandidate },
+      snapshotReadiness: {
+        ...readySnapshotRoster,
+        ready: false,
+        ready_contender_count: 2,
+        stale_reason: "One contender is stale.",
+      },
+    });
+
+    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    expect(screen.getByText("Champion + 2/3 contenders ready")).toBeInTheDocument();
+    const action = screen.getByRole("button", { name: "Prepare Release" });
+    fireEvent.click(action);
+    expect(onPreparePublish).toHaveBeenCalledWith("forecast-publish");
+    expect(screen.getAllByRole("button", { name: "Prepare Release" })).toHaveLength(1);
+  });
+
+  it("offers Model Refresh when governed champion evidence is missing", () => {
+    const { onPreparePublish } = renderCard({
+      snapshotReadiness: {
+        ...readySnapshotRoster,
+        ready: false,
+        champion_ready: false,
+        stale_reason: "Run the named Model Refresh pipeline.",
+        action_pipeline: "model-refresh",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Models" }));
+    expect(onPreparePublish).toHaveBeenCalledWith("model-refresh");
+  });
+
+  it("shows pipeline progress without allowing duplicate preparation", () => {
+    renderCard({
+      snapshotReadiness: { ...readySnapshotRoster, ready: false },
+      isPreparingPublish: true,
+    });
+
+    expect(screen.getByRole("button", { name: "Preparing Release..." })).toBeDisabled();
+  });
+
 });

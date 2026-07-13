@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 import psycopg
 import yaml
@@ -24,6 +23,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn
+from common.core.sql_helpers import row_to_dict_from_cols
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["ai-planner"])
@@ -83,9 +83,12 @@ class AutoAcceptRequest(BaseModel):
 @router.post("/ai-planner/analyze", status_code=201)
 async def analyze_dfu(body: AnalyzeRequest, request: Request):
     """Run AI analysis for a single DFU (synchronous, ~5-15s)."""
-    require_api_key(request)
-    from common.ai.ai_planner import AIPlannerAgent
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     from api.core import _get_pool
+    from common.ai.ai_planner import AIPlannerAgent
 
     pool = _get_pool()
     scan_run_id = str(uuid.uuid4())
@@ -113,9 +116,12 @@ async def analyze_dfu(body: AnalyzeRequest, request: Request):
 @router.post("/ai-planner/portfolio-scan", status_code=202)
 async def trigger_portfolio_scan(request: Request):
     """Trigger an async portfolio scan.  Returns 202 immediately."""
-    require_api_key(request)
-    from common.ai.ai_planner import AIPlannerAgent
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     from api.core import _get_pool
+    from common.ai.ai_planner import AIPlannerAgent
 
     pool = _get_pool()
     scan_run_id = str(uuid.uuid4())
@@ -125,7 +131,7 @@ async def trigger_portfolio_scan(request: Request):
         agent = AIPlannerAgent(pool, config)
         try:
             agent.run_portfolio_scan(scan_run_id)
-        except Exception:  # noqa: BLE001 — background ai_planner thread must never raise to the executor
+        except Exception:
             log.exception("Portfolio scan failed  scan_run_id=%s", scan_run_id)
 
     _executor.submit(_run)
@@ -138,15 +144,15 @@ async def trigger_portfolio_scan(request: Request):
 
 @router.get("/ai-planner/insights")
 async def get_insights(
-    severity: Optional[str] = Query(None),
-    status: Optional[str] = Query(None, alias="status"),
-    insight_type: Optional[str] = Query(None),
-    item_id: Optional[str] = Query(None),
-    loc: Optional[str] = Query(None),
-    brand: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    market: Optional[str] = Query(None),
-    channel: Optional[str] = Query(None),
+    severity: str | None = Query(None),
+    status: str | None = Query(None, alias="status"),
+    insight_type: str | None = Query(None),
+    item_id: str | None = Query(None),
+    loc: str | None = Query(None),
+    brand: str | None = Query(None),
+    category: str | None = Query(None),
+    market: str | None = Query(None),
+    channel: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
@@ -224,7 +230,7 @@ async def get_insights(
 
             cur.execute(select_sql, params)
             cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+            rows = [row_to_dict_from_cols(tuple(cols), tuple(r)) for r in cur.fetchall()]
 
     return {"total": total, "page": page, "page_size": page_size, "insights": rows}
 
@@ -236,7 +242,10 @@ async def get_insights(
 @router.post("/ai-planner/insights/{insight_id}/status")
 async def update_insight_status(insight_id: int, body: StatusUpdateRequest, request: Request):
     """Acknowledge or resolve an insight, and record the outcome for feedback tracking."""
-    require_api_key(request)
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     valid = {"open", "acknowledged", "resolved"}
     if body.status not in valid:
         raise HTTPException(status_code=422, detail=f"status must be one of {sorted(valid)}")
@@ -300,7 +309,10 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
 @router.post("/ai-planner/insights/{insight_id}/snooze")
 async def snooze_insight(insight_id: int, body: SnoozeRequest, request: Request):
     """Snooze an insight for N days — hides it from the default open queue."""
-    require_api_key(request)
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
     if body.days < 1 or body.days > 365:
         raise HTTPException(status_code=422, detail="days must be between 1 and 365")
 
@@ -347,7 +359,10 @@ async def auto_accept_insights(body: AutoAcceptRequest, request: Request):
     With dry_run=true returns matching count without writing.
     Writes ai_recommendation_outcomes with planner_decision='auto_accepted'.
     """
-    require_api_key(request)
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     min_rank = SEVERITY_RANK.get(body.min_severity, 0)
     qualifying = [s for s, r in SEVERITY_RANK.items() if r <= min_rank]
@@ -464,11 +479,15 @@ async def get_ai_metrics(
         with conn.cursor() as cur:
             cur.execute(sql, (days,))
             model_cols = [d[0] for d in cur.description]
-            by_model = [dict(zip(model_cols, r)) for r in cur.fetchall()]
+            by_model = [
+                row_to_dict_from_cols(tuple(model_cols), tuple(r)) for r in cur.fetchall()
+            ]
 
             cur.execute(tool_sql, (days,))
             tool_cols = [d[0] for d in cur.description]
-            by_tool = [dict(zip(tool_cols, r)) for r in cur.fetchall()]
+            by_tool = [
+                row_to_dict_from_cols(tuple(tool_cols), tuple(r)) for r in cur.fetchall()
+            ]
 
     return {"days": days, "by_model": by_model, "by_tool": by_tool}
 
@@ -479,7 +498,7 @@ async def get_ai_metrics(
 
 @router.get("/ai-planner/memos")
 async def get_memos(
-    scope: Optional[str] = Query(None),
+    scope: str | None = Query(None),
     limit: int = Query(10, ge=1, le=50),
 ):
     """Return planning memos (latest first)."""
@@ -501,6 +520,6 @@ async def get_memos(
         with conn.cursor() as cur:
             cur.execute(sql, params)
             cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+            rows = [row_to_dict_from_cols(tuple(cols), tuple(r)) for r in cur.fetchall()]
 
     return {"memos": rows}

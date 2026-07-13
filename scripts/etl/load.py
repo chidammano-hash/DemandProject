@@ -343,8 +343,9 @@ def _do_delta(domain: str, dry_run: bool) -> str | dict[str, Any]:
 
     last_hash = _fetch_last_hash(domain)
     if current_hash and last_hash and current_hash == last_hash:
-        logger.info("delta: %s unchanged (hash=%s) — skipping", domain, current_hash[:12])
-        return "skipped"
+        if domain != "sales" or _sales_source_is_synchronized():
+            logger.info("delta: %s unchanged (hash=%s) — skipping", domain, current_hash[:12])
+            return "skipped"
 
     # Source changed — re-normalize so the cleaned CSV reflects current raw,
     # then run the safe upsert.
@@ -354,7 +355,29 @@ def _do_delta(domain: str, dry_run: bool) -> str | dict[str, Any]:
         logger.info("DRY-RUN: would delta-upsert %s", domain)
         return "success"
 
-    # All domains route through the safe non-destructive upsert path.
+    if domain == "sales":
+        # Sales is a strict dual-track source: the canonical loader replaces
+        # current and immutable-original facts in one transaction and records
+        # the same batch hash. A generic upsert could advance audit lineage
+        # while leaving the raw model-training mirror stale.
+        from common.core.domain_specs import get_spec
+        from scripts.etl.load_dataset_postgres import load_domain
+
+        spec = get_spec(domain)
+        result = load_domain(
+            spec,
+            ROOT / "data" / spec.clean_file,
+            source_hash_override=current_hash or None,
+        )
+        loaded = int(result.get("rows_loaded", 0))
+        return {
+            "status": "success",
+            "inserted": loaded,
+            "updated": 0,
+            "deleted": 0,
+        }
+
+    # Remaining domains route through the safe non-destructive upsert path.
     # customer_demand previously used its dedicated loader, but that loader
     # raises CardinalityViolation when source has duplicate (demand_ck,
     # startdate) rows (~0.3% of feeds). _safe_upsert dedupes via DISTINCT ON.
@@ -473,6 +496,23 @@ def _resolve_raw_input(domain: str):
     if not src or "*" in src or src.startswith("_generated"):
         return None
     return ROOT / "data" / "input" / src
+
+
+def _sales_source_is_synchronized() -> bool:
+    """Return whether the latest sales audit and immutable mirror are coherent."""
+    from common.services.forecast_population import resolve_forecast_sales_table
+
+    try:
+        with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            resolve_forecast_sales_table(cur)
+    except (psycopg.Error, RuntimeError):
+        logger.warning(
+            "Sales hash is unchanged but forecast lineage is not synchronized; "
+            "forcing a canonical dual-track reload",
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 def _record_audit_hash(domain: str, source_hash: str, row_count: int) -> None:

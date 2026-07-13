@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `sql/008_perf_indexes_and_agg.sql`, `api/routers/forecasting/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `sql/008_perf_indexes_and_agg.sql`, `api/routers/forecasting/accuracy.py`, `frontend/src/tabs/AggregateAnalysisTab.tsx` |
 
 ---
 
@@ -16,7 +16,11 @@ A single forecasting algorithm rarely wins for every product. Without a way to s
 
 ## Solution
 
-A `model_id` column on the forecast table lets any number of algorithms write predictions for the same item-location-month. The uniqueness constraint is `(forecast_ck, model_id)`, meaning the same business key can appear once per model. All downstream views, KPIs, and UI components are model-aware -- they filter, compare, and aggregate by model automatically.
+A `model_id` column on the forecast table lets the maintained model roster and
+its comparison identities coexist for the same item-location-month. The
+uniqueness constraint is `(forecast_ck, model_id)`, meaning the same business
+key can appear once per model. All downstream views, KPIs, and UI components
+are model-aware -- they filter, compare, and aggregate by model automatically.
 
 ## How It Works
 
@@ -42,6 +46,10 @@ A `model_id` column on the forecast table lets any number of algorithms write pr
 |----------|--------|
 | `external` | ERP/source system statistical forecast |
 | `lgbm_cluster` | LightGBM per-cluster backtest |
+| `nhits` | N-HiTS global deep-learning backtest |
+| `nbeats` | N-BEATS global deep-learning backtest |
+| `mstl` | MSTL per-series statistical backtest |
+| `chronos2_enriched` | Chronos 2E covariate-aware foundation backtest |
 | `champion` | Best model per DFU per month (before-the-fact selection) |
 | `ceiling` | Best model per DFU per month (after-the-fact oracle) |
 
@@ -61,7 +69,14 @@ No dedicated pipeline. Model IDs are assigned during data loading:
 
 ## Configuration
 
-No config file. Model IDs are strings -- any new algorithm can write to the table with a new model_id without schema changes.
+`config/forecasting/forecast_pipeline_config.yaml` is authoritative. The active
+base roster is exactly `lgbm_cluster`, `nhits`, `nbeats`, `mstl`, and
+`chronos2_enriched`; `external`, `champion`, `ensemble`, and `ceiling` are
+benchmark or composite identities rather than additional algorithms. The SQL
+column can store historical ids for audit, but new champion experiments and
+production generation reject retired model ids. Expanding the roster is a
+deliberate product/schema/config change, not an ad-hoc new string written by a
+loader.
 
 ## Dependencies
 

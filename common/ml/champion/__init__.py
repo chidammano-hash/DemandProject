@@ -25,17 +25,14 @@ working.
 
 from __future__ import annotations
 
-# Importing each module triggers its @register_strategy decorators, populating
-# STRATEGY_REGISTRY. Order matters only insofar as dependencies (basic -> blend
-# -> regime -> segment, etc.) need to resolve, but every module imports its
-# helpers explicitly.
-from common.ml.champion.registry import STRATEGY_REGISTRY, register_strategy
-from common.ml.champion.helpers import (
-    compute_ceiling,
-    compute_strategy_accuracy,
-    make_blend_row,
-    mix_from,
-    select_output_cols,
+# Importing each module triggers its @register_strategy decorator, populating
+# STRATEGY_REGISTRY. Import order is otherwise immaterial because modules use
+# their dependencies directly.
+from common.ml.champion.bandit import (
+    strategy_exp3,
+    strategy_linucb,
+    strategy_thompson_ensemble,
+    strategy_thompson_sampling,
 )
 from common.ml.champion.basic import (
     strategy_decay,
@@ -56,14 +53,15 @@ from common.ml.champion.blend import (
     strategy_shrinkage_blend,
     strategy_uncertainty_aware,
 )
-from common.ml.champion.meta import (
-    strategy_hybrid_meta_router,
-    strategy_meta_learner,
+from common.ml.champion.helpers import (
+    compute_ceiling,
+    compute_strategy_accuracy,
+    make_blend_row,
+    mix_from,
 )
-from common.ml.champion.regime import (
-    strategy_dynamic_window,
-    strategy_regime_adaptive,
-)
+from common.ml.champion.meta import strategy_meta_learner
+from common.ml.champion.regime import strategy_dynamic_window, strategy_regime_adaptive
+from common.ml.champion.registry import STRATEGY_REGISTRY, register_strategy
 from common.ml.champion.routing import (
     strategy_dfu_strategy_router,
     strategy_hybrid_warmup,
@@ -75,12 +73,6 @@ from common.ml.champion.segment import (
     strategy_cluster_regime_hybrid,
     strategy_per_cluster,
     strategy_per_segment,
-)
-from common.ml.champion.bandit import (
-    strategy_exp3,
-    strategy_linucb,
-    strategy_thompson_ensemble,
-    strategy_thompson_sampling,
 )
 
 __all__ = [
@@ -110,7 +102,6 @@ __all__ = [
     "strategy_shrinkage_blend",
     "strategy_uncertainty_aware",
     # Meta-learner
-    "strategy_hybrid_meta_router",
     "strategy_meta_learner",
     # Regime detection
     "strategy_dynamic_window",

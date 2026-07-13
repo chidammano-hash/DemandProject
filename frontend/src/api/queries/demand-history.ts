@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { buildQuerySuffix } from "./helpers";
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types

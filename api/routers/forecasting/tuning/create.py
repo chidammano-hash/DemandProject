@@ -105,7 +105,7 @@ def create_experiment(model: str, body: CreateExperimentBody):
 
     new_run_id = row[0]
 
-    # Build temporary algorithm_config.yaml with overrides.
+    # Build a temporary forecast_pipeline_config.yaml with overrides.
     # NOTE: tests patch ``_helpers._build_temp_config``; calling via the
     # module attribute (rather than a direct import) keeps the patch effective.
     effective_config = dict(cfg)
@@ -154,5 +154,4 @@ def create_experiment(model: str, body: CreateExperimentBody):
             f"GET /{model}/experiments/{new_run_id}/logs"
         ),
     }
-
 

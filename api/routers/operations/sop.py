@@ -72,7 +72,10 @@ async def create_sop_cycle(body: _CreateRequest, request: Request):
     no longer has to drop to the CLI/API. The cycle month defaults to the first
     of the current planning-date month; a duplicate month returns 409.
     """
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     cycle_month = body.cycle_month or get_planning_date().replace(day=1)
 
@@ -223,7 +226,10 @@ async def get_sop_cycle(cycle_id: int):
 @router.post("/sop/cycles/{cycle_id}/advance")
 async def advance_sop_cycle(cycle_id: int, body: _AdvanceRequest, request: Request):
     """Advance cycle to next stage (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -255,7 +261,10 @@ async def advance_sop_cycle(cycle_id: int, body: _AdvanceRequest, request: Reque
 @router.post("/sop/cycles/{cycle_id}/approve")
 async def approve_sop_cycle(cycle_id: int, body: _ApproveRequest, request: Request):
     """Executive approval: lock the plan and publish to approved-plan table (auth required)."""
-    await require_api_key(x_api_key=request.headers.get("x-api-key"))
+    await require_api_key(
+        x_api_key=request.headers.get("x-api-key"),
+        authorization=request.headers.get("authorization"),
+    )
 
     with get_conn() as conn:
         with conn.cursor() as cur:

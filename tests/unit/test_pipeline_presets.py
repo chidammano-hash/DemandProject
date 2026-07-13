@@ -37,11 +37,38 @@ class TestPresetConfig:
             "archive_forecast_snapshot",
             "cleanup_forecast_staging",
         ]
+        assert steps[-1]["params"] == {"dry_run": False}
 
     def test_generation_pipelines_do_not_archive_outside_promotion(self):
         for name in ("forecast-publish", "full-refresh"):
             steps = preset_steps(get_pipeline_preset(name))
             assert steps[0]["job_type"] != "archive_forecast_snapshot"
+
+    def test_model_pipelines_finish_selection_with_governed_champion_refresh(self):
+        for name in ("model-refresh", "full-refresh"):
+            steps = preset_steps(get_pipeline_preset(name))
+            job_types = [step["job_type"] for step in steps]
+            assert "champion_select" not in job_types
+            assert "governed_champion_refresh" in job_types
+            governed_backtests = [
+                step
+                for step in steps
+                if step["job_type"].startswith("backtest_")
+            ]
+            assert len(governed_backtests) == 5
+            assert all(
+                step["params"] == {"governed": True}
+                for step in governed_backtests
+            )
+
+    def test_full_refresh_promotes_clusters_before_tuning(self):
+        steps = preset_steps(get_pipeline_preset("full-refresh"))
+        job_types = [step["job_type"] for step in steps]
+        cluster_index = job_types.index("cluster_pipeline")
+        tuning_index = job_types.index("tune_stale_clusters")
+
+        assert steps[cluster_index]["params"] == {"auto_promote": True}
+        assert cluster_index < tuning_index
 
     def test_every_step_job_type_is_registered(self):
         for name, preset in load_pipeline_presets().items():

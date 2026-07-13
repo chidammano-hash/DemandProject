@@ -70,7 +70,7 @@ exception_queue           sku_chat_session/message/call_log
 sku_chat_pending_adjustment   audit_load_batch       ...
 ```
 
-The generative-pipeline COPYs (`scripts/forecasting/generate_production_forecasts.py`, `scripts/ml/run_backtest.py`, `scripts/ml/run_champion_selection.py`, `scripts/etl/load_backtest_forecasts.py`) target **native** tables and require **no change**. Only the **source-load** scripts (`scripts/etl/load_dataset_postgres.py`, `load_customer_demand_postgres.py`, `load_ext_ml_forecasts.py`) are retired in favour of Delta sync.
+The generative-pipeline COPYs (`scripts/forecasting/generate_production_forecasts.py`, `scripts/ml/run_backtest.py`, `scripts/ml/run_champion_selection.py`, `scripts/etl/load_backtest_forecasts.py`) target **native** tables and require **no change**. Only the source-load scripts (`scripts/etl/load_dataset_postgres.py`, `load_customer_demand_postgres.py`) are retired in favour of Delta sync.
 
 **Schema bring-up.** The DDL is the `sql/*.sql` migrations applied in sorted (numeric-prefix) order — there is no separate `schema.sql`. `make db-apply-sql` does this **inside the Docker container**, so it cannot reach Lakebase. Use the host-side applier instead:
 
@@ -184,7 +184,7 @@ The 33 MVs depend on the now-**synced** base tables. Run `make refresh-mvs-tiere
 ## What Does NOT Change
 
 - Any router, any `%s` query, Pydantic v2 schemas.
-- `common/ml/**` (clustering, sku_features, backtest, champion, expert panel), `read_sql_chunked`.
+- `common/ml/**` (clustering, SKU features, backtest, champion, retained-model adapters), `read_sql_chunked`.
 - All 33 materialized views and the tiered-refresh ordering.
 - The entire `frontend/**` (React/Vite/Tailwind) — same API contract.
 - Champion candidate→production promotion, the generative-pipeline COPYs.

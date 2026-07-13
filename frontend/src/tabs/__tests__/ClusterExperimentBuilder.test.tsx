@@ -19,10 +19,11 @@ const mockTemplates = {
 };
 
 const mockEstimate = {
-  estimated_runtime_seconds: 120,
-  total_dfus: 50602,
-  k_min: 3,
-  k_max: 12,
+  estimated_seconds: 120,
+  sku_count: 50602,
+  training_sample: 50602,
+  sampled: false,
+  k_range: 10,
 };
 
 const mockCreateResponse = {

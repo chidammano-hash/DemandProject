@@ -54,6 +54,7 @@ interface SkuShapPanelProps {
   selectedModel: string | null;
   itemNo: string;
   loc: string;
+  customerGroup?: string;
   skuMode: SkuAnalysisMode;
   visibleMonths: string[];
 }
@@ -140,6 +141,7 @@ export function SkuShapPanel({
   selectedModel,
   itemNo,
   loc,
+  customerGroup,
   skuMode,
   visibleMonths,
 }: SkuShapPanelProps) {
@@ -170,7 +172,7 @@ export function SkuShapPanel({
     // Extract raw model_id from production forecast label "Production Forecast (model_id)"
     const modelIdForApi =
       selectedModel.match(/^Production Forecast \((.+)\)$/)?.[1] ?? selectedModel;
-    fetchSkuShap(modelIdForApi, itemNo.trim(), loc.trim())
+    fetchSkuShap(modelIdForApi, itemNo.trim(), loc.trim(), 10, customerGroup)
       .then((data) => {
         if (!cancelled) {
           setShapData(data);
@@ -191,7 +193,7 @@ export function SkuShapPanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedModel, itemNo, loc, skuMode]);
+  }, [selectedModel, itemNo, loc, customerGroup, skuMode]);
 
   // -- No model selected --
   if (!selectedModel) {

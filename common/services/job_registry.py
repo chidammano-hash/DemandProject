@@ -16,6 +16,7 @@ any AI agent can submit, schedule, and monitor jobs via the REST API.
 Public API (unchanged — all external imports still work):
     from common.services.job_registry import JobManager, JOB_TYPE_REGISTRY
 """
+
 from __future__ import annotations
 
 import json
@@ -25,19 +26,25 @@ import signal
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from copy import deepcopy
+from datetime import UTC, datetime
 from typing import Any
+
+from common.services.champion_refresh import run_governed_champion_refresh
+from common.services.job_scheduler import make_scheduler, make_trigger
 
 # ---------------------------------------------------------------------------
 # Sub-module imports
 # ---------------------------------------------------------------------------
 from common.services.job_state import (
     MODEL_OUTPUT_DIRS,
+    JobCancelledError,
     JobTypeDef,
+    _clear_pid,
+    _finalize_champion_results_lineage,
     _get_conn,
-    _row_to_dict,
-    get_job_log,
-    get_job_pid,
+    _reserve_backtest_run,
+    _run_archive_forecast_snapshot,
     _run_assign_policies,
     _run_backtest_chronos2_enriched,
     _run_backtest_lgbm,
@@ -46,9 +53,9 @@ from common.services.job_state import (
     _run_backtest_nhits,
     _run_champion_experiment,
     _run_champion_results_load,
-    _run_champion_select,
     _run_champion_sweep,
     _run_classify_abc_xyz,
+    _run_cleanup_forecast_staging,
     _run_cluster_pipeline,
     _run_cluster_scenario,
     _run_compare_inventory_algorithms,
@@ -57,24 +64,21 @@ from common.services.job_state import (
     _run_compute_investment,
     _run_compute_replenishment_plan,
     _run_compute_safety_stock,
-    _run_inventory_backtest,
-    _run_inventory_planning_pipeline,
     _run_compute_sku_features,
     _run_compute_variability,
     _run_data_quality,
     _run_etl_pipeline,
     _run_generate_ai_insights,
-    _run_load_domain,
     _run_generate_exceptions,
     _run_generate_production_forecast,
-    _run_prepare_forecast_snapshot_contenders,
-    _run_archive_forecast_snapshot,
-    _run_cleanup_forecast_staging,
-    _run_train_production_model,
     _run_generate_storyboard,
+    _run_inventory_backtest,
+    _run_inventory_planning_pipeline,
     _run_load_backtest_model,
     _run_load_backtest_results,
+    _run_load_domain,
     _run_model_tuning_experiment,
+    _run_prepare_forecast_snapshot_contenders,
     _run_refresh_all_mvs,
     _run_refresh_customer_analytics,
     _run_refresh_forecast_views,
@@ -83,10 +87,25 @@ from common.services.job_state import (
     _run_sampled_backtest,
     _run_seasonality,
     _run_ss_simulation,
+    _run_train_production_model,
     _run_tune_stale_clusters,
     _run_tuning_backtest,
+    _serialize_job_row,
+    _store_attempt_result,
+    _validate_attempt_result,
+    bind_job_attempt,
+    get_job_log,
+    get_job_pid,
+    get_job_process_identity,
+    load_attempt_result,
+    process_identity_matches,
+    reconcile_backtest_run,
+    reconcile_cluster_pipeline_experiment,
+    reset_job_attempt,
+    verify_backtest_artifact_identity,
+    verify_backtest_tracking_identity,
+    verify_cluster_pipeline_completion,
 )
-from common.services.job_scheduler import make_scheduler, make_trigger
 
 try:
     from apscheduler.jobstores.base import JobLookupError
@@ -96,6 +115,17 @@ except ImportError:
 import psycopg
 
 logger = logging.getLogger(__name__)
+
+_BACKTEST_JOB_MODELS = {
+    "backtest_lgbm": "lgbm_cluster",
+    "backtest_chronos2_enriched": "chronos2_enriched",
+    "backtest_mstl": "mstl",
+    "backtest_nhits": "nhits",
+    "backtest_nbeats": "nbeats",
+}
+_PROCESS_TERMINATION_TIMEOUT = 5.0
+_PROCESS_TERMINATION_POLL_INTERVAL = 0.1
+_RECOVERY_LEASE_SECONDS = 120
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +165,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         callable=_run_seasonality,
         params_schema={"time_window_months": 36},
     ),
-    # -- Tree models --
+    # -- LightGBM --
     "backtest_lgbm": JobTypeDef(
         type_id="backtest_lgbm",
         label="LightGBM Backtest",
@@ -148,7 +178,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "backtest_chronos2_enriched": JobTypeDef(
         type_id="backtest_chronos2_enriched",
         label="Chronos 2 Enriched Backtest",
-        description="Run Chronos 2 with 31 covariates backtest (~6h)",
+        description="Run Chronos 2E with 30 covariates (~6h)",
         group="backtest",
         callable=_run_backtest_chronos2_enriched,
         params_schema={},
@@ -181,10 +211,22 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     ),
     "champion_select": JobTypeDef(
         type_id="champion_select",
-        label="Champion Selection",
-        description="Select per-DFU champion model via rolling WAPE comparison",
+        label="Governed Champion Refresh",
+        description=(
+            "Create a five-model champion experiment and atomically promote its audited results"
+        ),
         group="champion",
-        callable=_run_champion_select,
+        callable=run_governed_champion_refresh,
+        params_schema={},
+    ),
+    "governed_champion_refresh": JobTypeDef(
+        type_id="governed_champion_refresh",
+        label="Governed Champion Refresh",
+        description=(
+            "Create a five-model champion experiment and atomically promote its audited results"
+        ),
+        group="champion",
+        callable=run_governed_champion_refresh,
         params_schema={},
     ),
     "champion_experiment": JobTypeDef(
@@ -221,11 +263,11 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     ),
     "train_production_model": JobTypeDef(
         type_id="train_production_model",
-        label="Train Production Model",
-        description="Train model on full history for production forecasting",
+        label="Train Production Models",
+        description="Final-refit LightGBM, N-HiTS, and N-BEATS on full history",
         group="forecast",
         callable=_run_train_production_model,
-        params_schema={"model_id": "", "all_models": False},
+        params_schema={"model_id": None, "all_models": True},
     ),
     "generate_production_forecast": JobTypeDef(
         type_id="generate_production_forecast",
@@ -234,7 +276,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="forecast",
         callable=_run_generate_production_forecast,
         params_schema={
-            "horizon": 12,
+            "horizon": None,
             "model_id": None,
             "run_id": None,
             "generation_purpose": "release_candidate",
@@ -263,7 +305,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         description="Delete staging only after the bounded archive is reconciled",
         group="forecast",
         callable=_run_cleanup_forecast_staging,
-        params_schema={"generation": None, "dry_run": False},
+        params_schema={"generation": None, "dry_run": True},
     ),
     "compute_replenishment_plan": JobTypeDef(
         type_id="compute_replenishment_plan",
@@ -391,8 +433,8 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         type_id="refresh_all_mvs",
         label="Refresh All Materialized Views",
         description="Refresh every materialized view in dependency order "
-                    "(staleness safety net; set skip_heavy to exclude "
-                    "mv_intramonth_stockout)",
+        "(staleness safety net; set skip_heavy to exclude "
+        "mv_intramonth_stockout)",
         group="platform",
         callable=_run_refresh_all_mvs,
         params_schema={"skip_heavy": True},
@@ -426,7 +468,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         type_id="tune_stale_clusters",
         label="Re-tune Stale Cluster Profiles",
         description="Re-tune per-cluster hyperparameters flagged stale by a "
-                    "clustering promotion (tune_cluster_hyperparams.py --stale-only)",
+        "clustering promotion (tune_cluster_hyperparams.py --stale-only)",
         group="tuning",
         callable=_run_tune_stale_clusters,
         params_schema={"model": "lgbm", "trials": None},
@@ -491,7 +533,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         type_id="etl_pipeline",
         label="Data Ingestion Pipeline",
         description="Run the data-ingestion pipeline: full reload or incremental "
-                    "refresh (change-detected) across all or selected domains",
+        "refresh (change-detected) across all or selected domains",
         group="etl",  # one ingestion run at a time
         callable=_run_etl_pipeline,
         params_schema={"mode": "refresh", "domains": None, "parallel": False},
@@ -500,11 +542,16 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         type_id="load_domain",
         label="Load Domain",
         description="Load a single domain via the unified ETL engine "
-                    "(onetime / delta / file); records row metrics in job_history",
+        "(onetime / delta / file); records row metrics in job_history",
         group="etl",  # shares the single-ingestion-at-a-time group with etl_pipeline
         callable=_run_load_domain,
-        params_schema={"domain": None, "mode": "delta", "slice": None,
-                       "file": None, "reindex": False},
+        params_schema={
+            "domain": None,
+            "mode": "delta",
+            "slice": None,
+            "file": None,
+            "reindex": False,
+        },
     ),
 }
 
@@ -550,12 +597,20 @@ class JobManager:
             if self._initialized:
                 return
             self._scheduler = make_scheduler()
-            self._state_lock = threading.Lock()  # guards _active_jobs, _pending_queues, _cancel_flags
+            self._state_lock = (
+                threading.Lock()
+            )  # guards _active_jobs, _pending_queues, _cancel_flags
             self._active_jobs: dict[str, str] = {}  # job_id -> group
             self._cancel_flags: dict[str, threading.Event] = {}
-            self._pending_queues: dict[str, list[tuple[str, Any, dict, int, str | None]]] = {}  # group -> [(job_id, type_def, params, max_retries, pipeline_id)]
+            self._pending_queues: dict[
+                str,
+                list[tuple[str, Any, dict, int, int, str | None]],
+            ] = {}  # group -> [(job_id, type_def, params, max_retries, retry_count, pipeline_id)]
+            self._worker_id = f"job-manager-{os.getpid()}-{uuid.uuid4().hex}"
             self._initialized = True
-            logger.info("JobManager initialised: APScheduler BackgroundScheduler started (4 workers)")
+            logger.info(
+                "JobManager initialised: APScheduler BackgroundScheduler started (4 workers)"
+            )
 
             # Recover stale jobs on startup
             recovered = self.recover_stale_jobs()
@@ -573,62 +628,183 @@ class JobManager:
             # refresh_all_mvs staleness safety net) exist.
             self.ensure_default_schedules()
 
+    def start(self) -> None:
+        """Initialize recovery, queues, recurring schedules, and APScheduler."""
+        self._ensure_init()
+
+    def shutdown(self) -> None:
+        """Stop this process's scheduler without waiting for long-running jobs."""
+        if not self._initialized:
+            return
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+        self._initialized = False
+
     # ---- helpers ----
 
     @staticmethod
     def _generate_id() -> str:
-        return f"job_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        return f"job_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
     def _is_group_busy(self, group: str) -> bool:
         """Check if a group has an active job. Must be called under _state_lock."""
         return any(g == group for g in self._active_jobs.values())
 
+    @staticmethod
+    def _materialize_durable_params(
+        job_id: str,
+        type_def: JobTypeDef,
+        params: dict[str, Any],
+    ) -> None:
+        """Persist identities needed to resume forecast work after an API restart."""
+        model_id = _BACKTEST_JOB_MODELS.get(type_def.type_id)
+        if model_id and params.get("backtest_run_id") is None:
+            tracking_model = str(params.get("model_id") or model_id)
+            if tracking_model == "lgbm":
+                tracking_model = "lgbm_cluster"
+            params["backtest_run_id"] = _reserve_backtest_run(
+                tracking_model,
+                job_id,
+                get_conn=_get_conn,
+            )
+        if type_def.type_id == "generate_production_forecast" and not params.get("run_id"):
+            params["run_id"] = str(uuid.uuid4())
+
     # ---- DB operations ----
 
     @staticmethod
-    def _db_insert(job_id: str, job_type: str, label: str, params: dict,
-                   triggered_by: str = "manual", pipeline_id: str | None = None,
-                   pipeline_step: int | None = None, max_retries: int = 0) -> None:
+    def _db_insert(
+        job_id: str,
+        job_type: str,
+        label: str,
+        params: dict,
+        triggered_by: str = "manual",
+        pipeline_id: str | None = None,
+        pipeline_step: int | None = None,
+        max_retries: int = 0,
+        execution_group: str | None = None,
+    ) -> None:
         with _get_conn() as conn:
             conn.execute(
                 """INSERT INTO job_history
                    (job_id, job_type, job_label, status, params, submitted_at,
-                    triggered_by, pipeline_id, pipeline_step, max_retries)
-                   VALUES (%s, %s, %s, 'queued', %s, NOW(), %s, %s, %s, %s)""",
-                (job_id, job_type, label, json.dumps(params),
-                 triggered_by, pipeline_id, pipeline_step, max_retries),
+                    triggered_by, pipeline_id, pipeline_step, max_retries,
+                    execution_group)
+                   VALUES (%s, %s, %s, 'queued', %s, NOW(), %s, %s, %s, %s,
+                           %s)""",
+                (
+                    job_id,
+                    job_type,
+                    label,
+                    json.dumps(params),
+                    triggered_by,
+                    pipeline_id,
+                    pipeline_step,
+                    max_retries,
+                    execution_group,
+                ),
             )
 
     @staticmethod
-    def _db_update_status(job_id: str, status: str, **kwargs: Any) -> None:
+    def _db_update_status(
+        job_id: str,
+        status: str,
+        *,
+        expected_status: str | None = None,
+        expected_attempt_token: str | None = None,
+        **kwargs: Any,
+    ) -> bool:
         sets = ["status = %s"]
         vals: list[Any] = [status]
-        for col in ("started_at", "completed_at", "progress_pct", "progress_msg",
-                     "error", "retry_count"):
+        for col in (
+            "started_at",
+            "completed_at",
+            "progress_pct",
+            "progress_msg",
+            "error",
+            "retry_count",
+            "attempt_token",
+            "attempt_result",
+            "attempt_failure_recorded",
+            "recovery_quarantine_reason",
+            "recovery_lease_owner",
+            "recovery_lease_until",
+        ):
             if col in kwargs:
-                sets.append(f"{col} = %s")
-                vals.append(kwargs[col])
+                placeholder = "%s::jsonb" if col == "attempt_result" else "%s"
+                sets.append(f"{col} = {placeholder}")
+                value = kwargs[col]
+                if col == "attempt_result" and value is not None:
+                    value = json.dumps(value)
+                vals.append(value)
         if "result" in kwargs:
             sets.append("result = %s")
             vals.append(json.dumps(kwargs["result"]) if kwargs["result"] is not None else None)
+        if "attempt_callable_completion" in kwargs:
+            completion = kwargs["attempt_callable_completion"]
+            if completion is None:
+                sets.append(
+                    "params = COALESCE(params, '{}'::jsonb) - '__attempt_callable_completion'"
+                )
+            else:
+                sets.append(
+                    "params = jsonb_set(COALESCE(params, '{}'::jsonb), "
+                    "'{__attempt_callable_completion}', %s::jsonb, true)"
+                )
+                vals.append(json.dumps(completion))
         # Append log entry when progress_msg is provided
-        if "progress_msg" in kwargs and kwargs["progress_msg"]:
-            log_entry = json.dumps({
-                "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                "pct": kwargs.get("progress_pct", 0),
-                "msg": kwargs["progress_msg"],
-            })
+        if kwargs.get("progress_msg"):
+            log_entry = json.dumps(
+                {
+                    "ts": datetime.now(UTC).strftime("%H:%M:%S"),
+                    "pct": kwargs.get("progress_pct", 0),
+                    "msg": kwargs["progress_msg"],
+                }
+            )
             sets.append("logs = COALESCE(logs, '[]'::jsonb) || %s::jsonb")
             vals.append(log_entry)
+        where_sql = "job_id = %s"
         vals.append(job_id)
+        if expected_status is not None:
+            where_sql += " AND status = %s"
+            vals.append(expected_status)
+        if expected_attempt_token is not None:
+            where_sql += " AND attempt_token = %s"
+            vals.append(expected_attempt_token)
         with _get_conn() as conn:
-            conn.execute(f"UPDATE job_history SET {', '.join(sets)} WHERE job_id = %s", vals)
+            result = conn.execute(
+                f"UPDATE job_history SET {', '.join(sets)} WHERE {where_sql}",
+                vals,
+            )
+        return int(result.rowcount or 0) > 0
 
     @staticmethod
     def _db_get(job_id: str) -> dict[str, Any] | None:
-        cols = ("job_id", "job_type", "job_label", "status", "params", "result",
-                "error", "submitted_at", "started_at", "completed_at",
-                "progress_pct", "progress_msg", "logs", "pid")
+        cols = (
+            "job_id",
+            "job_type",
+            "job_label",
+            "status",
+            "params",
+            "result",
+            "error",
+            "submitted_at",
+            "started_at",
+            "completed_at",
+            "progress_pct",
+            "progress_msg",
+            "logs",
+            "pid",
+            "pipeline_id",
+            "pipeline_step",
+            "retry_count",
+            "max_retries",
+            "execution_group",
+            "attempt_token",
+            "attempt_result",
+            "attempt_failure_recorded",
+            "recovery_quarantine_reason",
+        )
         with _get_conn() as conn:
             row = conn.execute(
                 f"SELECT {', '.join(cols)} FROM job_history WHERE job_id = %s",
@@ -636,7 +812,7 @@ class JobManager:
             ).fetchone()
         if row is None:
             return None
-        return _row_to_dict(cols, row)
+        return _serialize_job_row(cols, row)
 
     @staticmethod
     def _db_list(
@@ -654,32 +830,62 @@ class JobManager:
             where.append("job_type = %s")
             params.append(job_type)
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-        cols = ("job_id", "job_type", "job_label", "status", "params", "result",
-                "error", "submitted_at", "started_at", "completed_at",
-                "progress_pct", "progress_msg", "logs", "pid")
+        cols = (
+            "job_id",
+            "job_type",
+            "job_label",
+            "status",
+            "params",
+            "result",
+            "error",
+            "submitted_at",
+            "started_at",
+            "completed_at",
+            "progress_pct",
+            "progress_msg",
+            "logs",
+            "pid",
+            "pipeline_id",
+            "pipeline_step",
+            "retry_count",
+            "max_retries",
+            "execution_group",
+            "attempt_token",
+            "attempt_result",
+            "attempt_failure_recorded",
+            "recovery_quarantine_reason",
+        )
 
         with _get_conn() as conn:
             total = conn.execute(
                 f"SELECT COUNT(*) FROM job_history {where_sql}", params
             ).fetchone()[0]
             rows = conn.execute(
-                f"""SELECT {', '.join(cols)}
+                f"""SELECT {", ".join(cols)}
                     FROM job_history {where_sql}
                     ORDER BY submitted_at DESC LIMIT %s OFFSET %s""",
                 [*params, limit, offset],
             ).fetchall()
 
-        jobs = [_row_to_dict(cols, r) for r in rows]
+        jobs = [_serialize_job_row(cols, r) for r in rows]
         return jobs, int(total)
 
     @staticmethod
-    def _db_delete(job_id: str) -> bool:
+    def _db_delete(job_id: str) -> tuple[str | None, str | None] | None:
         with _get_conn() as conn:
-            result = conn.execute(
-                "DELETE FROM job_history WHERE job_id = %s AND status IN ('completed', 'failed', 'cancelled')",
+            row = conn.execute(
+                """DELETE FROM job_history
+                   WHERE job_id = %s
+                     AND status IN ('completed', 'failed', 'cancelled')
+                   RETURNING execution_group, recovery_quarantine_reason""",
                 (job_id,),
-            )
-            return result.rowcount > 0
+            ).fetchone()
+        if row is None:
+            return None
+        return (
+            str(row[0]) if row[0] else None,
+            str(row[1]) if row[1] else None,
+        )
 
     @staticmethod
     def _db_stats() -> dict[str, Any]:
@@ -748,22 +954,38 @@ class JobManager:
 
         job_id = self._generate_id()
         job_label = label or type_def.label
-        job_params = params or {}
+        # Scheduler callbacks may outlive their submitter. Keep an owned copy so
+        # later caller mutations cannot diverge execution from the params that
+        # were persisted in job_history.
+        job_params = deepcopy(params) if params is not None else {}
+        self._materialize_durable_params(
+            job_id,
+            type_def,
+            job_params,
+        )
 
         with self._state_lock:
             if self._is_group_busy(effective_group):
                 # Queue the job instead of rejecting
                 self._db_insert(
-                    job_id, job_type, job_label, job_params,
+                    job_id,
+                    job_type,
+                    job_label,
+                    job_params,
                     triggered_by=triggered_by,
                     pipeline_id=pipeline_id,
                     pipeline_step=pipeline_step,
                     max_retries=max_retries,
+                    execution_group=effective_group,
                 )
-                self._db_update_status(job_id, "queued", progress_msg="Waiting for group to be free")
+                self._db_update_status(
+                    job_id, "queued", progress_msg="Waiting for group to be free"
+                )
                 queue = self._pending_queues.setdefault(effective_group, [])
-                queue.append((job_id, type_def, job_params, max_retries, pipeline_id))
-                logger.info("Queued job %s (%s) — group '%s' is busy", job_id, job_type, effective_group)
+                queue.append((job_id, type_def, job_params, max_retries, 0, pipeline_id))
+                logger.info(
+                    "Queued job %s (%s) — group '%s' is busy", job_id, job_type, effective_group
+                )
                 return job_id
 
             # Track as active (inside lock to prevent race with _dispatch_next)
@@ -772,16 +994,28 @@ class JobManager:
 
         # DB insert and APScheduler dispatch outside lock (no contention on I/O)
         self._db_insert(
-            job_id, job_type, job_label, job_params,
+            job_id,
+            job_type,
+            job_label,
+            job_params,
             triggered_by=triggered_by,
             pipeline_id=pipeline_id,
             pipeline_step=pipeline_step,
             max_retries=max_retries,
+            execution_group=effective_group,
         )
 
         self._scheduler.add_job(
             self._execute_job,
-            args=[job_id, type_def, job_params, max_retries, pipeline_id],
+            args=[
+                job_id,
+                type_def,
+                job_params,
+                max_retries,
+                pipeline_id,
+                0,
+                effective_group,
+            ],
             id=job_id,
             name=f"{type_def.label}: {job_label}",
             replace_existing=True,
@@ -848,14 +1082,26 @@ class JobManager:
                        ON CONFLICT (schedule_id) DO UPDATE SET
                        cron_expr = EXCLUDED.cron_expr, interval_min = EXCLUDED.interval_min,
                        params = EXCLUDED.params, enabled = TRUE, next_run_at = EXCLUDED.next_run_at""",
-                    (schedule_id, job_type, job_label, cron, interval_minutes,
-                     json.dumps(job_params), next_run_at),
+                    (
+                        schedule_id,
+                        job_type,
+                        job_label,
+                        cron,
+                        interval_minutes,
+                        json.dumps(job_params),
+                        next_run_at,
+                    ),
                 )
         except Exception:
             logger.warning("job_schedule table may not exist yet; schedule only in memory")
 
-        logger.info("Scheduled recurring %s as %s (cron=%s, interval=%s min)",
-                     job_type, schedule_id, cron, interval_minutes)
+        logger.info(
+            "Scheduled recurring %s as %s (cron=%s, interval=%s min)",
+            job_type,
+            schedule_id,
+            cron,
+            interval_minutes,
+        )
         return schedule_id
 
     def remove_schedule(self, schedule_id: str) -> bool:
@@ -870,7 +1116,8 @@ class JobManager:
         try:
             with _get_conn() as conn:
                 res = conn.execute(
-                    "DELETE FROM job_schedule WHERE schedule_id = %s", (schedule_id,))
+                    "DELETE FROM job_schedule WHERE schedule_id = %s", (schedule_id,)
+                )
                 return res.rowcount > 0
         except psycopg.Error:
             logger.exception("Failed to delete schedule %s from DB", schedule_id)
@@ -889,16 +1136,21 @@ class JobManager:
                 ).fetchall()
             schedules = []
             for r in rows:
-                schedules.append({
-                    "schedule_id": r[0], "job_type": r[1], "job_label": r[2],
-                    "cron_expr": r[3], "interval_min": r[4],
-                    "params": r[5] if isinstance(r[5], dict) else json.loads(r[5] or "{}"),
-                    "enabled": r[6],
-                    "created_at": r[7].isoformat() if r[7] else None,
-                    "last_run_at": r[8].isoformat() if r[8] else None,
-                    "next_run_at": r[9].isoformat() if r[9] else None,
-                    "run_count": r[10] or 0,
-                })
+                schedules.append(
+                    {
+                        "schedule_id": r[0],
+                        "job_type": r[1],
+                        "job_label": r[2],
+                        "cron_expr": r[3],
+                        "interval_min": r[4],
+                        "params": r[5] if isinstance(r[5], dict) else json.loads(r[5] or "{}"),
+                        "enabled": r[6],
+                        "created_at": r[7].isoformat() if r[7] else None,
+                        "last_run_at": r[8].isoformat() if r[8] else None,
+                        "next_run_at": r[9].isoformat() if r[9] else None,
+                        "run_count": r[10] or 0,
+                    }
+                )
             return schedules
         except Exception:
             logger.warning("Failed to list schedules — table may not exist yet")
@@ -931,8 +1183,7 @@ class JobManager:
                     )
                     continue
                 params = (
-                    params_raw if isinstance(params_raw, dict)
-                    else json.loads(params_raw or "{}")
+                    params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
                 )
                 self._scheduler.add_job(
                     self._scheduled_execution,
@@ -969,9 +1220,7 @@ class JobManager:
             job_type = entry.get("job_type")
             name = entry.get("name") or job_type
             if job_type not in JOB_TYPE_REGISTRY:
-                logger.warning(
-                    "Skipping default schedule %r: unknown job type %r", name, job_type
-                )
+                logger.warning("Skipping default schedule %r: unknown job type %r", name, job_type)
                 continue
             schedule_id = f"sched_default_{name}"
             if self._scheduler.get_job(schedule_id) is not None:
@@ -1001,32 +1250,115 @@ class JobManager:
         Returns pipeline_id. Jobs are submitted one at a time as each completes.
         """
         self._ensure_init()
-        pipeline_id = f"pipe_{uuid.uuid4().hex[:8]}"
-
-        # Submit the first step; subsequent steps triggered on completion
         if not steps:
             raise ValueError("Pipeline must have at least one step")
 
-        first = steps[0]
+        # Validate the complete chain before submitting step one. Otherwise an
+        # invalid later step strands a partially executed pipeline. The deep
+        # copy also keeps internal pipeline metadata out of the caller's dicts.
+        pipeline_steps = deepcopy(steps)
+        for step_number, step in enumerate(pipeline_steps, start=1):
+            if not isinstance(step, dict):
+                raise ValueError(f"Pipeline step {step_number} must be an object")
+            step_job_type = step.get("job_type")
+            if not isinstance(step_job_type, str) or step_job_type not in JOB_TYPE_REGISTRY:
+                raise ValueError(
+                    f"Unknown job type at pipeline step {step_number}: {step_job_type}"
+                )
+            step_params = step.get("params")
+            if step_params is None:
+                step["params"] = {}
+            elif not isinstance(step_params, dict):
+                raise ValueError(f"Pipeline step {step_number} params must be an object")
+
+        pipeline_id = f"pipe_{uuid.uuid4().hex[:8]}"
+        first = pipeline_steps[0]
         job_type = first["job_type"]
-        params = first.get("params", {})
+        params = first["params"]
         step_label = first.get("label", JOB_TYPE_REGISTRY[job_type].label)
 
         # Store remaining steps in the first job's params
-        params["__pipeline_remaining"] = steps[1:]
+        params["__pipeline_remaining"] = pipeline_steps[1:]
         params["__pipeline_label"] = label
+        params["__pipeline_step"] = 1
+        params["__pipeline_total_steps"] = len(pipeline_steps)
 
         self.submit_job(
             job_type=job_type,
             params=params,
-            label=f"[{label} 1/{len(steps)}] {step_label}",
+            label=f"[{label} 1/{len(pipeline_steps)}] {step_label}",
             triggered_by=triggered_by,
             pipeline_id=pipeline_id,
             pipeline_step=1,
         )
 
-        logger.info("Submitted pipeline %s with %d steps", pipeline_id, len(steps))
+        logger.info("Submitted pipeline %s with %d steps", pipeline_id, len(pipeline_steps))
         return pipeline_id
+
+    def submit_named_pipeline(
+        self,
+        steps: list[dict[str, Any]],
+        label: str,
+        triggered_by: str = "manual",
+    ) -> tuple[str, bool]:
+        """Return the active named pipeline or atomically create one.
+
+        A transaction-scoped advisory lock serializes submissions for one
+        preset name across API workers. A completed intermediate step still
+        counts as active because restart recovery may be between persisting
+        that completion and creating its successor.
+        """
+        self._ensure_init()
+        with _get_conn() as conn:
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"named-pipeline:{label}",),
+            )
+            row = conn.execute(
+                """
+                WITH matching AS (
+                    SELECT pipeline_id,
+                           status,
+                           pipeline_step,
+                           params,
+                           submitted_at,
+                           completed_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY pipeline_id
+                               ORDER BY pipeline_step DESC, submitted_at DESC
+                           ) AS latest_in_pipeline
+                    FROM job_history
+                    WHERE pipeline_id IS NOT NULL
+                      AND params ->> '__pipeline_label' = %s
+                )
+                SELECT pipeline_id
+                FROM matching
+                WHERE latest_in_pipeline = 1
+                  AND (
+                      status IN ('queued', 'running')
+                      OR (
+                          status = 'completed'
+                          AND COALESCE(pipeline_step, 0) < COALESCE(
+                              (params ->> '__pipeline_total_steps')::integer,
+                              0
+                          )
+                          AND completed_at > NOW() - INTERVAL '5 minutes'
+                      )
+                  )
+                ORDER BY submitted_at DESC
+                LIMIT 1
+                """,
+                (label,),
+            ).fetchone()
+            if row is not None:
+                return str(row[0]), False
+
+            pipeline_id = self.submit_pipeline(
+                steps=steps,
+                label=label,
+                triggered_by=triggered_by,
+            )
+            return pipeline_id, True
 
     def get_status(self, job_id: str) -> dict[str, Any] | None:
         """Get current job status from DB."""
@@ -1067,14 +1399,10 @@ class JobManager:
             cancel_event = self._cancel_flags.get(job_id)
             if cancel_event:
                 cancel_event.set()
-            self._active_jobs.pop(job_id, None)
-            self._cancel_flags.pop(job_id, None)
             # Remove from pending queues (queued jobs that haven't dispatched yet)
             for group, queue in self._pending_queues.items():
                 before = len(queue)
-                self._pending_queues[group] = [
-                    entry for entry in queue if entry[0] != job_id
-                ]
+                self._pending_queues[group] = [entry for entry in queue if entry[0] != job_id]
                 if len(self._pending_queues[group]) < before:
                     logger.info("Removed queued job %s from pending queue '%s'", job_id, group)
                     break
@@ -1085,32 +1413,123 @@ class JobManager:
             pass  # job not in APScheduler — already running or completed
         except Exception:
             logger.exception("Failed to remove APScheduler job %s during cancel", job_id)
-        # Kill the subprocess by PID as safety net
-        self._kill_process(job_id)
-        self._db_update_status(
-            job_id, "cancelled",
-            completed_at=datetime.now(timezone.utc),
+        # A running job becomes terminal only after its recorded subprocess is
+        # verified dead. Jobs without a stored PID are cooperatively cancelled
+        # by the worker, which owns the final durable status transition.
+        terminated = self._kill_process(job_id)
+        if not terminated:
+            logger.error("Cancellation could not verify process exit for job %s", job_id)
+            return False
+        if job["status"] == "running" and not job.get("pid"):
+            logger.info("Cancellation requested for in-process job %s", job_id)
+            return True
+        type_def = JOB_TYPE_REGISTRY.get(str(job.get("job_type") or ""))
+        self._reconcile_job_terminal_state(
+            job_id,
+            type_def,
+            "cancelled",
+        )
+        cancelled = self._db_update_status(
+            job_id,
+            "cancelled",
+            expected_status=job["status"],
+            expected_attempt_token=job.get("attempt_token"),
+            completed_at=datetime.now(UTC),
             progress_msg="Cancelled by user",
         )
+        if job["status"] == "queued" and cancelled:
+            with self._state_lock:
+                active_group = self._active_jobs.pop(job_id, None)
+                self._cancel_flags.pop(job_id, None)
+            if active_group:
+                self._dispatch_next(active_group)
         return True
 
     @staticmethod
-    def _kill_process(job_id: str) -> None:
-        """Kill the subprocess process group by PID stored in job_history."""
+    def _kill_process(job_id: str) -> bool:
+        """Terminate a subprocess group and confirm its recorded PID exited."""
         pid = get_job_pid(job_id)
         if not pid:
-            return
+            return True
+        expected_identity = get_job_process_identity(job_id)
+        identity_match = process_identity_matches(pid, expected_identity)
+        if identity_match is False:
+            logger.warning(
+                "PID %d for job %s was reused; treating the recorded child as exited",
+                pid,
+                job_id,
+            )
+            return True
+        if identity_match is None:
+            logger.error(
+                "Refusing to signal unverifiable PID %d for job %s",
+                pid,
+                job_id,
+            )
+            return False
         try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            process_group = os.getpgid(pid)
+            os.killpg(process_group, signal.SIGTERM)
             logger.info("Sent SIGTERM to process group of PID %d for job %s", pid, job_id)
         except ProcessLookupError:
-            pass  # already dead
+            return True
         except OSError as exc:
             logger.warning("Failed to kill PID %d for job %s: %s", pid, job_id, exc)
+            return False
+
+        deadline = time.monotonic() + _PROCESS_TERMINATION_TIMEOUT
+        while time.monotonic() < deadline:
+            if not JobManager._is_pid_alive(pid):
+                return True
+            identity_match = process_identity_matches(pid, expected_identity)
+            if identity_match is False:
+                return True
+            if identity_match is None:
+                logger.error(
+                    "Stopped cancellation after PID %d identity became unverifiable",
+                    pid,
+                )
+                return False
+            time.sleep(_PROCESS_TERMINATION_POLL_INTERVAL)
+
+        if process_identity_matches(pid, expected_identity) is not True:
+            logger.error("Refusing to escalate unverifiable PID %d", pid)
+            return False
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+            logger.warning("Escalated to SIGKILL for PID %d (job %s)", pid, job_id)
+        except ProcessLookupError:
+            return True
+        except OSError as exc:
+            logger.warning("Failed to SIGKILL PID %d for job %s: %s", pid, job_id, exc)
+            return False
+
+        deadline = time.monotonic() + _PROCESS_TERMINATION_TIMEOUT
+        while time.monotonic() < deadline:
+            if not JobManager._is_pid_alive(pid):
+                return True
+            identity_match = process_identity_matches(pid, expected_identity)
+            if identity_match is False:
+                return True
+            if identity_match is None:
+                return False
+            time.sleep(_PROCESS_TERMINATION_POLL_INTERVAL)
+        return (
+            not JobManager._is_pid_alive(pid)
+            or process_identity_matches(pid, expected_identity) is False
+        )
 
     def delete_job(self, job_id: str) -> bool:
-        """Delete a completed/failed/cancelled job from history."""
-        return self._db_delete(job_id)
+        """Delete one terminal job and release an acknowledged quarantine."""
+        deleted = self._db_delete(job_id)
+        if deleted is None:
+            return False
+        execution_group, quarantine_reason = deleted
+        if quarantine_reason is not None:
+            self._release_group(f"quarantine:{job_id}")
+            if execution_group is not None:
+                self._dispatch_next(execution_group)
+        return True
 
     @staticmethod
     def purge_history(
@@ -1124,7 +1543,10 @@ class JobManager:
         Filters are AND-combined; ALL filters are optional. Running and queued
         jobs are NEVER touched. Returns the number of rows deleted.
         """
-        clauses = ["status IN ('completed', 'failed', 'cancelled')"]
+        clauses = [
+            "status IN ('completed', 'failed', 'cancelled')",
+            "recovery_quarantine_reason IS NULL",
+        ]
         params: list[Any] = []
         if status:
             clauses.append("status = %s")
@@ -1140,87 +1562,360 @@ class JobManager:
             result = conn.execute(sql, params)
             return int(result.rowcount or 0)
 
+    def _recovery_owner(self) -> str:
+        """Return the stable identity used for this manager's DB leases."""
+        owner = getattr(self, "_worker_id", None)
+        if isinstance(owner, str) and owner:
+            return owner
+        owner = f"job-manager-{os.getpid()}-{uuid.uuid4().hex}"
+        self._worker_id = owner
+        return owner
+
+    @staticmethod
+    def _persisted_execution_group(
+        type_def: JobTypeDef | None,
+        execution_group: object,
+    ) -> str | None:
+        if isinstance(execution_group, str) and execution_group:
+            return execution_group
+        return type_def.group if type_def is not None else None
+
+    def _hydrate_group(self, job_id: str, execution_group: str) -> None:
+        """Block one exact group before any queued rows are considered."""
+        with self._state_lock:
+            self._active_jobs[job_id] = execution_group
+            self._cancel_flags.setdefault(job_id, threading.Event())
+
+    def _release_group(self, job_id: str) -> None:
+        with self._state_lock:
+            self._active_jobs.pop(job_id, None)
+            self._cancel_flags.pop(job_id, None)
+
+    @staticmethod
+    def _reconcile_job_terminal_state(
+        job_id: str,
+        type_def: JobTypeDef | None,
+        terminal_status: str,
+    ) -> None:
+        """Reconcile domain tracking rows before the job becomes terminal."""
+        if type_def is None:
+            return
+        if type_def.type_id == "cluster_pipeline":
+            reconcile_cluster_pipeline_experiment(job_id, terminal_status)
+            return
+        if type_def.type_id in {
+            "backtest_lgbm",
+            "backtest_chronos2_enriched",
+            "backtest_mstl",
+            "backtest_nhits",
+            "backtest_nbeats",
+        }:
+            reconcile_backtest_run(job_id, terminal_status)
+
+    def _quarantine_recovered_job(
+        self,
+        job_id: str,
+        reason: str,
+        *,
+        attempt_token: str | None,
+        type_def: JobTypeDef | None = None,
+    ) -> None:
+        """Fail closed while leaving the persisted group blocked for review."""
+        self._reconcile_job_terminal_state(job_id, type_def, "failed")
+        updated = self._db_update_status(
+            job_id,
+            "failed",
+            expected_status="running",
+            expected_attempt_token=attempt_token,
+            completed_at=datetime.now(UTC),
+            error=f"Recovery quarantined: {reason}",
+            progress_msg="Recovery quarantined",
+            recovery_quarantine_reason=reason,
+        )
+        if updated:
+            logger.error("Quarantined recovered job %s: %s", job_id, reason)
+
+    def _lease_queued_jobs(self) -> list[tuple[Any, ...]]:
+        """Atomically lease queued rows so startup workers cannot duplicate them."""
+        owner = self._recovery_owner()
+        with _get_conn() as conn:
+            return conn.execute(
+                """WITH lease_candidates AS (
+                       SELECT queued.job_id
+                       FROM job_history queued
+                       WHERE queued.status = 'queued'
+                         AND (
+                           queued.recovery_lease_until IS NULL
+                           OR queued.recovery_lease_until < NOW()
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1
+                           FROM job_history blocker
+                           WHERE blocker.execution_group = queued.execution_group
+                             AND (
+                               blocker.status = 'running'
+                               OR blocker.recovery_quarantine_reason IS NOT NULL
+                             )
+                         )
+                       ORDER BY queued.submitted_at ASC
+                       FOR UPDATE SKIP LOCKED
+                   )
+                   UPDATE job_history queued
+                   SET recovery_lease_owner = %s,
+                       recovery_lease_until = NOW() + (%s * INTERVAL '1 second')
+                   FROM lease_candidates candidate
+                   WHERE queued.job_id = candidate.job_id
+                   RETURNING queued.job_id, queued.job_type, queued.params,
+                             queued.max_retries, queued.retry_count,
+                             queued.pipeline_id, queued.execution_group""",
+                (owner, _RECOVERY_LEASE_SECONDS),
+            ).fetchall()
+
+    def _lease_running_jobs(self) -> list[tuple[Any, ...]]:
+        """Lease running rows so only one API worker performs finalization."""
+        owner = self._recovery_owner()
+        with _get_conn() as conn:
+            return conn.execute(
+                """WITH lease_candidates AS (
+                       SELECT running.job_id
+                       FROM job_history running
+                       WHERE running.status = 'running'
+                         AND (
+                           running.recovery_lease_until IS NULL
+                           OR running.recovery_lease_until < NOW()
+                         )
+                       ORDER BY running.submitted_at ASC
+                       FOR UPDATE SKIP LOCKED
+                   )
+                   UPDATE job_history running
+                   SET recovery_lease_owner = %s,
+                       recovery_lease_until = NOW() + (%s * INTERVAL '1 second')
+                   FROM lease_candidates candidate
+                   WHERE running.job_id = candidate.job_id
+                   RETURNING running.job_id, running.job_type, running.pid,
+                             running.params, running.max_retries,
+                             running.pipeline_id, running.retry_count,
+                             running.execution_group, running.attempt_token,
+                             running.attempt_result,
+                             running.attempt_failure_recorded""",
+                (owner, _RECOVERY_LEASE_SECONDS),
+            ).fetchall()
+
+    def _renew_recovery_lease(
+        self,
+        job_id: str,
+        attempt_token: str | None,
+    ) -> bool:
+        """Extend this manager's exact running-attempt recovery lease."""
+        with _get_conn() as conn:
+            result = conn.execute(
+                """UPDATE job_history
+                   SET recovery_lease_until =
+                       NOW() + (%s * INTERVAL '1 second')
+                   WHERE job_id = %s
+                     AND status = 'running'
+                     AND recovery_lease_owner = %s
+                     AND attempt_token = %s""",
+                (
+                    _RECOVERY_LEASE_SECONDS,
+                    job_id,
+                    self._recovery_owner(),
+                    attempt_token,
+                ),
+            )
+        return int(result.rowcount or 0) == 1
+
+    @staticmethod
+    def _exact_attempt_result(
+        job_id: str,
+        attempt_token: str | None,
+        params: dict[str, Any],
+        persisted_result: object,
+    ) -> dict[str, Any] | None:
+        expected_digest = params.get("__attempt_command_digest")
+        if not isinstance(expected_digest, str):
+            return None
+        if attempt_token:
+            persisted = _validate_attempt_result(
+                persisted_result,
+                attempt_token,
+                expected_digest,
+            )
+            if persisted is not None:
+                return persisted
+        return load_attempt_result(
+            job_id,
+            attempt_token,
+            expected_command_digest=expected_digest,
+        )
+
     def recover_stale_jobs(self) -> int:
-        """On startup: re-adopt live processes and re-queue interrupted jobs.
+        """Lease and reconcile durable jobs on startup.
 
         For running jobs:
-        - If PID is alive → re-adopt via a monitoring thread
-        - If PID is dead or missing → re-queue from persisted parameters
+        - hydrate every exact persisted execution group before queued dispatch;
+        - re-adopt only a live PID with the persisted OS identity;
+        - reconcile exit only from an exact token + command wrapper result;
+        - quarantine ambiguous attempts instead of inferring success.
 
         Jobs previously marked failed specifically because of a server restart
-        are also re-queued. This makes API hot reloads and process restarts
-        transparent to UI-launched work while preserving explicit cancellation.
+        are also leased and re-queued. Queued and running leases prevent two API
+        workers from dispatching or finalizing the same durable row.
         """
         recovered = 0
 
-        # 1. Handle running jobs — PID-aware recovery
+        # 1. Hydrate every durable quarantine before inspecting queues. A
+        # quarantined attempt deliberately blocks its exact execution group
+        # until an operator resolves or deletes the failed history row.
         try:
             with _get_conn() as conn:
-                running_rows = conn.execute(
-                    """SELECT job_id, job_type, pid, params, max_retries, pipeline_id
+                quarantine_rows = conn.execute(
+                    """SELECT job_id, execution_group
                        FROM job_history
-                       WHERE status = 'running'
-                       ORDER BY submitted_at ASC"""
+                       WHERE recovery_quarantine_reason IS NOT NULL"""
                 ).fetchall()
-            for row in running_rows:
-                job_id, job_type, pid, params_raw, max_retries, pipeline_id = row
-                if pid and self._is_pid_alive(pid):
-                    type_def = JOB_TYPE_REGISTRY.get(job_type)
-                    if type_def:
-                        readoptable_types = {
-                            "backtest_lgbm",
-                            "backtest_chronos2_enriched",
-                            "backtest_mstl",
-                            "backtest_nhits",
-                            "backtest_nbeats",
-                            "model_tuning_run",
-                        }
-                        if job_type in readoptable_types:
-                            self._readopt_job(job_id, type_def, pid)
-                            logger.info(
-                                "Re-adopted running job %s (PID %d) on startup",
-                                job_id,
-                                pid,
-                            )
-                        else:
-                            # Without a job-specific finalizer the new API cannot
-                            # know the orphan's exit code. Stop and restart it
-                            # from durable parameters instead of guessing success.
-                            self._kill_process(job_id)
-                            self._db_requeue_after_restart(job_id)
-                    else:
-                        self._db_update_status(
-                            job_id, "failed",
-                            error=f"Unknown job type '{job_type}' on restart",
-                            completed_at=datetime.now(timezone.utc),
-                        )
-                else:
-                    # The API process disappeared before it could finish or
-                    # monitor this job. Re-run it from its persisted params.
-                    self._db_requeue_after_restart(job_id)
-                    logger.info(
-                        "Re-queued interrupted job %s (%s) after server restart",
-                        job_id,
-                        job_type,
-                    )
-                recovered += 1
-        except Exception:
-            logger.exception("Failed to recover running jobs on startup")
-            # Fallback: preserve work by returning running jobs to the queue.
-            try:
-                with _get_conn() as conn:
-                    result = conn.execute(
-                        """UPDATE job_history SET status = 'queued', pid = NULL,
-                                  started_at = NULL, completed_at = NULL,
-                                  error = NULL, progress_pct = 0,
-                                  progress_msg = 'Re-queued after server restart'
-                           WHERE status = 'running'"""
-                    )
-                    recovered += result.rowcount
-            except Exception:
-                logger.exception("Fallback recovery also failed")
+            for job_id, execution_group in quarantine_rows:
+                if isinstance(execution_group, str) and execution_group:
+                    self._hydrate_group(f"quarantine:{job_id}", execution_group)
+            with _get_conn() as conn:
+                active_group_rows = conn.execute(
+                    """SELECT job_id, job_type, execution_group
+                       FROM job_history
+                       WHERE status = 'running'"""
+                ).fetchall()
+            for job_id, job_type, persisted_group in active_group_rows:
+                group = self._persisted_execution_group(
+                    JOB_TYPE_REGISTRY.get(job_type),
+                    persisted_group,
+                )
+                if group is not None:
+                    self._hydrate_group(str(job_id), group)
+        except (psycopg.Error, TypeError, ValueError):
+            logger.exception("Failed to hydrate active and quarantined job groups")
 
-        # 2. Recover rows marked failed by older server versions, which treated
+        # 2. Hydrate every running group before any queued lease is acquired,
+        # then re-adopt only exact process identities. A missing/reused PID is
+        # reconciled exclusively from the wrapper's exact-token exit record.
+        try:
+            running_rows = self._lease_running_jobs()
+            for row in running_rows:
+                (
+                    job_id,
+                    job_type,
+                    pid,
+                    params_raw,
+                    max_retries,
+                    pipeline_id,
+                    retry_count,
+                    persisted_group,
+                    attempt_token,
+                    attempt_result,
+                    attempt_failure_recorded,
+                ) = row
+                params = (
+                    params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
+                )
+                type_def = JOB_TYPE_REGISTRY.get(job_type)
+                execution_group = self._persisted_execution_group(
+                    type_def,
+                    persisted_group,
+                )
+                if execution_group is None:
+                    self._db_update_status(
+                        job_id,
+                        "failed",
+                        expected_status="running",
+                        expected_attempt_token=attempt_token,
+                        error=f"Unknown job type '{job_type}' on restart",
+                        completed_at=datetime.now(UTC),
+                        recovery_quarantine_reason="Missing execution group",
+                    )
+                    recovered += 1
+                    continue
+                self._hydrate_group(str(job_id), execution_group)
+                if type_def is None:
+                    self._quarantine_recovered_job(
+                        str(job_id),
+                        f"Unknown job type '{job_type}'",
+                        attempt_token=attempt_token,
+                    )
+                    recovered += 1
+                    continue
+
+                if pid and self._is_pid_alive(pid):
+                    expected_identity = params.get("__process_identity")
+                    identity_match = process_identity_matches(
+                        int(pid),
+                        expected_identity if isinstance(expected_identity, dict) else None,
+                    )
+                    if identity_match is True:
+                        self._readopt_job(
+                            str(job_id),
+                            type_def,
+                            int(pid),
+                            pipeline_id=pipeline_id,
+                            execution_group=execution_group,
+                            attempt_token=attempt_token,
+                            recovery_leased=True,
+                            process_identity=(
+                                expected_identity if isinstance(expected_identity, dict) else None
+                            ),
+                        )
+                        logger.info(
+                            "Re-adopted running job %s (PID %d) on startup",
+                            job_id,
+                            pid,
+                        )
+                        recovered += 1
+                        continue
+                    if identity_match is None:
+                        self._quarantine_recovered_job(
+                            str(job_id),
+                            f"PID {pid} identity is unverifiable",
+                            attempt_token=attempt_token,
+                            type_def=type_def,
+                        )
+                        recovered += 1
+                        continue
+
+                exact_result = self._exact_attempt_result(
+                    str(job_id),
+                    attempt_token,
+                    params,
+                    attempt_result,
+                )
+                job = {
+                    "status": "running",
+                    "params": params,
+                    "pipeline_id": pipeline_id,
+                    "retry_count": retry_count or 0,
+                    "max_retries": max_retries or 0,
+                    "execution_group": execution_group,
+                    "attempt_token": attempt_token,
+                    "attempt_result": exact_result,
+                    "attempt_failure_recorded": bool(attempt_failure_recorded),
+                }
+                if exact_result is None:
+                    self._quarantine_recovered_job(
+                        str(job_id),
+                        "Process exited without an exact attempt result",
+                        attempt_token=attempt_token,
+                        type_def=type_def,
+                    )
+                else:
+                    release_group = self._reconcile_recovered_attempt(
+                        str(job_id),
+                        type_def,
+                        job,
+                        execution_group=execution_group,
+                    )
+                    if release_group:
+                        self._release_group(str(job_id))
+                recovered += 1
+        except (psycopg.Error, RuntimeError, TypeError, ValueError, OSError):
+            logger.exception("Failed to recover running jobs on startup")
+
+        # 3. Recover rows marked failed by older server versions, which treated
         # a restart as terminal instead of durable/retryable.
         try:
             with _get_conn() as conn:
@@ -1236,34 +1931,67 @@ class JobManager:
         except Exception:
             logger.exception("Failed to re-queue restart-interrupted jobs")
 
-        # 3. Re-enqueue queued jobs into memory (in submission order)
+        # 4. Lease and enqueue durable rows. The DB lease deduplicates API
+        # workers; the in-memory ID set also makes repeated local recovery safe.
         try:
-            with _get_conn() as conn:
-                rows = conn.execute(
-                    """SELECT job_id, job_type, params, max_retries, pipeline_id
-                       FROM job_history
-                       WHERE status = 'queued'
-                       ORDER BY submitted_at ASC"""
-                ).fetchall()
+            rows = self._lease_queued_jobs()
+            queued_ids = {
+                queued_job_id
+                for queue in self._pending_queues.values()
+                for queued_job_id, *_rest in queue
+            }
             for row in rows:
-                job_id, job_type, params_raw, max_retries, pipeline_id = row
+                (
+                    job_id,
+                    job_type,
+                    params_raw,
+                    max_retries,
+                    retry_count,
+                    pipeline_id,
+                    persisted_group,
+                ) = row
+                if job_id in queued_ids:
+                    continue
                 type_def = JOB_TYPE_REGISTRY.get(job_type)
                 if not type_def:
                     self._db_update_status(
-                        job_id, "failed",
+                        job_id,
+                        "failed",
                         error=f"Unknown job type '{job_type}' on restart",
-                        completed_at=datetime.now(timezone.utc),
+                        completed_at=datetime.now(UTC),
                     )
                     recovered += 1
                     continue
-                params = params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
-                # Use per-model group for tuning jobs (matches submit-time group_override)
-                effective_group = type_def.group
-                if job_type == "model_tuning_run" and params.get("model"):
-                    effective_group = f"tuning_{params['model']}"
+                params = (
+                    params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
+                )
+                effective_group = self._persisted_execution_group(
+                    type_def,
+                    persisted_group,
+                )
+                if effective_group is None:
+                    self._db_update_status(
+                        job_id,
+                        "failed",
+                        error="Queued job is missing its execution group",
+                        completed_at=datetime.now(UTC),
+                        recovery_quarantine_reason="Missing execution group",
+                    )
+                    recovered += 1
+                    continue
                 with self._state_lock:
                     queue = self._pending_queues.setdefault(effective_group, [])
-                    queue.append((job_id, type_def, params, max_retries or 0, pipeline_id))
+                    queue.append(
+                        (
+                            job_id,
+                            type_def,
+                            params,
+                            max_retries or 0,
+                            retry_count or 0,
+                            pipeline_id,
+                        )
+                    )
+                    queued_ids.add(job_id)
                 recovered += 1
                 logger.info("Re-enqueued job %s (%s) from DB on startup", job_id, job_type)
 
@@ -1279,20 +2007,50 @@ class JobManager:
         except Exception:
             logger.exception("Failed to re-enqueue queued jobs on startup")
 
-        return recovered
+        # 5. Heal the crash window where a step reached completed but the API
+        # exited before it durably submitted the successor. The per-step
+        # advisory lock in _advance_pipeline_step_once serializes this with a
+        # concurrently finishing worker and with other recovering API workers.
+        try:
+            with _get_conn() as conn:
+                completed_pipeline_rows = conn.execute(
+                    """SELECT completed.job_id,
+                              completed.pipeline_id,
+                              completed.params
+                       FROM job_history completed
+                       WHERE completed.status = 'completed'
+                         AND completed.pipeline_id IS NOT NULL
+                         AND completed.pipeline_step IS NOT NULL
+                         AND jsonb_typeof(
+                               completed.params -> '__pipeline_remaining'
+                             ) = 'array'
+                         AND jsonb_array_length(
+                               completed.params -> '__pipeline_remaining'
+                             ) > 0
+                         AND NOT EXISTS (
+                             SELECT 1
+                             FROM job_history successor
+                             WHERE successor.pipeline_id = completed.pipeline_id
+                               AND successor.pipeline_step = completed.pipeline_step + 1
+                         )
+                       ORDER BY completed.completed_at ASC"""
+                ).fetchall()
+            for job_id, pipeline_id, params_raw in completed_pipeline_rows:
+                params = (
+                    params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
+                )
+                remaining = params.get("__pipeline_remaining") or []
+                if isinstance(remaining, list):
+                    self._advance_pipeline_step_once(
+                        str(job_id),
+                        str(pipeline_id),
+                        remaining,
+                        params,
+                    )
+        except (psycopg.Error, TypeError, ValueError):
+            logger.exception("Failed to reconcile completed pipeline steps")
 
-    @staticmethod
-    def _db_requeue_after_restart(job_id: str) -> None:
-        """Return an interrupted job to the durable queue."""
-        with _get_conn() as conn:
-            conn.execute(
-                """UPDATE job_history SET status = 'queued', pid = NULL,
-                          started_at = NULL, completed_at = NULL,
-                          error = NULL, progress_pct = 0,
-                          progress_msg = 'Re-queued after server restart'
-                   WHERE job_id = %s""",
-                (job_id,),
-            )
+        return recovered
 
     @staticmethod
     def _is_pid_alive(pid: int) -> bool:
@@ -1305,61 +2063,298 @@ class JobManager:
         except PermissionError:
             return True  # process exists but we can't signal it
 
-    def _readopt_job(self, job_id: str, type_def: JobTypeDef, pid: int) -> None:
+    def _readopt_job(
+        self,
+        job_id: str,
+        type_def: JobTypeDef,
+        pid: int,
+        *,
+        pipeline_id: str | None = None,
+        execution_group: str | None = None,
+        attempt_token: str | None = None,
+        recovery_leased: bool = False,
+        process_identity: dict[str, str] | None = None,
+    ) -> None:
         """Start a monitoring thread that polls a re-adopted process until it exits.
 
         Since the re-adopted process is NOT a child of this API process,
         we cannot use proc.wait(). Instead we poll os.kill(pid, 0).
         """
-        with self._state_lock:
-            self._active_jobs[job_id] = type_def.group
-            self._cancel_flags[job_id] = threading.Event()
+        exact_group = execution_group or type_def.group
+        self._hydrate_group(job_id, exact_group)
 
         def _monitor():
+            release_group = True
             try:
                 while self._is_pid_alive(pid):
+                    if recovery_leased and not self._renew_recovery_lease(
+                        job_id,
+                        attempt_token,
+                    ):
+                        self._quarantine_recovered_job(
+                            job_id,
+                            "Recovery lease was lost",
+                            attempt_token=attempt_token,
+                            type_def=type_def,
+                        )
+                        release_group = False
+                        return
+                    if process_identity is not None:
+                        identity_match = process_identity_matches(
+                            pid,
+                            process_identity,
+                        )
+                        if identity_match is False:
+                            logger.info(
+                                "Recovered process for job %s exited before PID %d was reused",
+                                job_id,
+                                pid,
+                            )
+                            break
+                        if identity_match is None:
+                            logger.error(
+                                "Waiting because recovered PID %d identity is unverifiable",
+                                pid,
+                            )
+                            time.sleep(2)
+                            continue
                     cancel_event = self._cancel_flags.get(job_id)
                     if cancel_event and cancel_event.is_set():
-                        self._kill_process(job_id)
-                        self._db_update_status(
-                            job_id, "cancelled",
-                            completed_at=datetime.now(timezone.utc),
-                            progress_msg="Cancelled by user (re-adopted job)",
+                        if self._kill_process(job_id):
+                            self._db_update_status(
+                                job_id,
+                                "cancelled",
+                                expected_status="running",
+                                expected_attempt_token=attempt_token,
+                                completed_at=datetime.now(UTC),
+                                progress_msg="Cancelled by user (re-adopted job)",
+                            )
+                            return
+                        logger.error(
+                            "Cancellation is waiting for recovered PID %d (job %s)",
+                            pid,
+                            job_id,
                         )
-                        return
                     time.sleep(2)
-                # Process exited — check if results were written by the subprocess
-                # If the subprocess wrote its own result, status may already be completed
+                cancel_event = self._cancel_flags.get(job_id)
+                if cancel_event and cancel_event.is_set():
+                    self._db_update_status(
+                        job_id,
+                        "cancelled",
+                        expected_status="running",
+                        expected_attempt_token=attempt_token,
+                        completed_at=datetime.now(UTC),
+                        progress_msg="Cancelled by user (re-adopted job)",
+                    )
+                    return
                 job = self._db_get(job_id)
                 if job and job["status"] == "running":
-                    # Subprocess exited but its original API callback no longer
-                    # exists. Complete the job-specific durable finalization.
-                    if type_def.type_id == "model_tuning_run":
-                        self._finalize_tuning_run(job_id)
-                    self._finalize_recovered_job(job_id, type_def, job)
-                    self._db_update_status(
-                        job_id, "completed",
-                        completed_at=datetime.now(timezone.utc),
-                        progress_msg="Completed (re-adopted)",
+                    job.setdefault("attempt_token", attempt_token)
+                    job.setdefault("execution_group", exact_group)
+                    job.setdefault("pipeline_id", pipeline_id)
+                    release_group = self._reconcile_recovered_attempt(
+                        job_id,
+                        type_def,
+                        job,
+                        execution_group=exact_group,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001,RUF100 — persist unexpected finalizer failures.
                 logger.exception("Monitor thread for re-adopted job %s failed", job_id)
-                try:
-                    self._db_update_status(
-                        job_id, "failed",
-                        error="Monitor thread failed",
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                except Exception:
-                    pass
+                self._quarantine_recovered_job(
+                    job_id,
+                    "Monitor thread failed",
+                    attempt_token=attempt_token,
+                    type_def=type_def,
+                )
+                release_group = False
             finally:
-                with self._state_lock:
-                    self._active_jobs.pop(job_id, None)
-                    self._cancel_flags.pop(job_id, None)
-                self._dispatch_next(type_def.group)
+                if release_group:
+                    self._release_group(job_id)
+                    self._dispatch_next(exact_group)
 
         t = threading.Thread(target=_monitor, name=f"readopt-{job_id}", daemon=True)
         t.start()
+
+    def _reconcile_recovered_attempt(
+        self,
+        job_id: str,
+        type_def: JobTypeDef,
+        job: dict[str, Any],
+        *,
+        execution_group: str,
+    ) -> bool:
+        """Finalize, retry, or quarantine one exact recovered child attempt.
+
+        Returns true only when the execution group may be released.
+        """
+        params = job.get("params") or {}
+        if isinstance(params, str):
+            params = json.loads(params)
+        if not isinstance(params, dict):
+            self._quarantine_recovered_job(
+                job_id,
+                "Persisted job parameters are invalid",
+                attempt_token=job.get("attempt_token"),
+                type_def=type_def,
+            )
+            return False
+        attempt_token = job.get("attempt_token")
+        if not isinstance(attempt_token, str) or not attempt_token:
+            self._quarantine_recovered_job(
+                job_id,
+                "Running job has no attempt token",
+                attempt_token=None,
+                type_def=type_def,
+            )
+            return False
+        expected_digest = params.get("__attempt_command_digest")
+        if not isinstance(expected_digest, str) or not expected_digest:
+            self._quarantine_recovered_job(
+                job_id,
+                "Running job has no command digest",
+                attempt_token=attempt_token,
+                type_def=type_def,
+            )
+            return False
+        persisted_result = _validate_attempt_result(
+            job.get("attempt_result"),
+            attempt_token,
+            expected_digest,
+        )
+        attempt_result = persisted_result or load_attempt_result(
+            job_id,
+            attempt_token,
+            expected_command_digest=expected_digest,
+        )
+        if attempt_result is None:
+            self._quarantine_recovered_job(
+                job_id,
+                "Process exited without an exact attempt result",
+                attempt_token=attempt_token,
+                type_def=type_def,
+            )
+            return False
+        if persisted_result is None and not _store_attempt_result(
+            job_id,
+            attempt_token,
+            attempt_result,
+        ):
+            self._quarantine_recovered_job(
+                job_id,
+                "Exact attempt result could not be persisted",
+                attempt_token=attempt_token,
+                type_def=type_def,
+            )
+            return False
+
+        exit_code = int(attempt_result["exit_code"])
+        retry_count = int(job.get("retry_count") or 0)
+        max_retries = int(job.get("max_retries") or 0)
+        if exit_code != 0:
+            failure_recorded = bool(job.get("attempt_failure_recorded"))
+            next_retry_count = retry_count if failure_recorded else retry_count + 1
+            if next_retry_count <= max_retries:
+                self._reconcile_job_terminal_state(
+                    job_id,
+                    type_def,
+                    "failed",
+                )
+                # Clear the exited process while the old token still owns the
+                # row; the requeue CAS intentionally clears that token.
+                _clear_pid(job_id, attempt_token)
+                requeued = self._db_update_status(
+                    job_id,
+                    "queued",
+                    expected_status="running",
+                    expected_attempt_token=attempt_token,
+                    started_at=None,
+                    completed_at=None,
+                    progress_pct=0,
+                    progress_msg=(f"Recovered attempt exited {exit_code}; retry queued"),
+                    error=None,
+                    retry_count=next_retry_count,
+                    attempt_token=None,
+                    attempt_result=None,
+                    attempt_failure_recorded=False,
+                    attempt_callable_completion=None,
+                    recovery_lease_owner=None,
+                    recovery_lease_until=None,
+                )
+                if requeued:
+                    logger.warning(
+                        "Re-queued recovered job %s after exit code %d",
+                        job_id,
+                        exit_code,
+                    )
+                    return True
+                return False
+            self._reconcile_job_terminal_state(
+                job_id,
+                type_def,
+                "failed",
+            )
+            failed = self._db_update_status(
+                job_id,
+                "failed",
+                expected_status="running",
+                expected_attempt_token=attempt_token,
+                completed_at=datetime.now(UTC),
+                error=f"Recovered subprocess exited with code {exit_code}",
+                progress_msg="Failed",
+                retry_count=next_retry_count,
+            )
+            if failed:
+                _clear_pid(job_id, attempt_token)
+            return failed
+
+        callable_completion = params.get("__attempt_callable_completion")
+        callable_completed = (
+            isinstance(callable_completion, dict)
+            and callable_completion.get("attempt_token") == attempt_token
+        )
+        try:
+            if not callable_completed:
+                if type_def.type_id == "model_tuning_run":
+                    self._finalize_tuning_run(job_id)
+                self._finalize_recovered_job(job_id, type_def, job)
+        except Exception:  # noqa: BLE001,RUF100 — keep finalization failures quarantined.
+            logger.exception("Recovered finalization failed for job %s", job_id)
+            self._quarantine_recovered_job(
+                job_id,
+                "Durable finalization failed",
+                attempt_token=attempt_token,
+                type_def=type_def,
+            )
+            return False
+
+        completed = self._db_update_status(
+            job_id,
+            "completed",
+            expected_status="running",
+            expected_attempt_token=attempt_token,
+            completed_at=datetime.now(UTC),
+            progress_pct=100,
+            progress_msg="Completed (re-adopted)",
+            attempt_result=attempt_result,
+        )
+        if not completed:
+            return False
+        _clear_pid(job_id, attempt_token)
+        remaining = params.get("__pipeline_remaining", [])
+        recovered_pipeline_id = job.get("pipeline_id")
+        if remaining and recovered_pipeline_id:
+            self._advance_pipeline_step_once(
+                job_id,
+                str(recovered_pipeline_id),
+                remaining,
+                params,
+            )
+        logger.info(
+            "Completed recovered job %s in execution group %s",
+            job_id,
+            execution_group,
+        )
+        return True
 
     @staticmethod
     def _finalize_recovered_job(
@@ -1368,6 +2363,72 @@ class JobManager:
         job: dict[str, Any],
     ) -> None:
         """Run completion work lost when the original API process exited."""
+        params = job.get("params") or {}
+        if isinstance(params, str):
+            params = json.loads(params)
+        if type_def.type_id == "generate_production_forecast":
+            run_id = params.get("run_id")
+            if not run_id:
+                raise RuntimeError("Recovered generation is missing run_id")
+            with _get_conn() as conn:
+                row = conn.execute(
+                    """SELECT run_status, row_count, artifact_checksum
+                       FROM forecast_generation_run
+                       WHERE run_id = %s::uuid""",
+                    (str(run_id),),
+                ).fetchone()
+            if row is None:
+                raise RuntimeError("Recovered generation has no durable manifest")
+            status, row_count, artifact_checksum = row
+            if status != "ready" or int(row_count or 0) <= 0 or not artifact_checksum:
+                raise RuntimeError("Recovered generation manifest is not a complete ready run")
+            return
+
+        if type_def.type_id == "champion_results_load":
+            experiment_id = params.get("experiment_id")
+            if not experiment_id:
+                raise RuntimeError("Recovered champion results load is missing experiment_id")
+            from common.core.paths import DATA_DIR
+
+            winners_csv = DATA_DIR / "champion" / f"experiment_{int(experiment_id)}_winners.csv"
+            if not winners_csv.exists():
+                raise RuntimeError("Recovered champion results load has no winners artifact")
+            _finalize_champion_results_lineage(
+                int(experiment_id),
+                job_id,
+                winners_csv,
+            )
+            return
+
+        if type_def.type_id == "cluster_pipeline":
+            verify_cluster_pipeline_completion(
+                job_id,
+                require_promoted=bool(params.get("auto_promote", True)),
+            )
+            return
+
+        if type_def.type_id in {"champion_select", "governed_champion_refresh"}:
+            experiment_id = params.get("experiment_id")
+            if not experiment_id:
+                raise RuntimeError("Recovered governed champion refresh is missing experiment_id")
+            from common.services.champion_refresh import (
+                finalize_governed_champion_refresh,
+                refresh_spec_from_payload,
+            )
+
+            expected_spec = refresh_spec_from_payload(params.get("governed_spec"))
+            result = finalize_governed_champion_refresh(
+                int(experiment_id),
+                job_id=job_id,
+                expected_spec=expected_spec,
+            )
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE job_history SET result = %s WHERE job_id = %s",
+                    (json.dumps(result), job_id),
+                )
+            return
+
         backtest_types = {
             "backtest_lgbm",
             "backtest_chronos2_enriched",
@@ -1376,6 +2437,13 @@ class JobManager:
             "backtest_nbeats",
         }
         if type_def.type_id not in backtest_types:
+            parent_postwork_types = {
+                "tuning_backtest",
+                "load_backtest_results",
+                "backtest_load_model",
+            }
+            if type_def.type_id in parent_postwork_types:
+                raise RuntimeError(f"Job type {type_def.type_id} has no durable recovery finalizer")
             return
 
         from common.services.job_state import (
@@ -1384,14 +2452,15 @@ class JobManager:
             _update_backtest_run_on_completion,
         )
 
-        params = job.get("params") or {}
         run_id = params.get("backtest_run_id")
         if not run_id:
             raise RuntimeError("Recovered backtest is missing backtest_run_id")
         model = str(params.get("model_id") or type_def.type_id.removeprefix("backtest_"))
         try:
+            verify_backtest_artifact_identity(model, int(run_id), job_id)
+            verify_backtest_tracking_identity(model, int(run_id), job_id)
             _auto_load_backtest(model, int(run_id), job_id=job_id)
-        except Exception:  # noqa: BLE001 — all finalizer failures must fail the recovered job.
+        except Exception:
             _mark_backtest_run_failed(int(run_id))
             raise
         _update_backtest_run_on_completion(int(run_id), model)
@@ -1405,32 +2474,44 @@ class JobManager:
         """
         job = self._db_get(job_id)
         if not job:
-            return
+            raise RuntimeError(f"Re-adopted tuning job {job_id} no longer exists")
         params = job.get("params") or {}
         if isinstance(params, str):
             params = json.loads(params)
         run_id = params.get("run_id")
         model = params.get("model")
         if not run_id or not model:
-            return
+            raise RuntimeError("Re-adopted tuning job is missing run_id or model")
 
         output_dir = MODEL_OUTPUT_DIRS.get(model)
         if not output_dir:
-            return
+            raise RuntimeError(f"Re-adopted tuning job has unsupported model {model!r}")
 
         from common.core.paths import DATA_DIR
+
         meta_path = DATA_DIR / "backtest" / output_dir / "backtest_metadata.json"
         pred_path = DATA_DIR / "backtest" / output_dir / "backtest_predictions.csv"
+        all_lags_path = DATA_DIR / "backtest" / output_dir / "backtest_predictions_all_lags.csv"
 
         try:
-            from common.ml.tuning_tracker import complete_run, register_timeframes, register_cluster_month_breakdowns
+            from common.ml.tuning_tracker import (
+                complete_run,
+                register_cluster_month_breakdowns,
+                register_lag_breakdowns,
+                register_timeframes,
+            )
+
             complete_run(run_id, meta_path)
             register_timeframes(run_id, meta_path)
+            register_lag_breakdowns(run_id, all_lags_path)
             if pred_path.exists():
                 register_cluster_month_breakdowns(run_id, pred_path)
-            logger.info("Finalized re-adopted tuning run %d (%s) from backtest output", run_id, model)
+            logger.info(
+                "Finalized re-adopted tuning run %d (%s) from backtest output", run_id, model
+            )
         except Exception:
             logger.exception("Failed to finalize re-adopted tuning run %d (%s)", run_id, model)
+            raise
 
     def get_types(self) -> list[dict[str, Any]]:
         """List all registered job types with metadata."""
@@ -1454,87 +2535,247 @@ class JobManager:
         params: dict[str, Any],
         max_retries: int = 0,
         pipeline_id: str | None = None,
+        retry_count: int = 0,
+        execution_group: str | None = None,
     ) -> None:
         """Execute a job within APScheduler's thread pool."""
-        retry_count = 0
+        cancel_event = self._cancel_flags.get(job_id)
+        first_attempt = True
+        previous_attempt_token: str | None = None
+        exact_group = execution_group or self._active_jobs.get(
+            job_id,
+            type_def.group,
+        )
 
-        while True:
-            try:
-                self._db_update_status(
-                    job_id, "running",
-                    started_at=datetime.now(timezone.utc),
-                    progress_pct=0,
-                    progress_msg="Starting",
-                    retry_count=retry_count,
-                )
+        try:
+            while True:
+                attempt_token = uuid.uuid4().hex
+                try:
+                    started = self._db_update_status(
+                        job_id,
+                        "running",
+                        expected_status="queued" if first_attempt else "running",
+                        expected_attempt_token=previous_attempt_token,
+                        started_at=datetime.now(UTC),
+                        progress_pct=0,
+                        progress_msg="Starting",
+                        retry_count=retry_count,
+                        attempt_token=attempt_token,
+                        attempt_result=None,
+                        attempt_failure_recorded=False,
+                        attempt_callable_completion=None,
+                        recovery_lease_owner=None,
+                        recovery_lease_until=None,
+                        recovery_quarantine_reason=None,
+                    )
+                    if started is False:
+                        logger.info(
+                            "Job %s was terminal before worker attempt %d started",
+                            job_id,
+                            retry_count + 1,
+                        )
+                        break
+                    first_attempt = False
+                    previous_attempt_token = attempt_token
 
-                def progress_cb(pct: int | None = None, msg: str | None = None):
-                    updates: dict[str, Any] = {}
-                    if pct is not None:
-                        updates["progress_pct"] = pct
-                    if msg is not None:
-                        updates["progress_msg"] = msg
-                    if updates:
-                        self._db_update_status(job_id, "running", **updates)
+                    def progress_cb(
+                        pct: int | None = None,
+                        msg: str | None = None,
+                        *,
+                        _attempt_token: str = attempt_token,
+                    ) -> None:
+                        if cancel_event and cancel_event.is_set():
+                            raise JobCancelledError("Job cancelled by user")
+                        updates: dict[str, Any] = {}
+                        if pct is not None:
+                            updates["progress_pct"] = pct
+                        if msg is not None:
+                            updates["progress_msg"] = msg
+                        if updates:
+                            self._db_update_status(
+                                job_id,
+                                "running",
+                                expected_status="running",
+                                expected_attempt_token=_attempt_token,
+                                **updates,
+                            )
 
-                # Strip pipeline metadata before passing to callable
-                clean_params = {k: v for k, v in params.items() if not k.startswith("__pipeline")}
-                cancel_event = self._cancel_flags.get(job_id)
-                result = type_def.callable(
-                    clean_params, progress_cb,
-                    cancel_event=cancel_event, job_id=job_id,
-                )
+                    # Strip durable orchestration metadata before invoking the
+                    # domain callable; only user/job parameters cross this seam.
+                    clean_params = {
+                        key: value for key, value in params.items() if not key.startswith("__")
+                    }
+                    context_token = bind_job_attempt(attempt_token)
+                    try:
+                        result = type_def.callable(
+                            clean_params,
+                            progress_cb,
+                            cancel_event=cancel_event,
+                            job_id=job_id,
+                        )
+                    finally:
+                        reset_job_attempt(context_token)
+                    if cancel_event and cancel_event.is_set():
+                        raise JobCancelledError("Job cancelled by user")
 
-                self._db_update_status(
-                    job_id, "completed",
-                    completed_at=datetime.now(timezone.utc),
-                    progress_pct=100,
-                    progress_msg="Done",
-                    result=result,
-                )
-                logger.info("Job %s completed successfully", job_id)
+                    callable_persisted = self._db_update_status(
+                        job_id,
+                        "running",
+                        expected_status="running",
+                        expected_attempt_token=attempt_token,
+                        result=result,
+                        attempt_callable_completion={
+                            "attempt_token": attempt_token,
+                        },
+                    )
+                    if not callable_persisted:
+                        logger.error(
+                            "Job %s finished but its exact callable completion "
+                            "could not be persisted",
+                            job_id,
+                        )
+                        break
 
-                # If part of a pipeline, trigger next step
-                remaining = params.get("__pipeline_remaining", [])
-                if remaining and pipeline_id:
-                    self._trigger_next_pipeline_step(pipeline_id, remaining, params)
+                    completed = self._db_update_status(
+                        job_id,
+                        "completed",
+                        expected_status="running",
+                        expected_attempt_token=attempt_token,
+                        completed_at=datetime.now(UTC),
+                        progress_pct=100,
+                        progress_msg="Done",
+                    )
+                    if not completed:
+                        logger.info(
+                            "Job %s finished after its durable status became terminal",
+                            job_id,
+                        )
+                        break
+                    logger.info("Job %s completed successfully", job_id)
 
-                break  # success
+                    # If part of a pipeline, trigger next step.
+                    remaining = params.get("__pipeline_remaining", [])
+                    if remaining and pipeline_id:
+                        self._advance_pipeline_step_once(
+                            job_id,
+                            pipeline_id,
+                            remaining,
+                            params,
+                        )
+                    break
 
-            except Exception as exc:
-                retry_count += 1
-                if retry_count <= max_retries:
-                    wait = min(2 ** retry_count, 60)
-                    logger.warning("Job %s failed (attempt %d/%d), retrying in %ds: %s",
-                                   job_id, retry_count, max_retries + 1, wait, exc)
+                except JobCancelledError:
+                    self._reconcile_job_terminal_state(
+                        job_id,
+                        type_def,
+                        "cancelled",
+                    )
                     self._db_update_status(
-                        job_id, "running",
-                        progress_msg=f"Retry {retry_count}/{max_retries} in {wait}s",
+                        job_id,
+                        "cancelled",
+                        expected_status="running",
+                        expected_attempt_token=attempt_token,
+                        completed_at=datetime.now(UTC),
+                        progress_msg="Cancelled by user",
                         retry_count=retry_count,
                     )
-                    time.sleep(wait)
-                    continue
+                    break
 
-                logger.exception("Job %s failed after %d attempts", job_id, retry_count)
-                self._db_update_status(
-                    job_id, "failed",
-                    completed_at=datetime.now(timezone.utc),
-                    error=str(exc),
-                    progress_msg="Failed",
-                    retry_count=retry_count,
-                )
-                break
+                except Exception as exc:  # noqa: BLE001,RUF100 — persist worker failures.
+                    if cancel_event and cancel_event.is_set():
+                        self._reconcile_job_terminal_state(
+                            job_id,
+                            type_def,
+                            "cancelled",
+                        )
+                        self._db_update_status(
+                            job_id,
+                            "cancelled",
+                            expected_status="running",
+                            expected_attempt_token=attempt_token,
+                            completed_at=datetime.now(UTC),
+                            progress_msg="Cancelled by user",
+                            retry_count=retry_count,
+                        )
+                        break
 
-            finally:
-                with self._state_lock:
-                    # Use the stored group (may differ from type_def.group if group_override was used)
-                    active_group = self._active_jobs.get(job_id, type_def.group)
-                    was_active = job_id in self._active_jobs
-                    self._active_jobs.pop(job_id, None)
-                    self._cancel_flags.pop(job_id, None)
-                # Auto-dispatch next queued job (outside lock to avoid deadlock)
-                if was_active:
-                    self._dispatch_next(active_group)
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        self._reconcile_job_terminal_state(
+                            job_id,
+                            type_def,
+                            "failed",
+                        )
+                        delay = min(2**retry_count, 60)
+                        logger.warning(
+                            "Job %s failed (attempt %d/%d), retrying in %ds: %s",
+                            job_id,
+                            retry_count,
+                            max_retries + 1,
+                            delay,
+                            exc,
+                        )
+                        self._db_update_status(
+                            job_id,
+                            "running",
+                            expected_status="running",
+                            expected_attempt_token=attempt_token,
+                            progress_msg=(f"Retry {retry_count}/{max_retries} in {delay}s"),
+                            retry_count=retry_count,
+                            attempt_failure_recorded=True,
+                        )
+                        if cancel_event:
+                            if cancel_event.wait(delay):
+                                self._reconcile_job_terminal_state(
+                                    job_id,
+                                    type_def,
+                                    "cancelled",
+                                )
+                                self._db_update_status(
+                                    job_id,
+                                    "cancelled",
+                                    expected_status="running",
+                                    expected_attempt_token=attempt_token,
+                                    completed_at=datetime.now(UTC),
+                                    progress_msg="Cancelled by user",
+                                    retry_count=retry_count,
+                                )
+                                break
+                        else:
+                            time.sleep(delay)
+                        continue
+
+                    logger.exception(
+                        "Job %s failed after %d attempts",
+                        job_id,
+                        retry_count,
+                    )
+                    self._reconcile_job_terminal_state(
+                        job_id,
+                        type_def,
+                        "failed",
+                    )
+                    self._db_update_status(
+                        job_id,
+                        "failed",
+                        expected_status="running",
+                        expected_attempt_token=attempt_token,
+                        completed_at=datetime.now(UTC),
+                        error=str(exc),
+                        progress_msg="Failed",
+                        retry_count=retry_count,
+                        attempt_failure_recorded=True,
+                    )
+                    break
+        finally:
+            with self._state_lock:
+                # Use the stored group when submit_job applied group_override.
+                active_group = self._active_jobs.get(job_id, exact_group)
+                was_active = job_id in self._active_jobs
+                self._active_jobs.pop(job_id, None)
+                self._cancel_flags.pop(job_id, None)
+            if was_active:
+                self._dispatch_next(active_group)
 
     def _dispatch_next(self, group: str) -> None:
         """Pop the next queued job for *group* and dispatch it to APScheduler."""
@@ -1543,7 +2784,14 @@ class JobManager:
             if not queue:
                 return
 
-            job_id, type_def, params, max_retries, pipeline_id = queue.pop(0)
+            (
+                job_id,
+                type_def,
+                params,
+                max_retries,
+                retry_count,
+                pipeline_id,
+            ) = queue.pop(0)
             remaining = len(queue)
 
             # Track as active (inside lock)
@@ -1551,11 +2799,23 @@ class JobManager:
             self._cancel_flags[job_id] = threading.Event()
 
         # APScheduler dispatch outside lock (I/O operation)
-        logger.info("Auto-dispatching queued job %s for group '%s' (%d remaining in queue)",
-                     job_id, type_def.type_id, remaining)
+        logger.info(
+            "Auto-dispatching queued job %s for group '%s' (%d remaining in queue)",
+            job_id,
+            type_def.type_id,
+            remaining,
+        )
         self._scheduler.add_job(
             self._execute_job,
-            args=[job_id, type_def, params, max_retries, pipeline_id],
+            args=[
+                job_id,
+                type_def,
+                params,
+                max_retries,
+                pipeline_id,
+                retry_count,
+                group,
+            ],
             id=job_id,
             name=f"{type_def.label}: {job_id}",
             replace_existing=True,
@@ -1577,32 +2837,118 @@ class JobManager:
         except Exception as exc:
             logger.exception("Failed to submit scheduled job %s: %s", job_type, exc)
 
+    def _advance_pipeline_step_once(
+        self,
+        completed_job_id: str,
+        pipeline_id: str,
+        remaining: list[dict],
+        original_params: dict,
+    ) -> bool:
+        """Submit one missing successor under a cross-process step lock."""
+        if not remaining:
+            return False
+        try:
+            current_step = int(original_params.get("__pipeline_step", 1))
+            next_step = current_step + 1
+            with _get_conn() as conn:
+                conn.execute(
+                    "SELECT pg_advisory_lock(hashtext(%s), %s)",
+                    (pipeline_id, next_step),
+                )
+                try:
+                    claim_token = uuid.uuid4().hex
+                    claimed = conn.execute(
+                        """UPDATE job_history completed
+                           SET params = jsonb_set(
+                               COALESCE(completed.params, '{}'::jsonb),
+                               '{__pipeline_advance_claim}',
+                               to_jsonb(%s::text),
+                               true
+                           )
+                           WHERE completed.job_id = %s
+                             AND completed.status = 'completed'
+                             AND completed.pipeline_id = %s
+                             AND completed.pipeline_step = %s
+                             AND NOT EXISTS (
+                                 SELECT 1
+                                 FROM job_history successor
+                                 WHERE successor.pipeline_id = %s
+                                   AND successor.pipeline_step = %s
+                             )
+                           RETURNING 1""",
+                        (
+                            claim_token,
+                            completed_job_id,
+                            pipeline_id,
+                            current_step,
+                            pipeline_id,
+                            next_step,
+                        ),
+                    ).fetchone()
+                    if claimed is None:
+                        successor = conn.execute(
+                            """SELECT 1
+                               FROM job_history
+                               WHERE pipeline_id = %s AND pipeline_step = %s
+                               LIMIT 1""",
+                            (pipeline_id, next_step),
+                        ).fetchone()
+                        return successor is not None
+                    submitted = self._trigger_next_pipeline_step(
+                        pipeline_id,
+                        remaining,
+                        original_params,
+                    )
+                    return submitted is not None
+                finally:
+                    conn.execute(
+                        "SELECT pg_advisory_unlock(hashtext(%s), %s)",
+                        (pipeline_id, next_step),
+                    )
+                    logger.debug(
+                        "Released pipeline continuation lock for %s after %s",
+                        pipeline_id,
+                        completed_job_id,
+                    )
+        except (psycopg.Error, RuntimeError, TypeError, ValueError):
+            logger.exception(
+                "Failed to advance pipeline %s after job %s",
+                pipeline_id,
+                completed_job_id,
+            )
+            return False
+
     def _trigger_next_pipeline_step(
         self, pipeline_id: str, remaining: list[dict], original_params: dict
-    ) -> None:
+    ) -> str | None:
         """Submit the next step in a pipeline."""
         if not remaining:
-            return
-        next_step = remaining[0]
-        future_steps = remaining[1:]
+            return None
+        next_step = deepcopy(remaining[0])
+        future_steps = deepcopy(remaining[1:])
         job_type = next_step["job_type"]
-        params = next_step.get("params", {})
+        params = next_step.get("params") or {}
         step_label = next_step.get("label", JOB_TYPE_REGISTRY[job_type].label)
-        total_steps = len(future_steps) + 1 + (original_params.get("__pipeline_step", 1))
-        step_num = total_steps - len(future_steps)
-
-        if future_steps:
-            params["__pipeline_remaining"] = future_steps
-            params["__pipeline_label"] = original_params.get("__pipeline_label", "Pipeline")
+        current_step = int(original_params.get("__pipeline_step", 1))
+        total_steps = int(
+            original_params.get("__pipeline_total_steps", current_step + len(remaining))
+        )
+        step_num = current_step + 1
+        pipeline_label = str(original_params.get("__pipeline_label", "Pipeline"))
+        params["__pipeline_step"] = step_num
+        params["__pipeline_total_steps"] = total_steps
+        params["__pipeline_remaining"] = future_steps
+        params["__pipeline_label"] = pipeline_label
 
         try:
-            self.submit_job(
+            return self.submit_job(
                 job_type=job_type,
                 params=params,
-                label=f"[Pipeline {step_num}/{total_steps}] {step_label}",
+                label=f"[{pipeline_label} {step_num}/{total_steps}] {step_label}",
                 triggered_by="pipeline",
                 pipeline_id=pipeline_id,
                 pipeline_step=step_num,
             )
         except Exception as exc:
             logger.exception("Pipeline %s step %d failed to submit: %s", pipeline_id, step_num, exc)
+            return None

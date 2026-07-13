@@ -35,7 +35,10 @@ def _to_iso(value: Any) -> Any:
     return value
 
 
-def _row_to_dict(cur: psycopg.Cursor, row: tuple[Any, ...]) -> dict[str, Any]:
+def _serialize_integration_row(
+    cur: psycopg.Cursor,
+    row: tuple[Any, ...],
+) -> dict[str, Any]:
     """Convert an integration-job row to a dict with ISO/UUID coercion.
 
     Wraps the canonical :func:`row_to_dict_from_cursor` helper and then applies
@@ -67,7 +70,7 @@ class IntegrationRunner:
                 "SELECT * FROM integration_job_unified WHERE id = %s", (job_id,)
             )
             row = cur.fetchone()
-            return _row_to_dict(cur, row) if row is not None else None
+            return _serialize_integration_row(cur, row) if row is not None else None
 
     def list(
         self,
@@ -88,7 +91,7 @@ class IntegrationRunner:
                     (limit,),
                 )
             rows = cur.fetchall()
-            return [_row_to_dict(cur, r) for r in rows]
+            return [_serialize_integration_row(cur, r) for r in rows]
 
     def purge(
         self,

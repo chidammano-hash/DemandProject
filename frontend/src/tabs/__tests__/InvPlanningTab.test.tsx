@@ -28,7 +28,7 @@ vi.mock("@/api/queries/evolution", () => ({
   fetchScenarioResults: vi.fn().mockResolvedValue({ scenario_id: "", items: [], total_impact: 0, total_stockout_days: 0 }),
 }));
 
-// Mock insights query module (Expert panel enhancements)
+// Mock cross-domain planning insights query module
 vi.mock("@/api/queries/inv-planning-insights", () => ({
   insightKeys: {
     actionFeed: () => ["inv-planning", "action-feed"],
@@ -374,19 +374,26 @@ vi.mock("@/api/queries", () => ({
   // Production Forecast (F1.1)
   fetchProductionForecastVersions: vi.fn().mockResolvedValue({
     versions: [
-      { plan_version: "2026-03", sku_count: 1000, total_rows: 12000, generated_at: "2026-03-01T06:00:00Z" },
+      {
+        plan_version: "2026-03",
+        dfu_count: 1000,
+        total_rows: 12000,
+        generated_at: "2026-03-01T06:00:00Z",
+      },
     ],
   }),
   fetchProductionForecastSummary: vi.fn().mockResolvedValue({
     plan_version: "2026-03",
     horizon_months: 3,
-    total_sku_count: 1000,
+    total_dfu_count: 1000,
     total_forecast_qty: 55000.0,
     generated_at: "2026-03-01T06:00:00Z",
     by_abc_class: [
-      { abc_class: "A", sku_count: 200, forecast_qty: 20000.0 },
-      { abc_class: "B", sku_count: 500, forecast_qty: 25000.0 },
+      { abc_class: "A", dfu_count: 200, forecast_qty: 20000.0 },
+      { abc_class: "B", dfu_count: 500, forecast_qty: 25000.0 },
     ],
+    ci_coverage_pct: 100,
+    avg_ci_width: 60,
   }),
   fetchProductionForecast: vi.fn().mockResolvedValue({
     item_id: "ITEM001", loc: "LOC1",
@@ -483,7 +490,7 @@ vi.mock("@/api/queries", () => ({
   exportPOsCSV: vi.fn().mockResolvedValue({ filename: "PO_export_test.csv", line_count: 1, total_value: 7584, csv_content: "" }),
   fetchPOTimeline: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", current_status: "proposed", timeline: [] }),
   createPOFromException: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", status: "proposed", total_value: null, requested_delivery_date: null }),
-  // Expert Panel Insights
+  // Cross-domain planning insights
   insightKeys: {
     actionFeed: () => ["inv-planning", "action-feed"],
     dailyBriefing: () => ["inv-planning", "daily-briefing"],

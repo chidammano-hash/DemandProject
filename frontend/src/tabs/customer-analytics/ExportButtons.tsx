@@ -1,8 +1,8 @@
 import { useCallback } from "react";
 
-interface Props {
+interface Props<Row extends object> {
   panelId: string;
-  getData: () => Record<string, unknown>[];
+  getData: () => Row[];
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -16,9 +16,9 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function toCsv(rows: Record<string, unknown>[]): string {
+function toCsv<Row extends object>(rows: Row[]): string {
   if (rows.length === 0) return "";
-  const headers = Object.keys(rows[0]);
+  const headers = Object.keys(rows[0]) as Array<Extract<keyof Row, string>>;
   const lines = [
     headers.join(","),
     ...rows.map((r) =>
@@ -32,7 +32,7 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return lines.join("\n");
 }
 
-export function ExportButtons({ panelId, getData }: Props) {
+export function ExportButtons<Row extends object>({ panelId, getData }: Props<Row>) {
   const handlePng = useCallback(() => {
     const container = document.querySelector(`[data-panel-id="${panelId}"]`);
     if (!container) {

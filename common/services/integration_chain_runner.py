@@ -15,7 +15,7 @@ from typing import Any
 
 import psycopg
 
-from common.services.integration_runner import _row_to_dict
+from common.services.integration_runner import _serialize_integration_row
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class IntegrationChainRunner:
             row = cur.fetchone()
             if row is None:
                 return None
-            chain = _row_to_dict(cur, row)
+            chain = _serialize_integration_row(cur, row)
             cur.execute(
                 "SELECT chain_step AS step, id AS job_id, domain, mode, slice, "
                 "       status, rows_loaded, rows_inserted, rows_updated, "
@@ -41,7 +41,9 @@ class IntegrationChainRunner:
                 "  FROM integration_job WHERE chain_id = %s ORDER BY chain_step",
                 (chain_id,),
             )
-            chain["jobs"] = [_row_to_dict(cur, r) for r in cur.fetchall()]
+            chain["jobs"] = [
+                _serialize_integration_row(cur, r) for r in cur.fetchall()
+            ]
             return chain
 
     def list_chains(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -51,7 +53,7 @@ class IntegrationChainRunner:
                 "ORDER BY started_at DESC LIMIT %s",
                 (limit,),
             )
-            return [_row_to_dict(cur, r) for r in cur.fetchall()]
+            return [_serialize_integration_row(cur, r) for r in cur.fetchall()]
 
     def reap_orphans(self) -> int:
         """Mark in-flight legacy chains (and their child jobs) as failed.

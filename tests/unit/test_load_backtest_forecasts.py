@@ -9,6 +9,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.etl import load_backtest_forecasts as bt
@@ -31,12 +33,12 @@ def _make_backtest_dir(tmp_path, model_dirs, *, with_predictions=True):
 class TestResolveInputFilesAll:
     """The --all branch must derive its include set from the config roster
     (forecastable union competing), not a hardcoded 4-name allowlist. Regression
-    guard for the 'data for algorithms not copied to champion' bug where 11 of
-    15 backtested model dirs were silently skipped.
+    guard for the 'data for algorithms not copied to champion' bug where
+    configured model directories were silently skipped.
     """
 
     def test_resolve_all_loads_every_roster_dir_with_predictions(self, tmp_path, monkeypatch):
-        roster = {"lgbm_cluster", "catboost_cluster", "xgboost_cluster", "mstl", "seasonal_naive"}
+        roster = {"lgbm_cluster", "nhits", "nbeats", "mstl", "chronos2_enriched"}
         monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(roster))
         monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(roster))
 
@@ -45,11 +47,10 @@ class TestResolveInputFilesAll:
         resolved = bt._resolve_input_files(None, None, True, backtest_dir, None)
         resolved_models = {p.parent.name for p in resolved}
 
-        # NOT just the old 4 — mstl and seasonal_naive must now be included.
         assert resolved_models == roster
 
     def test_resolve_all_excludes_auxiliary_dirs(self, tmp_path, monkeypatch):
-        roster = {"lgbm_cluster", "catboost_cluster"}
+        roster = {"lgbm_cluster", "mstl"}
         monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(roster))
         monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(roster))
 
@@ -82,19 +83,66 @@ class TestResolveInputFilesAll:
         warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
         assert any("mystery_model" in msg for msg in warnings)
 
-    def test_resolve_all_includes_chronos(self, tmp_path, monkeypatch):
-        # Regression for the inverted allowlist: chronos is forecastable but
+    def test_resolve_all_includes_chronos2_enriched(self, tmp_path, monkeypatch):
+        # Regression for the inverted allowlist: Chronos 2 Enriched is forecastable but
         # NOT competing, so the union must still keep it loadable.
-        forecastable = {"lgbm_cluster", "chronos"}
-        competing = {"lgbm_cluster"}  # chronos intentionally absent here
+        forecastable = {"lgbm_cluster", "chronos2_enriched"}
+        competing = {"lgbm_cluster"}  # Chronos 2 Enriched intentionally absent here
         monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: sorted(forecastable))
         monkeypatch.setattr(bt, "get_competing_model_ids", lambda: sorted(competing))
 
-        backtest_dir = _make_backtest_dir(tmp_path, {"lgbm_cluster", "chronos"})
+        backtest_dir = _make_backtest_dir(tmp_path, {"lgbm_cluster", "chronos2_enriched"})
 
         resolved = bt._resolve_input_files(None, None, True, backtest_dir, None)
         resolved_models = {p.parent.name for p in resolved}
-        assert "chronos" in resolved_models
+        assert "chronos2_enriched" in resolved_models
+
+
+class TestCanonicalModelValidation:
+    def test_explicit_retired_model_is_rejected_before_path_lookup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: ["lgbm_cluster", "mstl"])
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: ["lgbm_cluster", "mstl"])
+
+        with pytest.raises(ValueError, match="catboost_cluster"):
+            bt._resolve_input_files(None, "catboost_cluster", False, tmp_path, None)
+
+    def test_csv_scan_rejects_retired_model_after_first_hundred_rows(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: ["lgbm_cluster"])
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: ["lgbm_cluster"])
+        csv_path = tmp_path / "backtest_predictions.csv"
+        csv_path.write_text(
+            "model_id\n" + "lgbm_cluster\n" * 101 + "xgboost_cluster\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="xgboost_cluster"):
+            bt._read_csv_model_ids(csv_path)
+
+    def test_csv_filter_must_exist_in_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            bt,
+            "get_forecastable_model_ids",
+            lambda: ["lgbm_cluster", "mstl"],
+        )
+        monkeypatch.setattr(
+            bt,
+            "get_competing_model_ids",
+            lambda: ["lgbm_cluster", "mstl"],
+        )
+        csv_path = tmp_path / "backtest_predictions.csv"
+        csv_path.write_text("model_id\nlgbm_cluster\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="does not contain requested model_id 'mstl'"):
+            bt._read_csv_model_ids(csv_path, model_id_filter="mstl")
+
+    def test_csv_model_ids_must_match_canonical_spelling_exactly(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bt, "get_forecastable_model_ids", lambda: ["lgbm_cluster"])
+        monkeypatch.setattr(bt, "get_competing_model_ids", lambda: ["lgbm_cluster"])
+        csv_path = tmp_path / "backtest_predictions.csv"
+        csv_path.write_text("model_id\n lgbm_cluster\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="unsupported backtest model"):
+            bt._read_csv_model_ids(csv_path)
 
 
 class TestArchiveStreaming:

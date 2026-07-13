@@ -88,10 +88,6 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
             "lgbm.search_space.learning_rate.high": {"label": "LGBM LR Upper Bound", "description": "Maximum learning rate for LGBM tuning.", "type": "number", "min": 0.01, "max": 1.0, "step": 0.01},
             "lgbm.search_space.num_leaves.low": {"label": "LGBM Leaves Lower", "description": "Minimum num_leaves in LGBM search space.", "type": "integer", "min": 4, "max": 64},
             "lgbm.search_space.num_leaves.high": {"label": "LGBM Leaves Upper", "description": "Maximum num_leaves in LGBM search space.", "type": "integer", "min": 32, "max": 512},
-            "catboost.search_space.depth.low": {"label": "CatBoost Depth Lower", "description": "Minimum tree depth in CatBoost search space.", "type": "integer", "min": 1, "max": 8},
-            "catboost.search_space.depth.high": {"label": "CatBoost Depth Upper", "description": "Maximum tree depth in CatBoost search space.", "type": "integer", "min": 4, "max": 16},
-            "xgboost.search_space.max_depth.low": {"label": "XGBoost Depth Lower", "description": "Minimum tree depth in XGBoost search space.", "type": "integer", "min": 1, "max": 8},
-            "xgboost.search_space.max_depth.high": {"label": "XGBoost Depth Upper", "description": "Maximum tree depth in XGBoost search space.", "type": "integer", "min": 4, "max": 20},
             "lgbm.fixed_params.random_state": {"label": "LGBM Random Seed", "description": "Fixed seed for LGBM reproducibility.", "type": "integer", "min": 0, "max": 99999},
         },
     },
@@ -127,7 +123,7 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
     "forecast_domain_config": {
         "label": "Forecast Domain",
         "category": "forecasting",
-        "description": "Consolidated forecast domain settings: seasonality detection, demand variability, quantile forecasts, and bias correction.",
+        "description": "Consolidated forecast domain settings: seasonality detection, demand variability, and bias correction.",
         "fields": {
             # --- Seasonality ---
             "seasonality.min_months_history": {"label": "Seasonality Min History", "description": "Minimum months of sales history required before seasonality analysis is attempted.", "type": "integer", "min": 6, "max": 48, "unit": "months"},
@@ -146,16 +142,6 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
             "variability.cv_thresholds.medium": {"label": "CV — Medium Threshold", "description": "CV between low and this is 'moderate' (Y-class).", "type": "number", "min": 0.3, "max": 1.5, "step": 0.05},
             "variability.cv_thresholds.high": {"label": "CV — High Threshold", "description": "CV above this is 'volatile' (Z-class).", "type": "number", "min": 0.5, "max": 3.0, "step": 0.1},
             "variability.intermittency_threshold.ratio": {"label": "Intermittency Threshold", "description": "Fraction of months with zero demand above which the item is classified as intermittent.", "type": "number", "min": 0.1, "max": 0.8, "step": 0.05},
-            # --- Quantile Forecast ---
-            "quantile_forecast.quantiles": {"label": "Quantile Levels", "description": "List of quantile levels to forecast. [0.10, 0.50, 0.90] gives pessimistic, median, and optimistic scenarios.", "type": "array"},
-            "quantile_forecast.default_horizon_months": {"label": "Default Forecast Horizon", "description": "Default number of months to forecast at each quantile level.", "type": "integer", "min": 1, "max": 36, "unit": "months"},
-            "quantile_forecast.max_horizon_months": {"label": "Max Forecast Horizon", "description": "Maximum allowed forecast horizon.", "type": "integer", "min": 1, "max": 36, "unit": "months"},
-            "quantile_forecast.weekly_disaggregation": {"label": "Weekly Disaggregation", "description": "Disaggregate monthly quantile forecasts into weekly buckets for operational planning.", "type": "boolean"},
-            "quantile_forecast.model.n_estimators": {"label": "LGBM Trees", "description": "Number of boosting rounds for the quantile regression model.", "type": "integer", "min": 50, "max": 2000},
-            "quantile_forecast.model.learning_rate": {"label": "LGBM Learning Rate", "description": "Learning rate for quantile regression training.", "type": "number", "min": 0.001, "max": 0.5, "step": 0.005},
-            "quantile_forecast.sigma_guard_rails.max_sigma_multiplier": {"label": "Max Sigma Multiplier", "description": "Cap the P90-P10 spread at this multiple of the median forecast.", "type": "number", "min": 1.0, "max": 10.0},
-            "quantile_forecast.plan_versioning.max_active_versions": {"label": "Max Active Versions", "description": "Number of quantile forecast versions to keep active.", "type": "integer", "min": 1, "max": 20},
-            "quantile_forecast.plan_versioning.retention_days": {"label": "Retention Days", "description": "Days to retain archived quantile forecast data.", "type": "integer", "min": 30, "max": 730, "unit": "days"},
             # --- Bias Correction ---
             "bias_correction.rolling_weights": {"label": "Rolling Window Weights", "description": "Weights for recent months in bias calculation. [0.50, 0.30, 0.20] means most recent month gets 50%. Must sum to 1.0.", "type": "array"},
             "bias_correction.min_months_dfu": {"label": "Min Months (DFU)", "description": "Minimum months of history before applying DFU-level bias correction.", "type": "integer", "min": 1, "max": 12, "unit": "months"},

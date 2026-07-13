@@ -1,7 +1,6 @@
 """Tests for common/mlflow_utils.py — MLflow logging."""
 
-from unittest.mock import patch, MagicMock
-import pytest
+from unittest.mock import MagicMock, patch
 
 from common.ml.mlflow_utils import log_backtest_run
 
@@ -17,7 +16,7 @@ class TestLogBacktestRun:
 
         log_backtest_run(
             model_type="lgbm_backtest",
-            model_id="lgbm_global",
+            model_id="lgbm_cluster",
             cluster_strategy="global",
             hyperparams={"n_estimators": 500},
             metrics={"n_predictions": 1000},
@@ -27,7 +26,7 @@ class TestLogBacktestRun:
 
         mock_mlflow.set_experiment.assert_called_once_with("demand_backtest")
         mock_mlflow.set_tag.assert_any_call("model_type", "lgbm_backtest")
-        mock_mlflow.set_tag.assert_any_call("model_id", "lgbm_global")
+        mock_mlflow.set_tag.assert_any_call("model_id", "lgbm_cluster")
         mock_mlflow.set_tag.assert_any_call("cluster_strategy", "global")
 
     @patch.dict("sys.modules", {"mlflow": MagicMock()})
@@ -48,7 +47,7 @@ class TestLogBacktestRun:
 
         log_backtest_run(
             model_type="lgbm_backtest",
-            model_id="lgbm_global",
+            model_id="lgbm_cluster",
             cluster_strategy="global",
             hyperparams={},
             metrics={},
@@ -67,7 +66,7 @@ class TestLogBacktestRun:
         # Just verify it doesn't raise
         log_backtest_run(
             model_type="lgbm_backtest",
-            model_id="lgbm_global",
+            model_id="lgbm_cluster",
             cluster_strategy="global",
             hyperparams={},
             metrics={},

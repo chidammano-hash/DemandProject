@@ -255,11 +255,9 @@ const VERDICT_LABELS: Record<VerdictValue, string> = {
 
 function VerdictBadge({ verdict }: { verdict: string }) {
   const key = (verdict in VERDICT_STYLES ? verdict : "mixed") as VerdictValue;
-  const styles = VERDICT_STYLES;
-  const labels = VERDICT_LABELS;
   return (
-    <Badge className={cn("text-[10px]", styles[verdict] ?? styles.mixed)}>
-      {labels[verdict] ?? verdict}
+    <Badge className={cn("text-[10px]", VERDICT_STYLES[key])}>
+      {VERDICT_LABELS[key]}
     </Badge>
   );
 }

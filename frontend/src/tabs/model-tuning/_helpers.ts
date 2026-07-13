@@ -14,7 +14,7 @@ import {
 
 import type { ModelType } from "@/api/queries";
 import type { PipelineAlgorithm } from "@/api/queries/unified-model-tuning";
-import { MODEL_LABELS as MODEL_LABEL_FALLBACK } from "@/lib/model-labels";
+import { isForecastModelId, MODEL_LABELS as MODEL_LABEL_FALLBACK } from "@/lib/model-labels";
 
 import type { ModelDetailTab, ModelInfo, PipelineStage, TabAction, TabState } from "./_types";
 
@@ -39,7 +39,7 @@ export const ID_TO_MODEL_TYPE: Record<string, ModelType> = {
 /** Derive the model grid from pipeline config algorithms */
 export function deriveModelsFromConfig(algorithms: Record<string, PipelineAlgorithm>): ModelInfo[] {
   return Object.entries(algorithms)
-    .filter(([, algo]) => algo.enabled)
+    .filter(([id, algo]) => isForecastModelId(id) && algo.enabled)
     .map(([id, algo]) => ({
       id,
       label:

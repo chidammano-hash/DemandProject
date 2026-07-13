@@ -1,4 +1,4 @@
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Inventory Planning — Replenishment Plan (forward-looking SS + EOQ plan)

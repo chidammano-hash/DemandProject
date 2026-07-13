@@ -34,7 +34,7 @@ def test_config_hash_distinguishes_params():
 _BASE = {"strategy": "rolling", "strategy_params": {"window_months": 6}}
 _KW = {
     "base_champion": _BASE,
-    "default_models": ["lgbm_cluster", "chronos"],
+    "default_models": ["lgbm_cluster", "chronos2_enriched"],
     "default_metric": "wape",
     "default_lag": "execution",
     "default_min_sku": 3,
@@ -73,10 +73,24 @@ def test_expand_zero_candidates_raises():
 def test_explicit_config_inherits_defaults():
     grid = {"configs": [{"strategy": "rolling"}]}
     out = sweep.expand_grid(grid, **_KW)
-    assert out[0]["models"] == ["lgbm_cluster", "chronos"]
+    assert out[0]["models"] == ["lgbm_cluster", "chronos2_enriched"]
     assert out[0]["metric"] == "wape"
     assert out[0]["lag_mode"] == "execution"
     assert out[0]["min_sku_rows"] == 3
+
+
+def test_candidate_model_guard_accepts_canonical_models():
+    candidates = [{"models": ["lgbm_cluster", "mstl", "chronos2_enriched"]}]
+    sweep._validate_candidate_models(
+        candidates,
+        ["lgbm_cluster", "mstl", "chronos2_enriched"],
+    )
+
+
+def test_candidate_model_guard_rejects_retired_models():
+    candidates = [{"models": ["lgbm_cluster", "catboost_cluster"]}]
+    with pytest.raises(ValueError, match="catboost_cluster"):
+        sweep._validate_candidate_models(candidates, ["lgbm_cluster", "mstl"])
 
 
 # ---------------------------------------------------------------------------

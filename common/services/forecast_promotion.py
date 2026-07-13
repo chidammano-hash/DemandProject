@@ -14,6 +14,38 @@ from psycopg.types.json import Jsonb
 
 from common.core.constants import CHAMPION_MODEL_ID
 from common.core.paths import PROJECT_ROOT
+from common.core.utils import load_forecast_pipeline_config
+from common.services.champion_lineage import (
+    GOVERNED_CHAMPION_LINEAGE_METADATA_KEY,
+    GovernedChampionLineageError,
+    load_governed_champion_lineage,
+)
+from common.ml.direct_model_lineage import (
+    DIRECT_MODEL_CONFIG_METADATA_KEY,
+    SOURCE_MODEL_ROSTER_METADATA_KEY,
+    DirectModelLineageError,
+    validate_direct_model_config_lineage,
+)
+from common.ml.generation_config_lineage import (
+    GENERATION_CONFIG_METADATA_KEY,
+    GenerationConfigLineageError,
+    validate_generation_config_lineage,
+)
+from common.ml.neural_artifacts import (
+    load_neural_training_cohort_identity,
+    read_active_neural_artifact_ref,
+)
+from common.ml.neural_forecast import SUPPORTED_NEURAL_MODELS
+from common.ml.tree_artifact_lineage import (
+    ProductionTreeArtifactLineage,
+    TreeArtifactLineageError,
+)
+from common.ml.tree_artifacts import read_active_tree_artifact_ref
+from common.services.cluster_lineage import load_promoted_cluster_population
+from common.services.forecast_generation import (
+    GENERATOR_CONTRACT_METADATA_KEY,
+    GENERATOR_CONTRACT_VERSION,
+)
 from common.services.forecast_lineage import (
     ForecastPayloadStats,
     compute_champion_results_stats,
@@ -21,12 +53,21 @@ from common.services.forecast_lineage import (
     compute_staging_payload_stats,
     sha256_file,
 )
+from common.services.forecast_population import (
+    build_forecast_eligibility_ctes,
+    resolve_forecast_sales_table,
+)
 from common.services.forecast_release import (
     ReleaseQualityMetrics,
     ReleaseReadinessThresholds,
     evaluate_quality_checks,
 )
 from common.services.forecast_snapshot import archive_snapshot_in_transaction
+from common.services.forecast_snapshot_validation import (
+    SnapshotContenderIntegrityError,
+    SnapshotContenderStaleError,
+    validate_ready_snapshot_contender,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +90,7 @@ class ForecastGenerationManifest:
     routing_artifact_checksum: str | None
     champion_results_checksum: str | None
     artifact_checksum: str | None
+    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -96,6 +138,12 @@ def validate_generation_manifest(
             "candidate_run_not_promotable",
             "The selected generation run is not eligible for release.",
         )
+    if manifest.metadata.get(GENERATOR_CONTRACT_METADATA_KEY) != GENERATOR_CONTRACT_VERSION:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The selected generation run was produced by an outdated forecast generator; "
+            "generate a new release candidate.",
+        )
     if manifest.requested_model_id != model_id:
         raise PromotionConflictError(
             "candidate_lineage_mismatch",
@@ -130,7 +178,7 @@ def _load_manifest(cur: Any, source_run_id: UUID) -> ForecastGenerationManifest:
                   row_count, dfu_count, candidate_model_count,
                   champion_experiment_id, cluster_experiment_id,
                   source_sales_batch_id, routing_artifact_checksum,
-                  champion_results_checksum, artifact_checksum
+                  champion_results_checksum, artifact_checksum, metadata
            FROM forecast_generation_run
            WHERE run_id = %s::uuid
            FOR UPDATE""",
@@ -160,6 +208,7 @@ def _load_manifest(cur: Any, source_run_id: UUID) -> ForecastGenerationManifest:
         routing_artifact_checksum=str(row[13]) if row[13] else None,
         champion_results_checksum=str(row[14]) if row[14] else None,
         artifact_checksum=str(row[15]) if row[15] else None,
+        metadata=dict(row[16]) if isinstance(row[16], dict) else {},
     )
 
 
@@ -176,6 +225,276 @@ def _validate_manifest_payload(
         raise PromotionConflictError(
             "candidate_lineage_mismatch",
             "The staged forecast payload no longer matches its generation manifest.",
+        )
+
+
+def _validate_direct_model_lineage(
+    cur: Any,
+    *,
+    manifest: ForecastGenerationManifest,
+    model_id: str,
+    pipeline_config: dict[str, Any] | None = None,
+) -> None:
+    """Reject candidates whose direct-adapter config changed after generation."""
+    del cur  # The pre-aggregation roster is immutable manifest evidence.
+    raw_roster = manifest.metadata.get(SOURCE_MODEL_ROSTER_METADATA_KEY)
+    if (
+        not isinstance(raw_roster, list)
+        or not raw_roster
+        or any(not isinstance(value, str) or not value.strip() for value in raw_roster)
+        or raw_roster != sorted(set(raw_roster))
+    ):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The forecast candidate is missing its canonical source-model roster.",
+        )
+    source_model_ids = set(raw_roster)
+    current = (
+        pipeline_config
+        if pipeline_config is not None
+        else load_forecast_pipeline_config()
+    )
+    algorithms = current.get("algorithms")
+    if not isinstance(algorithms, dict):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "Current direct-model configuration is unavailable.",
+        )
+    unknown_models = sorted(source_model_ids - set(algorithms))
+    if unknown_models:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The forecast candidate contains a model outside the current canonical roster.",
+        )
+    if model_id != CHAMPION_MODEL_ID and source_model_ids != {model_id}:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The single-model candidate source roster does not match its requested model.",
+        )
+    try:
+        validate_direct_model_config_lineage(
+            manifest.metadata.get(DIRECT_MODEL_CONFIG_METADATA_KEY, {}),
+            algorithms=algorithms,
+            required_model_ids=source_model_ids,
+        )
+        validate_generation_config_lineage(
+            manifest.metadata.get(GENERATION_CONFIG_METADATA_KEY),
+            pipeline_config=current,
+            source_model_ids=source_model_ids,
+        )
+    except (DirectModelLineageError, GenerationConfigLineageError) as exc:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "A direct forecast model changed after this candidate was generated; "
+            "generate a new release candidate.",
+        ) from exc
+
+
+def _validate_governed_champion_source(
+    cur: Any,
+    *,
+    manifest: ForecastGenerationManifest,
+) -> None:
+    """Bind a champion candidate to the exact governed model-refresh inputs."""
+    recorded = manifest.metadata.get(GOVERNED_CHAMPION_LINEAGE_METADATA_KEY)
+    source = manifest.metadata.get("source_sales")
+    if manifest.champion_experiment_id is None:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The champion candidate has no governed experiment lineage.",
+        )
+    try:
+        current = load_governed_champion_lineage(
+            cur,
+            experiment_id=int(manifest.champion_experiment_id),
+        )
+    except GovernedChampionLineageError as exc:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The active champion lacks governed source evidence; run model-refresh.",
+        ) from exc
+    if (
+        not isinstance(recorded, dict)
+        or not isinstance(source, dict)
+        or recorded != current
+        or manifest.source_sales_batch_id != current["source_sales_batch_id"]
+        or manifest.cluster_experiment_id != current["cluster_experiment_id"]
+        or source.get("source_sales_batch_id") != current["source_sales_batch_id"]
+        or source.get("data_checksum") != current["data_checksum"]
+    ):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The champion candidate and governed model-refresh use different sales, "
+            "cluster, or backtest lineage; run model-refresh then prepare a new release.",
+        )
+
+
+def _validate_active_model_artifacts(
+    *,
+    conn: Any,
+    cur: Any,
+    manifest: ForecastGenerationManifest,
+    pipeline_config: dict[str, Any],
+    project_root: Path = PROJECT_ROOT,
+) -> None:
+    """Require the exact persisted artifact versions used during generation."""
+    raw_roster = manifest.metadata.get(SOURCE_MODEL_ROSTER_METADATA_KEY)
+    if not isinstance(raw_roster, list):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The forecast candidate is missing its canonical source-model roster.",
+        )
+    production = pipeline_config.get("production_forecast")
+    registry = production.get("model_registry") if isinstance(production, dict) else None
+    raw_base_path = registry.get("base_path") if isinstance(registry, dict) else None
+    if not isinstance(raw_base_path, str) or not raw_base_path.strip():
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The production model registry path is unavailable.",
+        )
+    base_dir = Path(raw_base_path)
+    if not base_dir.is_absolute():
+        base_dir = project_root / base_dir
+
+    try:
+        if "lgbm_cluster" in raw_roster:
+            tree_artifacts = manifest.metadata.get("tree_artifacts")
+            tree_entry = (
+                tree_artifacts.get("lgbm_cluster")
+                if isinstance(tree_artifacts, dict)
+                else None
+            )
+            generated_id = (
+                tree_entry.get("artifact_set_id")
+                if isinstance(tree_entry, dict)
+                else None
+            )
+            if not isinstance(generated_id, str) or not generated_id:
+                raise ValueError("candidate tree artifact ID is missing")
+            active_tree = read_active_tree_artifact_ref(
+                model_id="lgbm_cluster",
+                base_dir=base_dir,
+            )
+            if active_tree.artifact_set_id != generated_id:
+                raise ValueError("active tree artifact changed after generation")
+
+        neural_artifacts = manifest.metadata.get("neural_artifacts")
+        algorithms = pipeline_config.get("algorithms")
+        sales_table: str | None = None
+        for neural_model_id in sorted(set(raw_roster) & SUPPORTED_NEURAL_MODELS):
+            neural_entry = (
+                neural_artifacts.get(neural_model_id)
+                if isinstance(neural_artifacts, dict)
+                else None
+            )
+            generated_id = (
+                neural_entry.get("artifact_id")
+                if isinstance(neural_entry, dict)
+                else None
+            )
+            algorithm_entry = (
+                algorithms.get(neural_model_id)
+                if isinstance(algorithms, dict)
+                else None
+            )
+            expected_params = (
+                algorithm_entry.get("params")
+                if isinstance(algorithm_entry, dict)
+                else None
+            )
+            history_end = (
+                neural_entry.get("history_end")
+                if isinstance(neural_entry, dict)
+                else None
+            )
+            generated_cohort_checksum = (
+                neural_entry.get("training_cohort_checksum")
+                if isinstance(neural_entry, dict)
+                else None
+            )
+            if (
+                not isinstance(generated_id, str)
+                or not generated_id
+                or not isinstance(expected_params, dict)
+                or not isinstance(history_end, str)
+                or not history_end
+                or not isinstance(generated_cohort_checksum, str)
+                or not generated_cohort_checksum
+            ):
+                raise ValueError("candidate neural artifact lineage is missing")
+            min_history = int(expected_params["min_history"])
+            if sales_table is None:
+                sales_table = resolve_forecast_sales_table(cur)
+            current_cohort = load_neural_training_cohort_identity(
+                conn,
+                sales_table=sales_table,
+                history_end=history_end,
+                min_history=min_history,
+            )
+            if current_cohort.checksum != generated_cohort_checksum:
+                raise ValueError("neural training cohort changed after generation")
+            active_neural = read_active_neural_artifact_ref(
+                model_id=neural_model_id,
+                base_dir=base_dir,
+                expected_params=expected_params,
+                expected_source_sales_batch_id=int(
+                    neural_entry["source_sales_batch_id"]
+                ),
+                expected_data_checksum=str(neural_entry["data_checksum"]),
+                expected_history_end=history_end,
+                expected_training_cohort_checksum=current_cohort.checksum,
+                expected_training_dfu_count=current_cohort.dfu_count,
+            )
+            if active_neural.artifact_id != generated_id:
+                raise ValueError("active neural artifact changed after generation")
+    except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "A production model artifact changed after this candidate was generated; "
+            "generate a new release candidate.",
+        ) from exc
+
+
+def _validate_tree_model_lineage(
+    conn: Any,
+    *,
+    manifest: ForecastGenerationManifest,
+) -> None:
+    """Require current assignment identity for every candidate that used LightGBM."""
+    raw_roster = manifest.metadata.get(SOURCE_MODEL_ROSTER_METADATA_KEY)
+    if not isinstance(raw_roster, list) or "lgbm_cluster" not in raw_roster:
+        return
+    tree_artifacts = manifest.metadata.get("tree_artifacts")
+    if not isinstance(tree_artifacts, dict):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The LightGBM candidate is missing immutable tree artifact lineage.",
+        )
+    tree_metadata = tree_artifacts.get("lgbm_cluster")
+    if not isinstance(tree_metadata, dict):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The LightGBM candidate is missing its artifact-set identity.",
+        )
+    try:
+        lineage = ProductionTreeArtifactLineage.from_metadata(tree_metadata["lineage"])
+    except (KeyError, TypeError, TreeArtifactLineageError) as exc:
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "The LightGBM candidate has invalid clustering lineage.",
+        ) from exc
+    if lineage.cluster_experiment_id is None:
+        return
+    current = load_promoted_cluster_population(conn)
+    if (
+        manifest.cluster_experiment_id != current.experiment_id
+        or lineage.cluster_experiment_id != current.experiment_id
+        or lineage.cluster_assignment_count != current.assignment_count
+        or lineage.cluster_assignment_checksum != current.assignment_checksum
+    ):
+        raise PromotionConflictError(
+            "candidate_lineage_mismatch",
+            "Promoted cluster assignments changed after this forecast candidate was generated.",
         )
 
 
@@ -242,16 +561,14 @@ def _candidate_coverage(
     active_window_months: int,
 ) -> tuple[int, int, int, int, int, int]:
     end_month = _add_months(planning_month, required_months)
-    active_since = _add_months(planning_month, -active_window_months)
-    cur.execute(
-        """WITH eligible AS (
-                 SELECT item_id, loc
-                 FROM fact_sales_monthly
-                 WHERE type = 1 AND startdate < %s
-                 GROUP BY item_id, loc
-                 HAVING COUNT(DISTINCT startdate) >= %s
-                    AND MAX(startdate) >= %s
-             ), candidate_rows AS (
+    sales_table = resolve_forecast_sales_table(cur)
+    eligibility = build_forecast_eligibility_ctes(
+        planning_month=planning_month,
+        min_history_months=min_history_months,
+        active_window_months=active_window_months,
+        sales_table=sales_table,
+    )
+    query = "WITH " + eligibility.sql + """, candidate_rows AS (
                  SELECT item_id, loc, forecast_month,
                         forecast_qty, forecast_qty_lower, forecast_qty_upper,
                         model_id
@@ -269,7 +586,7 @@ def _candidate_coverage(
                  GROUP BY item_id, loc
              )
              SELECT
-                 (SELECT COUNT(*) FROM eligible)::integer,
+                 (SELECT COUNT(*) FROM eligible_item_locations)::integer,
                  COUNT(*) FILTER (WHERE served.month_count = %s)::integer,
                  COUNT(*) FILTER (
                      WHERE served.month_count > 0 AND served.month_count < %s
@@ -285,11 +602,11 @@ def _candidate_coverage(
                      OR forecast_qty_lower > forecast_qty
                      OR forecast_qty_upper < forecast_qty)::integer
              FROM served
-             JOIN eligible USING (item_id, loc)""",
+             JOIN eligible_item_locations USING (item_id, loc)"""
+    cur.execute(
+        query,
         (
-            planning_month,
-            min_history_months,
-            active_since,
+            *eligibility.params,
             str(source_run_id),
             model_id,
             planning_month,
@@ -483,6 +800,7 @@ def _candidate_quality_report(
 def _validate_candidate_evidence(
     cur: Any,
     *,
+    conn: Any,
     manifest: ForecastGenerationManifest,
     model_id: str,
     planning_month: date,
@@ -520,7 +838,24 @@ def _validate_candidate_evidence(
             "A newer sales load exists than the selected forecast generation run.",
         )
 
+    pipeline_config = load_forecast_pipeline_config()
+    _validate_direct_model_lineage(
+        cur,
+        manifest=manifest,
+        model_id=model_id,
+        pipeline_config=pipeline_config,
+    )
+    _validate_active_model_artifacts(
+        conn=conn,
+        cur=cur,
+        manifest=manifest,
+        pipeline_config=pipeline_config,
+        project_root=project_root,
+    )
+    _validate_tree_model_lineage(conn, manifest=manifest)
+
     if model_id == CHAMPION_MODEL_ID:
+        _validate_governed_champion_source(cur, manifest=manifest)
         lineage_matches = (
             results_promoted_count == 1
             and manifest.champion_experiment_id == results_experiment_id
@@ -622,13 +957,77 @@ def _validate_candidate_evidence(
     return checks
 
 
+def _validate_incoming_snapshot_roster(
+    cur: Any,
+    *,
+    planning_month: date,
+) -> dict[str, Any]:
+    """Require archive-ready contender evidence before publishing a new plan."""
+    cur.execute(
+        """SELECT model_id, snapshot_role, contender_rank,
+                  source_backtest_run_id, generation_run_id
+           FROM forecast_snapshot_roster
+           WHERE record_month = %s
+           ORDER BY CASE WHEN snapshot_role = 'champion' THEN 0 ELSE 1 END,
+                    contender_rank NULLS FIRST""",
+        (planning_month,),
+    )
+    rows = cur.fetchall()
+    champion_rows = [
+        row
+        for row in rows
+        if row[0] == "champion"
+        and row[1] == "champion"
+        and row[2] is None
+        and row[3] is None
+        and row[4] is None
+    ]
+    contenders = [row for row in rows if row[1] == "contender"]
+    if (
+        len(rows) != 4
+        or len(champion_rows) != 1
+        or [int(row[2] or 0) for row in contenders] != [1, 2, 3]
+        or any(
+            row[0] == "champion" or row[3] is None or row[4] is None
+            for row in contenders
+        )
+    ):
+        raise PromotionConflictError(
+            "snapshot_roster_not_ready",
+            "Prepare the current champion plus three canonical snapshot contenders "
+            "before publishing this release.",
+        )
+    try:
+        for model_id, _, _, backtest_run_id, run_id in contenders:
+            validate_ready_snapshot_contender(
+                cur,
+                run_id=run_id,
+                model_id=str(model_id),
+                record_month=planning_month,
+                source_backtest_run_id=int(backtest_run_id),
+            )
+    except (SnapshotContenderIntegrityError, SnapshotContenderStaleError) as exc:
+        raise PromotionConflictError(
+            "snapshot_roster_not_ready",
+            "A snapshot contender is incomplete or stale; prepare the current "
+            "champion plus three contenders again before publishing.",
+        ) from exc
+    return {
+        "record_month": planning_month.isoformat(),
+        "roster_models": len(rows),
+        "ready_contenders": len(contenders),
+        "generator_contract_version": GENERATOR_CONTRACT_VERSION,
+    }
+
+
 def _archive_outgoing_release(
     cur: Any,
     *,
     incoming_planning_month: date,
-) -> tuple[int | None, str | None]:
+) -> tuple[int | None, str | None, dict[str, Any] | None]:
     cur.execute(
-        """SELECT id, plan_version, production_run_id
+        """SELECT id, plan_version, production_run_id, source_run_id,
+                  total_rows, dfu_count
            FROM model_promotion_log
            WHERE is_active = TRUE
            ORDER BY promoted_at DESC, id DESC
@@ -637,8 +1036,15 @@ def _archive_outgoing_release(
     )
     active = cur.fetchone()
     if active is None:
-        return None, None
-    promotion_id, plan_version, production_run_id = active
+        return None, None, None
+    (
+        promotion_id,
+        plan_version,
+        production_run_id,
+        source_run_id,
+        expected_rows,
+        expected_dfus,
+    ) = active
     try:
         record_month = date.fromisoformat(f"{plan_version}-01")
     except (TypeError, ValueError) as exc:
@@ -656,25 +1062,99 @@ def _archive_outgoing_release(
             "outgoing_archive_incomplete",
             "The outgoing release has no verifiable production run lineage.",
         )
-    try:
-        archive_checksum = archive_snapshot_in_transaction(
-            cur,
-            record_month=record_month,
-            production_run_id=UUID(str(production_run_id)),
-            source_promotion_id=int(promotion_id),
-        )
-    except ValueError as exc:
-        raise PromotionConflictError(
-            "outgoing_archive_incomplete",
-            "The outgoing champion-plus-three archive is incomplete or does not reconcile.",
-        ) from exc
+    production_run_uuid = UUID(str(production_run_id))
+    if source_run_id is None:
+        # Migration 203 can identify one pre-manifest active production run,
+        # but a historical contender roster may never have existed. Try the
+        # normal archive inside a savepoint; only that proven legacy shape may
+        # fall back to an audited, checksum-stamped retirement.
+        cur.execute("SAVEPOINT outgoing_forecast_archive")
+        try:
+            archive_checksum = archive_snapshot_in_transaction(
+                cur,
+                record_month=record_month,
+                production_run_id=production_run_uuid,
+                source_promotion_id=int(promotion_id),
+            )
+        except ValueError as exc:
+            cur.execute("ROLLBACK TO SAVEPOINT outgoing_forecast_archive")
+            cur.execute("RELEASE SAVEPOINT outgoing_forecast_archive")
+            legacy_stats = compute_production_payload_stats(cur, production_run_uuid)
+            cur.execute(
+                """SELECT COUNT(*)::integer,
+                          COUNT(DISTINCT (item_id, loc))::integer,
+                          COUNT(*) FILTER (
+                              WHERE promotion_log_id = %s
+                                AND lineage_status = 'legacy_unverified'
+                                AND source_run_id IS NULL
+                          )::integer
+                   FROM fact_production_forecast
+                   WHERE run_id = %s::uuid""",
+                (int(promotion_id), str(production_run_uuid)),
+            )
+            linkage = cur.fetchone()
+            if linkage is None:
+                linkage = (0, 0, 0)
+            actual_rows, actual_dfus, linked_rows = (int(value or 0) for value in linkage)
+            if (
+                legacy_stats.row_count <= 0
+                or legacy_stats.row_count != int(expected_rows or 0)
+                or legacy_stats.dfu_count != int(expected_dfus or 0)
+                or actual_rows != legacy_stats.row_count
+                or actual_dfus != legacy_stats.dfu_count
+                or linked_rows != legacy_stats.row_count
+            ):
+                raise PromotionConflictError(
+                    "outgoing_archive_incomplete",
+                    "The pre-manifest outgoing release does not have verifiable legacy lineage.",
+                ) from exc
+            report = {
+                "promotion_id": int(promotion_id),
+                "plan_version": str(plan_version),
+                "status": "legacy_retired_unarchived",
+                "reason": "pre_manifest_release_without_complete_snapshot_roster",
+                "production_run_id": str(production_run_uuid),
+                "row_count": legacy_stats.row_count,
+                "dfu_count": legacy_stats.dfu_count,
+                "production_checksum": legacy_stats.checksum,
+            }
+            logger.warning(
+                "Retiring pre-manifest release %s without an FVA archive; "
+                "checksum evidence is recorded on the replacement",
+                promotion_id,
+            )
+            return int(promotion_id), None, report
+        else:
+            cur.execute("RELEASE SAVEPOINT outgoing_forecast_archive")
+    else:
+        try:
+            archive_checksum = archive_snapshot_in_transaction(
+                cur,
+                record_month=record_month,
+                production_run_id=production_run_uuid,
+                source_promotion_id=int(promotion_id),
+            )
+        except ValueError as exc:
+            raise PromotionConflictError(
+                "outgoing_archive_incomplete",
+                "The outgoing champion-plus-three archive is incomplete or does not reconcile.",
+            ) from exc
     cur.execute(
         """UPDATE model_promotion_log
            SET archive_checksum = %s, archived_at = NOW()
            WHERE id = %s""",
         (archive_checksum, promotion_id),
     )
-    return int(promotion_id), archive_checksum
+    return (
+        int(promotion_id),
+        archive_checksum,
+        {
+            "promotion_id": int(promotion_id),
+            "plan_version": str(plan_version),
+            "status": "archived",
+            "archive_checksum": archive_checksum,
+        },
+    )
 
 
 def promote_forecast_run(
@@ -688,6 +1168,12 @@ def promote_forecast_run(
     policy: dict[str, Any],
 ) -> PromotionResult:
     """Atomically validate, archive the outgoing plan, and publish one source run."""
+    if model_id != CHAMPION_MODEL_ID:
+        raise PromotionConflictError(
+            "champion_release_required",
+            "Only the governed champion candidate can be promoted to production; "
+            "single-model candidates are diagnostic evidence.",
+        )
     required_months = int(policy["required_months"])
     production_run_id = UUID(str(uuid.uuid4()))
     plan_version = planning_month.strftime("%Y-%m")
@@ -718,16 +1204,23 @@ def promote_forecast_run(
                 )
             gate_report = _validate_candidate_evidence(
                 cur,
+                conn=conn,
                 manifest=manifest,
                 model_id=model_id,
                 planning_month=planning_month,
                 policy=policy,
                 release_stats=release_stats,
             )
-            outgoing_id, archive_checksum = _archive_outgoing_release(
+            gate_report["incoming_snapshot_roster"] = _validate_incoming_snapshot_roster(
+                cur,
+                planning_month=planning_month,
+            )
+            outgoing_id, archive_checksum, outgoing_report = _archive_outgoing_release(
                 cur,
                 incoming_planning_month=planning_month,
             )
+            if outgoing_report is not None:
+                gate_report["outgoing_release"] = outgoing_report
 
             if outgoing_id is not None:
                 cur.execute(

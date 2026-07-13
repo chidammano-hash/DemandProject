@@ -17,7 +17,6 @@ import {
   Target,
   Layers,
   Activity,
-  Copy,
   Trash2,
 } from "lucide-react";
 import {
@@ -67,6 +66,14 @@ import { ClusterPromoteModal } from "./ClusterPromoteModal";
 // ---------------------------------------------------------------------------
 
 type StatusFilter = "all" | "running" | "completed" | "failed" | "queued";
+type SortColumn =
+  | "experiment_id"
+  | "label"
+  | "status"
+  | "optimal_k"
+  | "silhouette_score"
+  | "total_dfus"
+  | "created_at";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -195,9 +202,8 @@ export function ClusterExperimentsPanel() {
   const [baselineId, setBaselineId] = useState<number | null>(null);
   const [candidateId, setCandidateId] = useState<number | null>(null);
   const [showBuilder, setShowBuilder] = useState(false);
-  const [cloneSource, setCloneSource] = useState<ClusterExperiment | null>(null);
   const [promoteTarget, setPromoteTarget] = useState<ClusterExperiment | null>(null);
-  const [sortCol, setSortCol] = useState<string>("experiment_id");
+  const [sortCol, setSortCol] = useState<SortColumn>("experiment_id");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   // ---- Data ----------------------------------------------------------------
@@ -217,14 +223,14 @@ export function ClusterExperimentsPanel() {
     staleTime: CLUSTER_EXP_STALE.EXPERIMENTS,
   });
 
-  const allExperiments = payload?.experiments ?? [];
+  const allExperiments = useMemo(() => payload?.experiments ?? [], [payload]);
 
   // ---- Sort ----------------------------------------------------------------
   const sortedExperiments = useMemo(() => {
     const items = [...allExperiments];
     items.sort((a, b) => {
-      let aVal: unknown = (a as Record<string, unknown>)[sortCol];
-      let bVal: unknown = (b as Record<string, unknown>)[sortCol];
+      let aVal: unknown = a[sortCol];
+      let bVal: unknown = b[sortCol];
 
       if (
         sortCol === "experiment_id" ||
@@ -293,7 +299,7 @@ export function ClusterExperimentsPanel() {
   }
 
   // ---- Sort handler --------------------------------------------------------
-  function handleSort(col: string) {
+  function handleSort(col: SortColumn) {
     if (sortCol === col) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -302,19 +308,13 @@ export function ClusterExperimentsPanel() {
     }
   }
 
-  function SortIndicator({ col }: { col: string }) {
+  function SortIndicator({ col }: { col: SortColumn }) {
     if (sortCol !== col) return null;
     return (
       <span className="ml-0.5 text-[10px]">
         {sortDir === "asc" ? "\u25B2" : "\u25BC"}
       </span>
     );
-  }
-
-  // ---- Clone handler -------------------------------------------------------
-  function handleClone(exp: ClusterExperiment) {
-    setCloneSource(exp);
-    setShowBuilder(true);
   }
 
   // ---- Delete handler ------------------------------------------------------
@@ -415,10 +415,7 @@ export function ClusterExperimentsPanel() {
         <Button
           size="sm"
           className="gap-1.5"
-          onClick={() => {
-            setCloneSource(null);
-            setShowBuilder(true);
-          }}
+          onClick={() => setShowBuilder(true)}
         >
           <Plus className="h-3.5 w-3.5" />
           New Experiment
@@ -479,10 +476,7 @@ export function ClusterExperimentsPanel() {
                     <Button
                       size="sm"
                       className="gap-1.5"
-                      onClick={() => {
-                        setCloneSource(null);
-                        setShowBuilder(true);
-                      }}
+                      onClick={() => setShowBuilder(true)}
                     >
                       <Plus className="h-3.5 w-3.5" />
                       Create First Experiment
@@ -576,16 +570,14 @@ export function ClusterExperimentsPanel() {
                             <div className="flex items-center gap-1">
                               <span className="truncate">{exp.label}</span>
                               {exp.is_promoted && (
-                                <Crown
-                                  className="shrink-0 h-3 w-3 text-amber-500"
-                                  title="Promoted to production"
-                                />
+                                <span title="Promoted to production">
+                                  <Crown className="block shrink-0 h-3 w-3 text-amber-500" />
+                                </span>
                               )}
                               {exp.has_durable_labels && (
-                                <Database
-                                  className="shrink-0 h-3 w-3 text-blue-500"
-                                  title="Assignments saved — can be re-promoted anytime"
-                                />
+                                <span title="Assignments saved — can be re-promoted anytime">
+                                  <Database className="block shrink-0 h-3 w-3 text-blue-500" />
+                                </span>
                               )}
                             </div>
                           </TableCell>
@@ -720,43 +712,13 @@ export function ClusterExperimentsPanel() {
       {/* Builder Modal */}
       <ClusterExperimentBuilder
         open={showBuilder}
-        onClose={() => {
-          setShowBuilder(false);
-          setCloneSource(null);
-        }}
+        onClose={() => setShowBuilder(false)}
         onSubmitted={() => {
           setShowBuilder(false);
-          setCloneSource(null);
           queryClient.invalidateQueries({
             queryKey: clusterExperimentKeys.all,
           });
         }}
-        cloneFrom={
-          cloneSource
-            ? {
-                featureParams: cloneSource.feature_params ?? {
-                  time_window_months: 24,
-                  min_months_history: 1,
-                },
-                modelParams: cloneSource.model_params ?? {
-                  k_range: [3, 12],
-                  min_cluster_size_pct: 2.0,
-                  use_pca: false,
-                  pca_components: null,
-                },
-                labelParams: cloneSource.label_params ?? {
-                  volume_high: 0.75,
-                  volume_low: 0.25,
-                  cv_steady: 0.3,
-                  cv_volatile: 0.8,
-                  seasonality_threshold: 0.5,
-                  zero_demand_threshold: 0.2,
-                },
-                label: cloneSource.label,
-                notes: cloneSource.notes ?? undefined,
-              }
-            : undefined
-        }
       />
 
       {/* Promote Modal */}

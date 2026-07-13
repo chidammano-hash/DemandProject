@@ -20,6 +20,10 @@ from pydantic import BaseModel, Field
 
 from api import core as api_core
 from api.auth import require_api_key
+from api.routers.forecasting._champion_promotion_boundary import (
+    RETIRED_PUBLIC_CHAMPION_JOB_TYPES,
+    reject_retired_champion_job_type,
+)
 from common.ai.workflow_planner import run_workflow_planner
 
 router = APIRouter(tags=["jobs"])
@@ -89,7 +93,13 @@ def _get_manager():
 def list_job_types():
     """List all available job types with metadata."""
     mgr = _get_manager()
-    return {"types": mgr.get_types()}
+    return {
+        "types": [
+            job_type
+            for job_type in mgr.get_types()
+            if job_type["type_id"] not in RETIRED_PUBLIC_CHAMPION_JOB_TYPES
+        ]
+    }
 
 
 @router.get("/jobs/stats")
@@ -106,6 +116,7 @@ def submit_job(req: SubmitJobRequest):
     Jobs are dispatched to APScheduler's managed thread pool for execution.
     Per-group concurrency control ensures only one job runs per group at a time.
     """
+    reject_retired_champion_job_type(req.job_type)
     mgr = _get_manager()
 
     from common.services.job_registry import JOB_TYPE_REGISTRY
@@ -170,6 +181,7 @@ def schedule_recurring_job(req: ScheduleJobRequest):
     This endpoint enables agentic AI automation: schedule jobs to run
     on a regular cadence (e.g., daily backtest, weekly clustering refresh).
     """
+    reject_retired_champion_job_type(req.job_type)
     mgr = _get_manager()
 
     from common.services.job_registry import JOB_TYPE_REGISTRY
@@ -234,11 +246,10 @@ def submit_pipeline(req: SubmitPipelineRequest):
     Jobs run one after another. If a step fails, the pipeline stops.
     This enables complex automation workflows for agentic AI.
     """
-    mgr = _get_manager()
-
     from common.services.job_registry import JOB_TYPE_REGISTRY
 
     for step in req.steps:
+        reject_retired_champion_job_type(step.job_type)
         if step.job_type not in JOB_TYPE_REGISTRY:
             raise HTTPException(status_code=422, detail=f"Unknown job type: {step.job_type}")
 
@@ -246,7 +257,7 @@ def submit_pipeline(req: SubmitPipelineRequest):
         {"job_type": s.job_type, "params": s.params, "label": s.label} for s in req.steps
     ]
 
-    pipeline_id = mgr.submit_pipeline(
+    pipeline_id = _get_manager().submit_pipeline(
         steps=steps_dicts,
         label=req.label,
         triggered_by="api",
@@ -299,6 +310,7 @@ def run_named_pipeline(name: str):
     from common.services.job_registry import JOB_TYPE_REGISTRY
 
     for step in steps:
+        reject_retired_champion_job_type(step["job_type"])
         if step["job_type"] not in JOB_TYPE_REGISTRY:
             raise HTTPException(
                 status_code=422,
@@ -306,13 +318,17 @@ def run_named_pipeline(name: str):
             )
 
     mgr = _get_manager()
-    pipeline_id = mgr.submit_pipeline(steps=steps, label=name, triggered_by="api")
+    pipeline_id, created = mgr.submit_named_pipeline(
+        steps=steps,
+        label=name,
+        triggered_by="api",
+    )
     return JSONResponse(
-        status_code=202,
+        status_code=202 if created else 200,
         content={
             "pipeline_id": pipeline_id,
             "name": name,
-            "status": "running",
+            "status": "running" if created else "already_running",
             "steps": len(steps),
         },
     )
@@ -394,7 +410,11 @@ def purge_jobs(
         description="Restrict to one job_type. Omit for all types.",
     ),
 ):
-    """Bulk-delete terminal jobs. Running/queued jobs are always preserved."""
+    """Bulk-delete terminal non-quarantined jobs.
+
+    Quarantines require deliberate single-job deletion so the in-memory group
+    block is released safely.
+    """
     from common.services.job_registry import JobManager
 
     deleted = JobManager.purge_history(

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Send, Loader2, Bot, User, Info, Sparkles } from "lucide-react";
 import {
@@ -249,7 +249,7 @@ export function TuningChatPanel() {
     refetchInterval: 15_000,
   });
 
-  const messages = sessionData?.messages ?? [];
+  const messages = useMemo(() => sessionData?.messages ?? [], [sessionData]);
 
   // On session load, detect recommendation -> run_started pairs to restore confirmed state
   useEffect(() => {

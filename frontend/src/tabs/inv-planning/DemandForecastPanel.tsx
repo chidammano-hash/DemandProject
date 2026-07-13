@@ -215,7 +215,7 @@ export function DemandForecastPanel() {
     summary?.by_abc_class.map((r: ProductionForecastAbcRow) => ({
       abc: r.abc_class,
       qty: r.forecast_qty,
-      skus: r.sku_count,
+      dfus: r.dfu_count,
     })) ?? [];
 
   return (
@@ -247,7 +247,7 @@ export function DemandForecastPanel() {
               {versions?.versions?.map((v, idx) => (
                 <option key={v.plan_version} value={v.plan_version}>
                   {idx === 0 ? `▶ Latest — ${v.plan_version}` : v.plan_version} (
-                  {v.sku_count.toLocaleString()} SKUs)
+                  {v.dfu_count.toLocaleString()} DFUs)
                 </option>
               ))}
             </select>
@@ -281,8 +281,8 @@ export function DemandForecastPanel() {
             sub={`Generated ${fmtDate(summary.generated_at)}`}
           />
           <KpiCard
-            label="SKU-Locations Planned"
-            value={formatFixed(summary.total_sku_count)}
+            label="DFUs Planned"
+            value={formatFixed(summary.total_dfu_count)}
             sub="item-location pairs"
           />
           <KpiCard

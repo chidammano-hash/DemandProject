@@ -18,6 +18,22 @@ Development uses `make api`, which starts Uvicorn with `--reload`; editing backe
 therefore restart the API while a job is running. The recovery rules above keep UI work durable,
 but production should run Uvicorn without `--reload` to avoid unnecessary process churn.
 
+Run exactly one forecasting job manager against a database. The standard local workflow is
+`make up` (infrastructure only) plus one host `make api`; production-image validation instead uses
+`docker compose up -d api` with the host API stopped. A host API and Docker API share database rows
+but not a PID namespace, so either runtime can otherwise mistake the other's live subprocess for a
+dead PID and quarantine it. If this happens, stop the duplicate API, terminate the orphaned process,
+acknowledge the quarantine in Jobs, and rerun the named pipeline.
+
+For accelerated Apple Silicon forecasting, replace `make api` with `make api-gpu`. The target
+preflights native PyTorch MPS and requires it for Chronos 2E, N-HiTS, and N-BEATS. It keeps
+`DEMAND_GPU=auto` so LightGBM does not mistake Apple MPS for its own GPU backend. The all-model
+trainer must retain its per-model subprocess isolation: placing LightGBM and PyTorch sequentially
+in one macOS process can deadlock at an OpenMP barrier during model construction. Apple MPS is
+unavailable inside Docker Desktop's Linux API container. The mixed-model production-generation
+job additionally enforces `OMP_NUM_THREADS=1`; do not remove that guard unless the macOS native
+library combination has been revalidated end to end.
+
 A minimal Postgres-backed job queue runs **alongside** APScheduler for jobs that
 must survive API restarts, span multiple workers, or run for many hours
 without blocking the API thread pool. Item 22 introduces this as a pilot:
@@ -416,7 +432,6 @@ fresh-all
         ├── backtest-load-all         (load predictions → DB)
         └── refresh-accuracy-mvs      (accuracy MVs)
     └── champion-all                  (meta-learner + simulate + select)
-├── seed-baselines                   (seed baseline forecasts)
 ├── policy-all                       (refresh DFU policy assignments)
 ├── ss-all                           (recompute safety stock)
 ├── eoq-all                          (recompute EOQ)
@@ -503,7 +518,7 @@ make setup-all    # Phases 1-6: data → features → backtests → inv planning
 | 2 | `setup-features` | Clustering, seasonality, variability, lead time, ABC-XYZ, demand signals | Phase 1 |
 | 3 | `setup-backtest` | All backtests (tree + foundation) + load + accuracy refresh + champion selection + seed baselines | Phase 2 |
 | 4 | `setup-inv-planning` | EOQ, policies, safety stock, exceptions, fill rate, health, supplier perf, investment, intramonth, control tower, rebalancing | Phase 1 |
-| 5 | `setup-demand-planning` | Production forecasts, projections, POs, quantiles, consensus, planned orders, replenishment plan, bias, blended, service level, lead time, echelon | Phase 3 |
+| 5 | `setup-demand-planning` | Production forecasts, projections, POs, consensus, planned orders, replenishment plan, bias, blended, service level, lead time, echelon | Phase 3 |
 | 6 | `setup-ops` | S&OP, events, financial plan, storyboard, scenarios, DQ | Phase 1 |
 
 **Dependency chain:**
@@ -521,8 +536,7 @@ setup-all
 │       └── demand-signals-all
 │   ├── backtest-load-all      (predictions → DB)
 │   ├── accuracy-slice-refresh (accuracy MVs)
-│   ├── champion-all           (meta-learner + simulate + select)
-│   └── seed-baselines         (baseline forecasts)
+│   └── champion-all           (meta-learner + simulate + select)
 ├── setup-inv-planning (Phase 4)
 │   ├── eoq-all                ├── supplier-perf-all
 │   ├── policy-all             ├── investment-all
@@ -534,9 +548,9 @@ setup-all
 │   ├── forecast-prod-all      ├── planned-orders-all
 │   ├── projection-all         ├── replplan-all
 │   ├── po-all                 ├── bias-all
-│   ├── quantile-all           ├── blended-all
-│   ├── consensus-all          ├── service-level-all
-│   ├── lead-time-all          └── echelon-all
+│   ├── consensus-all          ├── blended-all
+│   ├── service-level-all      ├── lead-time-all
+│   └── echelon-all
 └── setup-ops (Phase 6)
     ├── sop-all                ├── storyboard-all
     ├── events-all             ├── scenarios-all
@@ -605,7 +619,7 @@ TRUNCATE TABLE fact_supply_scenarios CASCADE;
 TRUNCATE TABLE fact_po_approval_log CASCADE;
 TRUNCATE TABLE fact_po_receipts CASCADE;
 TRUNCATE TABLE fact_open_purchase_orders CASCADE;
-TRUNCATE TABLE fact_purchase_orders CASCADE;
+TRUNCATE TABLE fact_released_purchase_orders CASCADE;
 
 -- Group 7: Consensus / Overrides
 TRUNCATE TABLE fact_consensus_plan CASCADE;
@@ -842,13 +856,13 @@ The legacy scripts (`detect_seasonality.py`, `update_seasonality_profiles.py`, `
 Sequential execution (safe for laptops). For parallel, append `&` to each and `wait` at the end.
 
 ```bash
-# Tree models
+# Tree model
 ~/.local/bin/uv run python scripts/ml/run_backtest.py
 
-# Foundation models
+# Foundation model
 ~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos2_enriched
 
-# Statistical baselines
+# Statistical model
 ~/.local/bin/uv run python scripts/ml/run_backtest_mstl.py
 
 # Deep learning models
@@ -983,10 +997,11 @@ The migration:
 - preserves existing production as `legacy_unverified` unless it can be safely
   tied to one audited production run.
 
-**A new results promotion and fresh full generation are mandatory after this
-migration.** First reload/promote the chosen champion experiment's cached
-winners (`POST /champion-experiments/{id}/promote-results`) so its rows carry
-the experiment id and its artifact/DB checksums are persisted. Never relabel a
+**A governed champion refresh and fresh full generation are mandatory after this
+migration.** Run `POST /jobs/pipelines/named/model-refresh` so all five current
+backtests are lineage-checked and a newly evaluated experiment plus results are
+promoted atomically. The retired manual experiment promotion endpoints return
+410 and cannot perform this cutover. Never relabel a
 `legacy_invalid` run or manually set `promotion_eligible`. Generate from the UI
 or forecast job, capture its returned `source_run_id`, and promote that exact
 run. If replacement reports `outgoing_archive_incomplete`, first prepare the
@@ -1151,9 +1166,8 @@ routed are safe because they aggregate over months of history.
 | Clustering fails | Load sales first: `make load-sales`; verify MLflow: `docker ps \| grep mlflow`; check: `ls -lh data/staged/clustering_features.csv` |
 | Cluster assignments not updating | Preview with `--dry-run`; verify DFU key format matches database; check Postgres connection |
 | Backtest fails | Run clustering first: `make cluster-all`; load sales: `make load-sales`; install deps: `uv sync` |
-| Production generate has no models to load (`data/models/<id>/` empty) | Confirm a current backtest completed and persisted its final valid timeframe, then re-run `make backtest-<model>` to repopulate `.pkl` artifacts. |
+| Production generation reports a missing/stale artifact | Run `make train-production-all` against the current latest-closed sales snapshot. LightGBM must have a valid `data/models/lgbm_cluster/production_tree/active.json` pointing to one complete checksummed version; N-HiTS/N-BEATS require their active neural versions. Do not copy a backtest or loose `.pkl` into `data/models/`. |
 | `make forecast-generate` now **aborts** instead of producing zeros | Intended (2026-06-20): a failed recursive prediction re-raises rather than zero-filling the cluster (an all-zero forecast silently corrupts the plan). Read the logged traceback and fix the underlying prediction error — do not treat the abort as a regression. |
-| `make quantile-train` fails with `NotImplementedError` | Intended (2026-06-20): the quantile script is an MVP stub that trains on random data; it refuses to write `fact_demand_plan`. Use `--dry-run` to preview, or skip it — production CI bands come from `make forecast-generate`. |
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/forecasting/forecast_pipeline_config.yaml` champion section; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
 | Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; check API logs for rate limit errors |
 | AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |

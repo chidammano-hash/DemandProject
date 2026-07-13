@@ -478,7 +478,7 @@ function ModelComparisonSection() {
     staleTime: STALE.FIVE_MIN,
   });
 
-  const models = data?.models ?? [];
+  const models = useMemo(() => data?.models ?? [], [data]);
   const oracleCeiling = data?.oracle_ceiling;
 
   const sorted = useMemo(

@@ -35,7 +35,7 @@ Residual-based empirical confidence intervals use the model's own backtest histo
 
 Training separate P10/P90 models would triple compute cost. Backtest residuals already exist for free in `backtest_lag_archive` -- they provide historically honest uncertainty with no additional training runs.
 
-> **Quantile-regression path is a stub (do not rely on it).** A separate script, `scripts/forecasting/generate_quantile_forecasts.py` (`make quantile-train`), trains P10/P50/P90 LightGBM models and writes to `fact_demand_plan` (consumed by the consensus plan, bias corrections, and safety stock). It currently trains on `rng.uniform` **random** data with constant dummy features — statistically meaningless output. As of 2026-06-20 it **refuses the DB write** unless `--dry-run` (preview) or `--allow-synthetic` (dev override) is passed, raising a clear `NotImplementedError`. The residual-based bands documented here are the only production CI source until that script is wired to the real feature pipeline.
+The former standalone synthetic quantile-regression generator was removed. Residual-based bands documented here are the production CI source; foundation-model quantile support and generic downstream quantile math remain available without adding a sixth production forecasting algorithm.
 
 ### Horizon Scaling
 
@@ -69,17 +69,22 @@ No dedicated pipeline. CI computation runs automatically during `make forecast-g
 In `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`:
 
 ```yaml
-confidence_interval:
-  enabled: true
-  z_lower: 1.282           # P10 bound (80% CI)
-  z_upper: 1.282           # P90 bound (80% CI)
-  min_residual_months: 6   # Minimum observations for DFU-level sigma
-  horizon_scaling: sqrt     # sqrt | linear | none
-  sigma_floor: 1.0         # Minimum sigma (prevents zero-width bands)
-  sigma_cap_multiplier: 3.0 # Cap = multiplier x global median sigma
-  source_model_ids:
-    - lgbm_cluster
-  residual_lag: 0           # Which lag from archive to use
+production_forecast:
+  confidence_interval:
+    enabled: true
+    z_lower: 1.282             # P10 bound (80% CI)
+    z_upper: 1.282             # P90 bound (80% CI)
+    min_residual_months: 6     # Minimum observations for DFU-level sigma
+    horizon_scaling: sqrt      # sqrt | linear | none
+    sigma_floor: 1.0           # Minimum sigma (prevents zero-width bands)
+    sigma_cap_multiplier: 3.0  # Cap = multiplier x global median sigma
+    source_model_ids:
+      - lgbm_cluster
+      - chronos2_enriched
+      - mstl
+      - nbeats
+      - nhits
+    residual_lag: 0             # Which lag from archive to use
 ```
 
 | Z-Score | Interval | Interpretation |

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from common.core.constants import FORECAST_QTY_COL
@@ -60,16 +59,27 @@ def make_blend_row(
     }
 
 
-def mix_from(top: "pd.DataFrame", weights: "pd.Series") -> list[dict[str, Any]]:
+def mix_from(top: pd.DataFrame, weights: pd.Series) -> list[dict[str, Any]]:
     """Build a ``source_mix`` list from a top-K frame + aligned weight Series.
 
     ``top`` must have a ``model_id`` column; ``weights`` is index-aligned to
-    ``top``. Tiny weights (< 0.5%) are dropped to keep the mix readable.
+    ``top``. Every positive member is retained so the evaluated blend and the
+    production blend have identical composition.
     """
     mix: list[dict[str, Any]] = []
     for mid, w in zip(top["model_id"].to_numpy(), [float(x) for x in weights], strict=False):
-        if w >= 0.005:
-            mix.append({"model": str(mid), "weight": round(w, 4)})
+        if w > 0:
+            mix.append({"model": str(mid), "weight": w})
+    total = sum(entry["weight"] for entry in mix)
+    if total <= 0:
+        raise ValueError("Champion ensemble has no positive source weights")
+    for entry in mix:
+        entry["weight"] = round(entry["weight"] / total, 8)
+    # Make the serialized mix sum exactly to one after rounding.
+    mix[-1]["weight"] = round(
+        1.0 - sum(entry["weight"] for entry in mix[:-1]),
+        8,
+    )
     return mix
 
 
@@ -141,7 +151,7 @@ def _resolve_fallback_rows(
 
     fallback_df = pd.concat(fallback_rows, ignore_index=True)
     fallback_df = fallback_df.drop_duplicates(
-        subset=_DFU_MONTH_COLS + ["model_id"],
+        subset=[*_DFU_MONTH_COLS, "model_id"],
     )
     if "abs_err" not in fallback_df.columns:
         fallback_df["abs_err"] = (
@@ -227,7 +237,7 @@ def _expanding_stats(df: pd.DataFrame) -> pd.DataFrame:
     Iterates over each (DFU, model) group explicitly to avoid pandas
     FutureWarning from groupby.apply operating on grouping columns.
     """
-    df = df.sort_values(_DFU_MODEL_COLS + ["startdate"]).copy()
+    df = df.sort_values([*_DFU_MODEL_COLS, "startdate"]).copy()
     groups = []
     for _, group in df.groupby(_DFU_MODEL_COLS, sort=False):
         g = group.sort_values("startdate").copy()
@@ -245,7 +255,7 @@ def _rolling_stats(
     df: pd.DataFrame, window_months: int, min_prior_months: int,
 ) -> pd.DataFrame:
     """Add roll_abs_err / roll_actual columns using shift(exec_lag+1)."""
-    df = df.sort_values(_DFU_MODEL_COLS + ["startdate"]).copy()
+    df = df.sort_values([*_DFU_MODEL_COLS, "startdate"]).copy()
     groups = []
     for _, group in df.groupby(_DFU_MODEL_COLS, sort=False):
         g = group.sort_values("startdate").copy()
@@ -273,7 +283,7 @@ def _expanding_uncertainty_stats(df: pd.DataFrame) -> pd.DataFrame:
     expanding window --- it captures how *consistent* (or erratic) a model's
     errors are.
     """
-    df = df.sort_values(_DFU_MODEL_COLS + ["startdate"]).copy()
+    df = df.sort_values([*_DFU_MODEL_COLS, "startdate"]).copy()
     groups: list[pd.DataFrame] = []
     for _, group in df.groupby(_DFU_MODEL_COLS, sort=False):
         g = group.sort_values("startdate").copy()
@@ -293,13 +303,8 @@ def _expanding_uncertainty_stats(df: pd.DataFrame) -> pd.DataFrame:
 
 # Re-export the model-family map used by diversity-aware strategies.
 _MODEL_FAMILIES: dict[str, str] = {
-    "chronos2_enriched": "chronos",
-    "catboost_cluster": "tree",
-    "xgboost_cluster": "tree",
+    "chronos2_enriched": "foundation",
     "lgbm_cluster": "tree",
-    "seasonal_naive": "baseline",
-    "rolling_mean": "baseline",
-    "rolling_median": "baseline",
     "mstl": "statistical",
     "nhits": "dl",
     "nbeats": "dl",

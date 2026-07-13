@@ -27,12 +27,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.core.db import get_db_params
+from common.core.utils import get_competing_model_ids
 from common.ml.champion import (
     STRATEGY_REGISTRY,
     compute_ceiling,
     compute_strategy_accuracy,
 )
-from common.core.db import get_db_params
 from scripts.ml.run_champion_selection import load_dfu_features, load_monthly_errors_df
 
 logging.basicConfig(
@@ -74,6 +75,21 @@ def _load_experiment(conn: psycopg.Connection, experiment_id: int) -> dict[str, 
         if isinstance(d[key], str):
             d[key] = json.loads(d[key])
     return d
+
+
+def _validate_experiment_models(models: Any) -> None:
+    """Reject queued legacy experiments that reference retired base models."""
+    if not isinstance(models, list) or any(not isinstance(model_id, str) for model_id in models):
+        raise ValueError("Champion experiment models must be a list of model ID strings")
+    valid_models = get_competing_model_ids()
+    unsupported = sorted(set(models) - set(valid_models))
+    if unsupported:
+        raise ValueError(
+            f"Champion experiment contains unsupported model(s) {unsupported}; "
+            f"valid competing models are {valid_models}"
+        )
+    if len(models) < 2 or len(models) != len(set(models)):
+        raise ValueError("Champion experiment requires at least 2 distinct competing models")
 
 
 def _set_running(conn: psycopg.Connection, experiment_id: int) -> None:
@@ -224,6 +240,7 @@ def run_experiment(experiment_id: int) -> None:
         conn = _connect(db)
         # 1. Load config
         exp = _load_experiment(conn, experiment_id)
+        _validate_experiment_models(exp["models"])
         logger.info(
             "Champion experiment #%d: strategy=%s, models=%s, metric=%s, lag=%s",
             experiment_id, exp["strategy"], exp["models"], exp["metric"], exp["lag_mode"],
@@ -314,7 +331,7 @@ def run_experiment(experiment_id: int) -> None:
         # Load all-lags data from backtest_lag_archive so that each lag
         # slice contains ALL DFUs at that forecast horizon — not just the
         # DFUs whose execution_lag matches.  This aligns with how
-        # lgbm_tuning_lag is populated in seed_production_baselines.py.
+        # The tuning tracker populates lgbm_tuning_lag from this same all-lag artifact.
         logger.info("Computing per-forecast-lag breakdown...")
         lag_rows: list[dict[str, Any]] = []
         try:

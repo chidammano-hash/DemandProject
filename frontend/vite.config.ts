@@ -32,6 +32,15 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/scenarios",
   "/auth",
   "/users",
+  "/admin",
+  "/customers",
+  "/dfus",
+  "/forecasts",
+  "/inventory-backtest",
+  "/items",
+  "/locations",
+  "/sales",
+  "/times",
   "/data-quality",
   "/notifications",
   "/collaboration",
@@ -53,7 +62,6 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/feature-lab",
   "/accuracy-budget",
   "/model-tuning",
-  "/expsys",
   "/customer-analytics",
   "/backtest-management",
   "/forecast-release",
@@ -83,6 +91,10 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    // ECharts is intentionally isolated below; its minified vendor chunk is
+    // about 755 kB (roughly 250 kB gzip), so use a limit that still catches
+    // accidental growth without flagging the known charting dependency.
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         // Function-form so vendor packages with many sub-packages (e.g. all

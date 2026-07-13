@@ -7,10 +7,7 @@
 import { Play, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 
 import type { ChampionExperiment } from "@/api/queries/champion-experiments";
-import type {
-  TrainingStatusMap,
-  StagingSummaryMap,
-} from "@/api/queries/backtest-management";
+import type { TrainingStatusMap, StagingSummaryMap } from "@/api/queries/backtest-management";
 import type { PipelineConfig } from "@/api/queries/unified-model-tuning";
 import { modelLabel, MODEL_TYPE_COLORS } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
@@ -18,10 +15,7 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-import type {
-  ForecastAlgorithm,
-  ProdConfigExtended,
-} from "./forecastPanelShared";
+import type { ForecastAlgorithm, ProdConfigExtended } from "./forecastPanelShared";
 import { requiresTraining } from "./forecastPanelShared";
 import { ConfigRow } from "./ConfigRow";
 
@@ -64,7 +58,7 @@ export function AlgorithmSelectionCard({
               "flex items-center gap-3 rounded-md border p-3 cursor-pointer transition-colors",
               selectedModel === "champion"
                 ? "border-primary bg-primary/5"
-                : "border-border hover:border-primary/50",
+                : "border-border hover:border-primary/50"
             )}
           >
             <input
@@ -78,11 +72,13 @@ export function AlgorithmSelectionCard({
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Use Champion</span>
-                <Badge variant="secondary" className="text-[10px]">Recommended</Badge>
+                <Badge variant="secondary" className="text-[10px]">
+                  Recommended
+                </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Uses the champion model selected by the meta-learner per DFU.
-                Falls back to {modelLabel(fallbackModelId)}.
+                Uses the promoted champion route for each DFU and forecast month. Falls back to{" "}
+                {modelLabel(fallbackModelId)} when no route is available.
               </p>
               {/* Champion participating models with trained/not-trained status */}
               {!promotedExperiment && (
@@ -109,7 +105,7 @@ export function AlgorithmSelectionCard({
                             "inline-flex items-center gap-1 text-xs",
                             hasStaged
                               ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-red-600 dark:text-red-400",
+                              : "text-red-600 dark:text-red-400"
                           )}
                         >
                           {hasStaged ? (
@@ -129,18 +125,18 @@ export function AlgorithmSelectionCard({
 
           {/* Algorithm options */}
           {forecastAlgos.map((algo) => {
-            const isTree = requiresTraining(algo.type);
-            const isTrained = trainingStatus?.[algo.id]?.trained ?? false;
-            const isProductionTrained =
-              isTrained &&
-              trainingStatus?.[algo.id]?.training_mode === "production";
-            // Tree models must be production-trained; non-tree always allowed
-            const isDisabled = isTree && !isProductionTrained;
+            const requiresProductionTraining = requiresTraining(algo.type);
+            const modelReadiness = trainingStatus?.[algo.id];
+            const isProductionReady = modelReadiness?.ready === true;
+            // LightGBM and the two neural models require final-refit artifacts;
+            // MSTL and Chronos 2E infer directly.
+            const isDisabled = requiresProductionTraining && !isProductionReady;
 
             let disabledReason: string | undefined;
             if (isDisabled) {
               disabledReason =
-                "Tree model not trained for production -- train it in Step 1 above";
+                modelReadiness?.stale_reason ??
+                `${modelLabel(algo.id)} needs a current production artifact; prepare the release in Step 1`;
             }
 
             return (
@@ -148,13 +144,11 @@ export function AlgorithmSelectionCard({
                 key={algo.id}
                 className={cn(
                   "flex items-center gap-3 rounded-md border p-3 transition-colors",
-                  isDisabled
-                    ? "opacity-50 cursor-not-allowed"
-                    : "cursor-pointer",
+                  isDisabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                   !isDisabled && selectedModel === algo.id
                     ? "border-primary bg-primary/5"
                     : "border-border",
-                  !isDisabled && selectedModel !== algo.id && "hover:border-primary/50",
+                  !isDisabled && selectedModel !== algo.id && "hover:border-primary/50"
                 )}
                 title={disabledReason}
               >
@@ -173,7 +167,7 @@ export function AlgorithmSelectionCard({
                     <Badge
                       className={cn(
                         "text-[10px] px-1.5 py-0",
-                        MODEL_TYPE_COLORS[algo.type] ?? "bg-gray-100 text-gray-700",
+                        MODEL_TYPE_COLORS[algo.type] ?? "bg-gray-100 text-gray-700"
                       )}
                     >
                       {algo.type}
@@ -184,13 +178,11 @@ export function AlgorithmSelectionCard({
                       </Badge>
                     )}
                     {/* Status icons */}
-                    {isTree ? (
-                      isProductionTrained ? (
+                    {requiresProductionTraining ? (
+                      isProductionReady ? (
                         <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-                      ) : isTrained ? (
-                        <AlertTriangle className="h-3 w-3 text-amber-500" />
                       ) : (
-                        <XCircle className="h-3 w-3 text-muted-foreground" />
+                        <AlertTriangle className="h-3 w-3 text-amber-500" />
                       )
                     ) : algo.hasPredictions ? (
                       <CheckCircle2 className="h-3 w-3 text-emerald-500" />
@@ -199,9 +191,7 @@ export function AlgorithmSelectionCard({
                     )}
                   </div>
                   {isDisabled && disabledReason && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {disabledReason}
-                    </p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{disabledReason}</p>
                   )}
                 </div>
               </label>
@@ -220,8 +210,14 @@ export function AlgorithmSelectionCard({
             <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
               <ConfigRow label="Horizon Months" value={String(prodConfig.horizon_months)} />
               <ConfigRow label="Min History Months" value={String(prodConfig.min_history_months)} />
-              <ConfigRow label="Cold-Start Model" value={modelLabel(prodConfig.cold_start_model_id)} />
-              <ConfigRow label="Cold-Start Min Months" value={String(prodConfig.cold_start_min_months)} />
+              <ConfigRow
+                label="Cold-Start Model"
+                value={modelLabel(prodConfig.cold_start_model_id)}
+              />
+              <ConfigRow
+                label="Cold-Start Min Months"
+                value={String(prodConfig.cold_start_min_months)}
+              />
               <ConfigRow
                 label="Confidence Intervals"
                 value={

@@ -31,6 +31,10 @@ from api.routers.forecasting._forecast_release_policy import (
 from common.core.planning_date import get_planning_date
 from common.core.utils import load_forecast_pipeline_config
 from common.services.cache import cached_sync
+from common.services.forecast_generation import (
+    GENERATOR_CONTRACT_METADATA_KEY,
+    GENERATOR_CONTRACT_VERSION,
+)
 from common.services.forecast_release import (
     ReleaseQualityMetrics,
     ReleaseReadinessThresholds,
@@ -253,7 +257,8 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                             (SELECT MAX(forecast_month_generated)
                              FROM forecast_generation_run
                              WHERE generation_purpose = 'release_candidate'
-                               AND run_status IN ('ready', 'promoted')),
+                               AND run_status IN ('ready', 'promoted')
+                               AND metadata ->> %s = %s),
                             outgoing.id,
                             outgoing.plan_version,
                             outgoing.promoted_at
@@ -379,7 +384,13 @@ def get_forecast_release_readiness() -> dict[str, Any]:
                 ),
             )
             quality_row = cur.fetchone()
-            cur.execute(state_sql)
+            cur.execute(
+                state_sql,
+                (
+                    GENERATOR_CONTRACT_METADATA_KEY,
+                    GENERATOR_CONTRACT_VERSION,
+                ),
+            )
             state_row = cur.fetchone()
             cur.execute(
                 coverage_sql,

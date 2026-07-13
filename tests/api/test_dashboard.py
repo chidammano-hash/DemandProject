@@ -5,6 +5,7 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 import httpx
+import psycopg
 import pytest
 from httpx import ASGITransport
 
@@ -930,16 +931,65 @@ async def test_customer_map_zip_fallback_to_state_centroid(mock_pool):
 # /dashboard/pipeline-readiness
 # ===========================================================================
 
-# fetchone order in the endpoint: (1) dim_sku counts, (2) stale tuning count,
-# (3) champion↔cluster lineage row, (4) (last sales load, champion promoted_at).
-_READINESS_HEALTHY_TAIL = [(0,), None, (None, None)]
+def _governed_readiness_row(
+    *,
+    champion_count: int = 1,
+    experiment_id: int | None = 12,
+    is_promoted: bool | None = True,
+    champion_cluster_id: int | None = 5,
+    cluster_count: int = 1,
+    current_cluster_id: int | None = 5,
+    champion_sales_batch_id: int | None = 91,
+    current_sales_batch_id: int | None = 91,
+    source_hash: str | None = "a" * 64,
+    source_file: str | None = "sales.csv",
+):
+    governed_spec = (
+        {
+            "source_sales_batch_id": champion_sales_batch_id,
+            "data_checksum": "a" * 64,
+            "cluster_experiment_id": champion_cluster_id,
+            "models": [
+                "lgbm_cluster",
+                "chronos2_enriched",
+                "mstl",
+                "nbeats",
+                "nhits",
+            ],
+            "backtest_run_ids": [
+                ["lgbm_cluster", 101],
+                ["chronos2_enriched", 102],
+                ["mstl", 103],
+                ["nbeats", 104],
+                ["nhits", 105],
+            ],
+        }
+        if champion_sales_batch_id is not None
+        else None
+    )
+    job_params = {"governed_spec": governed_spec} if governed_spec is not None else None
+    return (
+        champion_count,
+        experiment_id,
+        is_promoted,
+        champion_cluster_id,
+        cluster_count,
+        current_cluster_id,
+        job_params,
+        current_sales_batch_id,
+        source_hash,
+        source_file,
+    )
+
+
+_READINESS_HEALTHY_TAIL = [(0,), _governed_readiness_row()]
 
 
 async def _get_readiness(pool):
     with (
         patch("api.core._get_pool", return_value=pool),
         patch(
-            "api.routers.core.dashboard.get_read_only_conn",
+            "api.routers.core.pipeline_readiness.get_read_only_conn",
             return_value=pool.connection(),
         ),
     ):
@@ -980,20 +1030,27 @@ async def test_pipeline_readiness_ready_when_active_skus_clustered(mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_readiness_ready_when_dim_sku_empty(mock_pool):
-    """No SKUs at all -> nothing to flag (not stale)."""
+async def test_pipeline_readiness_blocks_when_dim_sku_is_empty(mock_pool):
+    """No SKU data cannot authorize the downstream forecasting lifecycle."""
     pool, _, cursor = mock_pool
     cursor.fetchone.side_effect = [(0, 0), *_READINESS_HEALTHY_TAIL]
     resp = await _get_readiness(pool)
     assert resp.status_code == 200
-    assert resp.json()["ready"] is True
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["checks"][0]["stage"] == "data"
+    assert "data-refresh" in data["checks"][0]["detail"]
 
 
 @pytest.mark.asyncio
 async def test_pipeline_readiness_flags_stale_tuning_profiles(mock_pool):
     """Stale cluster_tuning_profile_state rows -> a medium tuning check."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.side_effect = [(300_000, 13_000), (4,), None, (None, None)]
+    cursor.fetchone.side_effect = [
+        (300_000, 13_000),
+        (4,),
+        _governed_readiness_row(),
+    ]
     resp = await _get_readiness(pool)
     data = resp.json()
     assert data["ready"] is False
@@ -1011,10 +1068,30 @@ async def test_pipeline_readiness_flags_stale_tuning_profiles(mock_pool):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_readiness_tuning_query_error_is_unverified_not_ready(mock_pool):
+    pool, connection, cursor = mock_pool
+    cursor.execute.side_effect = [None, psycopg.OperationalError("missing tuning state"), None]
+    cursor.fetchone.side_effect = [(300_000, 13_000), _governed_readiness_row()]
+
+    resp = await _get_readiness(pool)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["checks"][0]["stage"] == "tuning"
+    assert "could not be verified" in data["checks"][0]["title"].lower()
+    connection.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_readiness_flags_champion_cluster_mismatch(mock_pool):
     """Champion built under cluster exp 3 while exp 5 is promoted -> high check."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.side_effect = [(300_000, 13_000), (0,), (12, 3, 5), (None, None)]
+    cursor.fetchone.side_effect = [
+        (300_000, 13_000),
+        (0,),
+        _governed_readiness_row(champion_cluster_id=3),
+    ]
     resp = await _get_readiness(pool)
     data = resp.json()
     assert data["ready"] is False
@@ -1028,24 +1105,63 @@ async def test_pipeline_readiness_flags_champion_cluster_mismatch(mock_pool):
 async def test_pipeline_readiness_champion_lineage_match_is_ok(mock_pool):
     """Matching champion/cluster generations produce no check."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.side_effect = [(300_000, 13_000), (0,), (12, 5, 5), (None, None)]
+    cursor.fetchone.side_effect = [(300_000, 13_000), *_READINESS_HEALTHY_TAIL]
     resp = await _get_readiness(pool)
     assert resp.json()["ready"] is True
 
 
 @pytest.mark.asyncio
-async def test_pipeline_readiness_flags_data_newer_than_champion(mock_pool):
-    """A sales load newer than the promoted champion -> medium forecast check."""
-    from datetime import datetime
-
+async def test_pipeline_readiness_requires_one_governed_promoted_champion(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchone.side_effect = [
-        (300_000, 13_000), (0,), None,
-        (datetime(2026, 7, 1), datetime(2026, 6, 1)),
+        (300_000, 13_000),
+        (0,),
+        _governed_readiness_row(
+            champion_count=0,
+            experiment_id=None,
+            is_promoted=None,
+            champion_cluster_id=None,
+            champion_sales_batch_id=None,
+        ),
     ]
     resp = await _get_readiness(pool)
     data = resp.json()
     assert data["ready"] is False
     check = data["checks"][0]
+    assert check["stage"] == "champion"
+    assert "model-refresh" in check["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_compares_exact_sales_batch_not_timestamps(mock_pool):
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [
+        (300_000, 13_000),
+        (0,),
+        _governed_readiness_row(champion_sales_batch_id=90, current_sales_batch_id=91),
+    ]
+
+    resp = await _get_readiness(pool)
+
+    data = resp.json()
+    assert data["ready"] is False
+    check = data["checks"][0]
     assert check["stage"] == "forecast"
-    assert check["severity"] == "medium"
+    assert "sales batch 90" in check["detail"]
+    assert "batch 91" in check["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_readiness_champion_query_error_is_unverified_not_ready(mock_pool):
+    pool, connection, cursor = mock_pool
+    cursor.execute.side_effect = [None, None, psycopg.OperationalError("missing lineage")]
+    cursor.fetchone.side_effect = [(300_000, 13_000), (0,)]
+
+    resp = await _get_readiness(pool)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["checks"][0]["stage"] == "champion"
+    assert "could not be verified" in data["checks"][0]["title"].lower()
+    connection.rollback.assert_called_once()

@@ -1,10 +1,6 @@
-import { fetchJson } from "./core";
-import type {
-  DomainMeta,
-  DomainPage,
-  SuggestPayload,
-  SamplePairPayload,
-} from "@/types";
+import { fetchJson } from "./request";
+import { isForecastModelId } from "@/lib/model-labels";
+import type { DomainMeta, DomainPage, SuggestPayload, SamplePairPayload } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Domain queries
@@ -45,13 +41,15 @@ export async function fetchDomainSuggest(
   field: string,
   q: string,
   filters?: Record<string, string>,
-  limit = 12,
+  limit = 12
 ): Promise<string[]> {
   const qs = new URLSearchParams({ field, q, limit: String(limit) });
   if (filters && Object.keys(filters).length > 0) {
     qs.set("filters", JSON.stringify(filters));
   }
-  const payload = await fetchJson<SuggestPayload>(`/domains/${encodeURIComponent(domain)}/suggest?${qs}`);
+  const payload = await fetchJson<SuggestPayload>(
+    `/domains/${encodeURIComponent(domain)}/suggest?${qs}`
+  );
   return Array.from(new Set((payload.values || []).filter(Boolean))).slice(0, limit);
 }
 
@@ -64,5 +62,5 @@ export async function fetchSamplePair(domain: string): Promise<SamplePairPayload
 // ---------------------------------------------------------------------------
 export async function fetchForecastModels(): Promise<string[]> {
   const payload = await fetchJson<{ models?: string[] }>("/domains/forecast/models");
-  return payload.models || [];
+  return (payload.models || []).filter(isForecastModelId);
 }

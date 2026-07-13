@@ -11,10 +11,10 @@ where the best model changes at a specific month and confirming that the
 prior window respects the execution_lag offset.
 """
 
-import pytest
-import numpy as np
-import pandas as pd
 from datetime import date
+
+import pandas as pd
+import pytest
 
 from common.core.constants import FORECAST_QTY_COL
 from common.ml.champion import (
@@ -22,20 +22,20 @@ from common.ml.champion import (
     compute_ceiling,
     compute_strategy_accuracy,
     make_blend_row,
-    strategy_expanding,
-    strategy_rolling,
+    strategy_adaptive_ensemble,
     strategy_decay,
     strategy_ensemble,
-    strategy_hybrid_warmup,
-    strategy_adaptive_ensemble,
-    strategy_learned_blend,
-    strategy_seasonal,
     strategy_ensemble_rolling,
+    strategy_expanding,
+    strategy_hybrid_warmup,
+    strategy_learned_blend,
     strategy_optimized_decay,
     strategy_per_segment,
+    strategy_rolling,
+    strategy_seasonal,
     strategy_uncertainty_aware,
 )
-
+from common.ml.champion.helpers import mix_from
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -135,14 +135,17 @@ class TestStrategyRegistry:
             "hybrid_warmup", "adaptive_ensemble", "learned_blend",
             "seasonal", "ensemble_rolling", "optimized_decay",
             "per_segment", "uncertainty_aware", "ridge_blend",
-            "hybrid_meta_router", "diverse_ensemble", "per_cluster",
+            "diverse_ensemble", "per_cluster",
             "cascade_ensemble", "adversarial_filter", "dynamic_window",
             "regime_adaptive", "bayesian_model_avg", "error_correcting",
             "shrinkage_blend", "dfu_strategy_router", "stacked_strategies",
             "cluster_regime_hybrid",
             "thompson_sampling", "linucb", "exp3", "thompson_ensemble",
         }
-        assert expected.issubset(set(STRATEGY_REGISTRY.keys()))
+        assert set(STRATEGY_REGISTRY) == expected
+
+    def test_retired_hybrid_meta_router_is_not_registered(self):
+        assert "hybrid_meta_router" not in STRATEGY_REGISTRY
 
     def test_unknown_strategy_returns_none(self):
         assert STRATEGY_REGISTRY.get("nonexistent") is None
@@ -286,7 +289,7 @@ class TestExpandingStrategy:
         which would tip B to win — if leaked, B wins June; if not leaked, A wins.
         """
         months = [date(2024, m, 1) for m in range(1, 7)]
-        df = _make_monthly_errors(
+        _df = _make_monthly_errors(
             models=["A", "B"],
             months=months,
             values={
@@ -300,7 +303,7 @@ class TestExpandingStrategy:
         # Without fix: prior for Jun = Jan-May → B err=231 vs A err=280 → B wins
         # With fix:    prior for Jun = Jan-Apr → tied → first alphabetical or tie-break
         # To make it conclusive: A slightly better in Jan-Apr
-        df2 = _make_monthly_errors(
+        _df2 = _make_monthly_errors(
             models=["A", "B"],
             months=months,
             values={
@@ -1694,3 +1697,14 @@ class TestOutputSchema:
             assert len(winners) == 0, (
                 f"Strategy {strategy_name} should return empty for empty input"
             )
+
+
+def test_source_mix_keeps_tiny_positive_members_and_normalizes_exactly():
+    top = pd.DataFrame({"model_id": ["lgbm_cluster", "mstl"]})
+    weights = pd.Series([0.997, 0.003])
+
+    mix = mix_from(top, weights)
+
+    assert [entry["model"] for entry in mix] == ["lgbm_cluster", "mstl"]
+    assert sum(entry["weight"] for entry in mix) == pytest.approx(1.0)
+    assert mix[1]["weight"] > 0

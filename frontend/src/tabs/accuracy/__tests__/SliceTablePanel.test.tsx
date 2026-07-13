@@ -69,6 +69,13 @@ function renderPanel(overrides: Partial<SliceTablePanelProps> = {}) {
 }
 
 describe("SliceTablePanel (virtualized body)", () => {
+  it("suggests only retained forecast models in the model filter", () => {
+    renderPanel();
+
+    expect(screen.getByPlaceholderText("e.g. lgbm_cluster,nhits")).toBeDefined();
+    expect(screen.queryByPlaceholderText(/lgbm_global/i)).toBeNull();
+  });
+
   it("renders the virtualized bucket rows", () => {
     renderPanel();
     expect(screen.getByText("cluster_a")).toBeDefined();

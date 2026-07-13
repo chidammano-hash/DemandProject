@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, X } from "lucide-react";
 
 import {
+  championExperimentKeys,
   championSweepKeys,
   createChampionSweep,
   fetchChampionTemplates,
@@ -29,7 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { modelLabel } from "@/lib/model-labels";
+import { isForecastModelId, modelLabel } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
 const MODE_OPTIONS: { value: SweepMode; label: string }[] = [
@@ -53,7 +54,7 @@ const OBJECTIVE_OPTIONS: { value: SweepObjective; label: string }[] = [
 export function SweepBuilder({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const { data: templatesData } = useQuery({
-    queryKey: ["champion-templates"],
+    queryKey: championExperimentKeys.templates(),
     queryFn: fetchChampionTemplates,
     staleTime: 300_000,
   });
@@ -66,13 +67,13 @@ export function SweepBuilder({ onClose }: { onClose: () => void }) {
     staleTime: 300_000,
   });
 
-  const algos = pipelineConfig?.algorithms ?? {};
+  const algos = useMemo(() => pipelineConfig?.algorithms ?? {}, [pipelineConfig?.algorithms]);
   // Roster = every enabled model that competes or is forecastable (covers
   // models that are forecast=true but not compete=true).
   const roster = useMemo(
     () =>
       Object.entries(algos)
-        .filter(([, a]) => a.enabled && (a.compete || a.forecast))
+        .filter(([id, a]) => isForecastModelId(id) && a.enabled && (a.compete || a.forecast))
         .map(([id, a]) => ({ id, type: a.type })),
     [algos],
   );
@@ -92,7 +93,10 @@ export function SweepBuilder({ onClose }: { onClose: () => void }) {
 
   // Default the model subset to the current production champion pair once config loads.
   const championModels = useMemo(
-    () => (pipelineConfig?.champion as { models?: string[] } | undefined)?.models ?? [],
+    () =>
+      ((pipelineConfig?.champion as { models?: string[] } | undefined)?.models ?? []).filter(
+        isForecastModelId,
+      ),
     [pipelineConfig],
   );
   useEffect(() => {
@@ -122,9 +126,11 @@ export function SweepBuilder({ onClose }: { onClose: () => void }) {
 
   const PRESETS: { label: string; models: string[] }[] = [
     { label: "Current champion", models: championModels },
-    { label: "All tree", models: byType("tree") },
-    { label: "All foundation", models: byType("foundation") },
-    { label: "Tree + foundation", models: [...byType("tree"), ...byType("foundation")] },
+    { label: "N-HiTS + N-BEATS", models: byType("deep_learning") },
+    {
+      label: "LightGBM + Chronos 2E",
+      models: [...byType("tree"), ...byType("foundation")],
+    },
     { label: "All competing", models: competing },
   ];
 
@@ -201,7 +207,7 @@ export function SweepBuilder({ onClose }: { onClose: () => void }) {
             </div>
             {/* Presets */}
             <div className="flex flex-wrap gap-1.5 mb-2">
-              {PRESETS.filter((p) => p.models.length > 0).map((p) => (
+              {PRESETS.filter((p) => p.models.length >= 2).map((p) => (
                 <button
                   key={p.label}
                   type="button"

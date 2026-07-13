@@ -26,6 +26,7 @@ FROM agg_inventory_monthly a
 LEFT JOIN fact_safety_stock_targets s ON a.item_id = s.item_id AND a.loc = s.loc
 WHERE a.month_start = (SELECT MAX(month_start) FROM agg_inventory_monthly)
 GROUP BY a.item_id
-HAVING COUNT(DISTINCT a.loc) >= 2;
+HAVING COUNT(DISTINCT a.loc) >= 2
+WITH NO DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_netbal_item ON mv_network_balance (item_id);

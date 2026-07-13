@@ -64,7 +64,7 @@ export function DemandAtRisk({ filters }: Props) {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Demand at Risk</CardTitle>
-          <ExportButtons panelId="demand-at-risk" getData={() => chartData as unknown as Record<string, unknown>[]} />
+          <ExportButtons panelId="demand-at-risk" getData={() => chartData} />
         </div>
         <p className="text-xs text-muted-foreground">Waterfall: total demand minus risk categories = secure demand</p>
       </CardHeader>
@@ -79,10 +79,15 @@ export function DemandAtRisk({ filters }: Props) {
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis tickFormatter={(v: number) => fmtNum(v)} tick={{ fontSize: 10 }} />
               <Tooltip
-                formatter={(v: number, _name: string, props: { payload: { label: string; value: number } }) => [
-                  `${fmtNum(props.payload.value)} cases`,
-                  props.payload.label,
-                ]}
+                formatter={(value: number, _name: string, item) => {
+                  const payload = item.payload as
+                    | { label?: string; value?: number }
+                    | undefined;
+                  return [
+                    `${fmtNum(payload?.value ?? value)} cases`,
+                    payload?.label ?? "Demand",
+                  ];
+                }}
               />
               <Bar dataKey="displayValue" radius={[4, 4, 0, 0]}>
                 {chartData.map((d, i) => (

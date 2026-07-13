@@ -26,7 +26,6 @@ from typing import Any
 
 import pandas as pd
 import psycopg
-import yaml
 from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
@@ -35,16 +34,19 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.ml.champion import (
+from common.core.constants import FORECAST_QTY_COL  # noqa: E402 — after sys.path bootstrap
+from common.core.db import get_db_params  # noqa: E402 — after sys.path bootstrap
+from common.core.sql_helpers import read_sql_chunked  # noqa: E402 — after sys.path bootstrap
+from common.core.utils import (  # noqa: E402 — after sys.path bootstrap
+    get_competing_model_ids,
+    load_forecast_pipeline_config,
+)
+from common.ml.champion import (  # noqa: E402 — after sys.path bootstrap
     STRATEGY_REGISTRY,
     compute_ceiling,
     compute_strategy_accuracy,
 )
-from common.core.constants import FORECAST_QTY_COL
-from common.core.db import get_db_params
-from common.core.sql_helpers import read_sql_chunked  # noqa: E402 — after sys.path bootstrap
-from common.services.perf_profiler import profiled_section
-from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
+from common.services.perf_profiler import profiled_section  # noqa: E402 — after sys.path bootstrap
 
 
 def load_monthly_errors(
@@ -229,14 +231,6 @@ DEFAULT_SIMULATIONS: dict[str, dict[str, Any]] = {
         "min_prior_months": 3,
         "validation_months": 3,
     },
-    "hybrid_meta_router": {
-        "strategy": "hybrid_meta_router",
-        "min_prior_months": 3,
-        "meta_model_path": str(ROOT / "data" / "champion" / "meta_learner.joblib"),
-        "performance_window": 6,
-        "confidence_threshold": 0.6,
-        "blend_top_k": 3,
-    },
     "per_segment": {
         "strategy": "per_segment",
         "min_prior_months": 3,
@@ -392,7 +386,11 @@ def _run_single_strategy(
         return {"sim_name": sim_name, "error": f"Unknown strategy: {strategy_name}"}
 
     strat_kwargs = {k: v for k, v in sim_cfg.items() if k != "strategy"}
-    if strategy_name in ("meta_learner", "hybrid_meta_router", "per_cluster", "cluster_regime_hybrid"):
+    if strategy_name in (
+        "meta_learner",
+        "per_cluster",
+        "cluster_regime_hybrid",
+    ):
         strat_kwargs["dfu_features"] = dfu_features
 
     t0 = time.time()

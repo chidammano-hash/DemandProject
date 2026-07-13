@@ -1,17 +1,26 @@
 /**
  * ModelReadinessCard -- Step 1 of the ForecastPanel.
  *
- * Per-model readiness table: train, generate, and promote each model
- * (plus the champion ensemble row). Pure presentation; all state and
- * handlers are lifted in from ForecastPanel.
+ * Per-model readiness table: train and generate diagnostic candidates, then
+ * publish only the governed champion ensemble. Pure presentation; all state
+ * and handlers are lifted in from ForecastPanel.
  */
-import { Loader2, CheckCircle2, Dumbbell, BarChart3, Crown, RotateCcw } from "lucide-react";
+import {
+  Loader2,
+  CheckCircle2,
+  Dumbbell,
+  BarChart3,
+  Crown,
+  RotateCcw,
+  ShieldCheck,
+  AlertTriangle,
+} from "lucide-react";
 
 import type { ChampionExperiment } from "@/api/queries/champion-experiments";
 import type {
   TrainingStatusMap,
   StagingSummaryMap,
-  PromotionStatus,
+  SnapshotRosterReadiness,
 } from "@/api/queries/backtest-management";
 import { modelLabel, MODEL_TYPE_COLORS } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
@@ -36,62 +45,70 @@ interface ModelReadinessCardProps {
   forecastAlgos: ForecastAlgorithm[];
   trainingStatus: TrainingStatusMap | undefined;
   staging: StagingSummaryMap;
-  treeAlgos: ForecastAlgorithm[];
-  trainedTreeCount: number;
-  allTreesTrained: boolean;
+  trainableAlgos: ForecastAlgorithm[];
+  trainedArtifactCount: number;
+  allRequiredArtifactsReady: boolean;
   isTraining: boolean;
   trainingModelId: string | null;
   generatingModelId: string | null;
   isGenerating: boolean;
   promotingModelId: string | null;
-  isSubmitting: boolean;
-  promotedModel: PromotionStatus | null;
   promotedExperiment: ChampionExperiment | null;
   championConstituents: string[];
   championMissingModels: string[];
-  championCanGenerate: boolean;
   championReady: boolean;
   championDfuCount: number;
   isChampionPromoted: boolean;
+  snapshotReadiness: SnapshotRosterReadiness | undefined;
+  isPreparingPublish: boolean;
   onTrain: (modelId: string) => void;
   onTrainAll: () => void;
   onGenerate: (modelId: string) => void;
   onGenerateAll: () => void;
   generatableCount: number;
   onPromote: (modelId: string) => void;
-  onGenerateChampion: () => void;
+  onPreparePublish: (pipeline: "model-refresh" | "forecast-publish") => void;
 }
 
 export function ModelReadinessCard({
   forecastAlgos,
   trainingStatus,
   staging,
-  treeAlgos,
-  trainedTreeCount,
-  allTreesTrained,
+  trainableAlgos,
+  trainedArtifactCount,
+  allRequiredArtifactsReady,
   isTraining,
   trainingModelId,
   generatingModelId,
   isGenerating,
   promotingModelId,
-  isSubmitting,
-  promotedModel,
   promotedExperiment,
   championConstituents,
   championMissingModels,
-  championCanGenerate,
   championReady,
   championDfuCount,
   isChampionPromoted,
+  snapshotReadiness,
+  isPreparingPublish,
   onTrain,
   onTrainAll,
   onGenerate,
   onGenerateAll,
   generatableCount,
   onPromote,
-  onGenerateChampion,
+  onPreparePublish,
 }: ModelReadinessCardProps) {
   const isGeneratingAll = generatingModelId === "__all__";
+  const snapshotEvidenceReady = snapshotReadiness?.ready === true;
+  const championPublishReady = championReady && snapshotEvidenceReady;
+  const shouldPrepareRelease =
+    snapshotReadiness?.action_pipeline != null &&
+    (!snapshotEvidenceReady || !championReady);
+  const readinessPipeline = snapshotReadiness?.action_pipeline ?? "forecast-publish";
+  const preparationLabel =
+    readinessPipeline === "model-refresh" ? "Refresh Models" : "Prepare Release";
+  const preparationProgressLabel =
+    readinessPipeline === "model-refresh" ? "Refreshing Models..." : "Preparing Release...";
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -102,33 +119,30 @@ export function ModelReadinessCard({
           </CardTitle>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">
-              {trainedTreeCount}/{treeAlgos.length} tree models production-ready
+              {trainingStatus
+                ? `${trainedArtifactCount}/${trainableAlgos.length} production artifacts ready`
+                : "Checking production artifacts..."}
             </span>
-            {!allTreesTrained && treeAlgos.length > 0 && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onTrainAll}
-                disabled={isTraining || allTreesTrained}
-              >
+            {trainingStatus && !allRequiredArtifactsReady && trainableAlgos.length > 0 ? (
+              <Button size="sm" variant="outline" onClick={onTrainAll} disabled={isTraining}>
                 {isTraining && trainingModelId === "__all__" ? (
                   <>
                     <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                    Training All...
+                    Training Models...
                   </>
                 ) : (
                   <>
                     <Dumbbell className="mr-1.5 h-3 w-3" />
-                    Train All Tree Models
+                    Train Production Models
                   </>
                 )}
               </Button>
-            )}
-            {allTreesTrained && (
+            ) : null}
+            {trainingStatus && allRequiredArtifactsReady ? (
               <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 text-[10px]">
-                All Ready
+                Required Artifacts Ready
               </Badge>
-            )}
+            ) : null}
             {/* Generate staging forecasts for every ready model in one click. */}
             <Button
               size="sm"
@@ -137,7 +151,7 @@ export function ModelReadinessCard({
               disabled={isGenerating || generatableCount === 0}
               title={
                 generatableCount === 0
-                  ? "Train tree models first — no models are ready to generate."
+                  ? "No retained model is ready; check model configuration and artifacts."
                   : `Generate staging forecasts for ${generatableCount} ready model(s)`
               }
             >
@@ -157,6 +171,58 @@ export function ModelReadinessCard({
         </div>
       </CardHeader>
       <CardContent className="p-0">
+        <div
+          className={cn(
+            "mx-4 mb-3 flex min-h-14 items-center justify-between gap-4 rounded-lg border px-3 py-2",
+            championPublishReady
+              ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20"
+              : "border-amber-200 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20"
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex min-w-0 items-start gap-2">
+            {championPublishReady ? (
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            )}
+            <div className="min-w-0">
+              <p className="text-xs font-semibold">
+                {snapshotReadiness
+                  ? `Champion + ${snapshotReadiness.ready_contender_count}/${snapshotReadiness.required_contender_count} contenders ready`
+                  : "Checking champion + top-three publish evidence..."}
+              </p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {championPublishReady
+                  ? "The current champion candidate and exact snapshot roster can be published."
+                  : (snapshotReadiness?.stale_reason ??
+                    "Waiting for current release evidence before promotion is enabled.")}
+              </p>
+            </div>
+          </div>
+          {shouldPrepareRelease ? (
+            <Button
+              size="sm"
+              onClick={() => onPreparePublish(readinessPipeline)}
+              disabled={isPreparingPublish}
+              className="h-9 shrink-0"
+              title="Run the canonical Forecast Publish workflow and monitor each job"
+            >
+              {isPreparingPublish ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  {preparationProgressLabel}
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                  {preparationLabel}
+                </>
+              )}
+            </Button>
+          ) : null}
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -219,22 +285,6 @@ export function ModelReadinessCard({
                     >
                       <CheckCircle2 className="h-3 w-3" /> N/A
                     </Badge>
-                    {/* Generate creates one immutable run from the promoted champion routing artifact. */}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[11px] gap-1"
-                      onClick={onGenerateChampion}
-                      disabled={isSubmitting || !championCanGenerate}
-                      title={
-                        championCanGenerate
-                          ? "Generate one immutable champion release candidate"
-                          : `Train first: ${championMissingModels.join(", ")}`
-                      }
-                    >
-                      <BarChart3 className="h-3 w-3" />
-                      Generate
-                    </Button>
                     {promotingModelId === "champion" ? (
                       <Button
                         size="sm"
@@ -261,11 +311,12 @@ export function ModelReadinessCard({
                         variant="outline"
                         className="h-7 px-2 text-[11px] gap-1"
                         onClick={() => onPromote("champion")}
-                        disabled={!championReady || promotingModelId !== null}
+                        disabled={!championPublishReady || promotingModelId !== null}
                         title={
-                          championReady
+                          championPublishReady
                             ? "Promote champion forecasts to production"
-                            : `Generate first: ${championMissingModels.join(", ")}`
+                            : (snapshotReadiness?.stale_reason ??
+                              `Prepare release first: ${championMissingModels.join(", ")}`)
                         }
                       >
                         <Crown className="h-3 w-3" />
@@ -279,17 +330,12 @@ export function ModelReadinessCard({
             {forecastAlgos.map((algo) => {
               const status = trainingStatus?.[algo.id];
               const needsTraining = requiresTraining(algo.type);
-              const isTrained = status?.trained ?? false;
-              const isProductionTrained = isTrained && status?.training_mode === "production";
+              const isProductionReady = status?.ready === true;
               const isCurrentlyTraining =
                 isTraining && (trainingModelId === algo.id || trainingModelId === "__all__");
 
               const staged = staging[algo.id];
               const hasStagedForecast = staged != null && staged.row_count > 0;
-              const isPromotable = staged?.run_status === "ready" && staged.promotion_eligible;
-              const isCurrentPromoted = Boolean(
-                staged?.source_run_id && promotedModel?.source_run_id === staged.source_run_id
-              );
 
               return (
                 <TableRow key={algo.id}>
@@ -313,10 +359,11 @@ export function ModelReadinessCard({
                   </TableCell>
                   <TableCell>
                     <TrainingStatusIndicator
-                      trained={isTrained}
+                      trained={isProductionReady}
                       trainingMode={status?.training_mode ?? null}
                       trainedAt={status?.trained_at ?? null}
                       needsTraining={needsTraining}
+                      staleReason={status?.stale_reason}
                     />
                   </TableCell>
                   {/* Staging column - shows staged forecast DFU count */}
@@ -333,7 +380,7 @@ export function ModelReadinessCard({
                   {/* Actions column - 3 buttons: Train, Generate, Promote */}
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {/* Train (tree models only) */}
+                      {/* Persisted-artifact models can be trained or retrained here. */}
                       {needsTraining ? (
                         isCurrentlyTraining ? (
                           <Button
@@ -345,7 +392,7 @@ export function ModelReadinessCard({
                             <Loader2 className="h-3 w-3 animate-spin" />
                             Training...
                           </Button>
-                        ) : isProductionTrained ? (
+                        ) : isProductionReady ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -395,8 +442,13 @@ export function ModelReadinessCard({
                           variant="outline"
                           className="h-7 px-2 text-[11px] gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
                           onClick={() => onGenerate(algo.id)}
-                          disabled={isGenerating}
-                          title="Click to re-generate"
+                          disabled={isGenerating || (needsTraining && !isProductionReady)}
+                          title={
+                            needsTraining && !isProductionReady
+                              ? (status?.stale_reason ??
+                                "Prepare a current production artifact before generating")
+                              : "Click to re-generate"
+                          }
                         >
                           <CheckCircle2 className="h-3 w-3" /> Generated
                           <RotateCcw className="h-3 w-3 opacity-50" />
@@ -407,55 +459,26 @@ export function ModelReadinessCard({
                           variant="outline"
                           className="h-7 px-2 text-[11px] gap-1"
                           onClick={() => onGenerate(algo.id)}
-                          disabled={isGenerating || (algo.type === "tree" && !isProductionTrained)}
+                          disabled={isGenerating || (needsTraining && !isProductionReady)}
+                          title={
+                            needsTraining && !isProductionReady
+                              ? (status?.stale_reason ??
+                                "Prepare a current production artifact before generating")
+                              : undefined
+                          }
                         >
                           <BarChart3 className="h-3 w-3" />
                           Generate
                         </Button>
                       )}
 
-                      {/* Promote */}
-                      {promotingModelId === algo.id ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-[11px] gap-1"
-                          disabled
-                        >
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Promoting...
-                        </Button>
-                      ) : isCurrentPromoted ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-[11px] gap-1 text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100"
-                          disabled
-                          title="This release is currently published"
-                        >
-                          <Crown className="h-3 w-3" /> Promoted
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-[11px] gap-1"
-                          onClick={() => onPromote(algo.id)}
-                          disabled={!isPromotable || promotingModelId !== null}
-                          title={
-                            isPromotable
-                              ? "Promote this exact generation run"
-                              : "Generate a new release candidate first"
-                          }
-                        >
-                          {promotingModelId === algo.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Crown className="h-3 w-3" />
-                          )}
-                          Promote
-                        </Button>
-                      )}
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] text-muted-foreground"
+                        title="Individual candidates are diagnostic; only the governed champion can be published"
+                      >
+                        Diagnostic only
+                      </Badge>
                     </div>
                   </TableCell>
                 </TableRow>

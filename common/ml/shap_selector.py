@@ -6,8 +6,8 @@ Pipeline stages (all per-timeframe, causal — computed on training data only):
   Stage 2: Correlation-based pre-filter (drop lower-variance member of pairs > threshold)
   Stage 3: SHAP cumulative-importance selection (existing, on reduced set)
 
-Model-specific SHAP extractors (LGBM / XGBoost vs CatBoost native) are passed
-as callables so this module stays framework-agnostic.
+The LightGBM SHAP extractor is passed as a callable so feature-selection logic
+stays independent of estimator construction.
 
 Typical flow per backtest timeframe:
   1. Train initial model on all features.
@@ -286,69 +286,31 @@ def compute_shap_global(
     feature_cols: list[str],
     cat_cols: list[str],
 ) -> np.ndarray:
-    """Extract |SHAP| values via native pred_contribs (XGBoost, LGBM) or shap.TreeExplainer.
-
-    Uses native XGBoost pred_contribs when available (avoids shap library issues
-    with categorical dtypes). Falls back to shap.TreeExplainer for LGBM.
+    """Extract LightGBM |SHAP| values via native contributions or TreeExplainer.
 
     Returns absolute SHAP values, shape (n_samples, n_features).
     """
-    # XGBoost: use native pred_contribs (more reliable than shap library with categoricals)
     module_name = type(model).__module__.split(".")[0].lower()
-    if module_name == "xgboost" or hasattr(model, "get_booster"):
-        try:
-            import xgboost as xgb
-            booster = model.get_booster() if hasattr(model, "get_booster") else model
-            dmatrix = xgb.DMatrix(X_sample, enable_categorical=True)
-            full = booster.predict(dmatrix, pred_contribs=True)
-            return np.abs(full[:, :-1])  # strip baseline column
-        except Exception:
-            pass  # fall through to shap.TreeExplainer
+    if module_name != "lightgbm" and not hasattr(model, "booster_"):
+        raise ValueError("SHAP feature selection supports only LightGBM artifacts")
 
-    # LGBM: use native pred_contrib (avoids shap library dtype issues)
-    if module_name == "lightgbm" or hasattr(model, "booster_"):
-        try:
-            # Ensure categorical columns have category dtype to match model training
-            for col in cat_cols:
-                if col in X_sample.columns and X_sample[col].dtype.name != "category":
-                    X_sample = X_sample.copy()
-                    X_sample[col] = X_sample[col].astype("category")
-            full = model.predict(X_sample, pred_contrib=True)
-            return np.abs(full[:, :-1])  # strip baseline column
-        except Exception:
-            pass  # fall through to shap.TreeExplainer
+    try:
+        # Ensure categorical columns have category dtype to match model training.
+        for col in cat_cols:
+            if col in X_sample.columns and X_sample[col].dtype.name != "category":
+                X_sample = X_sample.copy()
+                X_sample[col] = X_sample[col].astype("category")
+        full = model.predict(X_sample, pred_contrib=True)
+        return np.abs(full[:, :-1])  # strip baseline column
+    except (TypeError, ValueError, RuntimeError):
+        logger.debug("LightGBM native SHAP failed; using TreeExplainer", exc_info=True)
 
     # Fallback: shap.TreeExplainer
     import shap  # lazy import — not required for module-level usage
 
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X_sample)
-    if isinstance(shap_values, list):
-        # Multi-output: average across outputs
-        shap_values = np.mean([np.abs(sv) for sv in shap_values], axis=0)
     return np.abs(shap_values)
-
-
-def compute_shap_catboost(
-    model: Any,
-    X_sample: pd.DataFrame,
-    feature_cols: list[str],
-    cat_cols: list[str],
-) -> np.ndarray:
-    """Extract |SHAP| values via CatBoost native ShapValues (no shap library needed).
-
-    CatBoost's get_feature_importance(type="ShapValues") returns shape
-    (n_samples, n_features + 1) — the last column is the baseline expected
-    value and must be stripped.
-
-    Returns absolute SHAP values, shape (n_samples, n_features).
-    """
-    import catboost as cb
-
-    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-    pool = cb.Pool(X_sample, cat_features=cat_indices)
-    shap_matrix = model.get_feature_importance(data=pool, type="ShapValues")
-    return np.abs(shap_matrix[:, :-1])  # strip baseline column
 
 
 # ---------------------------------------------------------------------------

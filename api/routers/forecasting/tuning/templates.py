@@ -10,11 +10,7 @@ from fastapi.responses import Response as FastAPIResponse
 from api.core import set_cache
 from common.core.utils import get_algorithm_params
 
-from ._helpers import (
-    MODEL_ID_MAP,
-    _MODEL_PARAM_KEYS,
-    _validate_model,
-)
+from ._helpers import _MODEL_PARAM_KEYS, MODEL_ID_MAP, _validate_model
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +28,17 @@ def get_templates(model: str, response: FastAPIResponse):
         tmpl_cfg = load_config("tuning_templates.yaml")
     except (FileNotFoundError, OSError):
         logger.exception("Failed to load tuning_templates.yaml")
-        raise HTTPException(status_code=500, detail="Failed to load templates")
+        raise HTTPException(status_code=500, detail="Failed to load templates") from None
 
     model_templates = tmpl_cfg.get("templates", {}).get(model, [])
 
-    # For templates with source='algorithm_config' or 'pipeline_config', load live params
+    # Pipeline-backed templates load the current canonical model parameters.
     enriched: list[dict[str, Any]] = []
     live_params: dict[str, Any] | None = None
 
     for tmpl in model_templates:
         entry = dict(tmpl)
-        if entry.get("source") in ("algorithm_config", "pipeline_config"):
+        if entry.get("source") == "pipeline_config":
             # Lazy-load live params from forecast_pipeline_config.yaml
             if live_params is None:
                 live_params = _load_live_params(model)

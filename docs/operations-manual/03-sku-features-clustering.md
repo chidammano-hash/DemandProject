@@ -281,7 +281,7 @@ The stats used for matching come from `compute_cluster_demand_stats()`:
 
 ### 5.2 When to regenerate this file
 
-`/Users/manoharchidambaram/projects/DemandProject/config/forecasting/cluster_tuning_profiles.yaml` is **auto-generated** by `scripts/tune_cluster_hyperparams.py` (invoked via `make tune-clusters` or `make tune-lgbm-clusters`). After a clustering re-promotion, profiles are flagged stale; re-run per-cluster tuning to regenerate the override block.
+`/Users/manoharchidambaram/projects/DemandProject/config/forecasting/cluster_tuning_profiles.yaml` is **auto-generated** by `scripts/ml/tune_cluster_hyperparams.py` (invoked via `make tune-clusters` or `make tune-lgbm-clusters`). After a clustering re-promotion, profiles are flagged stale; re-run per-cluster tuning to regenerate the override block.
 
 ---
 

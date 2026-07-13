@@ -89,7 +89,7 @@ Minimum data: each SKU needs `min_months_history` (default 12) months of sales w
 
 | Script | Purpose |
 |---|---|
-| `scripts/run_clustering_scenario.py` | `run_scenario()` -- full pipeline orchestrator (used by both UI and CLI) |
+| `scripts/ml/run_clustering_scenario.py` | `run_scenario()` -- full pipeline orchestrator (used by both UI and CLI) |
 | `scripts/ml/run_cluster_pipeline.py` | `run_unified_pipeline()` -- creates experiment row, runs, auto-promotes |
 
 ### System Diagram
@@ -418,7 +418,7 @@ Cluster experiments cannot be deleted if:
 
 ### CLI Argument
 
-`scripts/run_backtest.py` accepts `--cluster-override`:
+`scripts/ml/run_backtest.py` accepts `--cluster-override`:
 
 ```python
 parser.add_argument("--cluster-override", type=str, default=None,
@@ -922,4 +922,3 @@ scikit-learn, pandas, numpy, scipy, matplotlib, seaborn, MLflow
 - [../02-forecasting/19-forecast-pipeline-config](../02-forecasting/19-forecast-pipeline-config.md) -- `cluster_strategy` config key
 - [../07-user-experience/04-job-scheduler](../07-user-experience/04-job-scheduler.md) -- Background scenario execution
 - [../02-forecasting/11-unified-model-tuning-v2](../02-forecasting/11-unified-model-tuning-v2.md) -- Algorithm tuning studio (cluster source selector)
-- [../02-forecasting/13-production-baseline-seeding](../02-forecasting/13-production-baseline-seeding.md) -- Auto-seeds production baselines

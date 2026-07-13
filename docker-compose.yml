@@ -12,7 +12,7 @@ services:
     # satisfy against THIS (primary) ceiling:
     #   GUNICORN_WORKERS x (POOL_MAX_SIZE + ASYNC_POOL_MAX_SIZE) + overhead
     #       <= max_connections
-    # Defaults: 4 x (12 + 20) = 128 <= 200. The read-replica pool
+    # Forecasting-stable default: 1 x (12 + 20) = 32 <= 200. The read-replica pool
     # (GUNICORN_WORKERS x READ_POOL_MAX_SIZE) counts against the REPLICA's
     # own max_connections, not this one. Enforced by `make deploy-check`.
     command: >
@@ -102,8 +102,19 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      # The scheduler and job locks are process-local. Enforce one worker here
+      # so a developer's .env cannot silently duplicate scheduled/model jobs.
+      GUNICORN_WORKERS: "1"
     ports:
       - "${API_HOST_PORT:-8000}:8000"
+    volumes:
+      # Forecast jobs run inside the API container and must share the host's
+      # normalized inputs, backtests, champion winners, and immutable models.
+      - ./data:/app/data
+      # Tuning and promoted configuration updates must survive image rebuilds;
+      # tree artifact checksums intentionally bind to these exact files.
+      - ./config:/app/config
     depends_on:
       postgres:
         condition: service_healthy

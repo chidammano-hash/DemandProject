@@ -27,40 +27,40 @@ class TestGenerateSummaryChampion:
 
     def test_single_dfu_single_month(self):
         winners = self._make_winners([
-            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_global",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 110.0, 100.0),
         ])
-        summary = generate_summary(winners, "champion", 1, {"models": ["lgbm_global", "catboost_global"]})
+        summary = generate_summary(winners, "champion", 1, {"models": ["lgbm_cluster", "mstl"]})
         assert summary["total_dfus"] == 1
         assert summary["total_dfu_months"] == 1
-        assert summary["model_wins"] == {"lgbm_global": 1}
+        assert summary["model_wins"] == {"lgbm_cluster": 1}
         # WAPE = |110-100| / |100| * 100 = 10.0
         assert summary["overall_champion_wape"] == pytest.approx(10.0, abs=0.01)
         assert summary["overall_champion_accuracy_pct"] == pytest.approx(90.0, abs=0.01)
 
     def test_multiple_months_same_dfu(self):
         winners = self._make_winners([
-            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_global",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 110.0, 100.0),
-            ("ITEM1", "GRP1", "LOC1", date(2024, 4, 1), "catboost_global",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 4, 1), "mstl",
              0.2, 90.0, 100.0),
         ])
-        summary = generate_summary(winners, "champion", 2, {"models": ["lgbm_global", "catboost_global"]})
+        summary = generate_summary(winners, "champion", 2, {"models": ["lgbm_cluster", "mstl"]})
         assert summary["total_dfus"] == 1  # same DFU
         assert summary["total_dfu_months"] == 2  # two months
-        assert summary["model_wins"]["lgbm_global"] == 1
-        assert summary["model_wins"]["catboost_global"] == 1
+        assert summary["model_wins"]["lgbm_cluster"] == 1
+        assert summary["model_wins"]["mstl"] == 1
         # WAPE = (|110-100| + |90-100|) / |100+100| * 100 = 20/200 * 100 = 10.0
         assert summary["overall_champion_wape"] == pytest.approx(10.0, abs=0.01)
 
     def test_multiple_dfus(self):
         winners = self._make_winners([
-            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_global",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 150.0, 100.0),
-            ("ITEM2", "GRP1", "LOC1", date(2024, 3, 1), "catboost_global",
+            ("ITEM2", "GRP1", "LOC1", date(2024, 3, 1), "mstl",
              0.2, 80.0, 100.0),
         ])
-        summary = generate_summary(winners, "champion", 2, {"models": ["lgbm_global", "catboost_global"]})
+        summary = generate_summary(winners, "champion", 2, {"models": ["lgbm_cluster", "mstl"]})
         assert summary["total_dfus"] == 2
         assert summary["total_dfu_months"] == 2
         # WAPE = (|150-100| + |80-100|) / |100+100| * 100 = 70/200 * 100 = 35.0
@@ -143,7 +143,7 @@ class TestGenerateSummaryFallback:
             "lag": "execution",
             "min_dfu_rows": 3,
             "fallback_model_id": "lgbm_cluster",
-            "models": ["lgbm_cluster", "catboost_cluster"],
+            "models": ["lgbm_cluster", "mstl"],
         }
         summary = generate_summary(winners, "champion", 1, cfg, fallback_inserted=5)
         assert summary["fallback_rows_inserted"] == 5
@@ -154,13 +154,13 @@ class TestGenerateSummaryFallback:
             ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 100.0, 100.0),
         ]
-        cfg = {"models": ["lgbm_cluster", "catboost_cluster"]}
+        cfg = {"models": ["lgbm_cluster", "mstl"]}
         summary = generate_summary(winners, "champion", 1, cfg)
         assert summary["fallback_rows_inserted"] == 0
 
     def test_fallback_model_id_none_when_not_configured(self):
         winners = []
-        cfg = {"models": ["lgbm_cluster", "catboost_cluster"]}
+        cfg = {"models": ["lgbm_cluster", "mstl"]}
         summary = generate_summary(winners, "champion", 0, cfg)
         assert summary["config"]["fallback_model_id"] is None
 
@@ -173,7 +173,7 @@ class TestInsertFallbackChampions:
     could not tell which model produced the forecast and silently substituted its
     own model_selection.fallback_model_id (lgbm_cluster) when loading the .pkl —
     even though the champion forecast value was actually the champion-config
-    fallback (seasonal_naive). NULL must mean only "legacy pre-column", never a
+    fallback (MSTL). NULL must mean only "legacy pre-column", never a
     row this script wrote with a known source.
     """
 
@@ -186,7 +186,7 @@ class TestInsertFallbackChampions:
             cur,
             lag_mode=lag_mode,
             champion_model_id="champion",
-            fallback_model_id="seasonal_naive",
+            fallback_model_id="mstl",
             champion_experiment_id=33,
         )
         sql, params = cur.execute.call_args[0]
@@ -201,9 +201,9 @@ class TestInsertFallbackChampions:
 
     def test_fallback_insert_binds_fallback_model_to_source(self):
         # The fallback model id must be bound as a parameter so source_model_id
-        # is populated with the model whose forecast was copied (seasonal_naive).
+        # is populated with the model whose forecast was copied (MSTL).
         _, params = self._capture("execution")
-        assert "seasonal_naive" in params
+        assert "mstl" in params
 
     def test_fallback_insert_stamps_results_experiment(self):
         sql, params = self._capture("execution")
@@ -212,7 +212,7 @@ class TestInsertFallbackChampions:
 
     def test_fallback_insert_binds_fallback_for_fixed_lag(self):
         _, params = self._capture("1")
-        assert "seasonal_naive" in params
+        assert "mstl" in params
 
 
 class TestLoadConfig:
@@ -239,6 +239,17 @@ class TestLoadConfig:
             with pytest.raises(ValueError, match="Invalid metric"):
                 load_config(Path("unused.yaml"))
 
+    @pytest.mark.parametrize("metric", ["crps", "pinball"])
+    def test_load_config_rejects_unimplemented_probabilistic_metric(self, metric):
+        from scripts.ml.run_champion_selection import load_config
+
+        with patch(
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
+            return_value={"metric": metric, "models": ["a", "b"]},
+        ):
+            with pytest.raises(ValueError, match="Invalid metric"):
+                load_config(Path("unused.yaml"))
+
     def test_load_config_too_few_models(self):
         from scripts.ml.run_champion_selection import load_config
         with patch(
@@ -259,7 +270,7 @@ class TestLoadConfig:
                 "metric": "wape",
                 "lag": "execution",
                 "min_dfu_rows": 5,
-                "models": ["lgbm_global", "catboost_global"],
+                "models": ["lgbm_cluster", "mstl"],
             },
         ):
             cfg = load_config(Path("unused.yaml"))
@@ -316,7 +327,7 @@ class TestLoadConfig:
             "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
-                "models": ["lgbm_cluster", "catboost_cluster"],
+                "models": ["lgbm_cluster", "mstl"],
             },
         ):
             cfg = load_config(Path("unused.yaml"))
@@ -329,12 +340,12 @@ class TestLoadConfig:
             "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
-                "models": ["lgbm_cluster", "catboost_cluster"],
-                "fallback_model_id": "catboost_cluster",
+                "models": ["lgbm_cluster", "mstl"],
+                "fallback_model_id": "mstl",
             },
         ):
             cfg = load_config(Path("unused.yaml"))
-            assert cfg["fallback_model_id"] == "catboost_cluster"
+            assert cfg["fallback_model_id"] == "mstl"
 
 
 class TestComputeSegmentAccuracy:
@@ -347,7 +358,7 @@ class TestComputeSegmentAccuracy:
             "customer_group": ["G1", "G1", "G1"],
             "loc": ["L1", "L1", "L1"],
             "startdate": [date(2024, 1, 1)] * 3,
-            "model_id": ["lgbm"] * 3,
+            "model_id": ["lgbm_cluster"] * 3,
             "basefcst_pref": [110.0, 90.0, 200.0],
             "tothist_dmd": [100.0, 100.0, 200.0],
             "ml_cluster": ["A", "A", "B"],
@@ -419,7 +430,7 @@ class TestGenerateSummaryPerSegment:
 
     def test_per_segment_analysis_included(self):
         winners = [
-            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 110.0, 100.0),
         ]
         segment_data = {
@@ -438,7 +449,7 @@ class TestGenerateSummaryPerSegment:
         }
         summary = generate_summary(
             winners, "champion", 1,
-            {"models": ["lgbm", "catboost"]},
+            {"models": ["lgbm_cluster", "mstl"]},
             per_segment_analysis=segment_data,
         )
         assert "per_cluster_analysis" in summary
@@ -449,24 +460,24 @@ class TestGenerateSummaryPerSegment:
 
     def test_no_per_segment_when_none(self):
         winners = [
-            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 100.0, 100.0),
         ]
         summary = generate_summary(
             winners, "champion", 1,
-            {"models": ["lgbm", "catboost"]},
+            {"models": ["lgbm_cluster", "mstl"]},
         )
         assert "per_cluster_analysis" not in summary
         assert "per_abc_analysis" not in summary
 
     def test_empty_per_segment_dict(self):
         winners = [
-            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm",
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
              0.1, 100.0, 100.0),
         ]
         summary = generate_summary(
             winners, "champion", 1,
-            {"models": ["lgbm", "catboost"]},
+            {"models": ["lgbm_cluster", "mstl"]},
             per_segment_analysis={},
         )
         assert "per_cluster_analysis" not in summary
@@ -484,14 +495,14 @@ class TestLoadCachedWinners:
             "customer_group": ["G1", "G1"],
             "loc": ["L1", "L1"],
             "startdate": ["2024-03-01", "2024-04-01"],
-            "model_id": ["lgbm_cluster", "catboost_cluster"],
+            "model_id": ["lgbm_cluster", "mstl"],
             "prior_wape": [0.1, 0.2],
             "basefcst_pref": [110.0, 90.0],
             "tothist_dmd": [100.0, 100.0],
         })
         df.to_csv(csv_path, index=False)
 
-        models = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"]
+        models = ["lgbm_cluster", "mstl", "nhits"]
         winners_df, winners, is_ensemble = _load_cached_winners(csv_path, models)
 
         assert len(winners_df) == 2
@@ -515,7 +526,7 @@ class TestLoadCachedWinners:
         })
         df.to_csv(csv_path, index=False)
 
-        models = ["lgbm_cluster", "catboost_cluster"]
+        models = ["lgbm_cluster", "mstl"]
         _winners_df, winners, is_ensemble = _load_cached_winners(csv_path, models)
 
         assert len(winners) == 2
@@ -649,43 +660,14 @@ class TestRunChampionResultsLoadCaching:
 
 
 class TestChampionCandidateRoster:
-    """Invariants on the champion candidate roster (forecast_pipeline_config.yaml).
+    """Champion defaults must remain on the canonical five-model roster."""
 
-    The LIVE champion selection path (competition.py, run_champion_selection.py)
-    derives its candidate pool from ``get_competing_model_ids()`` — every algorithm
-    with ``compete: true`` — NOT from the ``champion.models`` list, which is a
-    documentation + sweep-default fallback. rolling_mean must be a candidate so the
-    stable low-CV non-seasonal tail can route to it (validated 2026-06-20 to lift the
-    tail without regressing the volume-weighted headline).
-    """
+    def test_champion_models_list_matches_competing_roster(self):
+        from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
 
-    def test_rolling_mean_is_a_competing_candidate(self):
-        from common.core.utils import get_competing_model_ids
-
-        assert "rolling_mean" in get_competing_model_ids(), (
-            "rolling_mean must have compete: true so the champion can route the "
-            "non-seasonal tail to it"
-        )
-
-    def test_rolling_median_is_a_competing_candidate(self):
-        from common.core.utils import get_competing_model_ids
-
-        assert "rolling_median" in get_competing_model_ids(), (
-            "rolling_median must have compete: true so the champion can route the "
-            "outlier-prone segments (F-07 level steps / F-01 spikes) to it"
-        )
-
-    def test_champion_models_list_includes_rolling_mean(self):
-        from common.core.utils import load_forecast_pipeline_config
-
-        champion_models = load_forecast_pipeline_config()["champion"]["models"]
-        assert "rolling_mean" in champion_models
-
-    def test_champion_models_list_includes_rolling_median(self):
-        from common.core.utils import load_forecast_pipeline_config
-
-        champion_models = load_forecast_pipeline_config()["champion"]["models"]
-        assert "rolling_median" in champion_models
+        champion_models = set(load_forecast_pipeline_config()["champion"]["models"])
+        assert champion_models == set(get_competing_model_ids())
+        assert len(champion_models) == 5
 
     def test_champion_models_list_is_subset_of_competing_roster(self):
         # The documented list must never reference a non-competing model, or

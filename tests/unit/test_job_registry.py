@@ -6,17 +6,15 @@ mocked so no running database is needed.
 """
 from __future__ import annotations
 
-import json
 import signal
 import threading
-from datetime import datetime, timezone
-from typing import Any
-from unittest.mock import MagicMock, patch, call
+from copy import deepcopy
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from common.services.job_state import JobTypeDef, _row_to_dict
-
+from common.services.job_state import JobTypeDef, _serialize_job_row
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,9 +124,19 @@ class TestJobTypeRegistry:
             assert val.label
             assert callable(val.callable)
 
+    def test_forecast_jobs_defer_to_pipeline_config_by_default(self):
+        from common.services.job_registry import JOB_TYPE_REGISTRY
+
+        generate = JOB_TYPE_REGISTRY["generate_production_forecast"]
+        assert generate.params_schema["horizon"] is None
+        assert generate.params_schema["confidence_intervals"] is None
+
+        train = JOB_TYPE_REGISTRY["train_production_model"]
+        assert train.params_schema == {"model_id": None, "all_models": True}
+
     def test_groups_are_valid_strings(self):
         from common.services.job_registry import JOB_TYPE_REGISTRY
-        for key, val in JOB_TYPE_REGISTRY.items():
+        for val in JOB_TYPE_REGISTRY.values():
             assert isinstance(val.group, str)
             assert len(val.group) > 0
 
@@ -154,25 +162,58 @@ class TestJobManagerSingleton:
         b = JobManager()
         assert a is not b
 
+    def test_start_initializes_scheduler(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+        manager = JobManager()
+        manager.start()
+        assert manager._initialized is True
+
+    def test_shutdown_stops_running_scheduler(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+        manager = JobManager()
+        manager.start()
+        manager._scheduler.running = True
+        manager.shutdown()
+        manager._scheduler.shutdown.assert_called_once_with(wait=False)
+        assert manager._initialized is False
+
+    def test_start_and_shutdown_are_idempotent(self, mock_db):
+        from common.services.job_registry import JobManager
+
+        scheduler = MagicMock()
+        scheduler.running = True
+        with patch(
+            "common.services.job_registry.make_scheduler",
+            return_value=scheduler,
+        ) as make_scheduler:
+            manager = JobManager()
+            manager.start()
+            manager.start()
+            manager.shutdown()
+            manager.shutdown()
+
+        make_scheduler.assert_called_once_with()
+        scheduler.shutdown.assert_called_once_with(wait=False)
+
 
 # ---------------------------------------------------------------------------
-# Tests: _row_to_dict helper
+# Tests: job-row serialization helper
 # ---------------------------------------------------------------------------
 
 class TestRowToDict:
-    """Tests for the _row_to_dict helper from job_state."""
+    """Tests for the job-row serializer from job_state."""
 
     def test_basic_mapping(self):
         cols = ("a", "b", "c")
         row = (1, "two", 3.0)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result == {"a": 1, "b": "two", "c": 3.0}
 
     def test_datetime_conversion(self):
         cols = ("submitted_at", "started_at")
         dt = datetime(2026, 1, 1, 12, 0, 0)
         row = (dt, None)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result["submitted_at"] == dt.isoformat()
         assert result["started_at"] is None
 
@@ -180,32 +221,32 @@ class TestRowToDict:
         """JSON params should be parsed if string, or passed through if dict."""
         cols = ("params", "result")
         row = ('{"key": "val"}', None)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result["params"] == {"key": "val"}
         assert result["result"] is None
 
     def test_params_already_dict(self):
         cols = ("params",)
         row = ({"key": "val"},)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result["params"] == {"key": "val"}
 
     def test_logs_string_parsed(self):
         cols = ("logs",)
         row = ('[{"ts": "12:00:00", "pct": 50, "msg": "test"}]',)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result["logs"] == [{"ts": "12:00:00", "pct": 50, "msg": "test"}]
 
     def test_logs_list_passthrough(self):
         cols = ("logs",)
         row = ([{"ts": "12:00:00", "pct": 50, "msg": "test"}],)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result["logs"] == [{"ts": "12:00:00", "pct": 50, "msg": "test"}]
 
     def test_logs_null_returns_empty_list(self):
         cols = ("logs",)
         row = (None,)
-        result = _row_to_dict(cols, row)
+        result = _serialize_job_row(cols, row)
         assert result["logs"] == []
 
 
@@ -216,6 +257,14 @@ class TestRowToDict:
 class TestSubmitJob:
     """Tests for job submission."""
 
+    @pytest.fixture(autouse=True)
+    def _backtest_run_reservation(self):
+        with patch(
+            "common.services.job_registry._reserve_backtest_run",
+            return_value=71,
+        ):
+            yield
+
     def test_submit_unknown_type_raises(self, mock_db, mock_scheduler):
         from common.services.job_registry import JobManager
         mgr = JobManager()
@@ -223,7 +272,7 @@ class TestSubmitJob:
             mgr.submit_job("nonexistent_type")
 
     def test_submit_valid_type_returns_job_id(self, mock_db, mock_scheduler):
-        from common.services.job_registry import JobManager, JOB_TYPE_REGISTRY
+        from common.services.job_registry import JobManager
         mgr = JobManager()
         # Use a real registered type
         job_id = mgr.submit_job("cluster_pipeline", params={"k_range": [3, 8]})
@@ -274,6 +323,23 @@ class TestSubmitJob:
         job_id = mgr.submit_job("cluster_pipeline", label="Custom Label")
         assert job_id.startswith("job_")
 
+    def test_submit_owns_params_used_by_scheduler(self, mock_db, mock_scheduler):
+        from common.services.job_registry import JobManager
+
+        params = {"feature_params": {"windows": [6, 12]}}
+        manager = JobManager()
+        job_id = manager.submit_job("cluster_pipeline", params=params)
+
+        dispatch = next(
+            call_args
+            for call_args in mock_scheduler.add_job.call_args_list
+            if call_args.kwargs.get("id") == job_id
+        )
+        scheduled_params = dispatch.kwargs["args"][2]
+        params["feature_params"]["windows"].append(24)
+
+        assert scheduled_params == {"feature_params": {"windows": [6, 12]}}
+
 
 # ---------------------------------------------------------------------------
 # Tests: cancel_job
@@ -294,10 +360,11 @@ class TestCancelJob:
         mgr = JobManager()
         mgr._ensure_init()
 
-        # Mock DB to return a running job (14 cols including pid)
+        # Mock DB to return a running job (including persisted pipeline identity).
         mock_db.execute.return_value.fetchone.return_value = (
             "job_123", "cluster_pipeline", "Test", "running", "{}", None,
-            None, None, None, None, 0, "", "[]", None
+            None, None, None, None, 0, "", "[]", None, "pipe_123", 1,
+            0, 0, "clustering", "attempt-123", None, False, None,
         )
         with patch("common.services.job_registry.get_job_pid", return_value=None):
             result = mgr.cancel_job("job_123")
@@ -311,9 +378,16 @@ class TestCancelJob:
 
         mock_db.execute.return_value.fetchone.return_value = (
             "job_123", "cluster_pipeline", "Test", "running", "{}", None,
-            None, None, None, None, 0, "", "[]", 5555
+            None, None, None, None, 0, "", "[]", 5555, "pipe_123", 1,
+            0, 0, "clustering", "attempt-123", None, False, None,
         )
+        identity = {
+            "start_marker": "Sun Jul 12 03:00:00 2026",
+            "command_marker": "cluster-pipeline",
+        }
         with patch("common.services.job_registry.get_job_pid", return_value=5555), \
+             patch("common.services.job_registry.get_job_process_identity", return_value=identity), \
+             patch("common.services.job_registry.process_identity_matches", side_effect=[True, False]), \
              patch("common.services.job_registry.os.killpg") as m_killpg, \
              patch("common.services.job_registry.os.getpgid", return_value=5555):
             mgr.cancel_job("job_123")
@@ -324,10 +398,11 @@ class TestCancelJob:
         mgr = JobManager()
         mgr._ensure_init()
 
-        # Mock DB to return a completed job (14 cols including pid)
+        # Mock DB to return a completed job (including persisted pipeline identity).
         mock_db.execute.return_value.fetchone.return_value = (
             "job_123", "cluster_pipeline", "Test", "completed", "{}", None,
-            None, None, None, None, 100, "Done", "[]", None
+            None, None, None, None, 100, "Done", "[]", None, "pipe_123", 1,
+            0, 0, "clustering", "attempt-123", None, False, None,
         )
         result = mgr.cancel_job("job_123")
         assert result is False
@@ -341,7 +416,7 @@ class TestGetTypes:
     """Tests for listing registered job types."""
 
     def test_get_types_returns_all(self, mock_db, mock_scheduler):
-        from common.services.job_registry import JobManager, JOB_TYPE_REGISTRY
+        from common.services.job_registry import JOB_TYPE_REGISTRY, JobManager
         mgr = JobManager()
         types = mgr.get_types()
         assert len(types) == len(JOB_TYPE_REGISTRY)
@@ -394,6 +469,86 @@ class TestSubmitPipeline:
             label="Multi-step",
         )
         assert pipe_id.startswith("pipe_")
+
+    def test_pipeline_labels_and_metadata_advance_from_first_to_second_step(
+        self,
+        mock_db,
+        mock_scheduler,
+    ):
+        from common.services.job_registry import JobManager
+
+        steps = [
+            {
+                "job_type": "cluster_pipeline",
+                "params": {"k_range": [3, 8]},
+                "label": "Cluster demand",
+            },
+            {
+                "job_type": "seasonality_pipeline",
+                "params": {"time_window_months": 24},
+                "label": "Refresh seasonality",
+            },
+        ]
+        original_steps = deepcopy(steps)
+        manager = JobManager()
+
+        with patch.object(manager, "submit_job") as submit_job:
+            pipeline_id = manager.submit_pipeline(steps, label="Forecast refresh")
+
+            first_call = submit_job.call_args
+            first_params = first_call.kwargs["params"]
+            assert first_call.kwargs["label"] == (
+                "[Forecast refresh 1/2] Cluster demand"
+            )
+            assert first_call.kwargs["pipeline_id"] == pipeline_id
+            assert first_call.kwargs["pipeline_step"] == 1
+            assert first_params["__pipeline_step"] == 1
+            assert first_params["__pipeline_total_steps"] == 2
+            assert first_params["__pipeline_label"] == "Forecast refresh"
+
+            submit_job.reset_mock()
+            manager._trigger_next_pipeline_step(
+                pipeline_id,
+                first_params["__pipeline_remaining"],
+                first_params,
+            )
+
+            second_call = submit_job.call_args
+            second_params = second_call.kwargs["params"]
+            assert second_call.kwargs["label"] == (
+                "[Forecast refresh 2/2] Refresh seasonality"
+            )
+            assert second_call.kwargs["triggered_by"] == "pipeline"
+            assert second_call.kwargs["pipeline_id"] == pipeline_id
+            assert second_call.kwargs["pipeline_step"] == 2
+            assert second_params == {
+                "time_window_months": 24,
+                "__pipeline_step": 2,
+                "__pipeline_total_steps": 2,
+                "__pipeline_remaining": [],
+                "__pipeline_label": "Forecast refresh",
+            }
+
+        assert steps == original_steps
+
+    def test_pipeline_rejects_invalid_later_step_before_submitting_first(
+        self,
+        mock_db,
+        mock_scheduler,
+    ):
+        from common.services.job_registry import JobManager
+
+        manager = JobManager()
+        with patch.object(manager, "submit_job") as submit_job:
+            with pytest.raises(ValueError, match="Unknown job type"):
+                manager.submit_pipeline(
+                    steps=[
+                        {"job_type": "cluster_pipeline", "params": {}},
+                        {"job_type": "not_registered", "params": {}},
+                    ],
+                )
+
+        submit_job.assert_not_called()
 
     def test_pipeline_unknown_type_raises(self, mock_db, mock_scheduler):
         from common.services.job_registry import JobManager
@@ -513,7 +668,7 @@ class TestExecuteJob:
         # Queue a pending job
         pending_type_def = _make_type_def(type_id="pending_job", group="grp1")
         mgr._pending_queues["grp1"] = [
-            ("pending_id", pending_type_def, {}, 0, None)
+            ("pending_id", pending_type_def, {}, 0, 0, None)
         ]
 
         # Register current job as active
@@ -550,6 +705,12 @@ class TestRecoverStaleJobs:
         type_def = _make_type_def(type_id="backtest_nhits", group="backtest_dl")
         job = {"params": {"backtest_run_id": 53, "model_id": "nhits"}}
         with (
+            patch(
+                "common.services.job_registry.verify_backtest_artifact_identity"
+            ),
+            patch(
+                "common.services.job_registry.verify_backtest_tracking_identity"
+            ),
             patch("common.services.job_state._auto_load_backtest") as auto_load,
             patch("common.services.job_state._update_backtest_run_on_completion") as update_run,
         ):

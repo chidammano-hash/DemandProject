@@ -39,7 +39,6 @@ from common.core.constants import FORECAST_QTY_COL
 from common.core.db import get_db_params
 from common.core.sql_helpers import read_sql_chunked
 from common.core.utils import load_forecast_pipeline_config, get_competing_model_ids
-from common.ml.model_registry import build_tree_classifier, fit_tree_classifier
 from common.services.perf_profiler import profiled_section
 
 
@@ -218,14 +217,6 @@ _CLASSIFIER_PARAM_KEYS: dict[str, tuple[str, ...]] = {
         "random_state",
         "n_jobs",
     ),
-    "xgboost": (
-        "n_estimators",
-        "max_depth",
-        "learning_rate",
-        "random_state",
-        "n_jobs",
-        "eval_metric",
-    ),
 }
 
 
@@ -246,7 +237,7 @@ def _resolve_classifier_params(
     if model_type not in _CLASSIFIER_PARAM_KEYS:
         raise ValueError(
             f"Unknown meta-learner classifier {model_type!r}. "
-            "Expected 'random_forest' or 'xgboost'."
+            "Expected 'random_forest'."
         )
 
     cfg = _load_meta_learner_config()
@@ -275,22 +266,11 @@ def train_classifier(
 
     classifier_params = _resolve_classifier_params(model_type, kwargs)
 
-    if model_type == "xgboost":
-        from sklearn.preprocessing import LabelEncoder
+    from sklearn.ensemble import RandomForestClassifier
 
-        le = LabelEncoder()
-        y_train_enc = le.fit_transform(y_train)
-        # y_test encoding not needed — evaluation uses string labels
-        clf = build_tree_classifier("xgboost", classifier_params)
-        fit_tree_classifier(clf, "xgboost", X_train, y_train_enc)
-        y_pred_enc = clf.predict(X_test)
-        y_pred = le.inverse_transform(y_pred_enc)
-    else:
-        from sklearn.ensemble import RandomForestClassifier
-
-        clf = RandomForestClassifier(**classifier_params)
-        clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_test)
+    clf = RandomForestClassifier(**classifier_params)
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
 
     accuracy = accuracy_score(y_test, y_pred)
     report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
@@ -314,7 +294,8 @@ def main() -> None:
         "--model-type",
         type=str,
         default=None,
-        help="Classifier type: random_forest or xgboost (overrides config)",
+        choices=["random_forest"],
+        help="Classifier type (only random_forest is supported)",
     )
     parser.add_argument(
         "--output",

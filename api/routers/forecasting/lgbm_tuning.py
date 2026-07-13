@@ -549,7 +549,7 @@ def get_run_months(run_id: int, response: FastAPIResponse):
 # Promote to production
 # ---------------------------------------------------------------------------
 
-# Known LGBM hyperparameter keys that belong in algorithm_config.yaml
+# Known LightGBM keys persisted in forecast_pipeline_config.yaml.
 _LGBM_PARAM_KEYS = {
     "n_estimators", "learning_rate", "num_leaves", "min_child_samples",
     "max_depth", "min_gain_to_split", "subsample", "bagging_freq",

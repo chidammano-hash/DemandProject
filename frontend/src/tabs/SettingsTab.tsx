@@ -22,9 +22,6 @@ import {
   fetchConfigList,
   fetchConfigDetail,
   updateConfig,
-  resetConfig,
-  type ConfigCategory,
-  type ConfigListItem,
   type ConfigField,
 } from "@/api/queries/config";
 
@@ -221,7 +218,7 @@ function ModelToggleGrid({
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
       {fields.map((f) => {
         const isOn = !!editValues[f.path];
-        const modelType = (f as unknown as Record<string, unknown>).model_type as string | undefined;
+        const modelType = f.model_type;
         return (
           <button
             key={f.path}
@@ -378,13 +375,6 @@ export function SettingsTab() {
       setTimeout(() => setSaveStatus("idle"), 2000);
     },
     onError: () => setSaveStatus("error"),
-  });
-
-  const resetMutation = useMutation({
-    mutationFn: () => resetConfig(selectedConfig!),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: configKeys.detail(selectedConfig!) });
-    },
   });
 
   // --- Handlers ---

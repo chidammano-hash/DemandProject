@@ -1,13 +1,12 @@
 """
 Hyperparameter tuning for tree-based cluster models (Feature 41).
 
-Tunes LGBM, CatBoost, and XGBoost using Optuna Bayesian optimisation with
+Tunes LightGBM using Optuna Bayesian optimisation with
 walk-forward cross-validation that respects demand-forecasting causality.
 
 Usage:
     uv run python scripts/tune_hyperparams.py --model lgbm
-    uv run python scripts/tune_hyperparams.py --model catboost --n-trials 20
-    uv run python scripts/tune_hyperparams.py --model xgboost --output-dir data/tuning
+    uv run python scripts/tune_hyperparams.py --model lgbm --n-trials 20
 
 Outputs:
     data/tuning/best_params_<model>.json   — best params for backtest scripts
@@ -56,7 +55,7 @@ from common.ml.tuning import (
     trial_best_rounds_or_max,
 )
 
-TREE_MODEL_PREFIXES = ("lgbm", "catboost", "xgboost")
+TREE_MODEL_PREFIXES = ("lgbm",)
 DFU_KEY_COLS = ["item_id", "customer_group", "loc"]
 
 
@@ -292,15 +291,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        choices=["lgbm", "catboost", "xgboost"],
-        required=True,
-        help="Model to tune",
+        choices=["lgbm"],
+        default="lgbm",
+        help="Model to tune (the canonical tree model)",
     )
     parser.add_argument(
         "--model-id",
         type=str,
         default=None,
-        help="Pipeline model id to tune, e.g. lgbm_cust_enriched",
+        help="Canonical pipeline model id to tune (lgbm_cluster)",
     )
     parser.add_argument("--n-trials", type=int, default=None, help="Override n_trials from config")
     parser.add_argument(
@@ -411,8 +410,7 @@ def main() -> None:
     output_dir = Path(args.output_dir or (ROOT / t_cfg["output_dir"]))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # CatBoost uses str dtype for categoricals; LGBM and XGBoost use "category"
-    cat_dtype = "str" if model_name == "catboost" else "category"
+    cat_dtype = "category"
     output_stem = resolved_model_id if args.model_id else model_name
     include_customer_features = bool(
         (algo_entry.get("params", {}) if algo_entry else {}).get("customer_features", False)

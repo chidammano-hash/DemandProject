@@ -5,32 +5,30 @@ Blends short-horizon demand sensing signals with statistical forecasts
 using a linearly decaying alpha weight over the sensing horizon.
 
 Usage:
-    uv run python scripts/compute_blended_forecast.py
-    uv run python scripts/compute_blended_forecast.py --item-no 100320 --loc 1401-BULK
-    uv run python scripts/compute_blended_forecast.py --dry-run
+    uv run python scripts/forecasting/compute_blended_forecast.py
+    uv run python scripts/forecasting/compute_blended_forecast.py --item-no 100320 --loc 1401-BULK
+    uv run python scripts/forecasting/compute_blended_forecast.py --dry-run
 
-Config: config/forecasting/forecast_domain_config.yaml (quantile_forecast section)
+Config: config/forecasting/forecast_domain_config.yaml (optional sensing section)
 """
 
 from __future__ import annotations
 
 import argparse
-import yaml
-import psycopg
-from datetime import date, timedelta
-from typing import Optional
-
 import sys
+from datetime import date, timedelta
 from pathlib import Path
+
+import psycopg
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.core.db import get_db_params
-from common.core.planning_date import get_planning_date
-from common.services.perf_profiler import profiled_section
-from common.core.utils import load_config as _load_config
+from common.core.db import get_db_params  # noqa: E402
+from common.core.planning_date import get_planning_date  # noqa: E402
+from common.core.utils import load_config as _load_config  # noqa: E402
+from common.services.perf_profiler import profiled_section  # noqa: E402
 
 SENSING_HORIZON_WEEKS = 4
 OUTLIER_THRESHOLD = 3.0
@@ -136,8 +134,8 @@ def upsert_blend_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
 
 def fetch_sensing_data(
     conn: psycopg.Connection,
-    item_id: Optional[str],
-    loc: Optional[str],
+    item_id: str | None,
+    loc: str | None,
     today: date,
 ) -> list[dict]:
     """Fetch latest demand signals from fact_demand_signals."""
@@ -179,8 +177,8 @@ def fetch_sensing_data(
 
 def fetch_statistical_forecast(
     conn: psycopg.Connection,
-    item_id: Optional[str],
-    loc: Optional[str],
+    item_id: str | None,
+    loc: str | None,
     today: date,
     months_ahead: int = 2,
 ) -> list[dict]:
@@ -222,8 +220,8 @@ def fetch_statistical_forecast(
 
 
 def run(
-    item_id: Optional[str] = None,
-    loc: Optional[str] = None,
+    item_id: str | None = None,
+    loc: str | None = None,
     dry_run: bool = False,
     plan_version: str = "latest",
 ) -> dict:
@@ -254,7 +252,7 @@ def run(
         for f in forecasts:
             stat_lookup[(f["item_id"], f["loc"])].append(f)
 
-        # Generate blended forecast for each DFU × week
+        # Generate blended forecast for each DFU x week
         all_dfus = set(signal_lookup.keys()) | set(stat_lookup.keys())
 
         # Pre-compute constants that are the same for every DFU

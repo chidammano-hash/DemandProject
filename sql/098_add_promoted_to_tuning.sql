@@ -1,5 +1,5 @@
 -- 098: Add promote-to-production support for tuning runs
--- Allows exactly one promoted run PER MODEL (lgbm, catboost, xgboost).
+-- Allows exactly one promoted run per LightGBM tuning model ID.
 
 ALTER TABLE lgbm_tuning_run
     ADD COLUMN IF NOT EXISTS is_promoted BOOLEAN NOT NULL DEFAULT FALSE,

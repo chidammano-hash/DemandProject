@@ -5,7 +5,7 @@
  * submission, and DB-loading for both tunable and non-tunable models.
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,14 +49,37 @@ export interface ModelTrainingStatus {
   model_id: string;
   type: string;
   trained: boolean;
+  /** True only when the server validated this model against current inputs. */
+  ready: boolean;
   trained_at: string | null;
   training_mode: string | null;
   n_dfus: number | null;
   planning_date: string | null;
+  artifact_id?: string | null;
+  stale_reason?: string | null;
 }
 
 export interface TrainingStatusMap {
   [model_id: string]: ModelTrainingStatus;
+}
+
+export interface SnapshotContenderReadiness {
+  model_id: string;
+  rank: number;
+  ready: boolean;
+  stale_reason: string | null;
+}
+
+export interface SnapshotRosterReadiness {
+  planning_month: string;
+  ready: boolean;
+  champion_ready: boolean;
+  roster_model_count: number;
+  ready_contender_count: number;
+  required_contender_count: number;
+  contenders: SnapshotContenderReadiness[];
+  stale_reason: string | null;
+  action_pipeline: "model-refresh" | "forecast-publish" | null;
 }
 
 /** Promotion status — the currently active promoted model. */
@@ -108,7 +131,7 @@ export interface StagingSummary {
 export type StagingSummaryMap = Record<string, StagingSummary>;
 
 /** Promote response. */
-export interface PromoteResponse {
+export interface BacktestPromotionResponse {
   model_id: string;
   promotion_type: string;
   plan_version: string;
@@ -127,6 +150,7 @@ export interface PromoteResponse {
 export const backtestMgmtKeys = {
   summary: ["backtest-management", "summary"] as const,
   trainingStatus: ["backtest-management", "training-status"] as const,
+  snapshotRosterReadiness: ["backtest-management", "snapshot-roster-readiness"] as const,
   promotionStatus: ["backtest-management", "promotion-status"] as const,
   candidateSummary: ["backtest-management", "candidate-summary"] as const,
   stagingSummary: ["backtest-management", "staging-summary"] as const,
@@ -168,6 +192,11 @@ export async function fetchBacktestCurrent(modelId: string): Promise<Record<stri
 /** Fetch training status for all forecastable models. */
 export async function fetchTrainingStatus(): Promise<TrainingStatusMap> {
   return fetchJson<TrainingStatusMap>("/backtest-management/training-status");
+}
+
+/** Validate the current champion plus exact top-three publish evidence. */
+export async function fetchSnapshotRosterReadiness(): Promise<SnapshotRosterReadiness> {
+  return fetchJson<SnapshotRosterReadiness>("/backtest-management/snapshot-roster-readiness");
 }
 
 /** Fetch staging forecast summary per model. */
@@ -274,9 +303,9 @@ export async function fetchCandidateSummary(): Promise<CandidateSummaryMap> {
 export async function submitPromote(
   modelId: string,
   sourceRunId: string
-): Promise<PromoteResponse> {
+): Promise<BacktestPromotionResponse> {
   const qs = new URLSearchParams({ source_run_id: sourceRunId });
-  return fetchJson<PromoteResponse>(`/backtest-management/${modelId}/promote?${qs}`, {
+  return fetchJson<BacktestPromotionResponse>(`/backtest-management/${modelId}/promote?${qs}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

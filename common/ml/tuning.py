@@ -25,8 +25,6 @@ logger = logging.getLogger(__name__)
 
 ITERATION_PARAM_BY_MODEL = {
     "lgbm": "n_estimators",
-    "catboost": "iterations",
-    "xgboost": "n_estimators",
 }
 
 
@@ -290,10 +288,12 @@ def prepare_fold_features(
 
     Tuning entry points rebuild train/validation folds repeatedly, so this
     helper keeps the feature treatment aligned before the shared registry fit:
-    categorical columns are cast to the dtype each backend expects, additional
+    categorical columns are cast to LightGBM's category dtype, additional
     object/string feature columns are treated as categoricals, and numeric
     feature gaps are zero-filled consistently in both train and validation.
     """
+    if model_name != "lgbm":
+        raise ValueError(f"Unknown tree model: {model_name!r}. Expected 'lgbm'.")
     X_tr = X_train.copy()
     X_va = X_val.copy()
     metadata_cols = [col for col in X_tr.columns if col in METADATA_COLS]
@@ -321,15 +321,11 @@ def prepare_fold_features(
         if col in effective_cat_cols:
             train_values = X_tr[col].astype(object).fillna("__NA__").astype(str)
             val_values = X_va[col].astype(object).fillna("__NA__").astype(str)
-            if model_name == "catboost":
-                X_tr[col] = train_values
-                X_va[col] = val_values
-            else:
-                categories = pd.Index(
-                    pd.unique(pd.concat([train_values, val_values], ignore_index=True))
-                )
-                X_tr[col] = pd.Categorical(train_values, categories=categories)
-                X_va[col] = pd.Categorical(val_values, categories=categories)
+            categories = pd.Index(
+                pd.unique(pd.concat([train_values, val_values], ignore_index=True))
+            )
+            X_tr[col] = pd.Categorical(train_values, categories=categories)
+            X_va[col] = pd.Categorical(val_values, categories=categories)
             continue
 
         X_tr[col] = X_tr[col].fillna(0)
@@ -360,7 +356,7 @@ def _train_fold(
     """Shared per-fold trainer routed through model_registry.
 
     Builds the estimator via :func:`build_tree_model` (no direct
-    ``LGBMRegressor`` / ``CatBoostRegressor`` / ``XGBRegressor`` instantiation
+    direct ``LGBMRegressor`` instantiation
     in this module) and fits it through :func:`fit_model` so the early-stopping
     behaviour, eval-metric handling, and categorical-feature wiring exactly
     match the production training path.
@@ -433,100 +429,9 @@ def train_lgbm_fold(
     )
 
 
-def train_catboost_fold(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: np.ndarray,
-    cat_cols: list[str],
-    params: dict,
-    n_estimators_max: int,
-    early_stopping_rounds: int,
-) -> tuple[np.ndarray, int]:
-    """Train CatBoost with early stopping on one CV fold. Returns (preds, best_rounds).
-
-    Routes through :func:`common.ml.model_registry.build_tree_model` and
-    :func:`common.ml.model_registry.fit_model`.  Note that ``fit_model`` uses
-    ``iterations`` (the native CatBoost name) — :func:`build_tree_model`
-    translates ``n_estimators`` -> ``iterations`` via the canonical mapping
-    layer.
-    """
-    import catboost as cb
-
-    # Build manually here to use 'iterations' kwarg directly (CatBoost native).
-    from common.ml.model_registry import build_tree_model, fit_model, get_best_iteration
-
-    full_params = {
-        "iterations": n_estimators_max,
-        **params,
-    }
-    model = build_tree_model("catboost", full_params)
-
-    X_train_prepared, X_val_prepared, effective_cat_cols = prepare_fold_features(
-        "catboost",
-        X_train,
-        X_val,
-        cat_cols,
-    )
-    feature_cols = list(X_train_prepared.columns)
-    fit_model(
-        model,
-        "catboost",
-        X_train_prepared,
-        y_train,
-        X_val_prepared,
-        y_val,
-        effective_cat_cols,
-        feature_cols,
-        cb,
-        n_estimators_max,
-        early_stopping_rounds=early_stopping_rounds,
-    )
-
-    preds = np.maximum(model.predict(X_val_prepared), 0)
-    best_rounds = get_best_iteration(model, "catboost") or n_estimators_max
-    return preds, best_rounds
-
-
-def train_xgboost_fold(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: np.ndarray,
-    cat_cols: list[str],
-    params: dict,
-    n_estimators_max: int,
-    early_stopping_rounds: int,
-) -> tuple[np.ndarray, int]:
-    """Train XGBoost with early stopping on one CV fold. Returns (preds, best_rounds).
-
-    Routes through :func:`common.ml.model_registry.build_tree_model` and
-    :func:`common.ml.model_registry.fit_model`.  ``fit_model`` configures
-    ``early_stopping_rounds`` and the WAPE eval metric via ``set_params``;
-    the constructor only carries the static config defaults.
-    """
-    import xgboost as xgb
-
-    return _train_fold(
-        "xgboost",
-        X_train,
-        y_train,
-        X_val,
-        y_val,
-        cat_cols,
-        params,
-        n_estimators_max,
-        early_stopping_rounds,
-        constructor_extras={},
-        lib_module=xgb,
-    )
-
-
 # Registry used by tune_hyperparams.py and tune_for_timeframe()
 TRAIN_FOLD_FNS: dict[str, Callable] = {
     "lgbm": train_lgbm_fold,
-    "catboost": train_catboost_fold,
-    "xgboost": train_xgboost_fold,
 }
 
 
@@ -552,7 +457,7 @@ def tune_for_timeframe(
 
     Parameters
     ----------
-    model_name:     "lgbm" | "catboost" | "xgboost"
+    model_name:     ``"lgbm"``
     train_fold_fn:  Fold training function from TRAIN_FOLD_FNS
     full_grid:      Full feature matrix (all months). Internally filtered to <= cutoff_date.
     feature_cols:   Feature column names

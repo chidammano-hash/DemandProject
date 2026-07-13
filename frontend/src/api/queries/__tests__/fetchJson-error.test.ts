@@ -8,7 +8,8 @@
  * and the whole sanitization layer is bypassed).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchJson } from "@/api/queries/core";
+import { fetchJson as coreFetchJson } from "@/api/queries/core";
+import { fetchJson } from "@/api/queries/request";
 import { formatApiError, extractStatus } from "@/lib/formatApiError";
 
 describe("fetchJson error handling (U2.1)", () => {
@@ -16,6 +17,7 @@ describe("fetchJson error handling (U2.1)", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    sessionStorage.clear();
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -31,6 +33,20 @@ describe("fetchJson error handling (U2.1)", () => {
       json: () => Promise.resolve({ detail: "Not Found" }),
     };
   }
+
+  it("keeps the public core export wired to the leaf request helper", () => {
+    expect(coreFetchJson).toBe(fetchJson);
+  });
+
+  it("attaches the interactive JWT to shared API requests", async () => {
+    sessionStorage.setItem("ds_access_token", "planner-token");
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+
+    await fetchJson("/forecast/jobs");
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer planner-token");
+  });
 
   it("attaches the HTTP status to the thrown error", async () => {
     fetchMock.mockResolvedValue(notFoundResponse());

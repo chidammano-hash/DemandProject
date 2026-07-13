@@ -18,8 +18,6 @@ export interface JobGroupsPanelProps {
   onSubmit: (typeId: string, params: Record<string, unknown>, label: string) => void;
   onSchedule: (typeId: string) => void;
   submitting: boolean;
-  /** Render a custom inline panel for a specific job type (replaces the default Run button row) */
-  customCards?: Record<string, React.ReactNode>;
   /** Hide entire job groups by name (e.g., ["clustering"] — managed in dedicated tab) */
   hiddenGroups?: string[];
 }
@@ -27,7 +25,7 @@ export interface JobGroupsPanelProps {
 // ---------------------------------------------------------------------------
 // JobGroupsPanel
 // ---------------------------------------------------------------------------
-export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting, customCards, hiddenGroups }: JobGroupsPanelProps) {
+export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting, hiddenGroups }: JobGroupsPanelProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
 
   const hiddenSet = useMemo(() => new Set(hiddenGroups ?? []), [hiddenGroups]);
@@ -85,18 +83,6 @@ export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting, cus
             {isExpanded && (
               <div className="divide-y border-t bg-muted/20">
                 {types.map((t) => {
-                  const custom = customCards?.[t.type_id];
-                  if (custom) {
-                    return (
-                      <div key={t.type_id} className="px-4 py-3 space-y-3">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{t.label}</p>
-                          <p className="text-xs text-muted-foreground">{t.description}</p>
-                        </div>
-                        {custom}
-                      </div>
-                    );
-                  }
                   return (
                     <div
                       key={t.type_id}

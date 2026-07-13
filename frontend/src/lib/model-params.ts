@@ -222,12 +222,12 @@ export function getTemplates(model: ModelType): TemplateOption[] {
 
   return [
     template(
-      "production",
+      "production_baseline",
       "Current Production Settings",
       "The parameters currently running in production"
     ),
     template(
-      "aggressive_depth",
+      "curated_conservative",
       "Conservative (Stable Demand)",
       "Strong regularization for stable, low-variability items",
       {
@@ -240,12 +240,12 @@ export function getTemplates(model: ModelType): TemplateOption[] {
       }
     ),
     template(
-      "ultra_slow_lr",
+      "curated_high_precision",
       "High Precision (Long Training)",
       "Extended training for subtle patterns",
       { learning_rate: 0.008, n_estimators: 3000, subsample: 0.85, colsample_bytree: 0.85 }
     ),
-    template("feature_boost", "Intermittent Demand", "Regularized settings for sparse demand", {
+    template("curated_intermittent", "Intermittent Demand", "Regularized settings for sparse demand", {
       feature_fraction_bynode: 0.9,
       colsample_bytree: 0.9,
       min_child_samples: 100,
@@ -254,7 +254,7 @@ export function getTemplates(model: ModelType): TemplateOption[] {
       path_smooth: 12,
     }),
     template(
-      "balanced_champion",
+      "curated_balanced",
       "Balanced (Best All-Around)",
       "Balanced accuracy and training cost",
       {

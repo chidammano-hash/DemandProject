@@ -115,6 +115,6 @@ All features are recomputed per backtest cutoff to prevent future leakage.
 |---|---|
 | `common/ml/shap_selector.py` | Pipeline implementation (stages 0-3) |
 | `common/core/constants.py` | `DUPLICATE_FEATURE_ALIASES`, `PROTECTED_FEATURES`, `CAT_FEATURES` |
-| `scripts/run_backtest.py` | Builds `feature_selector_fn` closure with config params |
+| `scripts/ml/run_backtest.py` | Builds `feature_selector_fn` closure with config params |
 | `common/ml/backtest_framework.py` | Calls `feature_selector_fn` per timeframe (unchanged) |
 | `config/forecasting/forecast_pipeline_config.yaml` | Per-algorithm feature selection config |

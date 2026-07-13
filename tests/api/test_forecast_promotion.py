@@ -8,6 +8,10 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+from common.services.forecast_generation import (
+    GENERATOR_CONTRACT_METADATA_KEY,
+    GENERATOR_CONTRACT_VERSION,
+)
 from common.services.forecast_promotion import PromotionConflictError, PromotionResult
 from tests.api.conftest import make_pool
 
@@ -27,6 +31,45 @@ async def test_promote_requires_source_run_id_before_database_access():
             response = await client.post("/backtest-management/champion/promote")
 
     assert response.status_code == 422
+    pool.connection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_promote_rejects_retired_model_before_database_access():
+    pool, _, _ = make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/backtest-management/catboost_cluster/promote?source_run_id={RUN_ID}"
+            )
+
+    assert response.status_code == 404
+    pool.connection.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_id",
+    ["lgbm_cluster", "chronos2_enriched", "mstl", "nbeats", "nhits"],
+)
+async def test_promote_rejects_single_model_candidate_before_database_access(model_id: str):
+    pool, _, _ = make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/backtest-management/{model_id}/promote?source_run_id={RUN_ID}"
+            )
+
+    assert response.status_code == 409
+    assert response.json()["detail"].startswith("champion_release_required:")
     pool.connection.assert_not_called()
 
 
@@ -134,3 +177,9 @@ async def test_staging_summary_exposes_latest_candidate_source_run():
     assert summary["source_run_id"] == str(RUN_ID)
     assert summary["run_status"] == "ready"
     assert summary["promotion_eligible"] is True
+    staging_sql, staging_params = cursor.execute.call_args.args
+    assert "metadata ->> %s = %s" in staging_sql
+    assert staging_params == (
+        GENERATOR_CONTRACT_METADATA_KEY,
+        GENERATOR_CONTRACT_VERSION,
+    )

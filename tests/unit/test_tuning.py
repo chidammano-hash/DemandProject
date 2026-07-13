@@ -221,20 +221,12 @@ class TestBestRoundsToNEstimators:
 
 
 class TestTreeIterationParams:
-    @pytest.mark.parametrize(
-        ("model_name", "expected"),
-        [
-            ("lgbm", "n_estimators"),
-            ("catboost", "iterations"),
-            ("xgboost", "n_estimators"),
-        ],
-    )
-    def test_iteration_param_for_tree_model(self, model_name, expected):
-        assert iteration_param_for_model(model_name) == expected
+    def test_iteration_param_for_lightgbm(self):
+        assert iteration_param_for_model("lgbm") == "n_estimators"
 
     def test_iteration_param_unknown_model_raises(self):
         with pytest.raises(ValueError, match="Unknown tree model"):
-            iteration_param_for_model("prophet")
+            iteration_param_for_model("retired_model")
 
     def test_trial_best_rounds_uses_trial_attr(self):
         trial = SimpleNamespace(user_attrs={"best_n_estimators": 137})
@@ -301,7 +293,7 @@ class TestParamsJsonRoundtrip:
             out = Path(tmpdir) / "p.json"
             save_best_params(
                 output_path=out,
-                model_name="catboost",
+                model_name="lgbm",
                 best_wape=0.20,  # 20%
                 best_n_estimators=300,
                 best_params={"depth": 6},
@@ -320,10 +312,10 @@ class TestParamsJsonRoundtrip:
     def test_output_dir_created_if_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             nested = Path(tmpdir) / "subdir" / "deep"
-            out = nested / "best_params_xgboost.json"
+            out = nested / "best_params_lgbm.json"
             save_best_params(
                 output_path=out,
-                model_name="xgboost",
+                model_name="lgbm",
                 best_wape=0.15,
                 best_n_estimators=250,
                 best_params={"max_depth": 5},
@@ -374,10 +366,8 @@ class TestParamsJsonRoundtrip:
 
 
 class TestTrainFoldFnsRegistry:
-    def test_registry_has_all_three_models(self):
-        assert "lgbm" in TRAIN_FOLD_FNS
-        assert "catboost" in TRAIN_FOLD_FNS
-        assert "xgboost" in TRAIN_FOLD_FNS
+    def test_registry_contains_only_lightgbm(self):
+        assert set(TRAIN_FOLD_FNS) == {"lgbm"}
 
     def test_all_entries_are_callable(self):
         for name, fn in TRAIN_FOLD_FNS.items():
@@ -395,7 +385,7 @@ class TestPrepareFoldFeatures:
         assert X_va["region"].cat.categories.is_unique
         assert X_tr["region"].cat.categories.equals(X_va["region"].cat.categories)
 
-    def test_lgbm_and_xgboost_cast_categoricals_and_fill_numeric_gaps(self):
+    def test_lgbm_casts_categoricals_and_fills_numeric_gaps(self):
         X_train = pd.DataFrame(
             {
                 "region": ["WEST", None],
@@ -411,49 +401,20 @@ class TestPrepareFoldFeatures:
             }
         )
 
-        for model_name in ("lgbm", "xgboost"):
-            X_tr, X_va, effective_cat_cols = prepare_fold_features(
-                model_name,
-                X_train,
-                X_val,
-                ["region"],
-            )
-
-            assert effective_cat_cols == ["region", "brand"]
-            assert X_tr["region"].dtype.name == "category"
-            assert X_va["brand"].dtype.name == "category"
-            assert "__NA__" in X_tr["region"].cat.categories
-            assert "__NA__" in X_va["brand"].cat.categories
-            assert X_tr["qty_lag_1"].isna().sum() == 0
-            assert X_va["qty_lag_1"].isna().sum() == 0
-            assert X_tr["qty_lag_1"].iloc[1] == 0.0
-            assert X_va["qty_lag_1"].iloc[0] == 0.0
-
-    def test_catboost_casts_categoricals_to_strings(self):
-        X_train = pd.DataFrame(
-            {
-                "region": ["WEST", None],
-                "qty_lag_1": [10.0, np.nan],
-            }
-        )
-        X_val = pd.DataFrame(
-            {
-                "region": ["EAST", None],
-                "qty_lag_1": [np.nan, 20.0],
-            }
-        )
-
         X_tr, X_va, effective_cat_cols = prepare_fold_features(
-            "catboost",
+            "lgbm",
             X_train,
             X_val,
             ["region"],
         )
 
-        assert effective_cat_cols == ["region"]
-        assert X_tr["region"].tolist() == ["WEST", "__NA__"]
-        assert X_va["region"].tolist() == ["EAST", "__NA__"]
-        assert X_tr["region"].dtype == object
+        assert effective_cat_cols == ["region", "brand"]
+        assert X_tr["region"].dtype.name == "category"
+        assert X_va["brand"].dtype.name == "category"
+        assert "__NA__" in X_tr["region"].cat.categories
+        assert "__NA__" in X_va["brand"].cat.categories
+        assert X_tr["qty_lag_1"].isna().sum() == 0
+        assert X_va["qty_lag_1"].isna().sum() == 0
         assert X_tr["qty_lag_1"].iloc[1] == 0.0
         assert X_va["qty_lag_1"].iloc[0] == 0.0
 
@@ -491,7 +452,7 @@ class TestPrepareFoldFeatures:
 class TestFixedParams:
     def test_get_fixed_params_returns_copy(self):
         config = {
-            "xgboost": {
+            "lgbm": {
                 "fixed_params": {
                     "objective": "reg:absoluteerror",
                     "tree_method": "hist",
@@ -499,14 +460,14 @@ class TestFixedParams:
             },
         }
 
-        fixed = get_fixed_params("xgboost", config)
+        fixed = get_fixed_params("lgbm", config)
         fixed["tree_method"] = "approx"
 
-        assert config["xgboost"]["fixed_params"]["tree_method"] == "hist"
+        assert config["lgbm"]["fixed_params"]["tree_method"] == "hist"
 
     def test_merge_fixed_params_keeps_trial_params_authoritative(self):
         config = {
-            "catboost": {
+            "lgbm": {
                 "fixed_params": {
                     "loss_function": "RMSE",
                     "random_seed": 42,
@@ -516,7 +477,7 @@ class TestFixedParams:
         }
 
         params = merge_fixed_params(
-            "catboost",
+            "lgbm",
             config,
             {"depth": 8, "learning_rate": 0.05},
         )

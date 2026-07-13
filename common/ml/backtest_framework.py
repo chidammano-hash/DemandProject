@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import psycopg
+from psycopg import sql
 
 from common.core.constants import (
     ARCHIVE_COLS,
@@ -43,6 +44,7 @@ from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.core.utils import load_config
 from common.ml.mlflow_utils import log_backtest_run
+from common.services.forecast_population import resolve_forecast_sales_table
 from common.services.metrics import compute_accuracy_metrics
 
 logger = logging.getLogger(__name__)
@@ -216,18 +218,12 @@ def resolve_cluster_params(
     return base_params, "none"
 
 
-def warn_if_profiles_stale(db_params: dict[str, Any]) -> None:
-    """Log loud warnings when per-cluster tuning profiles are out of date.
+def validate_cluster_tuning_profiles(db_params: dict[str, Any]) -> None:
+    """Fail closed unless enabled tuning profiles match current clusters.
 
-    Two independent staleness signals:
-    - ``cluster_tuning_profile_state`` rows flagged stale by a cluster
-      promotion (``promote_scenario``) that no tuning run has covered yet;
-    - the profiles YAML ``metadata.cluster_experiment_id`` stamp differing
-      from the currently promoted cluster experiment (name-matched overrides
-      would then apply to a different SKU membership).
-
-    Warning-only by design: backtests stay runnable, but the operator sees
-    exactly why per-cluster overrides may be mismatched and how to fix it.
+    Name-matched LightGBM overrides are unsafe after cluster membership or
+    labels change. Backtests therefore require an exact label set, no active
+    stale flags, and the same promoted cluster experiment stamped in YAML.
     """
     cfg = load_config("cluster_tuning_profiles.yaml")
     if not cfg.get("enabled", False):
@@ -236,49 +232,65 @@ def warn_if_profiles_stale(db_params: dict[str, Any]) -> None:
     try:
         with psycopg.connect(**db_params) as conn, conn.cursor() as cur:
             cur.execute(
-                """SELECT COUNT(*) FROM cluster_tuning_profile_state tuning
+                """SELECT DISTINCT assignment.ml_cluster
+                   FROM current_sku_cluster_assignment assignment
+                   WHERE assignment.ml_cluster IS NOT NULL
+                   ORDER BY assignment.ml_cluster"""
+            )
+            current_labels = {str(row[0]) for row in cur.fetchall()}
+            cur.execute(
+                """SELECT tuning.cluster_name
+                   FROM cluster_tuning_profile_state tuning
                    WHERE tuning.stale = TRUE
                      AND EXISTS (
                          SELECT 1 FROM current_sku_cluster_assignment assignment
                          WHERE assignment.ml_cluster = tuning.cluster_name
-                     )"""
+                     )
+                   ORDER BY tuning.cluster_name"""
             )
-            row = cur.fetchone()
-            stale_count = int(row[0]) if row else 0
+            stale_labels = {str(row[0]) for row in cur.fetchall()}
             cur.execute(
                 "SELECT experiment_id FROM cluster_experiment "
                 "WHERE is_promoted ORDER BY promoted_at DESC LIMIT 1"
             )
-            row = cur.fetchone()
-            promoted_id = int(row[0]) if row else None
+            promoted_rows = cur.fetchall()
+            promoted_id = int(promoted_rows[0][0]) if promoted_rows else None
     except psycopg.Error as exc:
-        logger.warning("Could not check tuning-profile staleness: %s", exc)
-        return
+        raise RuntimeError("Current cluster tuning profiles could not be verified") from exc
 
-    if stale_count:
+    if stale_labels:
+        raise RuntimeError(
+            "Current cluster tuning profiles are stale for: "
+            + ", ".join(sorted(stale_labels))
+        )
+
+    profile_labels = {
+        str(criteria["cluster_name"])
+        for profile in (cfg.get("cluster_profiles") or {}).values()
+        if isinstance(profile, dict)
+        and isinstance((criteria := profile.get("match_criteria")), dict)
+        and criteria.get("cluster_name") is not None
+    }
+    missing = sorted(current_labels - profile_labels)
+    if missing:
+        retired = sorted(profile_labels - current_labels)
+        raise RuntimeError(
+            "Tuning profile labels do not exactly match current cluster labels "
+            f"(missing={missing}, retired={retired})"
+        )
+    retired = sorted(profile_labels - current_labels)
+    if retired:
         logger.warning(
-            "%d per-cluster tuning profile(s) are flagged STALE (cluster promotion "
-            "since the last tuning run). Re-tune via 'make tune-clusters' or "
-            "POST /admin/tuning/invalidate-stale?retune=true.",
-            stale_count,
+            "Ignoring %d tuning profile(s) for retired cluster labels: %s",
+            len(retired),
+            ", ".join(retired),
         )
 
     yaml_experiment = (cfg.get("metadata") or {}).get("cluster_experiment_id")
-    if promoted_id is None:
-        return
-    if yaml_experiment is None:
-        logger.info(
-            "cluster_tuning_profiles.yaml carries no cluster_experiment_id stamp; "
-            "generation match with promoted experiment %d cannot be verified.",
-            promoted_id,
-        )
-    elif int(yaml_experiment) != promoted_id:
-        logger.warning(
-            "cluster_tuning_profiles.yaml was tuned against cluster experiment %s "
-            "but experiment %d is promoted — per-cluster overrides may not match "
-            "current cluster membership. Re-run 'make tune-clusters'.",
-            yaml_experiment,
-            promoted_id,
+    if promoted_id is None or yaml_experiment is None or int(yaml_experiment) != promoted_id:
+        raise RuntimeError(
+            "Tuning profiles do not match the promoted cluster experiment "
+            f"(profiles={yaml_experiment}, promoted={promoted_id})"
         )
 
 
@@ -376,29 +388,24 @@ def load_backtest_data(
     t1 = time.time()
     planning_cutoff = _closed_month_cutoff(pd.Timestamp(get_planning_date())).date()
     with psycopg.connect(**db) as conn:
-        # Prefer uncorrected sales for accuracy (medallion dual-track)
-        sales_table = "fact_sales_monthly"
-        try:
-            with conn.cursor() as _cur:
-                _cur.execute("SELECT count(*) AS n FROM fact_sales_monthly_original LIMIT 1")
-                _cnt_cols = [d[0] for d in _cur.description]
-                _cnt = pd.DataFrame(_cur.fetchall(), columns=_cnt_cols)
-            if _cnt.iloc[0]["n"] > 0:
-                sales_table = "fact_sales_monthly_original"
-        except Exception:
-            pass  # Table doesn't exist or is empty, use default
+        with conn.cursor() as _cur:
+            sales_table = resolve_forecast_sales_table(_cur)
 
         with conn.cursor() as _cur:
-            _cur.execute(
-                f"""
+            sales_query = sql.SQL(
+                """
                 SELECT d.sku_ck, s.item_id, s.customer_group, s.loc, s.startdate, s.qty
-                FROM {sales_table} s
+                FROM {} s
                 INNER JOIN dim_sku d
                     ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
                 WHERE s.qty IS NOT NULL
+                  AND s.type = 1
                   AND s.startdate <= %s
                 ORDER BY d.sku_ck, s.startdate
-            """,
+                """
+            ).format(sql.Identifier(sales_table))
+            _cur.execute(
+                sales_query,
                 (planning_cutoff,),
             )
             _cols = [d[0] for d in _cur.description]
@@ -1087,6 +1094,8 @@ def _model_cat_cols(cat_cols: list[str], feature_cols: list[str]) -> list[str]:
 def _inject_recursive_noise(
     qty_values: np.ndarray,
     noise_pct: float = 0.05,
+    *,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Add Gaussian noise to qty values to simulate recursive prediction errors.
 
@@ -1118,7 +1127,8 @@ def _inject_recursive_noise(
     if not np.isfinite(scale) or scale <= 0.0:
         return qty_values.copy()
     out = qty_values.copy()
-    out[finite] = out[finite] + np.random.normal(0, scale, size=int(finite.sum()))
+    normal = rng.normal if rng is not None else np.random.normal
+    out[finite] = out[finite] + normal(0, scale, size=int(finite.sum()))
     return out
 
 
@@ -1367,8 +1377,7 @@ def run_tree_backtest(
         sales_df, dfu_attrs, item_attrs = data_result
         customer_features = None
 
-    # Surface stale per-cluster tuning profiles before training starts.
-    warn_if_profiles_stale(db)
+    validate_cluster_tuning_profiles(db)
 
     # Execution lag lookup
     exec_lag_map = dfu_attrs.set_index("sku_ck")["execution_lag"].fillna(0).astype(int).to_dict()

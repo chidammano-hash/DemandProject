@@ -23,6 +23,7 @@ import { formatPct, formatInt } from "@/lib/formatters";
 
 import { STALE, type ModelType, type TuningRun } from "@/api/queries";
 import { fetchModelExperiments, fetchModelSummary } from "@/api/queries/model-tuning";
+import { modelTuningKeys } from "@/api/queries/unified-model-tuning";
 
 import { ClusterEDAPanel } from "../lgbm-tuning/ClusterEDAPanel";
 import { FeatureLabPanel } from "../lgbm-tuning/FeatureLabPanel";
@@ -88,7 +89,7 @@ export function TuneStagePanel({
 }: Props) {
   // Per-model summaries shown on the tunable-model grid
   const { data: lgbmSummary } = useQuery({
-    queryKey: ["model-summary", "lgbm"],
+    queryKey: modelTuningKeys.summary("lgbm"),
     queryFn: () => fetchModelSummary("lgbm"),
     staleTime: STALE.TWO_MIN,
   });
@@ -105,7 +106,10 @@ export function TuneStagePanel({
     isError,
     error,
   } = useQuery({
-    queryKey: ["model-tuning-runs", selectedModel, statusFilter, execLag],
+    queryKey: modelTuningKeys.experiments(selectedModel, {
+      status: statusFilter,
+      exec_lag: execLag,
+    }),
     queryFn: () =>
       fetchModelExperiments(selectedModel, {
         status: statusFilter !== "all" ? statusFilter : undefined,
@@ -115,14 +119,28 @@ export function TuneStagePanel({
     enabled: isTunable,
   });
 
-  const allRuns = runsPayload?.experiments ?? [];
+  const allRuns = useMemo(() => runsPayload?.experiments ?? [], [runsPayload]);
 
   // Sort runs
   const sortedRuns = useMemo(() => {
     const runs = [...allRuns];
+    const readSortValue = (run: TuningRun): unknown => {
+      switch (sortCol) {
+        case "run_id":
+        case "accuracy_pct":
+        case "wape":
+        case "bias":
+        case "started_at":
+        case "status":
+        case "run_label":
+          return run[sortCol];
+        default:
+          return run.run_id;
+      }
+    };
     runs.sort((a, b) => {
-      let aVal: unknown = (a as Record<string, unknown>)[sortCol];
-      let bVal: unknown = (b as Record<string, unknown>)[sortCol];
+      let aVal = readSortValue(a);
+      let bVal = readSortValue(b);
       if (
         sortCol === "run_id" ||
         sortCol === "accuracy_pct" ||

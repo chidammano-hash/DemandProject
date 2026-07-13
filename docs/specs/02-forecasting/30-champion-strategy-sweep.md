@@ -8,8 +8,8 @@
 
 ## 1. Problem
 
-Today a "champion" is **one configuration** — a single strategy (`rolling`, window 6) over a
-fixed model set (`lgbm_cluster`, `chronos`), chosen by hand and committed in
+Today a "champion" is **one configuration** — a strategy over the canonical five-model roster,
+committed in
 `forecast_pipeline_config.yaml` `champion:`. The Champion Experimentation Studio
 (`champion_experiment` table + `/champion-experiments` API) lets a user run **one** experiment
 at a time and compare **two** experiments pairwise (`/champion-experiments/compare`).
@@ -33,7 +33,7 @@ These are **not new capabilities** — they already exist as champion strategies
 
 | Business phrasing | Existing strategy family | Examples | Output `model_id` |
 |---|---|---|---|
-| **One model per SKU** (winner-take-all, re-picked monthly) | single-model winners (10) | `expanding`, `rolling`, `decay`, `seasonal`, `per_cluster`, bandits | the winning model (`lgbm_cluster`, `chronos`, …) |
+| **One model per SKU** (winner-take-all, re-picked monthly) | single-model winners (10) | `expanding`, `rolling`, `decay`, `seasonal`, `per_cluster`, bandits | the winning model (`lgbm_cluster`, `chronos2_enriched`, …) |
 | **Mix of models for the same SKU** (weighted blend) | ensemble/blend (13) | `ensemble`, `ensemble_rolling`, `learned_blend`, `ridge_blend`, `adaptive_ensemble`, `shrinkage_blend` | `ensemble` / blend label |
 | **Different strategy for different SKUs** | segment/route (8) | `per_segment`, `dfu_strategy_router`, `cluster_regime_hybrid`, `stacked_strategies` | varies per DFU |
 
@@ -88,7 +88,7 @@ Parent record for one tournament.
 | `label` | TEXT NOT NULL | config | User label |
 | `notes` | TEXT | config | Optional |
 | `mode` | TEXT DEFAULT `'both'` | config | `'global'`, `'per_segment'`, or `'both'` (default — compute both and recommend the higher-scoring, gate-passing option) |
-| `segment_axis` | TEXT DEFAULT `'demand_class'` | config | Segmentation for per-segment scoring: `'demand_class'` (Syntetos-Boylan; the only *promotable* composite axis in Phase 1), `'ml_cluster'` or `'abc_xyz'` (diagnostic breakdown only — §8.2) |
+| `segment_axis` | TEXT DEFAULT `'demand_class'` | config | Segmentation for per-segment scoring: `'demand_class'` (Syntetos-Boylan; directly representable as reviewed config), `'ml_cluster'` or `'abc_xyz'` (diagnostic breakdown only — §8.2). All sweep results remain analysis-only. |
 | `objective` | TEXT DEFAULT `'robust'` | config | Ranking objective: `'accuracy'`, `'gap_to_ceiling'`, `'robust'` (§5) |
 | `grid_spec` | JSONB NOT NULL | config | The axes that expand into candidate configs (§4) |
 | `parallel` | BOOLEAN DEFAULT FALSE | config | Run children concurrently across model families (else serial) |
@@ -153,7 +153,7 @@ slicing of each candidate's results (§6.1), so `candidate_count` is independent
 
 ### 4.1 Template-based (recommended default)
 
-Reference existing entries from `config/forecasting/champion_experiment_templates.yaml` (36 curated
+Reference existing entries from `config/forecasting/champion_experiment_templates.yaml` (35 curated
 strategies) and optionally cross them with a model-subset axis:
 
 ```jsonc
@@ -161,7 +161,8 @@ strategies) and optionally cross them with a model-subset axis:
   "templates": ["production_baseline", "rolling_6m", "ensemble_top3_inverse",
                 "learned_blend", "per_segment", "adaptive_ensemble"],
   "models_variants": [                       // optional second axis
-    ["lgbm_cluster", "chronos"],
+    ["lgbm_cluster", "chronos2_enriched", "mstl", "nhits", "nbeats"],
+    ["lgbm_cluster", "mstl"]
   ],
   "metric": ["wape"]                         // optional; default = champion config metric
 }
@@ -220,8 +221,8 @@ candidate or composite beat production by the gate margin").
 
 ### 6.1 Job type & runner
 
-New job type `champion_sweep` (group `champion`, alongside `champion_experiment` /
-`champion_results_load`), params `{"sweep_id": int}`, handler `_run_champion_sweep` in
+New job type `champion_sweep` (group `champion`, alongside `champion_experiment`), params
+`{"sweep_id": int}`, handler `_run_champion_sweep` in
 `common/services/job_state.py`, invoking `scripts/ml/run_champion_sweep.py --sweep-id <id>`.
 
 Runner flow:
@@ -269,7 +270,7 @@ Under a new `/champion-sweeps` prefix — added to `api/main.py` **before** `dom
 | GET | `/champion-sweeps/{sweep_id}/leaderboard` | Global-ranked members joined to their `champion_experiment` rows (strategy, params, accuracy, ceiling, gap, score, gate_eligible, rank). |
 | GET | `/champion-sweeps/{sweep_id}/segments` | Per-segment winner map + per-segment scores (from `champion_sweep_segment_score`), and the global-vs-composite head-to-head. |
 | POST | `/champion-sweeps/{sweep_id}/cancel` | Cancel running/queued sweep + its queued children. `require_api_key`. |
-| POST | `/champion-sweeps/{sweep_id}/promote-winner` | Convenience: Stage-1 promote on `recommended_experiment_id` (refuses if not gate-eligible unless `bypass_token`). `require_api_key`. |
+| POST | `/champion-sweeps/{sweep_id}/promote-winner` | Retired compatibility boundary. Always returns `410 manual_champion_promotion_retired` before reading or mutating the DB; use the named `model-refresh` pipeline. `require_api_key`. |
 | DELETE | `/champion-sweeps/{sweep_id}` | Delete sweep + members (children left intact unless orphaned). `require_api_key`. |
 
 All reads use `get_conn()` / `get_async_read_only_conn()`, `%s` placeholders, `psycopg.sql.Identifier`
@@ -308,27 +309,28 @@ models — no `any`). Charts/colors via theme context per house rules.
 The composite is the heart of "blend for some SKUs, single model for others", so its production
 representation matters.
 
-### 8.1 Promote as a `per_segment` config (default, `demand_class` axis)
+### 8.1 Persist a reproducible `per_segment` recommendation (`demand_class` axis)
 
 `per_segment` (`common/ml/champion/segment.py:118`) already maps each Syntetos-Boylan demand class to a
 strategy + params (e.g. smooth→`expanding`, intermittent→`rolling(6)`). The sweep's discovered
-segment→winner map is exactly this shape, so the composite is stored and promoted **as a `per_segment`
-experiment whose `strategy_params` carry the discovered map**. Promotion is then the ordinary two-stage
-path (§24/§12): Stage-1 writes a runnable `per_segment` config to `forecast_pipeline_config.yaml`;
-Stage-2 loads the cached composite winners. Next production cycle reproduces it natively — **no one-off
-artifact, no new strategy.**
+segment→winner map is exactly this shape, so the composite is stored **as a `per_segment`
+experiment whose `strategy_params` carry the discovered map**. It remains analysis evidence and does
+not write `forecast_pipeline_config.yaml` or champion facts. Adopting the recommendation requires a
+reviewed production-config change followed by the named `model-refresh` pipeline, whose governed
+refresh re-evaluates current five-model lineage and atomically promotes its own result. There is no
+one-off production artifact or direct experiment-promotion shortcut.
 
 ### 8.2 Other axes are diagnostic-only in Phase 1
 
 `ml_cluster` and `abc_xyz` segmentations are offered as **read-only breakdowns** (insight: "where does
 each config win?") because the existing `per_cluster` strategy selects the best *model* per cluster, not
 the best *strategy* per cluster — so an ml-cluster composite has no clean runnable representation yet.
-Promotion of a composite is allowed only for `segment_axis='demand_class'`. The UI disables
-"Promote winner" for the composite under other axes and shows them for analysis.
+All sweep recommendations, including `demand_class`, are analysis-only in the UI; the other axes also
+lack a reviewed runnable config representation.
 
 ### 8.3 Optional extension (only if needed)
 
-If a sweep wants **per-segment model subsets** (e.g. blend lgbm+chronos for smooth, single seasonal for
+If a sweep wants **per-segment model subsets** (e.g. blend LightGBM + Chronos 2E for smooth demand, MSTL for
 lumpy), and `per_segment` cannot carry per-segment model lists today, that is a small additive extension
 to `per_segment` in `segment.py` (accept an optional per-segment `models` override) — **not** a new
 strategy. Flag during implementation; otherwise the composite holds the model set constant across
@@ -345,7 +347,7 @@ sweep:
   max_candidates: 24        # hard cap on expanded grid size; create call rejects above this
   default_objective: robust # accuracy | gap_to_ceiling | robust
   default_mode: both        # global | per_segment | both
-  default_segment_axis: demand_class  # demand_class (promotable) | ml_cluster | abc_xyz (diagnostic)
+  default_segment_axis: demand_class  # demand_class | ml_cluster | abc_xyz; all UI results are analysis-only
   robust_lambda: 0.5        # penalty weight on stdev of accuracy across execution lags
   robust_mu: 0.25           # penalty weight on stdev of accuracy across months
   min_segment_dfus: 30      # below this, a segment falls back to the global winner (anti-overfit)
@@ -354,9 +356,10 @@ sweep:
 
 The promote gate is **not** duplicated here — the sweep reuses `champion.promote_gate`.
 
-Winner artifacts serialize ensemble `source_mix` values as JSON. Stage-2 result loading also
-accepts legacy safe Python-literal list values created by earlier pandas CSV exports, validates that
-the decoded value is a list of model-weight objects, and rejects all other shapes.
+Winner artifacts serialize ensemble `source_mix` values as JSON. The retained internal historical
+results-loader parser accepts legacy safe Python-literal list values created by earlier pandas CSV
+exports, validates that the decoded value is a list of model-weight objects, and rejects all other
+shapes; generic job APIs cannot launch that retired loader.
 Production generation expands a synthetic `ensemble` winner into its `source_mix` constituents,
 generates each constituent forecast, and stages their configured weighted blend for that DFU-month;
 `ensemble` is never treated as a trainable model artifact.
@@ -370,12 +373,12 @@ generates each constituent forecast, and stages their configured weighted blend 
   (incl. `min_segment_dfus` fallback), composite assembly → `per_segment` param map, gate filtering,
   "neither beats gate" path.
 - **API** (`tests/api/test_champion_sweep.py`): create (returns candidate_count; segmentation does not
-  inflate it), list, detail, leaderboard ordering, segments endpoint, cancel, promote-winner (allowed
-  vs gate-refused vs non-`demand_class` composite refused), delete — all with `make_pool` /
+  inflate it), list, detail, leaderboard ordering, segments endpoint, cancel, fail-closed
+  promote-winner containment, delete — all with `make_pool` /
   `make_async_pool` and `httpx.AsyncClient` + `ASGITransport`.
 - **Frontend** (`SweepBuilder.test.tsx`, `SweepResultsPanel.test.tsx`): candidate-count preview, global
-  leaderboard render + sort, per-segment map + composite-vs-global card, gate badges, promote-winner
-  wiring, disabled-promote for diagnostic axes (`TestQueryWrapper`, mocked queries).
+  leaderboard render + sort, per-segment map + composite-vs-global card, gate badges, and absence of
+  production-mutation controls (`TestQueryWrapper`, mocked queries).
 - `make test-all` green; `make audit-routers` parity for the new prefix.
 
 ---
@@ -385,7 +388,7 @@ generates each constituent forecast, and stages their configured weighted blend 
 - DDL: `sql/192_champion_sweep.sql`; add the three tables to the `db-truncate-data` +
   cleanup runbook (`docs/operations-manual/11-maintenance-troubleshooting.md`).
 - Operations: extend `docs/operations-manual/12-ui-pipeline-runbook.md` Phase 7 (Champion) with the
-  sweep flow (run sweep → review global + per-segment → promote winner).
+  sweep flow (run sweep → review global + per-segment → use governed model-refresh for production).
 - Docs: this spec; `docs/ARCHITECTURE.md` Feature Catalog; `docs/specs/07-champion-selection.md`
   cross-link. Update `CLAUDE.md` only if a new critical rule emerges (none expected — additive).
 - Backward compatible: existing single experiments, compare, and promotion are untouched — the sweep

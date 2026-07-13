@@ -91,7 +91,7 @@ End-to-end runtime on a fresh dataset: **~4–6 hours** (dominated by foundation
 | SKU features | `common/ml/sku_features/`, `dim_sku`, `config/forecasting/sku_features_config.yaml` | 3 |
 | Backtest framework | `common/ml/backtest_framework.py`, `common/ml/model_registry.py` | 4 |
 | Tuning | `common/ml/tuning.py`, `config/forecasting/tune_strategies.yaml`, `config/forecasting/cluster_tuning_profiles.yaml` | 5 |
-| Champion | `common/ml/champion/` (package, 9 modules, 31 strategies), `data/champion/dfu_assignments.csv` | 5 |
+| Champion | `common/ml/champion/` (package, 9 modules, 30 strategies), `data/champion/dfu_assignments.csv` | 5 |
 | Production forecast | `fact_candidate_forecast` → `fact_production_forecast`, `model_promotion_log` | 6 |
 | Inventory planning | `scripts/` (compute_*.py), `api/routers/inventory/`, `frontend/src/tabs/inv-planning/` | 7 |
 | Exceptions / DQ | `common/engines/exception_engine.py`, `common/engines/dq_engine.py` | 7, 8 |

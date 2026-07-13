@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Projection panel), Accuracy (Bias Corrections panel) |
-| **Key Files** | `scripts/compute_bias_corrections.py`, `scripts/compute_inventory_projection.py`, `api/routers/forecasting/bias_corrections.py`, `api/routers/inventory/inv_planning_projection.py`, `config/bias_correction_config.yaml`, `config/inventory/inventory_planning_config.yaml` (projection section) |
+| **Key Files** | `scripts/forecasting/compute_bias_corrections.py`, `scripts/inventory/compute_inventory_projection.py`, `api/routers/forecasting/bias_corrections.py`, `api/routers/inventory/inv_planning_projection.py`, `config/forecasting/forecast_domain_config.yaml` (bias_correction section), `config/inventory/inventory_planning_config.yaml` (projection section) |
 
 ---
 
@@ -30,7 +30,7 @@ Two complementary capabilities: (1) Bias detection flags DFUs where the forecast
 4. Provide correction recommendations: multiplicative adjustment factor = `1 / (1 + bias)`
 5. Planners review flagged items in the Bias Corrections panel and can accept or dismiss
 
-### Configuration: `config/bias_correction_config.yaml`
+### Configuration: `config/forecasting/forecast_domain_config.yaml` (`bias_correction`)
 
 | Key | Default | Description |
 |-----|---------|-------------|

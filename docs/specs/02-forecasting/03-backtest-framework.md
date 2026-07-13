@@ -317,7 +317,15 @@ Key backtest-level settings:
 
 ### Model persistence under embargo
 
-When the `.pkl`-persisting backtest mode runs (`model_persistence_fn` set), production-model artifacts are written for the **last timeframe that has a non-empty predict window**, resolved by `_last_persistable_timeframe()` — not blindly the last timeframe index.
+When the optional `.pkl`-persisting **backtest** mode runs
+(`model_persistence_fn` set), its evaluation artifact is written for the **last
+timeframe that has a non-empty predict window**, resolved by
+`_last_persistable_timeframe()` — not blindly the last timeframe index. That
+artifact is not a production final fit and is never an input to the active
+LightGBM bundle. Production runs `scripts/ml/train_production_models.py` and
+loads only the complete checksummed version selected by
+`data/models/lgbm_cluster/production_tree/active.json` (or the corresponding
+active neural version).
 
 > **Lag contract (2026-07-11):** operational backtests use embargo 0 because the natural next-month boundary already prevents same-month scoring. A positive embargo shifts the shortest available natural lag upward and must not be used for the standard lag 0–4 accuracy contract. `_last_persistable_timeframe()` remains a defensive guard for custom windows. Separately, `_inject_recursive_noise` is NaN-safe.
 

@@ -1,6 +1,7 @@
 """Tests for competition/champion model endpoints."""
 
 import shutil
+from unittest.mock import patch
 
 import pytest
 
@@ -61,7 +62,7 @@ async def test_competition_config_update_accepts_valid_strategy(async_client):
         json={
             "metric": "wape",
             "lag": "execution",
-            "models": ["lgbm_cluster", "catboost_cluster"],
+            "models": ["lgbm_cluster", "mstl"],
             "strategy": "rolling",
             "strategy_params": {"window_months": 6},
         },
@@ -82,3 +83,26 @@ async def test_competition_config_includes_strategy_field(async_client):
         cfg = data.get("config", {})
         # strategy field should be present in config
         assert "strategy" in cfg or "models" in cfg
+
+
+@pytest.mark.asyncio
+async def test_competition_run_only_submits_governed_refresh(async_client):
+    """The legacy endpoint must not rewrite champion facts in the request."""
+    with patch("common.services.job_registry.JobManager") as manager_cls:
+        manager_cls.return_value.submit_job.return_value = "job-governed-82"
+
+        resp = await async_client.post("/competition/run")
+
+    assert resp.status_code == 202
+    assert resp.json() == {
+        "job_id": "job-governed-82",
+        "job_type": "champion_select",
+        "status": "queued",
+        "message": "Governed champion refresh submitted",
+    }
+    manager_cls.return_value.submit_job.assert_called_once_with(
+        job_type="champion_select",
+        params={},
+        label="Governed Champion Refresh",
+        triggered_by="competition_run",
+    )

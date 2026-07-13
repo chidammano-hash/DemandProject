@@ -344,7 +344,7 @@ async def test_residual_analysis_empty():
 
 @pytest.mark.asyncio
 async def test_residual_analysis_custom_model_id():
-    """GET /cluster-eda/residual-analysis?model_id=catboost_cluster passes model_id."""
+    """GET /cluster-eda/residual-analysis?model_id=mstl passes model_id."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [(1.0, 50.0, -0.1, 2.8)]
     cursor.fetchall.side_effect = [
@@ -358,12 +358,12 @@ async def test_residual_analysis_custom_model_id():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/cluster-eda/residual-analysis",
-                params={"model_id": "catboost_cluster"},
+                params={"model_id": "mstl"},
             )
     assert resp.status_code == 200
     # Verify model_id was passed as first param
     sql_call = cursor.execute.call_args_list[0]
-    assert sql_call[0][1][0] == "catboost_cluster"
+    assert sql_call[0][1][0] == "mstl"
 
 
 # ---------------------------------------------------------------------------

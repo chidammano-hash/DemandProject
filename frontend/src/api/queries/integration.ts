@@ -8,7 +8,7 @@
  * `src/api/queries/` modules.
  */
 
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------

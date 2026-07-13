@@ -7,6 +7,14 @@
 # JOB_TYPE_REGISTRY (common/services/job_registry.py). Steps run sequentially
 # through JobManager.submit_pipeline — a failed step stops the pipeline.
 # tests/unit/test_pipeline_presets.py verifies every step's job_type is registered.
+job_timeouts_seconds:
+  default: 7200              # Generic managed subprocess ceiling (2 hours).
+  chronos2_enriched: 28800  # Foundation backtest is documented at ~6h; allow 8h.
+  production_training: 28800   # Three persisted final fits run in one all-or-fail step.
+  production_generation: 28800 # Full champion inference can include Chronos routes.
+  snapshot_contenders: 28800   # Three six-lag contender generations may run serially.
+  stale_cluster_tuning: 28800  # Up to 50 trials x 5 folds across stale clusters.
+
 pipelines:
   clustering-refresh:
     description: >-
@@ -34,21 +42,27 @@ pipelines:
   model-refresh:
     description: >-
       Re-tune stale LightGBM cluster profiles, run the complete five-model
-      backtest roster, then champion selection.
+      backtest roster, then create and atomically promote a governed champion
+      experiment using the current production strategy.
       Run after data-refresh or after promoting a new clustering scenario.
     steps:
       - job_type: tune_stale_clusters
         params: {model: lgbm}
       - job_type: backtest_lgbm
+        params: {governed: true}
       - job_type: backtest_nhits
+        params: {governed: true}
       - job_type: backtest_nbeats
+        params: {governed: true}
       - job_type: backtest_mstl
+        params: {governed: true}
       - job_type: backtest_chronos2_enriched
-      - job_type: champion_select
+        params: {governed: true}
+      - job_type: governed_champion_refresh
 
   forecast-publish:
     description: >-
-      Train the production tree models on full history, then generate
+      Final-refit LightGBM, N-HiTS, and N-BEATS on full history, then generate
       one immutable champion release candidate and its top-three snapshot
       contenders. Review the returned source_run_id, then promote that exact
       run; promotion archives the outgoing release before replacement.
@@ -68,6 +82,7 @@ pipelines:
       - job_type: prepare_forecast_snapshot_contenders
       - job_type: archive_forecast_snapshot
       - job_type: cleanup_forecast_staging
+        params: {dry_run: false}
 
   inventory-refresh:
     description: >-
@@ -84,20 +99,28 @@ pipelines:
   full-refresh:
     description: >-
       The whole lifecycle end-to-end: data refresh, feature recompute,
-      stale-cluster re-tune, backtests, champion selection, production
-      training and staging generation. Promotion stays a manual review step.
+      promoted clustering, stale-cluster re-tune, five-model backtests,
+      governed champion refresh, persisted final refits, and staging generation.
+      Promotion stays a manual review step.
     steps:
       - job_type: etl_pipeline
         params: {mode: refresh, parallel: true}
       - job_type: compute_sku_features
+      - job_type: cluster_pipeline
+        params: {auto_promote: true}
       - job_type: tune_stale_clusters
         params: {model: lgbm}
       - job_type: backtest_lgbm
+        params: {governed: true}
       - job_type: backtest_nhits
+        params: {governed: true}
       - job_type: backtest_nbeats
+        params: {governed: true}
       - job_type: backtest_mstl
+        params: {governed: true}
       - job_type: backtest_chronos2_enriched
-      - job_type: champion_select
+        params: {governed: true}
+      - job_type: governed_champion_refresh
       - job_type: train_production_model
         params: {all_models: true}
       - job_type: generate_production_forecast

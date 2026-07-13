@@ -214,7 +214,8 @@ class TestLoadBacktestDataIntegration:
             def execute(self, query, params=None):
                 nonlocal call_count
                 call_count += 1
-                q = query.strip().lower()
+                rendered = query.as_string(None) if hasattr(query, "as_string") else query
+                q = rendered.strip().lower()
                 if "count(*)" in q:
                     self.description, self._rows = _df_to_cursor_result(cnt_df)
                 elif "from dim_item" in q:
@@ -237,9 +238,19 @@ class TestLoadBacktestDataIntegration:
         mock_conn.cursor.return_value = MockCursor()
         return mock_conn
 
+    @patch(
+        "common.ml.backtest_framework.resolve_forecast_sales_table",
+        return_value="fact_sales_monthly_original",
+    )
     @patch("common.ml.backtest_framework.get_planning_date")
     @patch("psycopg.connect")
-    def test_load_backtest_data_applies_override(self, mock_connect, mock_planning_date, tmp_path: Path):
+    def test_load_backtest_data_applies_override(
+        self,
+        mock_connect,
+        mock_planning_date,
+        _mock_sales_source,
+        tmp_path: Path,
+    ):
         """load_backtest_data should apply cluster override when algo_config has the path."""
         from common.ml.backtest_framework import load_backtest_data
 
@@ -269,9 +280,18 @@ class TestLoadBacktestDataIntegration:
         # Unchanged DFUs
         assert result_dfu_attrs.loc[result_dfu_attrs["sku_ck"] == "SKU_002", "ml_cluster"].iloc[0] == "high_volume_steady"
 
+    @patch(
+        "common.ml.backtest_framework.resolve_forecast_sales_table",
+        return_value="fact_sales_monthly_original",
+    )
     @patch("common.ml.backtest_framework.get_planning_date")
     @patch("psycopg.connect")
-    def test_load_backtest_data_no_override_without_config(self, mock_connect, mock_planning_date):
+    def test_load_backtest_data_no_override_without_config(
+        self,
+        mock_connect,
+        mock_planning_date,
+        _mock_sales_source,
+    ):
         """load_backtest_data without algo_config should leave clusters untouched."""
         from common.ml.backtest_framework import load_backtest_data
 

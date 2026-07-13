@@ -2,10 +2,10 @@
 Remove backtest model predictions from Postgres and refresh materialized views.
 
 Usage:
-  uv run python scripts/clean_backtest_models.py lgbm_global deepar_global
-  uv run python scripts/clean_backtest_models.py --all-backtest   # remove all non-external models
-  uv run python scripts/clean_backtest_models.py --list           # show model_id row counts
-  uv run python scripts/clean_backtest_models.py --dry-run lgbm_global  # preview without deleting
+  uv run python scripts/ml/clean_backtest_models.py lgbm_cluster mstl
+  uv run python scripts/ml/clean_backtest_models.py --all-backtest   # remove all non-external models
+  uv run python scripts/ml/clean_backtest_models.py --list           # show model_id row counts
+  uv run python scripts/ml/clean_backtest_models.py --dry-run lgbm_cluster  # preview without deleting
 """
 
 import argparse
@@ -22,9 +22,9 @@ load_dotenv(ROOT / ".env")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.core.db import get_db_params
+from common.core.db import get_db_params  # noqa: E402 — after CLI path bootstrap
 from common.core.mv_refresh import refresh_for_tables  # noqa: E402 — after sys.path bootstrap
-from common.core.utils import _ts
+from common.core.utils import _ts  # noqa: E402 — after CLI path bootstrap
 
 
 def list_models(conn: psycopg.Connection) -> None:
@@ -120,7 +120,7 @@ def main() -> None:
     )
     parser.add_argument(
         "models", nargs="*",
-        help="model_id values to remove (e.g., lgbm_global deepar_global)"
+        help="model_id values to remove (e.g., lgbm_cluster mstl)"
     )
     parser.add_argument(
         "--all-backtest", action="store_true",

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Algorithm Experiments, Champion Experiments, DFU Analysis, Inventory Backtest |
-| **Key Files** | `dim_sku.execution_lag`, `backtest_framework.py`, `run_champion_selection.py`, `seed_production_baselines.py`, `accuracy_budget.py`, `LagFilterBar.tsx` |
+| **Key Files** | `dim_sku.execution_lag`, `backtest_framework.py`, `run_champion_selection.py`, `tuning_tracker.py`, `accuracy_budget.py`, `LagFilterBar.tsx` |
 
 ---
 
@@ -265,14 +265,12 @@ When the lag filter is working correctly:
 
 ### 6.1 Algorithm Experiments (Model Tuning) — Correct
 
-**Data source:** `lgbm_tuning_lag`, populated by `seed_production_baselines.py`
+**Data source:** `lgbm_tuning_lag`, populated from each completed tuning run's
+`backtest_predictions_all_lags.csv` by `tuning_tracker.register_lag_breakdowns()`.
 
 ```python
-# seed_production_baselines.py
-all_lags_df = pd.read_csv("backtest_predictions_all_lags.csv")
-for lag_val, grp in all_lags_df.groupby("lag"):    # ← groups by FORECAST lag
-    metrics = compute_accuracy(grp)                 # ← ALL DFUs at this horizon
-    INSERT INTO lgbm_tuning_lag (run_id, exec_lag, accuracy_pct, ...)
+# common/ml/tuning_tracker.py
+register_lag_breakdowns(run_id, "backtest_predictions_all_lags.csv")
 ```
 
 - `exec_lag = 0` → all DFUs at forecast lag 0 (1-month-ahead, highest accuracy) ✓

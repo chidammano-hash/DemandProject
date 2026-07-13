@@ -29,6 +29,9 @@ export interface Job {
   progress_msg: string | null;
   logs?: Array<{ ts: string; pct: number; msg: string }>;
   pid: number | null;
+  pipeline_id?: string | null;
+  pipeline_step?: number | null;
+  recovery_quarantine_reason?: string | null;
 }
 
 export interface JobLogsPayload {

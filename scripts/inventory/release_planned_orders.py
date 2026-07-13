@@ -142,7 +142,7 @@ def create_po_from_exception(
     with profiled_section("insert_po_and_audit_log"):
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO fact_purchase_orders (
+                INSERT INTO fact_released_purchase_orders (
                     po_number, line_number, item_id, item_description, loc,
                     supplier_id, ordered_qty, unit_of_measure, currency,
                     po_date, requested_delivery_date, status,
@@ -196,7 +196,7 @@ def approve_po(
     with profiled_section("approve_po"):
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE fact_purchase_orders
+                UPDATE fact_released_purchase_orders
                 SET status = 'planner_approved',
                     planner_approved_by = %s,
                     planner_approved_at = NOW(),
@@ -240,7 +240,7 @@ def release_po(
     with profiled_section("release_po"):
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE fact_purchase_orders
+                UPDATE fact_released_purchase_orders
                 SET status = 'buyer_released',
                     buyer_released_by = %s,
                     buyer_released_at = NOW(),
@@ -302,7 +302,7 @@ def export_pos_to_csv(
                     po.unit_of_measure, po.unit_cost, po.total_value, po.currency,
                     po.requested_delivery_date, po.po_date, po.buyer_code,
                     po.company_code, po.plant_code, po.source_exception_id, po.notes
-                FROM fact_purchase_orders po
+                FROM fact_released_purchase_orders po
                 LEFT JOIN dim_supplier s ON s.supplier_id = po.supplier_id
                 WHERE po.po_number = ANY(%s)
                   AND po.status IN ('buyer_released', 'po_sent')
@@ -385,7 +385,7 @@ def send_po_to_erp(
                        unit_of_measure, unit_cost, currency,
                        requested_delivery_date, po_date, buyer_code,
                        company_code, plant_code
-                FROM fact_purchase_orders WHERE po_number = %s
+                FROM fact_released_purchase_orders WHERE po_number = %s
             """, (po_number,))
             po_data = cur.fetchone()
 
@@ -409,7 +409,7 @@ def send_po_to_erp(
 
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE fact_purchase_orders
+                    UPDATE fact_released_purchase_orders
                     SET status = 'po_sent',
                         erp_po_number = %s,
                         erp_sent_at = NOW(),
@@ -427,7 +427,7 @@ def send_po_to_erp(
             error_msg = str(e)
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE fact_purchase_orders
+                    UPDATE fact_released_purchase_orders
                     SET erp_response_payload = %s::jsonb
                     WHERE po_number = %s
                 """, (json.dumps({"error": error_msg}), po_number))

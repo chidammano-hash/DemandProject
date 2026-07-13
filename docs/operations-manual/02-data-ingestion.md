@@ -79,7 +79,7 @@ Example — restrict history and forecast to a single location:
 The script is **idempotent** — re-running on an already-trimmed file removes 0 rows. It only rewrites the raw files; the corresponding tables are not updated until you re-`normalize` + `load` them (which `TRUNCATE`+reload, so trimmed-out rows are removed). After a LOC-scoped trim of `hist`/`fcst`:
 
 ```bash
-make normalize-sales && make load-sales            # fact_sales_monthly
+make normalize-sales && make load-sales            # current + immutable-original sales facts
 make normalize-forecast && make load-forecast      # fact_external_forecast_monthly
 make refresh-mvs-tiered
 ```
@@ -172,7 +172,7 @@ make load-location
 make load-customer
 make load-time
 make load-dfu                    # loads dim_sku
-make load-sales                  # also refreshes agg_sales_monthly
+make load-sales                  # atomically replaces current + immutable-original sales; refreshes agg_sales_monthly
 make load-forecast               # UPSERT mode; also refreshes agg_forecast_monthly
 make load-forecast-replace       # truncates fact_external_forecast_monthly first
 make load-forecast-replace-no-archive   # also skips the backtest_lag_archive write
@@ -182,6 +182,16 @@ make load-purchase-order
 make load-customer-demand                 # full --replace: drop all partitions, reload
 make load-customer-demand-month MONTH=YYYY-MM    # drop+reload one partition
 ```
+
+Sales is a strict dual-track domain. `make load-sales` writes
+`fact_sales_monthly` and `fact_sales_monthly_original` in one transaction and
+records the shared source hash/audit batch used by forecast artifacts. The
+forecast lifecycle never falls back to the current table when the immutable
+mirror is empty or stale. If a historical latest audit row says
+`source_file = 'safe_upsert'`, run `make normalize-sales && make load-sales`
+before training or generation. Mirror freshness compares its `MAX(load_ts)` to
+the accepted batch's `started_at`, because `completed_at` is stamped only after
+the rows are written.
 
 ### Truncate-and-load semantics
 

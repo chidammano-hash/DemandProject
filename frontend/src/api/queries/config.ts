@@ -1,5 +1,5 @@
 /** Config management API queries — Settings tab */
-import { fetchJson } from "./core";
+import { fetchJson } from "./request";
 
 export interface ConfigCategory {
   key: string;
@@ -25,12 +25,22 @@ export interface ConfigField {
   value: unknown;
   label: string;
   description: string;
-  type: "number" | "integer" | "text" | "boolean" | "select" | "array" | "object";
+  type:
+    | "number"
+    | "integer"
+    | "text"
+    | "boolean"
+    | "select"
+    | "array"
+    | "object"
+    | "model_toggle";
   min?: number;
   max?: number;
   step?: number;
   unit?: string;
   options?: string[];
+  group?: string;
+  model_type?: string;
 }
 
 export interface ConfigDetailPayload {

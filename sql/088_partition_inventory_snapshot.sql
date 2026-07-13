@@ -1,9 +1,12 @@
+-- MIGRATION: SUPERSEDED
 -- Migration: Convert fact_inventory_snapshot to monthly range partitioning.
 -- Grain: item_id + loc + snapshot_date (one row per item-location-day).
 -- Partition key: snapshot_date (DATE) — matches source file granularity.
 --
 -- IMPORTANT: Run this migration ONCE on existing databases.
 -- New installs should use the updated 017_create_fact_inventory_snapshot.sql directly.
+-- The migration runner records this file without executing it because the
+-- current base schema already creates the partitioned table.
 
 BEGIN;
 

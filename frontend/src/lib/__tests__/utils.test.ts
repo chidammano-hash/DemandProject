@@ -11,7 +11,7 @@ describe("cn", () => {
   });
 
   it("ignores falsy values (false)", () => {
-    expect(cn("foo", false && "bar", "baz")).toBe("foo baz");
+    expect(cn("foo", false, "baz")).toBe("foo baz");
   });
 
   it("ignores undefined", () => {

@@ -11,6 +11,8 @@ import App from "./App";
 import "./index.css";
 import { toast } from "./components/Toaster";
 import { formatApiError, extractStatus } from "./lib/formatApiError";
+import { AuthGate } from "./components/AuthGate";
+import { AuthProvider } from "./context/AuthContext";
 
 // Devtools are dev-only and ~80KB. Lazy + dev-gated so the prod bundle
 // doesn't ship them. Vite strips this branch entirely in `npm run build`.
@@ -78,7 +80,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary FallbackComponent={CrashFallback} onReset={() => window.location.reload()}>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <AuthProvider>
+          <AuthGate><App /></AuthGate>
+        </AuthProvider>
         {ReactQueryDevtools && (
           <Suspense fallback={null}>
             <ReactQueryDevtools initialIsOpen={false} />

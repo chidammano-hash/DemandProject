@@ -158,6 +158,7 @@ describe("SkuShapPanel", () => {
           selectedModel="lgbm_cluster"
           itemNo="100320"
           loc="1401-BULK"
+          customerGroup="RETAIL"
           skuMode="item_location"
           visibleMonths={["2024-01-01", "2024-02-01", "2026-04-01"]}
         />
@@ -167,6 +168,13 @@ describe("SkuShapPanel", () => {
     // Cluster badge and future months note should appear after data loads
     expect(await screen.findByText(/cluster: 0/i)).toBeDefined();
     expect(await screen.findByText(/Faded bars = future forecast months/i)).toBeDefined();
+    expect(mockFetchSkuShap).toHaveBeenCalledWith(
+      "lgbm_cluster",
+      "100320",
+      "1401-BULK",
+      10,
+      "RETAIL",
+    );
   });
 
   // -------------------------------------------------------------------------

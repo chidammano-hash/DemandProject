@@ -22,8 +22,8 @@ _MOCK_CFG = {
     "matrix_max_cols": 50,
     "workbench_default_limit": 50,
     "cache_ttl_seconds": 120,
-    "hierarchical_model_ids": ["bolt_hierarchical"],
-    "top_down_model_ids": ["chronos_bolt"],
+    "hierarchical_model_ids": ["nbeats"],
+    "top_down_model_ids": ["chronos2_enriched"],
 }
 
 
@@ -200,7 +200,7 @@ async def test_comparison_with_predictions():
     pool, _, cursor = _make_pool()
     cursor.fetchall.side_effect = [
         [("2026-01", 100.0)],
-        [("2026-01", "bolt_hierarchical", 95.0), ("2026-01", "chronos_bolt", 105.0)],
+        [("2026-01", "nbeats", 95.0), ("2026-01", "chronos2_enriched", 105.0)],
     ]
     _reset_cfg()
     with (

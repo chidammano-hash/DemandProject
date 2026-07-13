@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   queryKeys,
@@ -12,7 +12,10 @@ import {
   deleteJob,
   createSchedule,
   deleteSchedule,
-  submitPipeline,
+  fetchNamedPipelines,
+  fetchPipelineReadiness,
+  pipelineReadinessKeys,
+  runNamedPipeline,
   STALE,
 } from "@/api/queries";
 import type { Job } from "@/types/jobs";
@@ -24,7 +27,6 @@ import { ActiveJobsPanel } from "./jobs/ActiveJobsPanel";
 import { SchedulesPanel } from "./jobs/SchedulesPanel";
 import { JobHistoryPanel } from "./jobs/JobHistoryPanel";
 import { PipelineBuilderPanel } from "./jobs/PipelineBuilderPanel";
-import { ChampionConfigPanel } from "./jobs/ChampionConfigPanel";
 // ClusterScenarioConfigPanel removed — clustering managed via Cluster tab
 
 // ---------------------------------------------------------------------------
@@ -34,6 +36,8 @@ type JobsTabProps = {
   onNavigateToScenario?: (jobId: string) => void;
   embedded?: boolean;
 };
+
+const EMPTY_JOBS: Job[] = [];
 
 export default function JobsTab({ onNavigateToScenario, embedded = false }: JobsTabProps) {
   const queryClient = useQueryClient();
@@ -78,10 +82,41 @@ export default function JobsTab({ onNavigateToScenario, embedded = false }: Jobs
     refetchInterval: 10_000,
   });
 
+  // Pipeline cards must reconcile against unfiltered history. Reusing the
+  // user-filtered table payload makes a completed/failed workflow appear idle
+  // as soon as the history filters change.
+  const { data: pipelineHistoryData } = useQuery({
+    queryKey: queryKeys.jobs({ scope: "forecast-pipeline-status", limit: 200, offset: 0 }),
+    queryFn: () => fetchJobs({ limit: 200, offset: 0 }),
+    refetchInterval: 5_000,
+  });
+
   const { data: schedulesData } = useQuery({
     queryKey: queryKeys.jobSchedules(),
     queryFn: fetchJobSchedules,
     staleTime: STALE.ONE_MIN,
+  });
+
+  const {
+    data: namedPipelinesData,
+    isLoading: namedPipelinesLoading,
+    error: namedPipelinesError,
+  } = useQuery({
+    queryKey: queryKeys.namedPipelines(),
+    queryFn: fetchNamedPipelines,
+    staleTime: STALE.TEN_MIN,
+  });
+
+  const {
+    data: pipelineReadiness,
+    error: pipelineReadinessError,
+    isLoading: pipelineReadinessLoading,
+  } = useQuery({
+    queryKey: pipelineReadinessKeys.readiness,
+    queryFn: fetchPipelineReadiness,
+    staleTime: STALE.ONE_MIN,
+    refetchInterval: (query) =>
+      query.state.data && !query.state.data.ready ? 30_000 : false,
   });
 
   // ---- Sync active jobs with notification context ----
@@ -125,17 +160,22 @@ export default function JobsTab({ onNavigateToScenario, embedded = false }: Jobs
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.jobSchedules() }),
   });
 
-  const pipelineMutation = useMutation({
-    mutationFn: ({ steps, label }: { steps: { type: string; params: Record<string, unknown> }[]; label: string }) =>
-      submitPipeline(steps.map((s) => ({ job_type: s.type, params: s.params })), label),
+  const namedPipelineMutation = useMutation({
+    mutationFn: (name: string) => runNamedPipeline(name),
     onSuccess: invalidateAll,
   });
 
   // ---- derived data ----
   const jobTypes = typesData?.types || [];
-  const activeJobs = activeData?.jobs || [];
+  const activeJobs = activeData?.jobs ?? EMPTY_JOBS;
   const historyJobs =
     historyData?.jobs?.filter((j: Job) => j.status !== "running" && j.status !== "queued") || [];
+  const pipelineJobs = useMemo(() => {
+    const byId = new Map<string, Job>();
+    for (const job of pipelineHistoryData?.jobs ?? []) byId.set(job.job_id, job);
+    for (const job of activeJobs) byId.set(job.job_id, job);
+    return Array.from(byId.values());
+  }, [activeJobs, pipelineHistoryData?.jobs]);
   const schedules = schedulesData?.schedules || [];
 
   return (
@@ -157,10 +197,19 @@ export default function JobsTab({ onNavigateToScenario, embedded = false }: Jobs
       {statsData && <KpiSection stats={statsData} />}
 
       {/* Submit error */}
-      {submitMutation.isError && (
+      {(submitMutation.isError || namedPipelineMutation.isError) && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive flex items-center gap-2">
           <AlertCircle className="h-4 w-4 shrink-0" />
-          {(submitMutation.error as Error)?.message || "Failed to submit job"}
+          {(namedPipelineMutation.error as Error)?.message ||
+            (submitMutation.error as Error)?.message ||
+            "Failed to submit job"}
+        </div>
+      )}
+
+      {cancelMutation.isError && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          Cancellation failed; the job status is unchanged. {(cancelMutation.error as Error)?.message}
         </div>
       )}
 
@@ -168,6 +217,7 @@ export default function JobsTab({ onNavigateToScenario, embedded = false }: Jobs
       <ActiveJobsPanel
         activeJobs={activeJobs}
         onCancel={(id) => cancelMutation.mutate(id)}
+        cancellingJobId={cancelMutation.isPending ? cancelMutation.variables : null}
       />
 
       {/* Recurring schedules + dialog */}
@@ -195,9 +245,6 @@ export default function JobsTab({ onNavigateToScenario, embedded = false }: Jobs
           }
           onSchedule={setScheduleDialogType}
           submitting={submitMutation.isPending}
-          customCards={{
-            champion_select: <ChampionConfigPanel onJobSubmitted={invalidateAll} />,
-          }}
           hiddenGroups={["clustering", "features", "backtest", "champion", "forecast"]}
         />
       </section>
@@ -205,9 +252,28 @@ export default function JobsTab({ onNavigateToScenario, embedded = false }: Jobs
       {/* Pipeline builder */}
       <PipelineBuilderPanel
         jobTypes={jobTypes}
-        activeJobs={activeJobs}
-        onSubmit={({ steps, label }) => pipelineMutation.mutate({ steps, label })}
-        isSubmitting={pipelineMutation.isPending}
+        pipelines={namedPipelinesData?.pipelines ?? []}
+        jobs={pipelineJobs}
+        readiness={pipelineReadiness}
+        readinessLoading={pipelineReadinessLoading}
+        readinessError={
+          pipelineReadinessError
+            ? "Readiness checks are unavailable. Verify prerequisites before running a workflow."
+            : null
+        }
+        launch={
+          namedPipelineMutation.variables && !namedPipelineMutation.isError
+            ? {
+                name: namedPipelineMutation.variables,
+                pipelineId: namedPipelineMutation.data?.pipeline_id,
+                submitting: namedPipelineMutation.isPending,
+                submittedAt: namedPipelineMutation.submittedAt,
+              }
+            : undefined
+        }
+        isLoading={namedPipelinesLoading}
+        loadError={namedPipelinesError ? "Could not load forecast workflows." : null}
+        onRun={(name) => namedPipelineMutation.mutate(name)}
       />
 
       {/* Job history */}
