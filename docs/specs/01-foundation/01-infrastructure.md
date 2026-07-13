@@ -118,7 +118,7 @@ The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, co
 | AI Operations Workbench (system-safe readiness scan + unified Workflows UI) | [../06-ai-platform/09-ai-operations-workbench.md](../06-ai-platform/09-ai-operations-workbench.md) | Operations / AI |
 | Mechanical lint gates for 7 unenforced rules (`scripts/ai_checks/check_unenforced_rules.sh`) | — | Foundation |
 | Central MV-refresh service (`common/core/mv_refresh.py` — table→MV dependency map, DDL-diff tested, nightly `refresh_all_mvs` safety net) | — | Foundation |
-| Workflow orchestration (named pipelines, boot-restored schedules, cross-stage staleness lineage + readiness checks) | [../07-user-experience/04-job-scheduler.md](../07-user-experience/04-job-scheduler.md) | Foundation |
+| Workflow orchestration (named pipelines, boot-restored schedules, cross-stage staleness lineage + readiness checks, monthly Period Roll scoring/archive control) | [../07-user-experience/04-job-scheduler.md](../07-user-experience/04-job-scheduler.md) | Foundation |
 | Async router pilot (`customer_analytics` + `inv_planning_insights` GETs use `AsyncConnectionPool` via `get_async_conn` / `get_async_read_only_conn`) | — | Foundation |
 | pg-queue scaffold (`sql/183_create_job_queue.sql`, `common/services/pg_queue.py` — `enqueue_job`, `claim_next_job`, exponential-backoff requeue) | — | Foundation |
 | Read-replica scaffold (`READ_REPLICA_URL` opt-in, parsed by `common/core/db.py` `get_read_replica_params()`; `api/pool.py` builds replica pools when present; `api/core.py` `get_read_only_conn` / `get_async_read_only_conn` route reads when available) | — | Foundation |

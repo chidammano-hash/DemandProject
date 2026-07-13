@@ -3,8 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   fetchFVASnapshotAccuracy,
   fetchFVASnapshotMonths,
+  fetchFVAHistoricalBacktestAccuracy,
+  fetchFVAHistoricalBacktestMonths,
   fvaKeys,
   STALE_PLATFORM,
+  type FVAHistoricalBacktestRow,
   type FVASnapshotAccuracyRow,
 } from "@/api/queries";
 
@@ -14,6 +17,33 @@ function formatPercent(value: number | null): string {
 
 function rowLabel(row: FVASnapshotAccuracyRow): string {
   return row.snapshot_role === "champion" ? "Champion" : `#${row.contender_rank} ${row.model_id}`;
+}
+
+function formatModelLabel(modelId: string): string {
+  const labels: Record<string, string> = {
+    lgbm_cluster: "LightGBM",
+    chronos2_enriched: "Chronos 2E",
+    mstl: "MSTL",
+    nbeats: "N-BEATS",
+    nhits: "N-HiTS",
+  };
+  return labels[modelId] ?? modelId;
+}
+
+function historicalCell(row: FVAHistoricalBacktestRow | undefined) {
+  if (!row || row.evidence_state === "missing") {
+    return <div className="text-muted-foreground">No evidence</div>;
+  }
+  if (row.evidence_state === "not_collected") {
+    return <div className="text-muted-foreground">Not collected</div>;
+  }
+  return (
+    <>
+      <div className="font-mono text-foreground">{formatPercent(row.accuracy_pct)}</div>
+      <div>{row.n_dfus.toLocaleString()} DFUs</div>
+      <div>Bias {row.bias == null ? "—" : `${(row.bias * 100).toFixed(1)}%`}</div>
+    </>
+  );
 }
 
 export function SnapshotAccuracyPanel() {
@@ -43,6 +73,24 @@ export function SnapshotAccuracyPanel() {
       const rightRank = right[0]?.snapshot_role === "champion" ? 0 : (right[0]?.contender_rank ?? 99);
       return leftRank - rightRank;
     });
+
+  const [selectedHistoricalMonth, setSelectedHistoricalMonth] = useState("");
+  const { data: historicalMonthsData } = useQuery({
+    queryKey: fvaKeys.historicalBacktestMonths,
+    queryFn: fetchFVAHistoricalBacktestMonths,
+    staleTime: STALE_PLATFORM,
+  });
+  const historicalMonth = selectedHistoricalMonth || historicalMonthsData?.months[0] || "";
+  const { data: historicalData } = useQuery({
+    queryKey: fvaKeys.historicalBacktestAccuracy(historicalMonth),
+    queryFn: () => fetchFVAHistoricalBacktestAccuracy(historicalMonth),
+    enabled: Boolean(historicalMonth),
+    staleTime: STALE_PLATFORM,
+  });
+  const historicalByModel = new Map<string, FVAHistoricalBacktestRow[]>();
+  for (const row of historicalData?.rows ?? []) {
+    historicalByModel.set(row.model_id, [...(historicalByModel.get(row.model_id) ?? []), row]);
+  }
 
   return (
     <section className="rounded-lg border border-border bg-card p-4" aria-labelledby="snapshot-accuracy-heading">
@@ -114,6 +162,74 @@ export function SnapshotAccuracyPanel() {
           {selectedMonthInfo.last_refresh_at ? ` Refreshed ${selectedMonthInfo.last_refresh_at}.` : " Refresh timestamp unavailable."}
         </p>
       ) : null}
+
+
+      <div className="mt-6 border-t border-border pt-5" aria-labelledby="historical-backtest-heading">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 id="historical-backtest-heading" className="text-sm font-medium text-foreground">
+              Historical Backtest Evidence
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Simulated historical test windows. These results are not live archived forecasts.
+            </p>
+          </div>
+          {historicalMonthsData?.months.length ? (
+            <label className="text-xs text-muted-foreground">
+              Target month
+              <select
+                aria-label="Historical backtest month"
+                className="ml-2 rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
+                value={historicalMonth}
+                onChange={(event) => setSelectedHistoricalMonth(event.target.value)}
+              >
+                {historicalMonthsData.months.map((month) => (
+                  <option key={month} value={month}>{month.slice(0, 7)}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
+
+        {historicalByModel.size === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            No pre-snapshot backtest evidence is available.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr>
+                  <th className="px-2 py-2 font-medium">Model</th>
+                  {[0, 1, 2, 3, 4, 5].map((lag) => (
+                    <th key={lag} className="px-2 py-2 font-medium">Lag {lag}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...historicalByModel.entries()].map(([modelId, rows]) => {
+                  const byLag = new Map(rows.map((row) => [row.lag, row]));
+                  return (
+                    <tr key={modelId} className="border-t border-border/60">
+                      <th scope="row" className="whitespace-nowrap px-2 py-2 font-medium text-foreground">
+                        {formatModelLabel(modelId)}
+                      </th>
+                      {[0, 1, 2, 3, 4, 5].map((lag) => (
+                        <td key={lag} className="min-w-28 px-2 py-2 align-top text-muted-foreground">
+                          {historicalCell(byLag.get(lag))}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-3 text-xs text-muted-foreground">
+          Legacy backtests contain lags 0–4 only. Lag 5 was not collected and cannot be reconstructed without hindsight.
+        </p>
+      </div>
     </section>
   );
 }

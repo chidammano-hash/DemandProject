@@ -1,9 +1,10 @@
 """Tests for Forecast Value Added (FVA) endpoints (Spec 08-07)."""
+
 import datetime
-import pytest
 from unittest.mock import patch
 
 import httpx
+import pytest
 from httpx import ASGITransport
 
 from tests.api.conftest import make_pool as _make_pool
@@ -24,6 +25,7 @@ async def test_fva_waterfall():
     cursor.fetchone.return_value = None
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall")
@@ -69,10 +71,12 @@ async def test_fva_waterfall_windows_on_planning_date_not_wallclock():
     pool, conn, cursor = _make_pool(fetchall_return=rows)
     cursor.fetchone.return_value = (64.2, 500)
     planning = datetime.date(2026, 4, 2)
-    with patch("api.core._get_pool", return_value=pool), patch(
-        "api.routers.forecasting.fva.get_planning_date", return_value=planning
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch("api.routers.forecasting.fva.get_planning_date", return_value=planning),
     ):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall", params={"months": 3})
@@ -93,6 +97,7 @@ async def test_fva_waterfall_empty():
     cursor.fetchone.return_value = (None, 0)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall")
@@ -125,6 +130,7 @@ async def test_fva_waterfall_champion_missing_renders_as_reserved_not_broken():
     cursor.fetchone.return_value = (65.3, 1000)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall")
@@ -135,8 +141,11 @@ async def test_fva_waterfall_champion_missing_renders_as_reserved_not_broken():
     assert champion["state"] == "planned"
     assert champion["accuracy_pct"] is None
     # All three forward stages now read consistently as reserved.
-    assert [s["state"] for s in stages if s["stage_id"] in
-            ("champion", "ai_adjusted", "planner_adjusted")] == ["planned", "planned", "planned"]
+    assert [
+        s["state"]
+        for s in stages
+        if s["stage_id"] in ("champion", "ai_adjusted", "planner_adjusted")
+    ] == ["planned", "planned", "planned"]
 
 
 @pytest.mark.asyncio
@@ -150,6 +159,7 @@ async def test_fva_waterfall_champion_actual_when_measured():
     cursor.fetchone.return_value = (60.2, 1000)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall")
@@ -168,6 +178,7 @@ async def test_fva_waterfall_custom_months():
     cursor.fetchone.return_value = (None, 0)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall", params={"months": 6})
@@ -190,6 +201,7 @@ async def test_fva_waterfall_ai_adjusted_reserved():
     cursor.fetchone.return_value = (60.2, 1000)  # naive; champion falls back to rollup
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall")
@@ -218,6 +230,7 @@ async def test_fva_waterfall_champion_from_backtest_experiment():
     cursor.fetchone.return_value = (71.62, 75.63, 20517)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/waterfall")
@@ -248,11 +261,25 @@ async def test_fva_interventions():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (5,)
     cursor.fetchall.return_value = [
-        (1, None, "policy_change", "sku", "100320-1401", None, None,
-         5000.0, None, None, None, "pending", now),
+        (
+            1,
+            None,
+            "policy_change",
+            "sku",
+            "100320-1401",
+            None,
+            None,
+            5000.0,
+            None,
+            None,
+            None,
+            "pending",
+            now,
+        ),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/interventions")
@@ -276,6 +303,7 @@ async def test_fva_interventions_empty():
     cursor.fetchall.return_value = []
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/interventions")
@@ -294,6 +322,7 @@ async def test_fva_roi_summary():
     pool, conn, cursor = _make_pool(fetchone_return=(10, 4, 6, 50000.0, 20000.0))
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/roi-summary")
@@ -316,6 +345,7 @@ async def test_fva_roi_summary_zeros():
     pool, conn, cursor = _make_pool(fetchone_return=(0, 0, 0, 0, 0))
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/fva/roi-summary")
@@ -335,6 +365,7 @@ async def test_snapshot_accuracy_requires_record_month():
     pool, _, _ = _make_pool(fetchall_return=[])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/fva/snapshot-accuracy")
@@ -345,15 +376,50 @@ async def test_snapshot_accuracy_requires_record_month():
 async def test_snapshot_accuracy_returns_champion_and_ranked_contenders():
     """The API exposes only the frozen four-series archive and common-DFU delta."""
     rows = [
-        ("champion", "champion", None, 0, datetime.date(2026, 6, 1), 100.0, 100.0, 0.0, 1, None, None, None, None, None, None),
-        ("lgbm_cluster", "contender", 1, 0, datetime.date(2026, 6, 1), 110.0, 100.0, 10.0, 1, 110.0, 100.0, 10.0, 100.0, 0.0, 1),
+        (
+            "champion",
+            "champion",
+            None,
+            0,
+            datetime.date(2026, 6, 1),
+            100.0,
+            100.0,
+            0.0,
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "lgbm_cluster",
+            "contender",
+            1,
+            0,
+            datetime.date(2026, 6, 1),
+            110.0,
+            100.0,
+            10.0,
+            1,
+            110.0,
+            100.0,
+            10.0,
+            100.0,
+            0.0,
+            1,
+        ),
     ]
     pool, _, cursor = _make_pool(fetchall_return=rows)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/fva/snapshot-accuracy", params={"record_month": "2026-06-01"})
+            response = await client.get(
+                "/fva/snapshot-accuracy", params={"record_month": "2026-06-01"}
+            )
     assert response.status_code == 200
     data = response.json()
     assert [row["model_id"] for row in data["rows"]] == ["champion", "lgbm_cluster"]
@@ -366,12 +432,89 @@ async def test_snapshot_accuracy_returns_champion_and_ranked_contenders():
 
 @pytest.mark.asyncio
 async def test_snapshot_months_returns_available_archives():
-    pool, _, _ = _make_pool(fetchall_return=[(datetime.date(2026, 6, 1), 2, datetime.date(2026, 7, 1), datetime.datetime(2026, 7, 9, 4, 0, 0))])
+    pool, _, _ = _make_pool(
+        fetchall_return=[
+            (
+                datetime.date(2026, 6, 1),
+                2,
+                datetime.date(2026, 7, 1),
+                datetime.datetime(2026, 7, 9, 4, 0, 0),
+            )
+        ]
+    )
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
+
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/fva/snapshot-months")
     assert response.status_code == 200
     assert response.json()["months"][0]["record_month"] == "2026-06-01"
     assert response.json()["months"][0]["last_refresh_at"] == "2026-07-09T04:00:00"
+
+
+@pytest.mark.asyncio
+async def test_historical_backtest_months_excludes_live_snapshot_months():
+    """Legacy evidence offers only the three latest pre-snapshot target months."""
+    pool, _, cursor = _make_pool(
+        fetchall_return=[
+            (datetime.date(2026, 6, 1),),
+            (datetime.date(2026, 5, 1),),
+            (datetime.date(2026, 4, 1),),
+        ]
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/fva/historical-backtest-months")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "months": ["2026-06-01", "2026-05-01", "2026-04-01"],
+        "evidence_type": "historical_backtest",
+    }
+    sql = cursor.execute.call_args_list[-1].args[0]
+    assert "backtest_lag_archive" in sql
+    assert "forecast_snapshot_roster" in sql
+
+
+@pytest.mark.asyncio
+async def test_historical_backtest_accuracy_marks_uncollected_lag_five():
+    """Historical backtests are never relabeled as a six-lag live snapshot."""
+    rows = [
+        ("lgbm_cluster", 0, 10, 90.0, 100.0, 10.0),
+        ("mstl", 0, 8, 80.0, 100.0, 20.0),
+    ]
+    pool, _, cursor = _make_pool(fetchall_return=rows)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/fva/historical-backtest-accuracy",
+                params={"month": "2026-06-01"},
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["month"] == "2026-06-01"
+    assert data["evidence_type"] == "historical_backtest"
+    assert data["source"] == "backtest_lag_archive"
+    assert data["supported_lags"] == [0, 1, 2, 3, 4]
+    assert data["unsupported_lags"] == [5]
+    assert len(data["rows"]) == 30
+    lgbm_lag_zero = next(
+        row for row in data["rows"] if row["model_id"] == "lgbm_cluster" and row["lag"] == 0
+    )
+    assert lgbm_lag_zero["evidence_state"] == "measured"
+    assert lgbm_lag_zero["accuracy_pct"] == 90.0
+    lag_five_rows = [row for row in data["rows"] if row["lag"] == 5]
+    assert len(lag_five_rows) == 5
+    assert {row["evidence_state"] for row in lag_five_rows} == {"not_collected"}
+    assert all(row["accuracy_pct"] is None for row in lag_five_rows)
+    sql = cursor.execute.call_args_list[-1].args[0]
+    assert "NOT EXISTS" in sql
+    assert "forecast_snapshot_roster" in sql

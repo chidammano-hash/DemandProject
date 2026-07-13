@@ -1,4 +1,5 @@
 """Forecast Value Added (FVA) & ROI tracking endpoints (Spec 08-07)."""
+
 from __future__ import annotations
 
 import logging
@@ -9,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.core import compute_kpis, get_conn, get_read_only_conn
 from common.core.planning_date import get_planning_date
+from common.core.utils import get_algorithm_roster
 from common.services.cache import cached_sync
 
 router = APIRouter(prefix="/fva", tags=["fva"])
@@ -29,10 +31,34 @@ logger = logging.getLogger(__name__)
 #     no promoted experiment exists, so it presents consistently with the
 #     AI/Planner reserved stages on a fresh DB.
 STAGE_DEFS = [
-    ("external", "External", "Current ERP or external forecast before model selection.", "actual", "missing"),
-    ("champion", "Champion", "Best measured statistical or ML model once champion-vs-actual outcomes are available.", "actual", "planned"),
-    ("ai_adjusted", "AI Adjusted", "Reserved for AI-assisted forecast interventions once they are measured.", "planned", "planned"),
-    ("planner_adjusted", "Planner Adjusted", "Reserved for human overrides once measured outcomes are available.", "planned", "planned"),
+    (
+        "external",
+        "External",
+        "Current ERP or external forecast before model selection.",
+        "actual",
+        "missing",
+    ),
+    (
+        "champion",
+        "Champion",
+        "Best measured statistical or ML model once champion-vs-actual outcomes are available.",
+        "actual",
+        "planned",
+    ),
+    (
+        "ai_adjusted",
+        "AI Adjusted",
+        "Reserved for AI-assisted forecast interventions once they are measured.",
+        "planned",
+        "planned",
+    ),
+    (
+        "planner_adjusted",
+        "Planner Adjusted",
+        "Reserved for human overrides once measured outcomes are available.",
+        "planned",
+        "planned",
+    ),
 ]
 
 
@@ -41,7 +67,12 @@ def _round_or_none(value: float | None, digits: int = 2) -> float | None:
 
 
 def _build_stage(
-    stage_id: str, label: str, description: str, default_state: str, missing_state: str, model: dict | None
+    stage_id: str,
+    label: str,
+    description: str,
+    default_state: str,
+    missing_state: str,
+    model: dict | None,
 ) -> dict:
     if default_state == "planned":
         state, accuracy, n_rows = "planned", None, 0
@@ -106,10 +137,8 @@ async def fva_waterfall(
         )
         rows = cur.fetchall()
 
-
     models = {
-        r[0]: {"model_id": r[0], "accuracy_pct": _round_or_none(r[1]), "n_rows": r[2]}
-        for r in rows
+        r[0]: {"model_id": r[0], "accuracy_pct": _round_or_none(r[1]), "n_rows": r[2]} for r in rows
     }
 
     # `ai_adjusted` and `planner_adjusted` remain reserved ("planned") stages in
@@ -162,7 +191,9 @@ async def fva_waterfall(
             }
 
     stages = [
-        _build_stage(stage_id, label, description, default_state, missing_state, models.get(stage_id))
+        _build_stage(
+            stage_id, label, description, default_state, missing_state, models.get(stage_id)
+        )
         for stage_id, label, description, default_state, missing_state in STAGE_DEFS
     ]
     for idx in range(1, len(stages)):
@@ -276,11 +307,15 @@ def snapshot_accuracy(
             db_rows = cur.fetchall()
     except psycopg.Error:
         logger.exception("Failed to load forecast snapshot accuracy")
-        raise HTTPException(status_code=500, detail="Failed to load forecast snapshot accuracy") from None
+        raise HTTPException(
+            status_code=500, detail="Failed to load forecast snapshot accuracy"
+        ) from None
 
     rows = []
     for row in db_rows:
-        own = compute_kpis(float(row[5] or 0), float(row[6] or 0), float(row[7] or 0), int(row[8] or 0))
+        own = compute_kpis(
+            float(row[5] or 0), float(row[6] or 0), float(row[7] or 0), int(row[8] or 0)
+        )
         if row[0] == "champion":
             delta = 0.0
             common_count = own["dfu_count"]
@@ -336,7 +371,9 @@ def snapshot_months():
             db_rows = cur.fetchall()
     except psycopg.Error:
         logger.exception("Failed to load forecast snapshot months")
-        raise HTTPException(status_code=500, detail="Failed to load forecast snapshot months") from None
+        raise HTTPException(
+            status_code=500, detail="Failed to load forecast snapshot months"
+        ) from None
     return {
         "months": [
             {
@@ -347,6 +384,128 @@ def snapshot_months():
             }
             for row in db_rows
         ]
+    }
+
+
+@router.get("/historical-backtest-months")
+@cached_sync(ttl=300, group="fva_historical")
+def historical_backtest_months():
+    """Latest three pre-snapshot months with legacy backtest evidence.
+
+    These months are intentionally separate from the immutable live-forward
+    snapshot archive. A month with a frozen snapshot roster can never appear
+    in this legacy selector.
+    """
+    planning_month = get_planning_date().replace(day=1)
+    sql = """WITH first_live AS (
+                 SELECT MIN(record_month) AS record_month
+                 FROM forecast_snapshot_roster
+             ),
+             historical AS (
+                 SELECT DISTINCT a.startdate AS month_start
+                 FROM backtest_lag_archive a
+                 CROSS JOIN first_live
+                 WHERE a.startdate < COALESCE(first_live.record_month, %s::date)
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM forecast_snapshot_roster r
+                       WHERE r.record_month = a.startdate
+                   )
+             )
+             SELECT month_start
+             FROM historical
+             ORDER BY month_start DESC
+             LIMIT 3"""
+    try:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (planning_month,))
+            db_rows = cur.fetchall()
+    except psycopg.Error:
+        logger.exception("Failed to load historical backtest months")
+        raise HTTPException(
+            status_code=500, detail="Failed to load historical backtest months"
+        ) from None
+    return {
+        "months": [row[0].isoformat() for row in db_rows],
+        "evidence_type": "historical_backtest",
+    }
+
+
+@router.get("/historical-backtest-accuracy")
+@cached_sync(ttl=300, group="fva_historical")
+def historical_backtest_accuracy(
+    month: date = Query(..., description="Historical target month"),
+):
+    """Five-model lag accuracy from legacy backtests, never live snapshots.
+
+    The legacy backtest contract collected lags 0 through 4. Lag 5 is emitted
+    as ``not_collected`` so the UI can keep a six-column comparison without
+    implying that missing historical evidence is pending or reconstructable.
+    """
+    model_ids = list(get_algorithm_roster(stage="compete"))
+    sql = """SELECT a.model_id, a.lag,
+                    COUNT(DISTINCT (a.item_id, a.customer_group, a.loc))::bigint,
+                    SUM(a.basefcst_pref), SUM(a.tothist_dmd),
+                    SUM(ABS(a.basefcst_pref - a.tothist_dmd))
+             FROM backtest_lag_archive a
+             WHERE a.startdate = %s
+               AND a.model_id = ANY(%s)
+               AND a.basefcst_pref IS NOT NULL
+               AND a.tothist_dmd IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM forecast_snapshot_roster r
+                   WHERE r.record_month = %s
+               )
+             GROUP BY a.model_id, a.lag
+             ORDER BY a.model_id, a.lag"""
+    try:
+        with get_read_only_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, (month, model_ids, month))
+            db_rows = cur.fetchall()
+    except psycopg.Error:
+        logger.exception("Failed to load historical backtest accuracy")
+        raise HTTPException(
+            status_code=500, detail="Failed to load historical backtest accuracy"
+        ) from None
+
+    measured: dict[tuple[str, int], dict] = {}
+    for model_id, lag, n_dfus, sum_forecast, sum_actual, sum_abs_error in db_rows:
+        measured[(str(model_id), int(lag))] = compute_kpis(
+            float(sum_forecast or 0),
+            float(sum_actual or 0),
+            float(sum_abs_error or 0),
+            int(n_dfus or 0),
+        )
+
+    rows = []
+    for model_id in model_ids:
+        for lag in range(6):
+            kpis = measured.get((model_id, lag))
+            if lag == 5:
+                evidence_state = "not_collected"
+            elif kpis is None:
+                evidence_state = "missing"
+            else:
+                evidence_state = "measured"
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "lag": lag,
+                    "n_dfus": kpis["dfu_count"] if kpis else 0,
+                    "accuracy_pct": kpis["accuracy_pct"] if kpis else None,
+                    "wape": kpis["wape"] if kpis else None,
+                    "bias": kpis["bias"] if kpis else None,
+                    "evidence_state": evidence_state,
+                }
+            )
+    return {
+        "month": month.isoformat(),
+        "evidence_type": "historical_backtest",
+        "source": "backtest_lag_archive",
+        "supported_lags": list(range(5)),
+        "unsupported_lags": [5],
+        "rows": rows,
     }
 
 
@@ -396,8 +555,10 @@ async def list_interventions(
                 "intervention_id": r[0],
                 "user_id": str(r[1]) if r[1] else None,
                 "intervention_type": r[2],
-                "resource_type": r[3], "resource_id": r[4],
-                "metric_before": r[5], "metric_after": r[6],
+                "resource_type": r[3],
+                "resource_id": r[4],
+                "metric_before": r[5],
+                "metric_after": r[6],
                 "financial_impact_estimate": float(r[7]) if r[7] else None,
                 "actual_financial_impact": float(r[8]) if r[8] else None,
                 "measurement_window_start": r[9].isoformat() if r[9] else None,

@@ -285,8 +285,15 @@ intersection rather than fabricating forecasts for uncovered DFUs.
   roster is replaced transactionally only when it belongs to the current month
   and neither an archive nor active release exists; historical, archived, and
   published rosters remain immutable.
-- Belt-and-suspenders cron: `default_schedules` entry `forecast_snapshot_monthly` (cron `0 4 3 * *`, the 3rd at 04:00, after month-open actuals loads; `enabled: false` initially).
-- Manual trigger: Jobs tab, or `make forecast-archive ARGS="--record-month 2026-06"`.
+- Monthly control: the enabled `forecast_period_roll_monthly` default schedule
+  runs job type `period_roll` at `0 4 3 * *` (the 3rd at 04:00). It reads the
+  same `period-roll` named-pipeline definition used by manual workflow launches:
+  refresh closed snapshot KPIs, prepare the current roster, archive it, then
+  clean only reconciled staging. This keeps recurring and manual ordering from
+  drifting.
+- Manual trigger: Workflows -> Workflow Library -> **Period Roll**, the
+  schedulable `period_roll` job type, or the standalone Make targets for
+  remediation.
 - Named bundle: `forecast-snapshot-bundle` runs contender selection, archive, and
   reconciliation-gated cleanup in that order. Its cleanup step targets generations
   older than the planning month; use the standalone cleanup job for an explicit
@@ -343,9 +350,17 @@ separate, explicitly designed retention policy; this command cannot sweep them.
 
 ### 6.1 What becomes measurable
 
-With record month 2026-06 archived and June actuals loaded, lag-0 accuracy for the champion and three frozen contenders is computable immediately.
-Each subsequent month's actuals close one more lag: July actuals close lag 1, ..., November actuals close lag 5.
-When July 2026 is archived (record month 2026-07), the lag matrix starts filling diagonally; after six cycles every lag has a measured value per model per record month - real forward accuracy alongside (not merged with) the simulated backtest curves.
+July 2026 is the first complete live-forward archive. When July actuals load,
+Period Roll refreshes `agg_accuracy_snapshot` and closes July lag 0. Each later
+actual month closes the next lag, through December actuals closing July lag 5.
+After six cycles every lag has a measured value per model per record month -
+real forward accuracy alongside (not merged with) simulated backtest curves.
+
+The migration-era April, May, and June 2026 months have no complete immutable
+roster/manifest archive. The UI exposes them only as `historical_backtest`
+evidence from `backtest_lag_archive`. That legacy contract collected lags 0-4;
+lag 5 is explicitly `not_collected`, never pending and never reconstructed
+after actuals are known.
 
 ### 6.2 API
 
@@ -355,6 +370,8 @@ Extend `api/routers/forecasting/fva.py` with cached, replica-tolerant reads: bot
 |---|---|---|
 | GET | `/fva/snapshot-accuracy?record_month=&lag=` | Required `record_month`; optional `lag` constrained to 0..5. Champion-plus-three accuracy aggregated from `agg_accuracy_snapshot`: `{model_id, snapshot_role, contender_rank, lag, forecast_month, n_dfus, accuracy_pct, wape, bias, fva_vs_champion_pts, n_dfus_common}` rows; omit `lag` for the full model x lag matrix of one record month |
 | GET | `/fva/snapshot-months` | Distinct record months available, per-month closed-lag count, and the MV's last-refresh time (drives the UI selector and the freshness caption) |
+| GET | `/fva/historical-backtest-months` | Latest three pre-snapshot target months with backtest evidence; excludes every month present in `forecast_snapshot_roster` |
+| GET | `/fva/historical-backtest-accuracy?month=` | Canonical five-model historical accuracy matrix. Lags 0-4 are measured when available; lag 5 is returned as `not_collected`. Response is stamped `evidence_type=historical_backtest` and `source=backtest_lag_archive` |
 
 - `accuracy_pct`, `wape`, `bias` per model are aggregated over that model's own covered DFUs (with `n_dfus` always returned).
 - `fva_vs_champion_pts` is computed **only on the DFU intersection** between each contender and `champion` at the same `(record_month, lag)`; both sides are re-aggregated over that common set (`n_dfus_common`). A positive value means the contender outperformed the promoted plan on the same DFUs. The champion's value is `0`; an empty intersection is `NULL`/n-a.
@@ -373,11 +390,17 @@ New sub-panel `frontend/src/tabs/fva/SnapshotAccuracyPanel.tsx`, mounted in `FVA
 - Fetchers `fetchFVASnapshotAccuracy` / `fetchFVASnapshotMonths` added to the FVA group in `frontend/src/api/queries/platform.ts`.
 - `/fva` is already proxied in vite.config.ts; regenerate types via `npm run gen:types`.
 - The existing waterfall ladder (../08-integration/07-fva.md) is unchanged: it remains backtest-based at execution lag; this panel adds the live-forward view alongside it.
+- A visually separated **Historical Backtest Evidence** section uses the two
+  historical endpoints for April-June 2026. It never calls those rows champion,
+  never mixes them into the live selector, and explains why lag 5 is unavailable.
 
 ### 6.4 Snapshot lag vs backtest lag (do not conflate)
 
 `backtest_lag_archive` lag = true horizon from a simulated training cutoff (every DFU re-anchored per timeframe).
 Snapshot lag = plan age from a single calendar record month, while each DFU's true horizon varies (`horizon_months`, 22.6% of June series originate before June).
+The legacy backtest schema enforces `lag BETWEEN 0 AND 4`; the snapshot schema
+enforces `lag BETWEEN 0 AND 5`. UI alignment to six columns does not change
+those contracts: the historical lag-5 cell says `Not collected`.
 The two curves answer different questions ("how good is the model at N months out" vs "how good was the plan of record N months before the target") and are shown in different panels with different labels.
 `horizon_months` is preserved in both the table and the MV so a horizon-conditioned analysis (e.g. restrict to `horizon_months = lag + 1`) remains possible later without re-archiving.
 

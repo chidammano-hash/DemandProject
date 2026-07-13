@@ -1315,6 +1315,9 @@ The maintained base-model roster is exactly LightGBM (`lgbm_cluster`), N-HiTS
    - REST API: core CRUD (types, submit, list, active, detail, cancel, delete), logs (`GET /jobs/{id}/logs`), scheduling, custom and named pipelines, workflow planning, and dashboard statistics
    - Cron/interval scheduling for recurring automation (e.g., daily 2AM backtest, weekly clustering refresh)
    - Job pipelines: sequential chaining of multi-step workflows (cluster → backtest → champion select)
+   - Monthly `period_roll` control: refresh prior-month live snapshot KPIs,
+     prepare/archive the current champion-plus-three six-lag snapshot, then
+     clean only reconciliation-proven staging; enabled for the 3rd at 04:00
    - Retry logic with exponential backoff (configurable max_retries per job)
    - Professional automation dashboard UI: KPI cards, grouped job type cards with category colors, live active job monitoring with animated progress bars, schedule dialog, schedules section, expandable job history
    - `JobNotificationContext` for cross-tab completion/failure alerts on Dashboard
@@ -1408,8 +1411,8 @@ The maintained base-model roster is exactly LightGBM (`lgbm_cluster`), N-HiTS
    - ROI measurement: quantify financial impact of forecast interventions vs. the current forecast baseline; compares estimated and realized impact
    - DDL: `sql/068_create_fva_tracking.sql` — `fact_intervention_metrics` table for intervention measurement
    - Config: FVA settings are now inline in the FVA router (stages, metrics, ROI computation parameters)
-   - Router: `api/routers/forecasting/fva.py` — `GET /fva/waterfall` (ordered ladder stages + ceiling benchmark), `GET /fva/interventions` (intervention log), `GET /fva/roi-summary` (aggregate ROI metrics)
-   - Frontend: `FVATab.tsx` — Forecast Value Ladder cards, ceiling benchmark card, intervention history list, ROI summary KPIs
+   - Router: `api/routers/forecasting/fva.py` — ladder/intervention/ROI endpoints; immutable live snapshot month/accuracy endpoints; separate pre-snapshot historical-backtest month/accuracy endpoints
+   - Frontend: `FVATab.tsx` — Forecast Value Ladder, live champion-plus-three snapshot matrix, separately labeled April-June historical backtest matrix, intervention history, and ROI KPIs
 
 45. Reporting & Distribution (08-08):
    - Report template system: define reusable report layouts with configurable sections (KPIs, charts, tables)
@@ -1999,7 +2002,7 @@ Data Quality (DQEngine, 12 check types, statistical auto-fix, Self-Heal UI), RBA
 
 APScheduler engine with job types across 5 groups (clustering, backtest, seasonality, champion, tuning) plus a Postgres-backed pg-queue scaffold for long jobs. Per-group FIFO concurrency, cron/interval scheduling, sequential pipelines, retry with backoff. Resilient execution: subprocesses survive API restarts (`Popen(start_new_session=True)` + PID tracking, SIGTERM group kill, startup recovery, persistent DB log streaming). Persisted `job_schedule` rows are **re-registered into APScheduler at API boot** (`restore_schedules()`), and config-declared defaults (`config/platform/jobs_config.yaml`) are guaranteed via `ensure_default_schedules()` — the nightly `refresh_all_mvs` staleness safety net ships enabled. Workflows → Workflow Library provides live progress, kill controls, schedules, logs, and cross-tab completion alerts.
 
-**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `inventory-refresh`, and `full-refresh`. `model-refresh` finishes with `governed_champion_refresh`: it binds the current five loaded backtest runs to identical sales/cluster lineage, creates a champion experiment, and atomically swaps audited champion facts plus both promotion flags only after the experiment succeeds. The publish pipeline has no leading archive step because the required outgoing archive is inside the promotion transaction. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
+**Named pipelines** (`config/forecasting/pipelines.yaml` → `common/services/pipeline_presets.py`): the lifecycle runs as chained JobManager pipelines instead of manually stepped jobs — `data-refresh`, `clustering-refresh`, `model-refresh`, `forecast-publish`, `forecast-snapshot-bundle`, `period-roll`, `inventory-refresh`, and `full-refresh`. `model-refresh` finishes with `governed_champion_refresh`: it binds the current five loaded backtest runs to identical sales/cluster lineage, creates a champion experiment, and atomically swaps audited champion facts plus both promotion flags only after the experiment succeeds. The publish pipeline has no leading archive step because the required outgoing archive is inside the promotion transaction. `period-roll` first scores newly closed live-snapshot lags, then prepares/archives the current planning month and performs reconciliation-gated cleanup; the schedulable `period_roll` job reads this same preset. `GET /jobs/pipelines/named` lists them; `POST /jobs/pipelines/named/{name}` launches.
 
 **AI-verified operational planning:** `common/ai/workflow_planner/` evaluates
 input changes and database readiness, then asks GPT to verify and explain the

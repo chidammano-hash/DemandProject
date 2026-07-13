@@ -25,6 +25,7 @@ class TestPresetConfig:
             "model-refresh",
             "forecast-publish",
             "forecast-snapshot-bundle",
+            "period-roll",
             "full-refresh",
             "inventory-refresh",
         ):
@@ -33,6 +34,16 @@ class TestPresetConfig:
     def test_snapshot_bundle_selects_archives_then_cleans(self):
         steps = preset_steps(get_pipeline_preset("forecast-snapshot-bundle"))
         assert [step["job_type"] for step in steps] == [
+            "prepare_forecast_snapshot_contenders",
+            "archive_forecast_snapshot",
+            "cleanup_forecast_staging",
+        ]
+        assert steps[-1]["params"] == {"dry_run": False}
+
+    def test_period_roll_scores_prior_month_then_archives_current_month(self):
+        steps = preset_steps(get_pipeline_preset("period-roll"))
+        assert [step["job_type"] for step in steps] == [
+            "refresh_forecast_snapshot_kpis",
             "prepare_forecast_snapshot_contenders",
             "archive_forecast_snapshot",
             "cleanup_forecast_staging",
@@ -51,15 +62,10 @@ class TestPresetConfig:
             assert "champion_select" not in job_types
             assert "governed_champion_refresh" in job_types
             governed_backtests = [
-                step
-                for step in steps
-                if step["job_type"].startswith("backtest_")
+                step for step in steps if step["job_type"].startswith("backtest_")
             ]
             assert len(governed_backtests) == 5
-            assert all(
-                step["params"] == {"governed": True}
-                for step in governed_backtests
-            )
+            assert all(step["params"] == {"governed": True} for step in governed_backtests)
 
     def test_full_refresh_promotes_clusters_before_tuning(self):
         steps = preset_steps(get_pipeline_preset("full-refresh"))

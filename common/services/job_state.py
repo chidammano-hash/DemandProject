@@ -1858,6 +1858,81 @@ def _run_archive_forecast_snapshot(
     return {"output_log": output or "Forecast snapshot archived"}
 
 
+def _run_refresh_forecast_snapshot_kpis(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Score newly closed live-snapshot lags after monthly actuals load."""
+    from common.core.mv_refresh import refresh_materialized_views
+    from common.services.cache import get_cache
+
+    result = refresh_materialized_views(
+        ["agg_accuracy_snapshot"],
+        progress_cb=progress_cb,
+        cancel_event=cancel_event,
+    )
+    if result["failed"] or result["missing"]:
+        raise RuntimeError("Forecast snapshot KPI refresh did not complete")
+    get_cache().invalidate("ds:fva_snapshot*")
+    return result
+
+
+def _run_period_roll(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the canonical Period Roll preset inline for recurring schedules.
+
+    Manual workflow launches use the named pipeline and expose each step as a
+    separate job. Recurring schedules can only target one registered job type,
+    so this wrapper reads and executes the same preset without duplicating its
+    ordering in Python.
+    """
+    from common.services.job_registry import JOB_TYPE_REGISTRY
+    from common.services.pipeline_presets import get_pipeline_preset, preset_steps
+
+    steps = preset_steps(get_pipeline_preset("period-roll"))
+    output_logs: list[str] = []
+    total_steps = len(steps)
+    for index, step in enumerate(steps, start=1):
+        if cancel_event and cancel_event.is_set():
+            raise JobCancelledError("Period Roll cancelled by user")
+        job_type = step["job_type"]
+        step_params = dict(step["params"])
+        if params.get("record_month") and job_type in {
+            "prepare_forecast_snapshot_contenders",
+            "archive_forecast_snapshot",
+        }:
+            step_params["record_month"] = params["record_month"]
+
+        def step_progress(*, pct: int | None = None, msg: str, step_number: int = index) -> None:
+            if progress_cb:
+                completed_share = (step_number - 1) / total_steps
+                step_pct = 5 if pct is None else pct
+                current_share = max(0, min(step_pct, 100)) / 100 / total_steps
+                progress_cb(
+                    pct=int((completed_share + current_share) * 100),
+                    msg=f"Period Roll {step_number}/{total_steps}: {msg}",
+                )
+
+        result = JOB_TYPE_REGISTRY[job_type].callable(
+            step_params,
+            progress_cb=step_progress,
+            cancel_event=cancel_event,
+            job_id=job_id,
+        )
+        output_logs.append(str(result.get("output_log") or result))
+
+    return {
+        "steps_completed": total_steps,
+        "output_log": "\n".join(output_logs),
+    }
+
+
 def _run_cleanup_forecast_staging(
     params: dict[str, Any],
     progress_cb: Callable | None = None,

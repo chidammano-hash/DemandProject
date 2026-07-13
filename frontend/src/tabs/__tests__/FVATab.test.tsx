@@ -23,12 +23,16 @@ vi.mock("@/api/queries", () => ({
   fetchFVAInterventions: vi.fn().mockResolvedValue({ interventions: [] }),
   fetchFVASnapshotMonths: vi.fn().mockResolvedValue({ months: [] }),
   fetchFVASnapshotAccuracy: vi.fn().mockResolvedValue({ rows: [] }),
+  fetchFVAHistoricalBacktestMonths: vi.fn().mockResolvedValue({ months: [] }),
+  fetchFVAHistoricalBacktestAccuracy: vi.fn().mockResolvedValue({ rows: [] }),
   fvaKeys: {
     waterfall: (m: number) => ["fva", "waterfall", m],
     roi: (m: number) => ["fva", "roi", m],
     interventions: ["fva", "interventions"],
     snapshotMonths: ["fva", "snapshot-months"],
     snapshotAccuracy: (month: string) => ["fva", "snapshot", month],
+    historicalBacktestMonths: ["fva", "historical-backtest-months"],
+    historicalBacktestAccuracy: (month: string) => ["fva", "historical-backtest", month],
   },
   STALE_PLATFORM: 300000,
 }));

@@ -84,6 +84,23 @@ pipelines:
       - job_type: cleanup_forecast_staging
         params: {dry_run: false}
 
+  period-roll:
+    description: >-
+      Beginning-of-month control: score any newly closed lags from actuals,
+      prepare and archive the current planning month's champion-plus-three
+      snapshot, then remove only staging generations that reconcile to an
+      immutable archive. Safe to retry for an already archived planning month.
+    steps:
+      - job_type: refresh_forecast_snapshot_kpis
+        label: Calculate Prior-Month Snapshot KPIs
+      - job_type: prepare_forecast_snapshot_contenders
+        label: Prepare Current-Month Snapshot
+      - job_type: archive_forecast_snapshot
+        label: Archive Current-Month Snapshot
+      - job_type: cleanup_forecast_staging
+        label: Clean Reconciled Forecast Staging
+        params: {dry_run: false}
+
   inventory-refresh:
     description: >-
       Recompute safety stock, EOQ, replenishment plans, policies, health scores,

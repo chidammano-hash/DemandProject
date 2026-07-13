@@ -118,6 +118,13 @@ const MOCK_JOB_TYPES: JobType[] = [
     params_schema: {},
   },
   {
+    type_id: "refresh_forecast_snapshot_kpis",
+    label: "Calculate Snapshot KPIs",
+    description: "",
+    group: "forecast",
+    params_schema: {},
+  },
+  {
     type_id: "cleanup_forecast_staging",
     label: "Clean Forecast Staging",
     description: "",
@@ -166,6 +173,16 @@ const PIPELINES: NamedPipelinePreset[] = [
     name: "forecast-snapshot-bundle",
     description: "Archive champion plus three contenders, then clean staging.",
     steps: [
+      "prepare_forecast_snapshot_contenders",
+      "archive_forecast_snapshot",
+      "cleanup_forecast_staging",
+    ],
+  },
+  {
+    name: "period-roll",
+    description: "Score the prior month, archive the current month, then clean staging.",
+    steps: [
+      "refresh_forecast_snapshot_kpis",
       "prepare_forecast_snapshot_contenders",
       "archive_forecast_snapshot",
       "cleanup_forecast_staging",
@@ -231,11 +248,12 @@ describe("PipelineBuilderPanel", () => {
     renderPanel();
 
     expect(screen.getByText("Forecast Pipelines")).toBeDefined();
-    expect(screen.getByText("4 workflows")).toBeDefined();
+    expect(screen.getByText("5 workflows")).toBeDefined();
     expect(screen.getByText("1. Prepare Features & Clusters")).toBeDefined();
     expect(screen.getByText("2. Refresh Five-Model Roster")).toBeDefined();
     expect(screen.getByText("3. Build Release Candidate")).toBeDefined();
     expect(screen.getByText("4. Archive Forecast Snapshot")).toBeDefined();
+    expect(screen.getByText("Period Roll · Score Prior + Archive Current")).toBeDefined();
     expect(screen.queryByText("General ETL.")).toBeNull();
     expect(screen.queryByText("Inventory calculations.")).toBeNull();
   });

@@ -19,6 +19,7 @@ const FORECAST_PIPELINE_ORDER = [
   "model-refresh",
   "forecast-publish",
   "forecast-snapshot-bundle",
+  "period-roll",
 ] as const;
 
 const PIPELINE_LABELS: Record<(typeof FORECAST_PIPELINE_ORDER)[number], string> = {
@@ -26,6 +27,7 @@ const PIPELINE_LABELS: Record<(typeof FORECAST_PIPELINE_ORDER)[number], string> 
   "model-refresh": "2. Refresh Five-Model Roster",
   "forecast-publish": "3. Build Release Candidate",
   "forecast-snapshot-bundle": "4. Archive Forecast Snapshot",
+  "period-roll": "Period Roll · Score Prior + Archive Current",
 };
 
 type PipelineStatus =

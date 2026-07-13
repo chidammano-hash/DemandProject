@@ -1040,6 +1040,28 @@ reconciliation. It never deletes release candidates, legacy-invalid runs,
 unselected staging, or production. Use the standalone cleanup job for an
 explicit record-month override.
 
+### Monthly Period Roll
+
+Use **Workflows -> Workflow Library -> Period Roll** after the prior month's
+actuals are loaded and the planning date has advanced to the new month. The
+same control is registered as job type `period_roll` and scheduled by default
+for the 3rd day of each month at 04:00 (`0 4 3 * *`). Its guarded order is:
+
+1. Refresh `agg_accuracy_snapshot` and invalidate FVA snapshot cache entries.
+   This scores the prior live snapshot (for example, July lag 0 after July
+   actuals load); it never creates an accuracy value without an actual.
+2. Prepare the current planning month's frozen champion-plus-three roster.
+3. Archive the current six-lag snapshot. Existing immutable rows make retries
+   idempotent.
+4. Delete only older snapshot-contender staging that reconciles to its archive.
+
+If the configured planning date is still in the prior month, Period Roll safely
+retries that month rather than inventing the next record month. Advance
+`config/planning_config.yaml` (or `PLANNING_DATE`) before the scheduled run.
+April-June 2026 appear in FVA only as **Historical Backtest Evidence**. The old
+backtest table collected lags 0-4; lag 5 is correctly labeled `Not collected`.
+July 2026 onward comes only from `fact_forecast_snapshot`.
+
 ---
 
 ## Read Replica Deployment (Item 24)

@@ -214,6 +214,25 @@ export interface FVASnapshotMonth {
   last_refresh_at: string | null;
 }
 
+export interface FVAHistoricalBacktestRow {
+  model_id: string;
+  lag: number;
+  n_dfus: number;
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  evidence_state: "measured" | "missing" | "not_collected";
+}
+
+export interface FVAHistoricalBacktestPayload {
+  month: string;
+  evidence_type: "historical_backtest";
+  source: "backtest_lag_archive";
+  supported_lags: number[];
+  unsupported_lags: number[];
+  rows: FVAHistoricalBacktestRow[];
+}
+
 export interface FVAWaterfallStage {
   stage_id: string;
   label: string;
@@ -267,6 +286,8 @@ export const fvaKeys = {
   roi: (m: number) => ["fva", "roi", m],
   snapshotMonths: ["fva", "snapshot-months"],
   snapshotAccuracy: (recordMonth: string) => ["fva", "snapshot", recordMonth],
+  historicalBacktestMonths: ["fva", "historical-backtest-months"],
+  historicalBacktestAccuracy: (month: string) => ["fva", "historical-backtest", month],
 } as const;
 
 export const fetchFVAWaterfall = async (months = 12): Promise<FVAWaterfallPayload> =>
@@ -286,6 +307,16 @@ export const fetchFVASnapshotMonths = async (): Promise<{ months: FVASnapshotMon
 
 export const fetchFVASnapshotAccuracy = async (recordMonth: string): Promise<{ record_month: string; rows: FVASnapshotAccuracyRow[] }> =>
   fetchJson(`/fva/snapshot-accuracy?record_month=${encodeURIComponent(recordMonth)}`);
+
+export const fetchFVAHistoricalBacktestMonths = async (): Promise<{
+  months: string[];
+  evidence_type: "historical_backtest";
+}> => fetchJson("/fva/historical-backtest-months");
+
+export const fetchFVAHistoricalBacktestAccuracy = async (
+  month: string,
+): Promise<FVAHistoricalBacktestPayload> =>
+  fetchJson(`/fva/historical-backtest-accuracy?month=${encodeURIComponent(month)}`);
 
 // ---------------------------------------------------------------------------
 // Reports (08-08)

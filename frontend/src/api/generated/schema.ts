@@ -5823,6 +5823,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/fva/historical-backtest-months": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Historical Backtest Months
+         * @description Latest three pre-snapshot months with legacy backtest evidence.
+         *
+         *     These months are intentionally separate from the immutable live-forward
+         *     snapshot archive. A month with a frozen snapshot roster can never appear
+         *     in this legacy selector.
+         */
+        get: operations["historical_backtest_months_fva_historical_backtest_months_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fva/historical-backtest-accuracy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Historical Backtest Accuracy
+         * @description Five-model lag accuracy from legacy backtests, never live snapshots.
+         *
+         *     The legacy backtest contract collected lags 0 through 4. Lag 5 is emitted
+         *     as ``not_collected`` so the UI can keep a six-column comparison without
+         *     implying that missing historical evidence is pending or reconstructable.
+         */
+        get: operations["historical_backtest_accuracy_fva_historical_backtest_accuracy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/fva/interventions": {
         parameters: {
             query?: never;
@@ -21980,6 +22028,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    historical_backtest_months_fva_historical_backtest_months_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    historical_backtest_accuracy_fva_historical_backtest_accuracy_get: {
+        parameters: {
+            query: {
+                /** @description Historical target month */
+                month: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
