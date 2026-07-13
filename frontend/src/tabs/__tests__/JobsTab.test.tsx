@@ -178,8 +178,7 @@ describe("JobsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("2. Refresh Five-Model Roster")).toBeDefined();
       expect(screen.getByText("Run the retained five-model roster.")).toBeDefined();
-      expect(screen.getByText("3. Select & Assign Champion")).toBeDefined();
-      expect(screen.getByText("Select and atomically assign the governed champion.")).toBeDefined();
+      expect(screen.queryByText("3. Select & Assign Champion")).toBeNull();
     });
   });
 

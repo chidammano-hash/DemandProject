@@ -27,4 +27,24 @@ describe("GenerateForecastCard", () => {
     expect(screen.getByText("Champion (promoted DFU routing)")).toBeDefined();
     expect(screen.queryByText(/meta-learner/i)).toBeNull();
   });
+
+  it("blocks champion generation until a user-selected champion is assigned", () => {
+    render(
+      <GenerateForecastCard
+        selectedModel="champion"
+        effectiveHorizon={24}
+        onHorizonChange={vi.fn()}
+        includeCI
+        onIncludeCIChange={vi.fn()}
+        isSubmitting={false}
+        isForecastRunning={false}
+        blockedReason="Select and assign a completed experiment in Champion first."
+        onGenerateForecast={vi.fn()}
+        latestVersion={null}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /generate forecast/i })).toBeDisabled();
+    expect(screen.getByText(/select and assign a completed experiment/i)).toBeDefined();
+  });
 });

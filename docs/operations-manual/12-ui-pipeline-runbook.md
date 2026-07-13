@@ -89,19 +89,28 @@ build a workflow with `backtest_lgbm`, `backtest_chronos2_enriched`, `backtest_m
 
 ## 12.3 Phase 7 — Champion (Model Tuning → Champion stage)
 
-The Champion stage (`ChampionExperimentsPanel`) creates and runs read-only selection experiments.
+The Champion stage (`ChampionExperimentsPanel`) creates, compares, and explicitly assigns selection
+experiments.
 
 - **Create / run an experiment** → job type `champion_experiment` (params `{experiment_id}`),
   submitted by `POST /champion-experiments`. It compares loaded backtests without replacing the
   active config or champion results.
 - The old **Promote Config**, **Load Results**, and sweep **Promote winner** controls are retired.
   Their compatibility endpoints return `410 manual_champion_promotion_retired` with guidance to
-  `POST /jobs/pipelines/named/champion-refresh`; they perform no DB/config mutation and submit no job.
+  `POST /champion-experiments/{experiment_id}/assign`; they perform no DB/config mutation and submit
+  no job.
   Generic job launch, scheduling, and ad-hoc pipeline APIs also reject and hide
   `champion_results_load`.
 - The named **model-refresh** workflow stops after loading all five governed backtests.
-- The separate **champion-refresh** workflow uses `governed_champion_refresh`: it verifies the
-  exact current five-run lineage and atomically promotes the completed experiment and its results.
+- For a completed exact-five-model experiment, click **Select & Assign Champion**. The confirmation
+  submits `POST /champion-experiments/{experiment_id}/assign`, which queues
+  `governed_champion_refresh` with `source_experiment_id`. It copies the selected strategy—not its
+  potentially stale artifact—into a new governed experiment, re-evaluates it against the exact
+  current five-run lineage, and atomically assigns its historical results.
+- Champion assignment is intentionally absent from the Jobs guided workflow cards and the Forecast
+  readiness button. Those surfaces direct the user back to Champion so no background workflow can
+  silently choose a strategy. The named `champion-refresh` preset remains an automation-only path
+  for the configured production strategy.
 - Named pipeline submission is server-idempotent. Concurrent or repeated
   launches of the same preset return HTTP 200 with `status=already_running`
   and the existing pipeline id; only the first launch returns HTTP 202. This
@@ -123,8 +132,8 @@ variants in the **Sweep Builder**; the live counter shows how many candidates th
 (capped at `sweep.max_candidates`, default 24; per-segment scoring adds **no** extra runs). The
 **Sweep Results** panel shows the global leaderboard (with gate-eligibility badges), the per-segment
 winner map, and a "composite vs. best global" headline. Every recommendation is analysis-only.
-To adopt one, make a reviewed production-config change and run the named **champion-refresh** workflow;
-the UI never writes production config or champion facts. See spec
+To adopt one, open its completed experiment and use **Select & Assign Champion**; the UI queues the
+governed assignment and never writes production config or champion facts directly. See spec
 `docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
 
 ---
@@ -132,6 +141,8 @@ the UI never writes production config or champion facts. See spec
 ## 12.4 Phase 8 — Production forecast + promote (Model Tuning → Forecast stage)
 
 The Forecast stage (`ForecastPanel`) is a guided Train → Generate → Promote flow.
+Champion generation is disabled until an assigned experiment is active. If readiness reports a stale
+champion, Forecast directs the user to the Champion stage rather than launching automatic selection.
 
 | Step | UI control → endpoint | Job type | Notes |
 |---|---|---|---|

@@ -250,8 +250,7 @@ export function ForecastPanel() {
   // Promoted champion experiment — use its model list for the champion display
   const promotedExperiment = promotedData?.promoted ?? null;
 
-  // Champion models: from the promoted experiment (may include models not in forecastAlgos)
-  // If no promoted experiment, fall back to all algos with compete: true
+  // Champion models come only from the atomically assigned experiment.
   const championCompetingAlgos = useMemo(() => {
     const allAlgos = pipelineConfig?.algorithms ?? {};
     const promotedModelIds = new Set((promotedExperiment?.models ?? []).filter(isForecastModelId));
@@ -270,8 +269,8 @@ export function ForecastPanel() {
         } as ForecastAlgorithm;
       });
     }
-    return forecastAlgos.filter((a) => a.compete);
-  }, [pipelineConfig?.algorithms, backtestSummary, promotedExperiment?.models, forecastAlgos]);
+    return [];
+  }, [pipelineConfig?.algorithms, backtestSummary, promotedExperiment?.models]);
 
   // Champion generation needs current production artifacts; promotion needs one
   // completed immutable champion candidate run returned by the generation API.
@@ -440,6 +439,10 @@ export function ForecastPanel() {
   }
 
   async function handleGenerateForecast() {
+    if (selectedModel === "champion" && !promotedExperiment) {
+      toast.error("Select and assign a completed experiment in Champion first.");
+      return;
+    }
     setIsSubmitting(true);
     setGeneratingModelId(selectedModel);
     try {
@@ -559,6 +562,11 @@ export function ForecastPanel() {
           onIncludeCIChange={setConfidenceIntervalsOverride}
           isSubmitting={isSubmitting}
           isForecastRunning={isForecastRunning}
+          blockedReason={
+            selectedModel === "champion" && !promotedExperiment
+              ? "Select and assign a completed experiment in Champion first."
+              : undefined
+          }
           onGenerateForecast={handleGenerateForecast}
           latestVersion={latestVersion}
         />

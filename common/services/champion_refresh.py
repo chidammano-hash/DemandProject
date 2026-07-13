@@ -64,6 +64,22 @@ class ChampionRefreshSpec:
     cluster_assignment_count: int | None = None
     cluster_assignment_checksum: str | None = None
     backtest_run_ids: tuple[tuple[str, int], ...] = ()
+    source_experiment_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ChampionAssignmentCandidate:
+    """Completed analysis experiment selected as the assignment strategy source."""
+
+    experiment_id: int
+    label: str
+    strategy: str
+    strategy_params: dict[str, Any]
+    meta_learner_params: dict[str, Any]
+    models: tuple[str, ...]
+    metric: str
+    lag_mode: str
+    min_dfu_rows: int
 
 
 def _json_object(value: object, *, field_name: str) -> dict[str, Any]:
@@ -184,6 +200,97 @@ def load_refresh_spec() -> ChampionRefreshSpec:
     )
 
 
+def load_champion_assignment_candidate(
+    experiment_id: int,
+) -> ChampionAssignmentCandidate:
+    """Load a completed experiment that can safely source an assignment strategy."""
+    if not _positive_integer(experiment_id):
+        raise ValueError("source_experiment_id must be a positive integer")
+    with _get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT label, status, strategy, strategy_params,
+                      meta_learner_params, models, metric, lag_mode, min_sku_rows
+               FROM champion_experiment
+               WHERE experiment_id = %s""",
+            (experiment_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise LookupError(f"Champion experiment {experiment_id} not found")
+
+    (
+        label,
+        status,
+        strategy,
+        raw_strategy_params,
+        raw_meta_params,
+        raw_models,
+        metric,
+        lag_mode,
+        min_sku_rows,
+    ) = row
+    if status != "completed":
+        raise ValueError(
+            f"Champion experiment {experiment_id} is {status!r}; "
+            "only completed experiments can be assigned"
+        )
+    models = _decode_json(raw_models, field_name="models")
+    candidate = ChampionAssignmentCandidate(
+        experiment_id=experiment_id,
+        label=str(label),
+        strategy=str(strategy),
+        strategy_params=_json_object(
+            _decode_json(raw_strategy_params, field_name="strategy_params"),
+            field_name="strategy_params",
+        ),
+        meta_learner_params=_json_object(
+            _decode_json(raw_meta_params, field_name="meta_learner_params"),
+            field_name="meta_learner_params",
+        ),
+        models=tuple(models) if isinstance(models, list) else (),
+        metric=str(metric),
+        lag_mode=str(lag_mode),
+        min_dfu_rows=int(min_sku_rows),
+    )
+    _validate_assignment_candidate(candidate)
+    return candidate
+
+
+def _validate_assignment_candidate(
+    candidate: ChampionAssignmentCandidate,
+) -> None:
+    if len(candidate.models) != len(CANONICAL_CHAMPION_MODELS) or set(candidate.models) != set(
+        CANONICAL_CHAMPION_MODELS
+    ):
+        raise ValueError(
+            "Champion assignment requires the exact canonical five-model roster: "
+            f"{list(CANONICAL_CHAMPION_MODELS)}"
+        )
+    if not candidate.strategy or not candidate.metric or not candidate.lag_mode:
+        raise ValueError("Selected champion experiment has an incomplete strategy contract")
+    if candidate.min_dfu_rows < 1:
+        raise ValueError("Selected champion experiment min_sku_rows must be positive")
+
+
+def build_selected_refresh_spec(
+    current_spec: ChampionRefreshSpec,
+    candidate: ChampionAssignmentCandidate,
+) -> ChampionRefreshSpec:
+    """Bind a selected strategy to the current sales/cluster/backtest lineage."""
+    _validate_assignment_candidate(candidate)
+    return replace(
+        current_spec,
+        source_experiment_id=candidate.experiment_id,
+        strategy=candidate.strategy,
+        strategy_params=candidate.strategy_params,
+        meta_learner_params=candidate.meta_learner_params,
+        models=CANONICAL_CHAMPION_MODELS,
+        metric=candidate.metric,
+        lag_mode=candidate.lag_mode,
+        min_dfu_rows=candidate.min_dfu_rows,
+    )
+
+
 def _positive_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -270,11 +377,24 @@ def create_governed_experiment(
     spec: ChampionRefreshSpec,
     *,
     job_id: str | None,
+    source_candidate: ChampionAssignmentCandidate | None = None,
 ) -> int:
     """Create a queued experiment without changing either promoted incumbent."""
+    if source_candidate is None:
+        label = "Governed champion refresh"
+        template_id = "governed-champion-refresh"
+        source_note = "using the configured production strategy"
+    else:
+        label = f"Assigned from #{source_candidate.experiment_id}: {source_candidate.label}"
+        template_id = "selected-champion-assignment"
+        source_note = (
+            f"from selected analysis experiment #{source_candidate.experiment_id} "
+            f"({source_candidate.label})"
+        )
     notes = (
-        "Created by the governed champion-refresh lifecycle. The incumbent remains "
-        "active until this experiment and its historical results are complete."
+        f"Created by the governed champion assignment lifecycle {source_note}. "
+        "The selected strategy is re-evaluated on current five-model backtests; "
+        "the incumbent remains active until historical results are complete."
     )
     with _get_conn() as conn, conn.transaction(), conn.cursor() as cur:
         cur.execute(
@@ -289,9 +409,9 @@ def create_governed_experiment(
                  AND cluster.is_promoted = TRUE
                RETURNING experiment_id""",
             (
-                "Governed champion refresh",
+                label,
                 notes,
-                "governed-champion-refresh",
+                template_id,
                 job_id,
                 spec.strategy,
                 json.dumps(spec.strategy_params),
@@ -361,6 +481,11 @@ def refresh_spec_from_payload(payload: object) -> ChampionRefreshSpec:
             cluster_assignment_count=int(payload["cluster_assignment_count"]),
             cluster_assignment_checksum=str(payload["cluster_assignment_checksum"]),
             backtest_run_ids=tuple((pair[0], int(pair[1])) for pair in run_ids),
+            source_experiment_id=(
+                int(payload["source_experiment_id"])
+                if payload["source_experiment_id"] is not None
+                else None
+            ),
         )
     except (TypeError, ValueError) as exc:
         raise RuntimeError("Persisted governed champion spec contains invalid values") from exc
@@ -386,9 +511,7 @@ def persist_job_experiment_id(
             (experiment_id, json.dumps(_spec_payload(spec)), job_id),
         )
     if int(result.rowcount or 0) != 1:
-        raise RuntimeError(
-            f"Could not persist champion experiment {experiment_id} on job {job_id}"
-        )
+        raise RuntimeError(f"Could not persist champion experiment {experiment_id} on job {job_id}")
 
 
 def champion_winners_path(experiment_id: int) -> Path:
@@ -426,9 +549,7 @@ def _decode_json(value: object, *, field_name: str) -> object:
         try:
             return json.loads(value)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Champion experiment has invalid {field_name} JSON"
-            ) from exc
+            raise RuntimeError(f"Champion experiment has invalid {field_name} JSON") from exc
     return value
 
 
@@ -497,6 +618,28 @@ def _validated_experiment_spec(
     )
 
 
+def _current_refresh_context_matches(
+    current: ChampionRefreshSpec,
+    expected: ChampionRefreshSpec,
+) -> bool:
+    """Keep selected strategy frozen while requiring current governed lineage."""
+    if expected.source_experiment_id is None:
+        return current == expected
+    return (
+        replace(
+            expected,
+            source_experiment_id=None,
+            strategy=current.strategy,
+            strategy_params=current.strategy_params,
+            meta_learner_params=current.meta_learner_params,
+            metric=current.metric,
+            lag_mode=current.lag_mode,
+            min_dfu_rows=current.min_dfu_rows,
+        )
+        == current
+    )
+
+
 def _promotion_snapshot(spec: ChampionRefreshSpec) -> dict[str, Any]:
     snapshot = _spec_payload(spec)
     snapshot["_promotion_mode"] = GOVERNED_PROMOTION_MODE
@@ -518,12 +661,15 @@ def finalize_governed_champion_refresh(
     subsequent execution verifies the stored checksums instead of rewriting.
     """
     current_spec = load_refresh_spec()
-    if expected_spec is not None and current_spec != expected_spec:
+    if expected_spec is not None and not _current_refresh_context_matches(
+        current_spec,
+        expected_spec,
+    ):
         raise RuntimeError(
-            "Sales, clustering, backtest lineage, or champion configuration changed "
+            "Sales, clustering, backtest lineage, or governed model roster changed "
             "while the experiment was running; the incumbent champion was not touched"
         )
-    spec = current_spec
+    spec = expected_spec or current_spec
     artifact_path = winners_csv or champion_winners_path(experiment_id)
     if not artifact_path.exists():
         raise FileNotFoundError(
@@ -544,8 +690,7 @@ def finalize_governed_champion_refresh(
     missing_columns = required_columns - set(winners_df.columns)
     if missing_columns:
         raise RuntimeError(
-            "Champion winners artifact is missing required columns: "
-            f"{sorted(missing_columns)}"
+            f"Champion winners artifact is missing required columns: {sorted(missing_columns)}"
         )
 
     previous_experiment_id: int | None = None
@@ -714,7 +859,7 @@ def finalize_governed_champion_refresh(
     if refresh_views:
         view_refresh = refresh_for_tables(["fact_external_forecast_monthly"])
 
-    return {
+    result = {
         "experiment_id": experiment_id,
         "previous_experiment_id": previous_experiment_id,
         "backtest_run_ids": dict(spec.backtest_run_ids),
@@ -731,6 +876,9 @@ def finalize_governed_champion_refresh(
         "already_promoted": already_promoted,
         "view_refresh": view_refresh,
     }
+    if spec.source_experiment_id is not None:
+        result["source_experiment_id"] = spec.source_experiment_id
+    return result
 
 
 def run_governed_champion_refresh(
@@ -744,13 +892,27 @@ def run_governed_champion_refresh(
         raise ValueError(
             "governed_champion_refresh creates its own experiment; experiment_id is not accepted"
         )
+    raw_source_experiment_id = params.get("source_experiment_id")
+    if raw_source_experiment_id is not None and not _positive_integer(raw_source_experiment_id):
+        raise ValueError("source_experiment_id must be a positive integer")
+    source_candidate = None
     if progress_cb:
         progress_cb(pct=5, msg="Validating canonical five-model champion inputs")
     spec = load_refresh_spec()
+    if raw_source_experiment_id is not None:
+        source_candidate = load_champion_assignment_candidate(raw_source_experiment_id)
+        spec = build_selected_refresh_spec(spec, source_candidate)
 
     if progress_cb:
         progress_cb(pct=10, msg="Creating governed champion experiment")
-    experiment_id = create_governed_experiment(spec, job_id=job_id)
+    if source_candidate is None:
+        experiment_id = create_governed_experiment(spec, job_id=job_id)
+    else:
+        experiment_id = create_governed_experiment(
+            spec,
+            job_id=job_id,
+            source_candidate=source_candidate,
+        )
     persist_job_experiment_id(job_id, experiment_id, spec)
 
     if progress_cb:
@@ -777,6 +939,8 @@ def run_governed_champion_refresh(
         winners_csv=artifact_path,
         expected_spec=spec,
     )
+    if source_candidate is not None:
+        result["source_experiment_id"] = source_candidate.experiment_id
     if progress_cb:
         progress_cb(pct=100, msg=f"Champion experiment #{experiment_id} is active")
     return result

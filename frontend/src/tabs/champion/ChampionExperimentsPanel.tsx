@@ -24,6 +24,7 @@ import {
   CHAMPION_EXP_STALE,
   fetchChampionExperiments,
   fetchChampionExperimentLogs,
+  assignChampionExperiment,
   cancelChampionExperiment,
   deleteChampionExperiment,
   type ChampionExperiment,
@@ -48,10 +49,13 @@ import {
 } from "@/components/ui/select";
 import { StatusBadge, formatDuration } from "@/components/shared-tuning-utils";
 import { cn } from "@/lib/utils";
+import { formatApiError } from "@/lib/formatApiError";
+import { toast } from "@/components/Toaster";
 
 import { LagFilterBar } from "@/tabs/model-tuning/LagFilterBar";
 import { ChampionExperimentBuilder } from "./ChampionExperimentBuilder";
 import { ChampionComparisonPanel } from "./ChampionComparisonPanel";
+import { ChampionPromoteModal } from "./ChampionPromoteModal";
 import { SweepBuilder } from "./SweepBuilder";
 import { SweepResultsPanel } from "./SweepResultsPanel";
 import {
@@ -64,6 +68,22 @@ import {
 // Status filter
 // ---------------------------------------------------------------------------
 type StatusFilter = "all" | "running" | "completed" | "failed";
+
+const ASSIGNABLE_MODELS = new Set([
+  "lgbm_cluster",
+  "chronos2_enriched",
+  "mstl",
+  "nbeats",
+  "nhits",
+]);
+
+function isAssignmentEligible(experiment: ChampionExperiment): boolean {
+  return (
+    experiment.models.length === ASSIGNABLE_MODELS.size &&
+    new Set(experiment.models).size === ASSIGNABLE_MODELS.size &&
+    experiment.models.every((modelId) => ASSIGNABLE_MODELS.has(modelId))
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Strategy labels
@@ -118,6 +138,8 @@ export function ChampionExperimentsPanel() {
   const [candidateId, setCandidateId] = useState<number | null>(null);
   const [logExpId, setLogExpId] = useState<number | null>(null);
   const [logOffset, setLogOffset] = useState(0);
+  const [assignmentExperiment, setAssignmentExperiment] =
+    useState<ChampionExperiment | null>(null);
 
   // Data
   const { data, isLoading, isError } = useQuery({
@@ -166,6 +188,18 @@ export function ChampionExperimentsPanel() {
     mutationFn: deleteChampionExperiment,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: championExperimentKeys.all }),
+  });
+
+  const assignmentMutation = useMutation({
+    mutationFn: assignChampionExperiment,
+    onSuccess: (result) => {
+      setAssignmentExperiment(null);
+      queryClient.invalidateQueries({ queryKey: championExperimentKeys.all });
+      toast.success(
+        `Champion assignment queued as ${result.job_id}. Monitor Jobs, then continue to Forecast.`,
+      );
+    },
+    onError: (error) => toast.error(formatApiError(error)),
   });
 
   // KPIs
@@ -396,6 +430,22 @@ export function ChampionExperimentsPanel() {
                               >
                                 <FileText className="h-3 w-3" />
                               </Button>
+                              {exp.status === "completed" && !exp.is_promoted && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  title={
+                                    isAssignmentEligible(exp)
+                                      ? "Select & Assign Champion"
+                                      : "Assignment requires all five governed models"
+                                  }
+                                  onClick={() => setAssignmentExperiment(exp)}
+                                  disabled={!isAssignmentEligible(exp)}
+                                >
+                                  <Crown className="h-3 w-3 text-amber-500" />
+                                </Button>
+                              )}
                               {(exp.status === "running" || exp.status === "queued") && (
                                 <Button
                                   variant="ghost"
@@ -499,6 +549,16 @@ export function ChampionExperimentsPanel() {
           queryClient.invalidateQueries({ queryKey: championExperimentKeys.all })
         }
       />
+
+      {assignmentExperiment ? (
+        <ChampionPromoteModal
+          experiment={assignmentExperiment}
+          open
+          onClose={() => setAssignmentExperiment(null)}
+          onAssign={(experimentId) => assignmentMutation.mutate(experimentId)}
+          isPending={assignmentMutation.isPending}
+        />
+      ) : null}
 
     </div>
   );

@@ -223,11 +223,18 @@ No new tables. Champion and ceiling predictions are stored in the existing `fact
 | PUT | `/competition/config` | Update config (writes YAML to disk) |
 | POST | `/competition/run` | Submit `champion_select` (the governed experiment + atomic results promotion), return job id (202) |
 | GET | `/competition/summary` | Last run summary |
+| POST | `/champion-experiments/{experiment_id}/assign` | Re-evaluate a selected completed experiment on current governed five-model backtests and atomically assign its resulting composition (202) |
 
 `/competition/run` performs no forecast-table mutation in the request. The
 governed job creates a champion experiment, atomically promotes its exact
 winners/results, then refreshes the full materialized-view dependency closure
 through `common/core/mv_refresh.py`.
+
+The user-facing assignment route freezes the selected experiment's strategy, parameters, metric,
+lag, and exact canonical roster, while taking sales, cluster, and five backtest run lineage from the
+current governed state. Single-model winners copy their source backtest rows; blend winners rebuild
+historical rows from `source_mix`. Both promotion flags and all champion rows switch in one
+transaction only after row-count and checksum audits pass.
 
 ## Pipeline
 

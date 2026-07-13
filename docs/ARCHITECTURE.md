@@ -362,6 +362,9 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - **Fallback model** (`fallback_model_id`, default `lgbm_cluster`): fills warm-up DFU-months so every DFU-month always has a champion row
    - WAPE-based DFU-level evaluation: `SUM(ABS(F-A)) / ABS(SUM(A))` per DFU per model
    - Champion composite stored as `model_id='champion'` in `fact_external_forecast_monthly` — auto-appears in all accuracy views
+   - A completed exact-five-model Champion experiment can be user-selected for governed assignment;
+     its strategy is re-evaluated on current backtest lineage and its resulting single-model or blend
+     composition is copied atomically before Forecast can use it
    - Ceiling (oracle) model: per-DFU per-month best model selection — theoretical upper bound with perfect foresight
    - Ceiling stored as `model_id='ceiling'` — provides accuracy benchmark alongside champion
    - Gap-to-ceiling metric shows how far champion is from theoretical best (in percentage points)
@@ -744,7 +747,9 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 64.  `champion_experiment_month` — per-month accuracy breakdown for each champion experiment (Feature 48); grain: `(id)` SERIAL PK, UNIQUE(experiment_id, month_start); columns: experiment_id (FK), month_start (DATE), champion_accuracy, ceiling_accuracy, gap_bps, n_champions, model_distribution (JSONB); DDL: `sql/102_champion_experiments.sql`
 65.  `champion_experiment_comparison` — cached pairwise comparison results for champion experiments (Feature 48); grain: `(id)` SERIAL PK, UNIQUE(experiment_a_id, experiment_b_id); columns: experiment_a_id (FK), experiment_b_id (FK), created_at, overall_comparison (JSONB), per_lag_comparison (JSONB), per_month_comparison (JSONB), model_dist_comparison (JSONB), config_diffs (JSONB); DDL: `sql/102_champion_experiments.sql`
 66.  `champion_promotion_log` — audit log for champion strategy promotions (Feature 48); grain: `(id)` SERIAL PK; columns: experiment_id (FK), promoted_at, promoted_by (default 'manual'), previous_experiment_id, strategy, champion_accuracy, config_snapshot (JSONB); DDL: `sql/102_champion_experiments.sql`
-- Champion experiments API router at `/champion-experiments`, `/demand-history` with 15 endpoints: list, templates, promoted, promotions, compare, detail, lags, months, logs, create, promote, promote-results, promote-results/status, cancel, delete
+- Champion experiments API router at `/champion-experiments`, `/demand-history` with 16 endpoints:
+  list, templates, promoted, promotions, compare, detail, lags, months, logs, create, assign,
+  retired promote, retired promote-results, promote-results/status, cancel, delete
 67.  `fact_candidate_forecast` — legacy candidate table; grain: `(item_id, loc, model_id, forecast_month)` UNIQUE. It currently has no writer and is not used by forward promotion; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 68.  `model_promotion_log` — exact promotion/demotion audit; grain: `(id)` SERIAL PK; includes model/type/version/cardinalities plus `source_run_id`, `production_run_id`, gate report, candidate/production/archive checksums, archive time, and replacement id. Database indexes enforce one active release and one promotion per source run; DDL: `sql/121`, extended by `sql/203_create_forecast_generation_run.sql`
 - `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, generator-contract metadata, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`. Migration `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready release candidates invalid and non-promotable without deleting their evidence.
@@ -995,7 +1000,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Sampled Backtest** | `/lgbm-tuning/sampled/run`, `/sampled/status/{job_id}`, `/sampled/result/{job_id}` | `lgbm_tuning_run` (sampled mode) |
 | **Unified Model Tuning** | `/model-tuning/{model}/experiments`, `/experiments/{id}`, `/experiments/{id}/lags`, `/experiments/{id}/clusters`, `/experiments/{id}/months`, `/experiments/{id}/logs`, `/compare`, `/templates`, `/promoted`, `/promotions`, `/experiments/{id}/promote`, `/experiments/{id}/cancel` | `lgbm_tuning_run`, `lgbm_tuning_timeframe`, `lgbm_tuning_cluster`, `lgbm_tuning_month`, `lgbm_tuning_comparison` |
 | **Cluster Experiments** | `/cluster-experiments`, `/{id}`, `/compare`, `/templates`, `/completed`, `/{id}/promote`, `/{id}/used-by` | `cluster_experiment`, `cluster_experiment_comparison` |
-| **Champion Experiments** | `/champion-experiments`, `/{id}`, `/{id}/lags`, `/{id}/months`, `/{id}/logs`, `/templates`, `/promoted`, `/promotions`, `/compare`, `/{id}/promote`, `/{id}/promote-results`, `/{id}/promote-results/status`, `/{id}/cancel` | `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log` |
+| **Champion Experiments** | `/champion-experiments`, `/{id}`, `/{id}/lags`, `/{id}/months`, `/{id}/logs`, `/templates`, `/promoted`, `/promotions`, `/compare`, `/{id}/assign`, retired `/{id}/promote`, retired `/{id}/promote-results`, `/{id}/promote-results/status`, `/{id}/cancel` | `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log` |
 | **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions` |
 | **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`, `/{model_id}/train` | `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
 | **Forecast Release Readiness** | `/forecast-release/readiness` | `fact_external_forecast_monthly`, `dim_sku`, `champion_experiment`, `cluster_experiment`, `fact_production_forecast`, `fact_forecast_snapshot` |
@@ -1155,6 +1160,9 @@ The maintained base-model roster is exactly LightGBM (`lgbm_cluster`), N-HiTS
    - All strategies enforce **exec-lag-aware causality** via `shift(exec_lag + 1)` per DFU-model group — selection for month T excludes last exec_lag months whose actuals weren't available at issuance time; backward compatible with exec_lag=0
    - **Fallback model** fills warm-up DFU-months (NOT EXISTS + ON CONFLICT DO NOTHING insert) so every DFU-month has a champion row
    - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
+   - User-selected assignment clones only the chosen strategy contract into a new governed experiment,
+     binds it to current sales/cluster/five-run lineage, and atomically copies single-model or
+     `source_mix` ensemble history after audits; the previous champion survives any failure
    - Also computes ceiling (oracle): best model per DFU per month via `ABS(basefcst_pref - tothist_dmd)` ranking
    - Ceiling rows stored as `model_id='ceiling'` — theoretical upper bound with perfect foresight
    - Refreshes materialized views so champion + ceiling auto-appear in all accuracy comparisons

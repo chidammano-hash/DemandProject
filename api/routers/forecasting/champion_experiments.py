@@ -26,6 +26,7 @@ from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 from common.core.sql_helpers import parse_db_json as _parse_json
 from common.core.utils import get_competing_model_ids
 from common.ml.champion import STRATEGY_REGISTRY as _STRAT_REG
+from common.services.champion_refresh import load_champion_assignment_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -839,7 +840,54 @@ def create_experiment(body: CreateChampionExperimentBody):
 
 
 # ---------------------------------------------------------------------------
-# 11. POST /champion-experiments/{experiment_id}/promote — retired Stage 1
+# 11. POST /champion-experiments/{experiment_id}/assign — governed assignment
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{experiment_id}/assign",
+    status_code=202,
+    dependencies=[Depends(require_api_key)],
+)
+def assign_champion_experiment(experiment_id: int):
+    """Queue selected-strategy evaluation and atomic historical assignment."""
+    try:
+        candidate = load_champion_assignment_candidate(experiment_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    try:
+        from common.services.job_registry import JobManager
+
+        job_id = JobManager().submit_job(
+            job_type="governed_champion_refresh",
+            params={"source_experiment_id": experiment_id},
+            label=f"Assign Champion: {candidate.label}",
+        )
+    except Exception:  # noqa: BLE001 — durable scheduler boundary logs and sanitizes failures
+        logger.exception(
+            "Failed to queue champion assignment from experiment %d",
+            experiment_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to queue champion assignment",
+        ) from None
+
+    return {
+        "source_experiment_id": experiment_id,
+        "job_id": job_id,
+        "status": "queued",
+        "message": (
+            f"Selected champion experiment #{experiment_id} will be re-evaluated "
+            "against the current governed five-model backtests before atomic assignment."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 12. POST /champion-experiments/{experiment_id}/promote — retired Stage 1
 # ---------------------------------------------------------------------------
 
 @router.post("/{experiment_id}/promote", dependencies=[Depends(require_api_key)])
@@ -849,7 +897,7 @@ def promote_experiment(experiment_id: int):
 
 
 # ---------------------------------------------------------------------------
-# 12. POST /champion-experiments/{experiment_id}/promote-results — retired Stage 2
+# 13. POST /champion-experiments/{experiment_id}/promote-results — retired Stage 2
 # ---------------------------------------------------------------------------
 
 @router.post("/{experiment_id}/promote-results", dependencies=[Depends(require_api_key)])
@@ -859,7 +907,7 @@ def promote_results(experiment_id: int):
 
 
 # ---------------------------------------------------------------------------
-# 13. GET /champion-experiments/{experiment_id}/promote-results/status
+# 14. GET /champion-experiments/{experiment_id}/promote-results/status
 # ---------------------------------------------------------------------------
 
 @router.get("/{experiment_id}/promote-results/status")

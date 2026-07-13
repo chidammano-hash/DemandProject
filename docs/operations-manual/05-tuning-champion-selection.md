@@ -228,17 +228,19 @@ lookback is configured under `champion.release_readiness`; query parameters
 cannot shorten it. The card shows all blockers through its disclosure and polls
 every 60 seconds while open, including after a green result.
 
-`model-refresh` stops after the five governed backtests are loaded. Run the
-separate `champion-refresh` pipeline to launch `governed_champion_refresh`. It
+`model-refresh` stops after the five governed backtests are loaded. In the Champion UI, select a
+completed exact-five-model experiment and click **Select & Assign Champion**. This launches
+`governed_champion_refresh` with the selected experiment id. It
 requires the latest completed-and-loaded run for every canonical model to carry
 one identical, current sales-batch/hash and promoted-cluster assignment
-lineage. The job creates a new `champion_experiment` from the current production
-strategy, evaluates and checksums its winners without touching the incumbent,
+lineage. The job creates a new governed `champion_experiment` from the selected
+strategy, evaluates and checksums fresh winners without touching the incumbent,
 then replaces champion/ceiling facts and both promotion flags in one database
 transaction. The job result contains the experiment id, five source backtest
 run ids, and result checksums. A failed evaluation, empty load, lineage change,
 or audit failure rolls back before the incumbent is cleared; no separate
-results-promotion click is required for this named workflow.
+results-promotion click is required. The selected experiment's old winners file is never promoted
+directly; only the re-evaluated composition is copied into historical champion rows.
 
 This is a post-release planner-use scorecard, not yet a transactional database
 constraint on `POST /backtest-management/champion/promote`. Do not proceed to

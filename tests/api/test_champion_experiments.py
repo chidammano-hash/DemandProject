@@ -10,14 +10,16 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+from common.services.champion_lineage import CANONICAL_CHAMPION_MODELS
+from common.services.champion_refresh import ChampionAssignmentCandidate
 from tests.api.conftest import make_pool as _make_pool
 
 _MANUAL_PROMOTION_RETIRED_DETAIL = {
     "code": "manual_champion_promotion_retired",
     "message": (
-        "Manual champion promotion is retired. Run "
-        "POST /jobs/pipelines/named/champion-refresh to create and atomically promote "
-        "a governed champion."
+        "Manual two-stage champion promotion is retired. Select a completed experiment "
+        "and run POST /champion-experiments/{experiment_id}/assign to re-evaluate and "
+        "atomically assign a governed champion."
     ),
 }
 
@@ -257,6 +259,73 @@ async def test_create_experiment_rejects_retired_model_before_insert():
     assert "catboost_cluster" in resp.json()["detail"]
     assert "Valid competing models" in resp.json()["detail"]
     cursor.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_assign_completed_experiment_queues_governed_selected_assignment():
+    candidate = ChampionAssignmentCandidate(
+        experiment_id=41,
+        label="Selected ensemble",
+        strategy="ensemble",
+        strategy_params={"top_k": 3},
+        meta_learner_params={},
+        models=CANONICAL_CHAMPION_MODELS,
+        metric="accuracy_pct",
+        lag_mode="execution",
+        min_dfu_rows=3,
+    )
+    mock_jm = MagicMock()
+    mock_jm.return_value.submit_job.return_value = "job-assign-41"
+
+    with (
+        patch(
+            "api.routers.forecasting.champion_experiments.load_champion_assignment_candidate",
+            return_value=candidate,
+        ),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/champion-experiments/41/assign")
+
+    assert resp.status_code == 202
+    assert resp.json() == {
+        "source_experiment_id": 41,
+        "job_id": "job-assign-41",
+        "status": "queued",
+        "message": (
+            "Selected champion experiment #41 will be re-evaluated against the current "
+            "governed five-model backtests before atomic assignment."
+        ),
+    }
+    mock_jm.return_value.submit_job.assert_called_once_with(
+        job_type="governed_champion_refresh",
+        params={"source_experiment_id": 41},
+        label="Assign Champion: Selected ensemble",
+    )
+
+
+@pytest.mark.asyncio
+async def test_assign_rejects_experiment_that_is_not_completed():
+    mock_jm = MagicMock()
+    with (
+        patch(
+            "api.routers.forecasting.champion_experiments.load_champion_assignment_candidate",
+            side_effect=ValueError(
+                "Champion experiment 41 is 'running'; only completed experiments can be assigned"
+            ),
+        ),
+        patch("common.services.job_registry.JobManager", mock_jm),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/champion-experiments/41/assign")
+
+    assert resp.status_code == 409
+    assert "only completed experiments" in resp.json()["detail"]
+    mock_jm.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

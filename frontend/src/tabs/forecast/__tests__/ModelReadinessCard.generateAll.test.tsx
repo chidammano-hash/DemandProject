@@ -2,10 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ModelReadinessCard } from "../ModelReadinessCard";
 import type { ForecastAlgorithm } from "../forecastPanelShared";
-import type {
-  SnapshotRosterReadiness,
-  StagingSummary,
-} from "@/api/queries/backtest-management";
+import type { SnapshotRosterReadiness, StagingSummary } from "@/api/queries/backtest-management";
 
 const treeAlgo: ForecastAlgorithm = {
   id: "lgbm_cluster",
@@ -188,7 +185,7 @@ describe("ModelReadinessCard — Generate All", () => {
     expect(screen.getAllByRole("button", { name: "Prepare Release" })).toHaveLength(1);
   });
 
-  it("offers Champion Refresh when governed champion evidence is missing", () => {
+  it("directs the user to select a Champion experiment instead of auto-assigning", () => {
     const { onPreparePublish } = renderCard({
       snapshotReadiness: {
         ...readySnapshotRoster,
@@ -199,8 +196,11 @@ describe("ModelReadinessCard — Generate All", () => {
       },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Assign Champion" }));
-    expect(onPreparePublish).toHaveBeenCalledWith("champion-refresh");
+    expect(
+      screen.getByText(/go to champion and select a completed experiment to assign/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Assign Champion" })).not.toBeInTheDocument();
+    expect(onPreparePublish).not.toHaveBeenCalled();
   });
 
   it("shows pipeline progress without allowing duplicate preparation", () => {
@@ -228,10 +228,9 @@ describe("ModelReadinessCard — Generate All", () => {
 
     expect(screen.getByText("Production release published")).toBeInTheDocument();
     expect(
-      screen.getByText(/Generate All creates 5 diagnostic comparison forecasts/),
+      screen.getByText(/Generate All creates 5 diagnostic comparison forecasts/)
     ).toBeInTheDocument();
     expect(screen.queryByText("Champion + 0/3 contenders ready")).not.toBeInTheDocument();
     expect(screen.queryByText(/failed an integrity check/)).not.toBeInTheDocument();
   });
-
 });

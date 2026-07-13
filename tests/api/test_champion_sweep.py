@@ -15,9 +15,9 @@ from tests.api.conftest import make_pool as _make_pool
 _MANUAL_PROMOTION_RETIRED_DETAIL = {
     "code": "manual_champion_promotion_retired",
     "message": (
-        "Manual champion promotion is retired. Run "
-        "POST /jobs/pipelines/named/champion-refresh to create and atomically promote "
-        "a governed champion."
+        "Manual two-stage champion promotion is retired. Select a completed experiment "
+        "and run POST /champion-experiments/{experiment_id}/assign to re-evaluate and "
+        "atomically assign a governed champion."
     ),
 }
 

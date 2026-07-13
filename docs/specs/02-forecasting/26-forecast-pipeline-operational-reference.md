@@ -793,10 +793,11 @@ make champion-train-meta     # Train meta-learner classifier
 - Model Tuning Tab > **Champion** stage card > `ChampionExperimentsPanel`
 - "New Experiment" -> select from 36 templates, toggle competing models, configure params
 - Compare 2 experiments -> per-lag, per-month, model distribution comparison
-- Completed experiments and sweep recommendations are analysis-only; no Promote/Load control is shown
+- Completed exact-five-model experiments expose **Select & Assign Champion**; legacy Promote/Load
+  controls remain absent
 - Jobs → `model-refresh`: fixed five-model governed backtest and load refresh
-- Jobs → `champion-refresh`: the experiment id and lineage checksums are returned
-  with the final job result and results assignment is atomic
+- Champion → **Select & Assign Champion**: queues a selected-strategy governed job; the new governed
+  experiment id and lineage checksums are returned with the final job result and assignment is atomic
 
 API endpoints (prefix `/champion-experiments`):
 - `POST /` -- create + launch experiment (combined, returns 202)
@@ -809,6 +810,8 @@ API endpoints (prefix `/champion-experiments`):
 - `GET /{id}/lags` -- per-lag breakdown
 - `GET /{id}/months` -- per-month breakdown
 - `GET /{id}/logs` -- stream logs
+- `POST /{id}/assign` -- re-evaluate the selected completed experiment against current governed
+  five-model backtests, copy its resulting composition, and atomically assign it
 - `POST /{id}/promote` -- retired; stable 410 with `champion-refresh` guidance, no mutation
 - `POST /{id}/promote-results` -- retired; stable 410 with `champion-refresh` guidance, no job submission
 - `GET /{id}/promote-results/status` -- check promotion status
@@ -951,7 +954,7 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 7. View results: champion accuracy, ceiling, gap to oracle (bps), model distribution
 8. **Compare** two experiments -> per-lag delta, model distribution diff
 9. Review the experiment or sweep recommendation as analysis evidence
-10. For production, apply any reviewed config change and run named `champion-refresh`
+10. For production, click **Select & Assign Champion** on the reviewed completed experiment
 
 ### 3.4 Promotion Workflow (Experiment to Production)
 
@@ -964,9 +967,11 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 2. API writes params to `config/forecasting/forecast_pipeline_config.yaml`
 3. Downstream: re-run backtest for that algorithm, reload, re-run champion
 
-**Champion promotion (governed refresh):**
-1. Run `POST /jobs/pipelines/named/champion-refresh`; manual experiment/sweep promotion routes return 410.
-2. `governed_champion_refresh` verifies current sales, cluster, roster, and backtest lineage, then
+**Champion assignment (governed refresh):**
+1. Select a completed experiment and run `POST /champion-experiments/{id}/assign`; legacy two-stage
+   experiment/sweep promotion routes return 410.
+2. `governed_champion_refresh` freezes that strategy, verifies current sales, cluster, roster, and
+   backtest lineage, re-evaluates the composition, then
    atomically swaps champion facts and promotion flags. Failure leaves the incumbent untouched.
 
 ### 3.5 Post-Promotion Validation

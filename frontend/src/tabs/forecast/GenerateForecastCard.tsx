@@ -25,6 +25,7 @@ interface GenerateForecastCardProps {
   onIncludeCIChange: (checked: boolean) => void;
   isSubmitting: boolean;
   isForecastRunning: boolean;
+  blockedReason?: string;
   onGenerateForecast: () => void;
   latestVersion: ProductionForecastVersion | null;
 }
@@ -37,6 +38,7 @@ export function GenerateForecastCard({
   onIncludeCIChange,
   isSubmitting,
   isForecastRunning,
+  blockedReason,
   onGenerateForecast,
   latestVersion,
 }: GenerateForecastCardProps) {
@@ -90,7 +92,7 @@ export function GenerateForecastCard({
             className="w-full"
             size="lg"
             onClick={onGenerateForecast}
-            disabled={isSubmitting || isForecastRunning}
+            disabled={isSubmitting || isForecastRunning || Boolean(blockedReason)}
           >
             {isSubmitting || isForecastRunning ? (
               <>
@@ -110,6 +112,9 @@ export function GenerateForecastCard({
               A forecast generation job is currently running. Wait for it to complete before
               submitting another.
             </p>
+          )}
+          {blockedReason && !isForecastRunning && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">{blockedReason}</p>
           )}
         </CardContent>
       </Card>

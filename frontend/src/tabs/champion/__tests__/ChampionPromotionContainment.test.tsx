@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { TestQueryWrapper } from "@/tabs/__tests__/test-utils";
@@ -40,6 +40,12 @@ const fetchChampionExperiments = vi.fn().mockResolvedValue({
   offset: 0,
   limit: 50,
 });
+const assignChampionExperiment = vi.fn().mockResolvedValue({
+  source_experiment_id: 41,
+  job_id: "job-assign-41",
+  status: "queued",
+  message: "queued",
+});
 
 vi.mock("@/api/queries", () => ({
   championExperimentKeys: {
@@ -52,6 +58,7 @@ vi.mock("@/api/queries", () => ({
   fetchChampionExperimentLogs: vi.fn().mockResolvedValue({ log: "", has_more: false }),
   cancelChampionExperiment: vi.fn(),
   deleteChampionExperiment: vi.fn(),
+  assignChampionExperiment: (...args: unknown[]) => assignChampionExperiment(...args),
   championSweepKeys: { list: () => ["champion-sweeps", "list"] },
   fetchChampionSweeps: vi.fn().mockResolvedValue({ sweeps: [] }),
 }));
@@ -68,31 +75,42 @@ vi.mock("../ChampionComparisonPanel", () => ({
 vi.mock("../SweepBuilder", () => ({ SweepBuilder: () => null }));
 vi.mock("../SweepResultsPanel", () => ({ SweepResultsPanel: () => null }));
 
-describe("legacy champion promotion containment", () => {
-  it("does not offer manual promotion from the experiment table", async () => {
+describe("governed champion assignment", () => {
+  it("offers selected assignment but no legacy promotion controls", async () => {
     const { ChampionExperimentsPanel } = await import("../ChampionExperimentsPanel");
     render(
       <TestQueryWrapper>
         <ChampionExperimentsPanel />
-      </TestQueryWrapper>,
+      </TestQueryWrapper>
     );
 
     expect(await screen.findByText("Legacy experiment")).toBeDefined();
+    expect(screen.getByTitle("Select & Assign Champion")).toBeDefined();
     expect(screen.queryByTitle("Promote")).toBeNull();
     expect(screen.queryByRole("button", { name: /promote/i })).toBeNull();
   });
 
-  it("renders the retired modal as guidance without mutation actions", async () => {
+  it("confirms and submits the selected experiment for governed assignment", async () => {
     const { ChampionPromoteModal } = await import("../ChampionPromoteModal");
     const experiment = (await fetchChampionExperiments()).experiments[0];
 
     render(
       <TestQueryWrapper>
-        <ChampionPromoteModal experiment={experiment} open onClose={vi.fn()} />
-      </TestQueryWrapper>,
+        <ChampionPromoteModal
+          experiment={experiment}
+          open
+          onClose={vi.fn()}
+          onAssign={(id) => assignChampionExperiment(id)}
+          isPending={false}
+        />
+      </TestQueryWrapper>
     );
 
-    expect(screen.getByText(/named champion-refresh pipeline/i)).toBeDefined();
+    expect(
+      screen.getByText(/re-evaluated against the current governed five-model backtests/i)
+    ).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: /assign champion/i }));
+    await waitFor(() => expect(assignChampionExperiment).toHaveBeenCalledWith(41));
     expect(screen.queryByRole("button", { name: /promote config/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /load results/i })).toBeNull();
   });

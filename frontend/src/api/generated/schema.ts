@@ -2403,7 +2403,8 @@ export interface paths {
          * @description Launch a named pipeline preset as a sequential JobManager pipeline.
          *
          *     This is the one-call way to bring a whole lifecycle current (e.g.
-         *     ``data-refresh``, ``model-refresh``, ``forecast-publish``, ``full-refresh``)
+         *     ``data-refresh``, ``model-refresh``, ``champion-refresh``,
+         *     ``forecast-publish``, ``full-refresh``)
          *     instead of manually stepping each job.
          */
         post: operations["run_named_pipeline_jobs_pipelines_named__name__post"];
@@ -3475,7 +3476,7 @@ export interface paths {
         };
         /**
          * List Purchase Orders
-         * @description List Supply Chain Command Center-generated purchase orders from fact_purchase_orders.
+         * @description List application-generated purchase orders from fact_released_purchase_orders.
          */
         get: operations["list_purchase_orders_supply_purchase_orders_get"];
         put?: never;
@@ -8302,6 +8303,26 @@ export interface paths {
         get: operations["get_experiment_logs_champion_experiments__experiment_id__logs_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/champion-experiments/{experiment_id}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign Champion Experiment
+         * @description Queue selected-strategy evaluation and atomic historical assignment.
+         */
+        post: operations["assign_champion_experiment_champion_experiments__experiment_id__assign_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -26062,6 +26083,40 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assign_champion_experiment_champion_experiments__experiment_id__assign_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-api-key"?: string | null;
+                authorization?: string | null;
+            };
+            path: {
+                experiment_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

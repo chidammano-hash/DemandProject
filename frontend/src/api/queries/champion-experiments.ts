@@ -6,6 +6,7 @@
  */
 
 import { buildSearchParams } from "./helpers";
+import { fetchJson } from "./request";
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -311,33 +312,15 @@ export async function createChampionExperiment(body: {
   return res.json();
 }
 
-export async function promoteChampionExperiment(
+export async function assignChampionExperiment(
   id: number,
 ): Promise<{
-  promoted: boolean;
-  experiment_id: number;
-  strategy: string;
-  champion_accuracy: number | null;
-  previous_experiment_id: number | null;
-  backup_path: string;
+  source_experiment_id: number;
+  job_id: string;
+  status: string;
+  message: string;
 }> {
-  const res = await fetch(`${BASE}/${id}/promote`, { method: "POST" });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to promote champion experiment: ${text}`);
-  }
-  return res.json();
-}
-
-export async function promoteChampionResults(
-  id: number,
-): Promise<{ job_id: string; experiment_id: number; message: string }> {
-  const res = await fetch(`${BASE}/${id}/promote-results`, { method: "POST" });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to submit champion results load: ${text}`);
-  }
-  return res.json();
+  return fetchJson(`${BASE}/${id}/assign`, { method: "POST" });
 }
 
 export async function fetchChampionResultsStatus(

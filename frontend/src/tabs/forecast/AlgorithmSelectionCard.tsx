@@ -55,7 +55,8 @@ export function AlgorithmSelectionCard({
           {/* Champion option */}
           <label
             className={cn(
-              "flex items-center gap-3 rounded-md border p-3 cursor-pointer transition-colors",
+              "flex items-center gap-3 rounded-md border p-3 transition-colors",
+              promotedExperiment ? "cursor-pointer" : "cursor-not-allowed opacity-60",
               selectedModel === "champion"
                 ? "border-primary bg-primary/5"
                 : "border-border hover:border-primary/50"
@@ -67,6 +68,7 @@ export function AlgorithmSelectionCard({
               value="champion"
               checked={selectedModel === "champion"}
               onChange={() => onSelectModel("champion")}
+              disabled={!promotedExperiment}
               className="accent-primary"
             />
             <div className="flex-1">
@@ -84,7 +86,7 @@ export function AlgorithmSelectionCard({
               {!promotedExperiment && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3 shrink-0" />
-                  No promoted champion experiment. Run champion selection first.
+                  No assigned champion. Select and assign a completed experiment in Champion first.
                 </p>
               )}
               {championCompetingAlgos.length > 0 && (

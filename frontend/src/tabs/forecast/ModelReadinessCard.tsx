@@ -67,9 +67,7 @@ interface ModelReadinessCardProps {
   onGenerateAll: () => void;
   generatableCount: number;
   onPromote: (modelId: string) => void;
-  onPreparePublish: (
-    pipeline: "model-refresh" | "champion-refresh" | "forecast-publish"
-  ) => void;
+  onPreparePublish: (pipeline: "model-refresh" | "champion-refresh" | "forecast-publish") => void;
 }
 
 export function ModelReadinessCard({
@@ -109,18 +107,12 @@ export function ModelReadinessCard({
     snapshotReadiness?.action_pipeline != null &&
     (!snapshotEvidenceReady || !championReady);
   const readinessPipeline = snapshotReadiness?.action_pipeline ?? "forecast-publish";
+  const championSelectionRequired = readinessPipeline === "champion-refresh";
+  const canLaunchPreparation = shouldPrepareRelease && !championSelectionRequired;
   const preparationLabel =
-    readinessPipeline === "model-refresh"
-      ? "Refresh Models"
-      : readinessPipeline === "champion-refresh"
-        ? "Assign Champion"
-        : "Prepare Release";
+    readinessPipeline === "model-refresh" ? "Refresh Models" : "Prepare Release";
   const preparationProgressLabel =
-    readinessPipeline === "model-refresh"
-      ? "Refreshing Models..."
-      : readinessPipeline === "champion-refresh"
-        ? "Assigning Champion..."
-        : "Preparing Release...";
+    readinessPipeline === "model-refresh" ? "Refreshing Models..." : "Preparing Release...";
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -204,20 +196,24 @@ export function ModelReadinessCard({
                 {releasePublished
                   ? "Production release published"
                   : snapshotReadiness
-                  ? `Champion + ${snapshotReadiness.ready_contender_count}/${snapshotReadiness.required_contender_count} contenders ready`
-                  : "Checking champion + top-three publish evidence..."}
+                    ? `Champion + ${snapshotReadiness.ready_contender_count}/${snapshotReadiness.required_contender_count} contenders ready`
+                    : "Checking champion + top-three publish evidence..."}
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
                 {releasePublished
                   ? `The champion is active in production. Generate All creates ${generatableCount} diagnostic comparison forecast${generatableCount === 1 ? "" : "s"} without changing production.`
                   : championPublishReady
-                  ? "The current champion candidate and exact snapshot roster can be published."
-                  : (snapshotReadiness?.stale_reason ??
-                    "Waiting for current release evidence before promotion is enabled.")}
+                    ? "The current champion candidate and exact snapshot roster can be published."
+                    : (snapshotReadiness?.stale_reason ??
+                      "Waiting for current release evidence before promotion is enabled.")}
               </p>
             </div>
           </div>
-          {shouldPrepareRelease ? (
+          {championSelectionRequired ? (
+            <p className="max-w-64 text-right text-xs font-medium text-amber-700 dark:text-amber-300">
+              Go to Champion and select a completed experiment to assign.
+            </p>
+          ) : canLaunchPreparation ? (
             <Button
               size="sm"
               onClick={() => onPreparePublish(readinessPipeline)}
