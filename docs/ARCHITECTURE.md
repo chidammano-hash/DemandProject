@@ -372,9 +372,9 @@ Data loads directly from CSV into main tables via `scripts/etl/load_dataset_post
    - Simulation script (`simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling; includes 16 simulation entries: expanding, rolling_3/6/9/12, decay_090/095, ensemble_top3_inv/eq, meta_learner, ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt
    - YAML config: `config/forecasting/forecast_pipeline_config.yaml` (master config — `champion` section for strategy, strategy_params, meta_learner; `algorithms` section for competing models via `compete: true` flag)
    - CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
-   - API endpoints: `GET/PUT /competition/config`, `POST /competition/run` (202 governed job submission), `GET /competition/summary`
-   - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, strategy selector, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
-   - Summary saved to `data/champion/champion_summary.json` (includes `fallback_rows_inserted` count)
+   - API endpoints: `GET/PUT /competition/config`, `POST /competition/run` (202 governed job submission), `GET /competition/summary` (promoted database experiment + exact experiment-scoped winner artifact; fail-closed integrity validation)
+   - UI: **Promoted Champion Results** in Portfolio Analysis shows experiment lineage, governed champion/ceiling KPIs, and routed model composition from `data/champion/experiment_<id>_winners.csv`
+   - `data/champion/champion_summary.json` remains a legacy standalone-run diagnostic and is not a promotion source of truth
 18. Data Explorer performance & UX (feature16):
    - Type-aware SQL filtering: `_col_type()` dispatches to native-type clauses instead of universal `::text` casts
    - GIN trigram indexes (`gin_trgm_ops`) on fact table text columns (model_id, item_id, loc, customer_group) for indexed `ILIKE` substring search

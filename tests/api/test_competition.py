@@ -1,6 +1,7 @@
 """Tests for competition/champion model endpoints."""
 
 import shutil
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -34,9 +35,131 @@ async def test_competition_config_get(async_client):
 
 
 @pytest.mark.asyncio
-async def test_competition_summary(async_client):
+async def test_competition_summary_uses_promoted_experiment_winner_artifact(
+    tmp_path, monkeypatch, mock_pool, async_client
+):
+    from api.routers.forecasting import competition
+
+    champion_dir = tmp_path / "champion"
+    champion_dir.mkdir()
+    (champion_dir / "champion_summary.json").write_text(
+        '{"overall_champion_accuracy_pct": 76.56, "model_wins": {"ensemble": 42329}}'
+    )
+    (champion_dir / "experiment_84_winners.csv").write_text(
+        "item_id,customer_group,loc,startdate,model_id,prior_wape,basefcst_pref,tothist_dmd,source_mix\n"
+        "100,ALL,A,2026-01-01,lgbm_cluster,0.1,10,9,\n"
+        "100,ALL,A,2026-02-01,mstl,0.2,11,10,\n"
+        "200,ALL,B,2026-01-01,lgbm_cluster,0.1,12,11,\n"
+    )
+    monkeypatch.setattr(competition, "_CHAMPION_DATA_DIR", champion_dir)
+    _, _, cursor = mock_pool
+    cursor.fetchone.return_value = (
+        84,
+        "Assigned from #83: champ1",
+        "per_cluster",
+        75.379,
+        84.5679,
+        918.89,
+        2,
+        3,
+        datetime(2026, 7, 13, 18, 31, tzinfo=UTC),
+    )
+
     resp = await async_client.get("/competition/summary")
-    assert resp.status_code in (200, 404, 500)
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "ok"
+    assert payload["summary"] == {
+        "experiment_id": 84,
+        "experiment_label": "Assigned from #83: champ1",
+        "strategy": "per_cluster",
+        "artifact_name": "experiment_84_winners.csv",
+        "total_dfus": 2,
+        "total_dfu_months": 3,
+        "total_champion_rows": 3,
+        "model_wins": {"lgbm_cluster": 2, "mstl": 1},
+        "overall_champion_wape": 24.621,
+        "overall_champion_accuracy_pct": 75.379,
+        "run_ts": "2026-07-13T18:31:00+00:00",
+        "overall_ceiling_wape": 15.4321,
+        "overall_ceiling_accuracy_pct": 84.5679,
+        "gap_bps": 918.89,
+    }
+
+
+@pytest.mark.asyncio
+async def test_competition_summary_fails_closed_when_promoted_artifact_is_missing(
+    tmp_path, monkeypatch, mock_pool, async_client
+):
+    from api.routers.forecasting import competition
+
+    monkeypatch.setattr(competition, "_CHAMPION_DATA_DIR", tmp_path)
+    _, _, cursor = mock_pool
+    cursor.fetchone.return_value = (
+        84,
+        "Champion",
+        "per_cluster",
+        75.379,
+        84.5679,
+        918.89,
+        2,
+        3,
+        datetime(2026, 7, 13, 18, 31, tzinfo=UTC),
+    )
+
+    resp = await async_client.get("/competition/summary")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == (
+        "Promoted champion experiment #84 is missing its winner artifact"
+    )
+
+
+@pytest.mark.asyncio
+async def test_competition_summary_rejects_duplicate_dfu_month_winners(
+    tmp_path, monkeypatch, mock_pool, async_client
+):
+    from api.routers.forecasting import competition
+
+    (tmp_path / "experiment_84_winners.csv").write_text(
+        "item_id,customer_group,loc,startdate,model_id\n"
+        "100,ALL,A,2026-01-01,lgbm_cluster\n"
+        "100,ALL,A,2026-01-01,mstl\n"
+    )
+    monkeypatch.setattr(competition, "_CHAMPION_DATA_DIR", tmp_path)
+    _, _, cursor = mock_pool
+    cursor.fetchone.return_value = (
+        84,
+        "Champion",
+        "per_cluster",
+        75.379,
+        84.5679,
+        918.89,
+        1,
+        2,
+        datetime(2026, 7, 13, 18, 31, tzinfo=UTC),
+    )
+
+    resp = await async_client.get("/competition/summary")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == (
+        "Promoted champion experiment #84 has duplicate winner rows at line 3"
+    )
+
+
+@pytest.mark.asyncio
+async def test_competition_summary_returns_not_run_without_a_promoted_experiment(
+    mock_pool, async_client
+):
+    _, _, cursor = mock_pool
+    cursor.fetchone.return_value = None
+
+    resp = await async_client.get("/competition/summary")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "not_run", "summary": None}
 
 
 @pytest.mark.asyncio

@@ -435,7 +435,10 @@ competition:
 
 - `model_id='champion'` rows in `fact_external_forecast_monthly`
 - `model_id='ceiling'` rows (oracle best-with-hindsight) in `fact_external_forecast_monthly`
-- `data/champion/champion_summary.json` — champion + ceiling metrics
+- `data/champion/experiment_<id>_winners.csv` — immutable routed winner rows for the
+  promoted experiment
+- `data/champion/champion_summary.json` — legacy standalone-run diagnostic; it is not
+  used by the API or UI to identify the promoted champion
 - `data/champion/simulation_results.json` — strategy comparison
 - All accuracy materialized views refreshed automatically; running again is idempotent
 
@@ -451,6 +454,12 @@ curl -X POST http://localhost:8000/competition/run  # returns governed job_id (H
 curl http://localhost:8000/jobs/<job_id>             # poll experiment/result promotion
 curl http://localhost:8000/competition/summary
 ```
+
+`GET /competition/summary` resolves the current `is_promoted` experiment from
+`champion_experiment`, reads only its matching `experiment_<id>_winners.csv`, and returns
+the experiment ID, label, strategy, artifact name, governed KPIs, and exact routed model
+counts. A missing or count-mismatched artifact returns `409` instead of falling back to
+`champion_summary.json`.
 
 ---
 
@@ -482,8 +491,8 @@ curl http://localhost:8000/competition/summary
 1. `make test-all` — backend + frontend test suites pass.
 2. `make audit-routers` — confirms routes/proxies still aligned.
 3. Inspect `data/tuning/<model>_<timestamp>.json` for the promoted trial.
-4. Inspect `data/champion/champion_summary.json` and the promoted experiment's
-   `experiment_<id>_winners.csv` for coverage and per-strategy ceiling deltas.
+4. Call `GET /competition/summary`; confirm its `experiment_id` matches the promoted
+   database row and inspect the named `experiment_<id>_winners.csv` for routed coverage.
 5. Spot-check the **Lgbm Tuning** and **Champion Experiments** tabs for the
    new run rows.
 6. Promote via `POST /backtest-management/{model_id}/promote` and confirm the
@@ -514,5 +523,5 @@ curl http://localhost:8000/competition/summary
 | `config/forecasting/tune_strategies.yaml` | Per-model auto-tune strategy overrides |
 | `config/forecasting/cluster_tuning_profiles.yaml` | Per-cluster overrides (auto-generated) |
 | `data/tuning/` | Trial JSON archive |
-| `data/champion/dfu_assignments.csv` | Per-DFU champion assignments |
-| `data/champion/champion_summary.json` | Strategy comparison summary |
+| `data/champion/experiment_<id>_winners.csv` | Immutable DFU-month routing for one champion experiment |
+| `data/champion/champion_summary.json` | Legacy standalone-run diagnostic; not promotion state |

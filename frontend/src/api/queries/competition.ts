@@ -14,6 +14,10 @@ export interface CompetitionConfig {
 }
 
 export interface ChampionSummary {
+  experiment_id: number;
+  experiment_label: string;
+  strategy: string;
+  artifact_name: string;
   total_dfus: number;
   total_dfu_months?: number;
   total_champion_rows: number;
@@ -21,22 +25,27 @@ export interface ChampionSummary {
   overall_champion_wape: number | null;
   overall_champion_accuracy_pct: number | null;
   run_ts: string;
-  total_ceiling_rows?: number;
-  ceiling_model_wins?: Record<string, number>;
   overall_ceiling_wape?: number | null;
   overall_ceiling_accuracy_pct?: number | null;
+  gap_bps?: number | null;
 }
 
-export async function fetchCompetitionConfig(): Promise<{ config: CompetitionConfig; available_models: string[] } | null> {
+export async function fetchCompetitionConfig(): Promise<{
+  config: CompetitionConfig;
+  available_models: string[];
+} | null> {
   try {
     return await fetchJson("/competition/config");
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
-export async function fetchCompetitionSummary(): Promise<{ summary: ChampionSummary } | null> {
-  try {
-    return await fetchJson("/competition/summary");
-  } catch { return null; }
+export async function fetchCompetitionSummary(): Promise<{
+  status: string;
+  summary: ChampionSummary | null;
+}> {
+  return fetchJson("/competition/summary");
 }
 
 export async function saveCompetitionConfig(config: CompetitionConfig): Promise<void> {

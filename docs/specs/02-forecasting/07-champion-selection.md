@@ -222,7 +222,7 @@ No new tables. Champion and ceiling predictions are stored in the existing `fact
 | GET | `/competition/config` | Current config + available model_ids from DB |
 | PUT | `/competition/config` | Update config (writes YAML to disk) |
 | POST | `/competition/run` | Submit `champion_select` (the governed experiment + atomic results promotion), return job id (202) |
-| GET | `/competition/summary` | Last run summary |
+| GET | `/competition/summary` | Current promoted experiment KPIs and exact `experiment_<id>_winners.csv` routing composition; fails closed on missing or mismatched evidence |
 | POST | `/champion-experiments/{experiment_id}/assign` | Re-evaluate a selected completed experiment on current governed five-model backtests and atomically assign its resulting composition (202) |
 
 `/competition/run` performs no forecast-table mutation in the request. The
@@ -235,6 +235,10 @@ lag, and exact canonical roster, while taking sales, cluster, and five backtest 
 current governed state. Single-model winners copy their source backtest rows; blend winners rebuild
 historical rows from `source_mix`. Both promotion flags and all champion rows switch in one
 transaction only after row-count and checksum audits pass.
+
+The Portfolio Analysis **Promoted Champion Results** panel uses the same promoted experiment
+record and its experiment-scoped winner artifact. It never reads the singleton
+`champion_summary.json`, so an older analysis run cannot be presented as the active champion.
 
 ## Pipeline
 
