@@ -6,6 +6,7 @@ import {
   formatPercent,
   formatCompactNumber,
 } from "@/lib/formatters";
+import { modelLabel } from "@/lib/model-labels";
 import type { SkuAnalysisKpis, SkuAnalysisPayload } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -17,6 +18,89 @@ export interface ModelKpiSectionProps {
   skuKpiMonths: number;
   setSkuKpiMonths: (v: number) => void;
   skuVisibleSeries: Set<string>;
+}
+
+type ChampionEvidence = {
+  composition: string;
+  explanation: string;
+  reconciliation?: string;
+  mismatch?: boolean;
+};
+
+function formatMonth(month: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${month.slice(0, 10)}T00:00:00Z`));
+}
+
+function formatMix(mix: { model: string; weight: number }[]): string {
+  return mix
+    .slice()
+    .sort((left, right) => right.weight - left.weight)
+    .map(({ model, weight }) => `${Math.round(weight * 100)}% ${modelLabel(model)}`)
+    .join(" + ");
+}
+
+function championEvidence(
+  skuData: SkuAnalysisPayload,
+  months: number,
+): ChampionEvidence | null {
+  const rows = skuData.model_monthly.champion?.slice(0, months) ?? [];
+  if (rows.length === 0) return null;
+
+  if (rows.length === 1) {
+    const month = rows[0].month;
+    const mix = skuData.champion_mix_by_month?.[month];
+    if (mix?.length) {
+      const components = mix.flatMap(({ model, weight }) => {
+        const modelRow = skuData.model_monthly[model]?.find((row) => row.month === month);
+        return modelRow ? [{ forecast: modelRow.forecast, weight }] : [];
+      });
+      const completeComponents = components.length === mix.length;
+      const weightedForecast = completeComponents
+        ? components.reduce(
+            (sum, component) => sum + component.forecast * component.weight,
+            0,
+          )
+        : null;
+      const mismatch = weightedForecast !== null
+        && Math.abs(weightedForecast - rows[0].forecast) > 0.01;
+      const expression = completeComponents
+        ? components
+            .map(
+              (component) =>
+                `${Math.round(component.weight * 100)}% × ${formatCompactNumber(component.forecast)}`,
+            )
+            .join(" + ")
+        : null;
+
+      return {
+        composition: formatMix(mix),
+        explanation: `Blended forecast for ${formatMonth(month)}; accuracy is calculated after combining these models.`,
+        reconciliation: expression && weightedForecast !== null
+          ? mismatch
+            ? `Blend mismatch: stored champion ${formatCompactNumber(rows[0].forecast)}, weighted components ${formatCompactNumber(weightedForecast)}.`
+            : `Blend verified: ${expression} = ${formatCompactNumber(rows[0].forecast)}.`
+          : undefined,
+        mismatch,
+      };
+    }
+
+    const source = skuData.champion_source_by_month?.[month];
+    if (source && source !== "ensemble") {
+      return {
+        composition: `Selected ${modelLabel(source)}`,
+        explanation: `Single-model champion for ${formatMonth(month)}; its KPI should match that model for the same month.`,
+      };
+    }
+  }
+
+  return {
+    composition: "Per-month governed routing",
+    explanation: `Aggregate champion KPI across ${rows.length} months; the selected model or blend can change each month.`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +148,9 @@ export function ModelKpiSection({
           {visibleModels.map((model) => {
             const kpi = skuKpis[model];
             const colorIdx = skuData.models.indexOf(model) + 1;
+            const evidence = model === "champion"
+              ? championEvidence(skuData, skuKpiMonths)
+              : null;
             return (
               <Card
                 key={model}
@@ -79,7 +166,7 @@ export function ModelKpiSection({
                       }}
                     />
                     <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-                      {model}
+                      {model === "champion" ? "Champion" : modelLabel(model)}
                     </p>
                     <span className="text-xs text-muted-foreground ml-auto">
                       {kpi.months_covered} mo
@@ -127,6 +214,29 @@ export function ModelKpiSection({
                       </p>
                     </div>
                   </div>
+                  {evidence && (
+                    <div className={`mt-3 rounded-md border px-2.5 py-2 ${
+                      evidence.mismatch
+                        ? "border-red-500/40 bg-red-500/10"
+                        : "border-amber-500/30 bg-amber-500/5"
+                    }`}>
+                      <p className="text-xs font-semibold text-foreground">
+                        {evidence.composition}
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                        {evidence.explanation}
+                      </p>
+                      {evidence.reconciliation && (
+                        <p className={`mt-1 text-[11px] font-medium leading-4 ${
+                          evidence.mismatch
+                            ? "text-red-600 dark:text-red-400"
+                            : "text-emerald-600 dark:text-emerald-400"
+                        }`}>
+                          {evidence.reconciliation}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );

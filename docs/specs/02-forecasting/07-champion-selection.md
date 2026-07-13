@@ -38,6 +38,16 @@ Because the champion picks a different model per DFU, the **Item Analysis** char
 
 **Blend mix.** When the champion is a *blend* (ensemble / learned_blend / shrinkage / etc.), a single model name isn't enough - the forecast is a weighted combination. Every champion winner row carries `source_mix`: a JSON array of `{"model": <id>, "weight": <0-1>}` (NULL for single-model picks). It is captured at selection time - `make_blend_row(..., source_mix=mix_from(top, weights))` via the `source_mix` column added to the canonical `_OUTPUT_COLS` (so it survives router/segment `pd.concat`), persisted by `insert_ensemble_forecasts` into `fact_external_forecast_monthly.source_mix` (`sql/193`). `/sku/analysis` exposes it as `champion_mix_by_month`, and the chart's **tooltip** shows that month's exact composition - e.g. `champion (40% N-BEATS, 35% LightGBM, 25% Chronos 2 Enriched)` (the mix is per-DFU **per-month**, so it can change month to month). The shared formatter is `formatChampionLabel(mix, source)` in `frontend/src/lib/model-labels.ts`.
 
+The Item Analysis **Forecast KPIs** card uses the same lineage evidence. For a one-month
+window it displays the exact blend composition and explains that champion accuracy is computed
+from the combined forecast, so it need not equal any individual model's accuracy. A single-model
+champion instead names the selected model and explicitly states that the two KPIs should reconcile
+for that month. Multi-month windows are labelled as per-month governed routing because the selected
+model or blend may change from month to month. For one-month blends the UI also recomputes the
+weighted forecast from the displayed constituent model rows: a matching value is marked **Blend
+verified**, while any stored-versus-weighted discrepancy is surfaced as a red **Blend mismatch**
+integrity warning rather than being explained away as normal ensemble behavior.
+
 ### Execution-Lag Causality (Critical)
 
 Each DFU has an `execution_lag` -- how many months in advance its forecast is issued. For a DFU with `execution_lag = 1`, the April forecast is issued in March. At issuance time, March actuals are NOT available yet.
