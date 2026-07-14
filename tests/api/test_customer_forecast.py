@@ -210,7 +210,8 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
     )
     assert "FROM job_history job" in select_sql
     assert "job.params ->> 'run_id' = run.run_id::text" in select_sql
-    assert "job.created_at >= COALESCE(run.started_at, run.created_at)" in select_sql
+    assert "job.submitted_at >= COALESCE(run.started_at, run.created_at)" in select_sql
+    assert "job.created_at" not in select_sql
 
 
 @pytest.mark.asyncio
@@ -332,7 +333,10 @@ def test_submission_reconciliation_repairs_jobs_and_retires_orphans() -> None:
     orphan_sql, orphan_params = cursor.execute.call_args_list[1].args
     assert "WITH latest_job AS" in repair_sql
     assert "job.params ->> 'run_id' = run.run_id::text" in repair_sql
-    assert "job.created_at >= COALESCE(run.started_at, run.created_at)" in repair_sql
+    assert "job.submitted_at >= COALESCE(run.started_at, run.created_at)" in repair_sql
+    assert "job.created_at" not in repair_sql
+    assert "job.submitted_at >= COALESCE(run.started_at, run.created_at)" in orphan_sql
+    assert "job.created_at" not in orphan_sql
     assert "job.error" not in repair_sql
     assert "'managed job failed'" in repair_sql
     assert "job submission was not persisted" in orphan_sql

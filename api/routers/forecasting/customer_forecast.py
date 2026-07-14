@@ -41,8 +41,8 @@ _RUN_SELECT = """
                    FROM job_history job
                    WHERE job.job_type = 'generate_customer_forecast'
                      AND job.params ->> 'run_id' = run.run_id::text
-                     AND job.created_at >= COALESCE(run.started_at, run.created_at)
-                   ORDER BY job.created_at DESC
+                     AND job.submitted_at >= COALESCE(run.started_at, run.created_at)
+                   ORDER BY job.submitted_at DESC
                    LIMIT 1
                )
            ),
@@ -63,7 +63,7 @@ def _reconcile_customer_forecast_submissions(cur: Any) -> None:
                SELECT DISTINCT ON (job.params ->> 'run_id') job.*
                FROM job_history job
                WHERE job.job_type = 'generate_customer_forecast'
-               ORDER BY job.params ->> 'run_id', job.created_at DESC
+               ORDER BY job.params ->> 'run_id', job.submitted_at DESC
            )
            UPDATE customer_forecast_run run
            SET job_id = COALESCE(run.job_id, job.job_id),
@@ -89,7 +89,7 @@ def _reconcile_customer_forecast_submissions(cur: Any) -> None:
            FROM latest_job job
            WHERE run.run_status IN ('queued', 'generating')
              AND job.params ->> 'run_id' = run.run_id::text
-             AND job.created_at >= COALESCE(run.started_at, run.created_at)"""
+             AND job.submitted_at >= COALESCE(run.started_at, run.created_at)"""
     )
     cur.execute(
         """UPDATE customer_forecast_run run
@@ -105,7 +105,7 @@ def _reconcile_customer_forecast_submissions(cur: Any) -> None:
                  FROM job_history job
                  WHERE job.job_type = 'generate_customer_forecast'
                    AND job.params ->> 'run_id' = run.run_id::text
-                   AND job.created_at >= COALESCE(run.started_at, run.created_at)
+                   AND job.submitted_at >= COALESCE(run.started_at, run.created_at)
              )""",
         (_SUBMISSION_RECONCILIATION_GRACE_SECONDS,),
     )
