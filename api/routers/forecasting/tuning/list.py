@@ -50,9 +50,11 @@ def list_experiments(
                r.is_promoted, r.promoted_at, r.job_id, r.template_id,
                r.is_results_promoted, r.results_promoted_at, r.results_promote_job_id,
                r.cluster_source, r.cluster_experiment_id,
-               ce.label AS cluster_experiment_label
+               ce.label AS cluster_experiment_label,
+               jh.error AS job_error
         FROM lgbm_tuning_run r
         LEFT JOIN cluster_experiment ce ON ce.experiment_id = r.cluster_experiment_id
+        LEFT JOIN job_history jh ON jh.job_id = r.job_id
         {where_sql}
         ORDER BY r.started_at DESC
         LIMIT %s OFFSET %s
@@ -116,6 +118,7 @@ def list_experiments(
             "cluster_source": r[19] or "production",
             "cluster_experiment_id": int(r[20]) if r[20] is not None else None,
             "cluster_experiment_label": r[21],
+            "error": r[22],
         }
         # Override with lag-specific metrics when filtering by exec_lag
         if exec_lag is not None and run_id in lag_metrics:

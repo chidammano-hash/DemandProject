@@ -165,7 +165,16 @@ export function RunHistoryTable({
                         isCandidate && "bg-emerald-50 dark:bg-emerald-950/30",
                         !isSelected && "hover:bg-muted/50",
                       )}
+                      tabIndex={0}
+                      aria-selected={isSelected}
+                      aria-label={`Select run #${run.run_id} (${run.run_label})`}
                       onClick={() => onSelectRow(run.run_id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectRow(run.run_id);
+                        }
+                      }}
                     >
                       <TableCell className="font-mono text-xs">
                         #{run.run_id}
@@ -198,6 +207,14 @@ export function RunHistoryTable({
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={run.status} />
+                        {run.error && (run.status === "failed" || run.status === "cancelled") && (
+                          <p
+                            className="mt-0.5 max-w-[220px] truncate text-[10px] text-destructive/80"
+                            title={run.error}
+                          >
+                            {run.error}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
                         {formatPct(run.accuracy_pct)}

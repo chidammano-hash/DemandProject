@@ -40,8 +40,10 @@ export function RecentJobsCard({ recentJobs }: { recentJobs: Job[] }) {
             <TableBody>
               {recentJobs.map((job) => (
                 <TableRow key={job.job_id}>
-                  <TableCell className="text-xs font-mono max-w-[120px] truncate">
-                    {job.job_id.slice(0, 8)}
+                  {/* IDs look like job_20260714_073317_d36a5c97 — the shared
+                      prefix is useless, the hex tail is the unique handle. */}
+                  <TableCell className="text-xs font-mono max-w-[120px] truncate" title={job.job_id}>
+                    {job.job_id.slice(-8)}
                   </TableCell>
                   <TableCell className="text-xs">
                     {job.job_label || "--"}

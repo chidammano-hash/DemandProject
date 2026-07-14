@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 
 import { TestQueryWrapper } from "@/tabs/__tests__/test-utils";
+import { fetchSweepLeaderboard } from "@/api/queries";
 import { SweepResultsPanel } from "../SweepResultsPanel";
 
 const promoteSweepWinner = vi.fn().mockResolvedValue({ sweep_id: 1, promoted_experiment_id: 7, promoted: true });
@@ -69,6 +70,40 @@ describe("SweepResultsPanel", () => {
     await waitFor(() => expect(screen.getByText(/Recommended #7/)).toBeDefined());
     expect(screen.queryByRole("button", { name: /Promote winner/ })).toBeNull();
     expect(promoteSweepWinner).not.toHaveBeenCalled();
+  });
+
+  it("collapses duplicate composite members and shows one dense rank per row", async () => {
+    const member = {
+      gate_eligible: true, skipped_duplicate: false, strategy_params: {},
+      models: ["lgbm_cluster"], metric: "wape", ceiling_accuracy: null,
+      gap_bps: null, status: "completed",
+    };
+    vi.mocked(fetchSweepLeaderboard).mockResolvedValueOnce({
+      sweep_id: 1,
+      members: [
+        // A re-run sweep persists two identical composites, and the backend
+        // ranks composites and non-composites separately (three rank-1 rows).
+        { ...member, experiment_id: 7, global_rank: 1, global_score: 86.2,
+          is_composite: true, label: "composite", strategy: "per_segment", champion_accuracy: 88.0 },
+        { ...member, experiment_id: 8, global_rank: 1, global_score: 86.2,
+          is_composite: true, label: "composite", strategy: "per_segment", champion_accuracy: 88.0 },
+        { ...member, experiment_id: 3, global_rank: 1, global_score: 84.0,
+          is_composite: false, label: "ensemble", strategy: "ensemble", champion_accuracy: 85.0 },
+      ],
+    });
+
+    renderPanel();
+    await screen.findByText("Global leaderboard");
+
+    // The two identical composites collapse to one displayed row.
+    expect(await screen.findAllByText("per_segment")).toHaveLength(1);
+
+    // Ranks are dense by score: composite 1, ensemble 2 — no duplicate #1.
+    const ensembleRow = screen.getAllByRole("row").find((row) =>
+      within(row).queryByText("ensemble"),
+    );
+    expect(ensembleRow).toBeDefined();
+    expect(within(ensembleRow as HTMLElement).getByText("2")).toBeInTheDocument();
   });
 
   it("makes the portfolio-only tournament scope explicit when a fixed lag is selected", async () => {

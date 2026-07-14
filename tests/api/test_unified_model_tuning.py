@@ -56,14 +56,16 @@ def _list_row(
     cluster_source: str = "production",
     cluster_experiment_id: int | None = None,
     cluster_experiment_label: str | None = None,
+    job_error: str | None = None,
 ) -> tuple:
-    """Build a mock lgbm_tuning_run list-query row (22 columns)."""
+    """Build a mock lgbm_tuning_run list-query row (23 columns)."""
     return (
         run_id, run_label, model_id, started_at, completed_at,
         status, accuracy_pct, wape, bias, n_predictions, n_dfus,
         notes, is_promoted, promoted_at, job_id, template_id,
         is_results_promoted, results_promoted_at, results_promote_job_id,
         cluster_source, cluster_experiment_id, cluster_experiment_label,
+        job_error,
     )
 
 
@@ -186,6 +188,33 @@ async def test_list_experiments_lgbm():
     assert data["experiments"][0]["run_id"] == 1
     assert data["experiments"][0]["model_id"] == "lgbm_cluster"
     assert data["experiments"][1]["accuracy_pct"] == 73.1
+
+
+@pytest.mark.asyncio
+async def test_list_experiments_surfaces_job_error_for_failed_runs():
+    """Failed runs carry the job_history failure reason so the UI can show it."""
+    pool, _conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (1,)
+    cursor.fetchall.return_value = [
+        _list_row(
+            run_id=91,
+            run_label="Balanced (Best All-Around)",
+            status="failed",
+            accuracy_pct=None,
+            job_error="LightGBM training crashed: out of memory",
+        ),
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/model-tuning/lgbm/experiments")
+
+    assert resp.status_code == 200
+    exp = resp.json()["experiments"][0]
+    assert exp["status"] == "failed"
+    assert exp["error"] == "LightGBM training crashed: out of memory"
 
 
 @pytest.mark.asyncio

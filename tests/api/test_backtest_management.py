@@ -154,6 +154,53 @@ async def test_get_summary_returns_all_models():
 
 
 @pytest.mark.asyncio
+async def test_summary_exposes_loaded_run_when_latest_run_was_cancelled():
+    """A cancelled newest run must not hide the loaded results behind it."""
+    pool, _conn, cursor = _make_pool()
+    cancelled_latest = _run_row(
+        run_id=68,
+        model_id="lgbm_cluster",
+        status="cancelled",
+        accuracy_pct=None,
+        wape=None,
+        bias=None,
+        is_loaded_to_db=False,
+    )
+    loaded_earlier = _run_row(
+        run_id=67,
+        model_id="lgbm_cluster",
+        status="completed",
+        accuracy_pct=74.0,
+        wape=0.2599,
+        is_loaded_to_db=True,
+    )
+    cursor.fetchall.side_effect = [[cancelled_latest], [loaded_earlier]]
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.get_algorithm_roster", return_value=_mock_roster()),
+        patch(f"{_ROUTER_MOD}._read_metadata_from_disk", return_value=None),
+        patch(f"{_ROUTER_MOD}._BACKTEST_DIR", new=MagicMock()),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/backtest-management/summary")
+
+    assert resp.status_code == 200
+    entry = resp.json()["lgbm_cluster"]
+    assert entry["latest_run"]["status"] == "cancelled"
+    assert entry["loaded_run"] is not None
+    assert entry["loaded_run"]["id"] == 67
+    assert entry["loaded_run"]["accuracy_pct"] == 74.0
+    # Convenience accuracy falls back to the loaded run for the Exec chip.
+    assert entry["current_accuracy"] == 74.0
+    # Models with no loaded run report loaded_run explicitly as null.
+    assert resp.json()["mstl"]["loaded_run"] is None
+
+
+@pytest.mark.asyncio
 async def test_training_status_reads_validated_neural_artifact_metadata(tmp_path):
     pool, conn, _cursor = _make_pool()
     sales_lineage = SimpleNamespace(batch_id=91, source_hash="c" * 64)
@@ -1015,9 +1062,13 @@ async def test_training_status_fails_closed_when_current_lineage_is_not_ready(tm
 @pytest.mark.asyncio
 async def test_get_model_runs_returns_list():
     pool, _conn, cursor = _make_pool()
+    # The runs query appends job_history.error as an 18th column.
     cursor.fetchall.return_value = [
-        _run_row(run_id=10, model_id="lgbm_cluster", status="completed"),
-        _run_row(run_id=9, model_id="lgbm_cluster", status="running", accuracy_pct=None),
+        (*_run_row(run_id=10, model_id="lgbm_cluster", status="completed"), None),
+        (
+            *_run_row(run_id=9, model_id="lgbm_cluster", status="failed", accuracy_pct=None),
+            "Backtest crashed: feature matrix empty",
+        ),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -1032,7 +1083,10 @@ async def test_get_model_runs_returns_list():
     assert len(data) == 2
     assert data[0]["id"] == 10
     assert data[0]["status"] == "completed"
+    assert data[0]["error"] is None
     assert data[1]["accuracy_pct"] is None
+    # Failed runs surface the job_history failure reason for the UI.
+    assert data[1]["error"] == "Backtest crashed: feature matrix empty"
 
 
 @pytest.mark.asyncio

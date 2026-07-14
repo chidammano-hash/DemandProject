@@ -356,7 +356,12 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
         {PANELS.map((p) => (
           <label key={p.key} className="flex items-center gap-1.5 text-xs">
-            <Checkbox checked={visible[p.key]} onCheckedChange={() => toggle(p.key)} className="h-3.5 w-3.5" />
+            <Checkbox
+              checked={visible[p.key]}
+              onCheckedChange={() => toggle(p.key)}
+              aria-label={`Toggle ${p.label}`}
+              className="h-3.5 w-3.5"
+            />
             <span className={cn(visible[p.key] ? "text-foreground" : "text-muted-foreground")}>{p.label}</span>
           </label>
         ))}

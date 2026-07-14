@@ -32,3 +32,13 @@ export function isFromDisabled(option: string, to: string): boolean {
   if (!to) return false;
   return option > to;
 }
+
+/**
+ * Clamp forecast months to an explicit TO bound (empty bound = show all).
+ * Without this the staged 24-month horizon stretches the axis years past
+ * the selected range.
+ */
+export function clampFutureMonths(futureMonths: string[], to: string): string[] {
+  if (!to) return futureMonths;
+  return futureMonths.filter((month) => month <= to);
+}

@@ -202,10 +202,10 @@ describe("IntegrationTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: /Submit Job/i }),
+        screen.getByRole("button", { name: /^Submit Job$/i }),
       ).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: /Submit Job/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Submit Job$/i })).toBeDisabled();
   });
 
   it("submits with the correct payload when Submit clicked", async () => {
@@ -231,7 +231,7 @@ describe("IntegrationTab", () => {
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
     fireEvent.click(screen.getByRole("radio", { name: /Delta/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit Job$/i }));
 
     await waitFor(() => {
       expect(queries.submitJob as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
@@ -268,7 +268,7 @@ describe("IntegrationTab", () => {
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
     fireEvent.click(screen.getByRole("radio", { name: /Delta/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit Job$/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Job abc-123 submitted")).toBeInTheDocument();
@@ -297,7 +297,7 @@ describe("IntegrationTab", () => {
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
     fireEvent.click(screen.getByRole("radio", { name: /Delta/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit Job$/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Failed: boom")).toBeInTheDocument();
@@ -533,7 +533,7 @@ describe("IntegrationTab", () => {
     const domainSelects = screen.getAllByLabelText(/^Domain$/i) as HTMLSelectElement[];
     fireEvent.change(domainSelects[0], { target: { value: "sales" } });
     fireEvent.click(screen.getByRole("radio", { name: /one-time/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Submit Job/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Submit Job$/i }));
 
     expect(
       await screen.findByRole("dialog", { name: /confirm one-time reload/i }),

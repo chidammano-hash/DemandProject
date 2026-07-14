@@ -43,6 +43,8 @@ export interface UnifiedChartPanelProps {
   skuData: SkuAnalysisPayload;
   skuFilteredSeries: Record<string, unknown>[];
   skuMonths: string[];
+  /** Forecast months beyond history — selectable as TO bounds. */
+  skuFutureMonths?: string[];
   skuTimeStart: string;
   setSkuTimeStart: (v: string) => void;
   skuTimeEnd: string;
@@ -74,6 +76,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   skuData,
   skuFilteredSeries,
   skuMonths,
+  skuFutureMonths = [],
   skuTimeStart,
   setSkuTimeStart,
   skuTimeEnd,
@@ -97,6 +100,11 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(() => loadDefaultHiddenSupply());
   // Tracks demand series whose pill is shown but chart line is hidden (dimmed pill)
   const [hiddenDemand, setHiddenDemand] = useState<Set<string>>(new Set());
+
+  const toMonthOptions = useMemo(
+    () => [...skuMonths, ...skuFutureMonths],
+    [skuMonths, skuFutureMonths],
+  );
 
   // Staging forecast model visibility (hidden set — hidden by default until toggled on)
   const [hiddenStaging, setHiddenStaging] = useState<Set<string>>(new Set());
@@ -527,12 +535,14 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
         </label>
         <label className="flex items-center gap-1.5">
           <span className="font-semibold uppercase tracking-wider text-muted-foreground">To</span>
+          {/* TO spans history AND forecast months so the control governs the
+              whole visible axis; empty state means "everything". */}
           <select
             className="h-7 w-28 rounded border border-input bg-background px-2 text-xs"
-            value={skuTimeEnd || skuMonths[skuMonths.length - 1] || ""}
+            value={skuTimeEnd || toMonthOptions[toMonthOptions.length - 1] || ""}
             onChange={(e) => setSkuTimeEnd(e.target.value)}
           >
-            {skuMonths.map((m) => (
+            {toMonthOptions.map((m) => (
               <option key={m} value={m} disabled={isToDisabled(m, skuTimeStart)}>
                 {formatMonthLabel(m)}
               </option>

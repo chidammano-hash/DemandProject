@@ -40,6 +40,25 @@ describe("CollapsibleSection", () => {
     expect(screen.getByText("Toggleable")).toBeInTheDocument();
   });
 
+  it("is keyboard-accessible: focusable header with aria-expanded, toggled by Enter and Space", () => {
+    render(
+      <CollapsibleSection title="Error Decomposition">
+        <p>Pareto table</p>
+      </CollapsibleSection>
+    );
+    const header = screen.getByRole("button", { name: "Error Decomposition section" });
+    expect(header).toHaveAttribute("tabindex", "0");
+    expect(header).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(header, { key: "Enter" });
+    expect(screen.queryByText("Pareto table")).not.toBeInTheDocument();
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.keyDown(header, { key: " " });
+    expect(screen.getByText("Pareto table")).toBeInTheDocument();
+    expect(header).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("renders headerRight without toggling when clicked", () => {
     render(
       <CollapsibleSection

@@ -47,7 +47,9 @@ export function StatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Format duration between two ISO timestamps as "Xm Ys" or "Xs".
+ * Format duration between two ISO timestamps at a human scale:
+ * "42s", "5m 20s", "2h 15m", "2d 22h". Long-running or runaway jobs must
+ * not render as raw minutes ("4217m 31s").
  * If `completedAt` is null, uses current time (for in-progress items).
  */
 export function formatDuration(
@@ -59,8 +61,12 @@ export function formatDuration(
   const end = completedAt ? new Date(completedAt).getTime() : Date.now();
   const elapsed = Math.max(0, end - start);
   const totalSec = Math.floor(elapsed / 1000);
-  const min = Math.floor(totalSec / 60);
+  const day = Math.floor(totalSec / 86_400);
+  const hr = Math.floor((totalSec % 86_400) / 3_600);
+  const min = Math.floor((totalSec % 3_600) / 60);
   const sec = totalSec % 60;
+  if (day > 0) return `${day}d ${hr}h`;
+  if (hr > 0) return `${hr}h ${min}m`;
   if (min > 0) return `${min}m ${sec}s`;
   return `${sec}s`;
 }

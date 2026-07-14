@@ -127,6 +127,77 @@ describe("BacktestStagePanel — grouped table", () => {
     expect(within(row).queryByText("Completed")).toBeNull();
   });
 
+  it("shows 'Loaded' with a note when the newest run was cancelled but a loaded run exists", async () => {
+    const { fetchBacktestSummary } = await import("@/api/queries/backtest-management");
+    vi.mocked(fetchBacktestSummary).mockResolvedValueOnce({
+      lgbm_cluster: {
+        latest_run: {
+          id: 68,
+          model_id: "lgbm_cluster",
+          job_id: "cancelled-job",
+          status: "cancelled",
+          accuracy_pct: null,
+          wape: null,
+          bias: null,
+          n_predictions: null,
+          n_dfus: null,
+          is_loaded_to_db: false,
+          loaded_at: null,
+          load_job_id: null,
+          created_at: "2026-07-12T00:00:00Z",
+          completed_at: "2026-07-12T00:01:00Z",
+        },
+        loaded_run: { id: 67, status: "completed", accuracy_pct: 74.0, is_loaded_to_db: true },
+        has_predictions: false,
+        current_accuracy: 74.0,
+        current_wape: 25.99,
+      },
+    });
+    renderPanel();
+
+    const labelCell = screen.getAllByText("LightGBM").find((el) => el.closest("tr"));
+    const row = labelCell!.closest("tr") as HTMLElement;
+    expect(await within(row).findByText("Loaded")).toBeDefined();
+    expect(within(row).getByText("(latest run cancelled)")).toBeDefined();
+    expect(within(row).queryByText("No backtest")).toBeNull();
+    // Exec chip picks up the loaded run's accuracy via current_accuracy.
+    expect(within(row).getByText("Exec 74.0%")).toBeDefined();
+  });
+
+  it("shows 'Cancelled' when the newest run was cancelled and nothing is loaded", async () => {
+    const { fetchBacktestSummary } = await import("@/api/queries/backtest-management");
+    vi.mocked(fetchBacktestSummary).mockResolvedValueOnce({
+      mstl: {
+        latest_run: {
+          id: 5,
+          model_id: "mstl",
+          job_id: "cancelled-job",
+          status: "cancelled",
+          accuracy_pct: null,
+          wape: null,
+          bias: null,
+          n_predictions: null,
+          n_dfus: null,
+          is_loaded_to_db: false,
+          loaded_at: null,
+          load_job_id: null,
+          created_at: "2026-07-12T00:00:00Z",
+          completed_at: "2026-07-12T00:01:00Z",
+        },
+        loaded_run: null,
+        has_predictions: false,
+        current_accuracy: null,
+        current_wape: null,
+      },
+    });
+    renderPanel();
+
+    const labelCell = screen.getAllByText("MSTL").find((el) => el.closest("tr"));
+    const row = labelCell!.closest("tr") as HTMLElement;
+    expect(await within(row).findByText("Cancelled")).toBeDefined();
+    expect(within(row).queryByText("No backtest")).toBeNull();
+  });
+
   it("shows execution-lag and fixed-lag accuracy for each model", async () => {
     renderPanel();
 

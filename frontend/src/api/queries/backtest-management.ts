@@ -6,6 +6,7 @@
  */
 
 import { fetchJson } from "./request";
+import { extractStatus } from "@/lib/formatApiError";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,10 +29,14 @@ export interface BacktestRun {
   completed_at: string | null;
   is_loaded_to_candidate?: boolean;
   candidate_loaded_at?: string | null;
+  /** Failure reason from job_history for failed/cancelled runs. */
+  error?: string | null;
 }
 
 export interface BacktestModelSummary {
   latest_run: BacktestRun | null;
+  /** Latest run with results loaded to the DB — may predate a newer failed run. */
+  loaded_run?: Partial<BacktestRun> | null;
   has_predictions: boolean;
   current_accuracy: number | null;
   current_wape: number | null;
@@ -193,9 +198,22 @@ export async function fetchBacktestRuns(modelId: string): Promise<BacktestRun[]>
   return fetchJson<BacktestRun[]>(`/backtest-management/${modelId}/runs`);
 }
 
-/** Fetch current metadata from disk for a model. */
-export async function fetchBacktestCurrent(modelId: string): Promise<Record<string, unknown>> {
-  return fetchJson<Record<string, unknown>>(`/backtest-management/${modelId}/current`);
+/**
+ * Fetch current metadata from disk for a model.
+ *
+ * A 404 means "no backtest artifacts on disk yet" — a normal state for a
+ * model that has never run — so it resolves to `null` instead of throwing
+ * (throwing would surface the global "record not found" error toast).
+ */
+export async function fetchBacktestCurrent(
+  modelId: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await fetchJson<Record<string, unknown>>(`/backtest-management/${modelId}/current`);
+  } catch (err) {
+    if (extractStatus(err) === 404) return null;
+    throw err;
+  }
 }
 
 /** Fetch training status for all forecastable models. */

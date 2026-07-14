@@ -54,7 +54,17 @@ export function CollapsibleSection({
     <Card className={cn("animate-fade-in", className)}>
       <CardHeader
         className="cursor-pointer select-none flex flex-row items-center justify-between pb-2"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${title} section`}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
       >
         <div className="flex items-center gap-2">
           {open ? (

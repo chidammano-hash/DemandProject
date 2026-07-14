@@ -267,6 +267,14 @@ export function BacktestDetailPanel({ modelId }: BacktestDetailPanelProps) {
                           {statusIcon(run.status)}
                           <StatusBadge status={run.status} />
                         </div>
+                        {run.error && run.status !== "completed" && (
+                          <p
+                            className="mt-0.5 max-w-[220px] truncate text-[10px] text-destructive/80"
+                            title={run.error}
+                          >
+                            {run.error}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
                         {formatPct(run.accuracy_pct)}

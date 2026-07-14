@@ -65,6 +65,9 @@ export function FilterDropdown({
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
+        aria-label={`Filter by ${config.label}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className={cn(
           "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ease-smooth",
           selected.length > 0
@@ -183,6 +186,9 @@ export function SearchableFilterDropdown({
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
+        aria-label={`Filter by ${config.label}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className={cn(
           "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ease-smooth",
           selected.length > 0

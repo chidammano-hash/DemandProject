@@ -638,6 +638,41 @@ class TestSubmitPipeline:
 
         assert steps == original_steps
 
+    def test_pipeline_step_label_none_falls_back_to_registry_label(
+        self,
+        mock_db,
+        mock_scheduler,
+    ):
+        """An explicit label=None on a step must not render as the string 'None'."""
+        from common.services.job_registry import JobManager
+
+        steps = [
+            {"job_type": "cluster_pipeline", "params": {}, "label": None},
+            {"job_type": "seasonality_pipeline", "params": {}, "label": None},
+        ]
+        manager = JobManager()
+
+        with patch.object(manager, "submit_job") as submit_job:
+            pipeline_id = manager.submit_pipeline(steps, label="forecast-publish")
+
+            first_call = submit_job.call_args
+            first_params = first_call.kwargs["params"]
+            assert first_call.kwargs["label"] == (
+                "[forecast-publish 1/2] Full Clustering Pipeline"
+            )
+
+            submit_job.reset_mock()
+            manager._trigger_next_pipeline_step(
+                pipeline_id,
+                first_params["__pipeline_remaining"],
+                first_params,
+            )
+
+            second_call = submit_job.call_args
+            assert second_call.kwargs["label"] == (
+                "[forecast-publish 2/2] Seasonality Detection"
+            )
+
     def test_pipeline_rejects_invalid_later_step_before_submitting_first(
         self,
         mock_db,

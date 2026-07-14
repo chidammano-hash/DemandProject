@@ -48,6 +48,8 @@ export interface TuningExperiment {
   cluster_source: "production" | "experimental";
   cluster_experiment_id: number | null;
   cluster_experiment_label: string | null;
+  /** Failure reason from job_history for failed/cancelled runs. */
+  error?: string | null;
 }
 
 export interface TuningLag {

@@ -198,13 +198,29 @@ export function BacktestStagePanel({
     if (status === "queued") {
       return <span className="text-yellow-600 dark:text-yellow-400">Queued…</span>;
     }
-    if (status === "failed") {
-      return <span className="font-medium text-destructive">Failed</span>;
-    }
     if (bt?.latest_run?.is_loaded_to_db) {
       return (
         <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="h-3 w-3" /> Loaded
+        </span>
+      );
+    }
+    if (status === "failed" || status === "cancelled") {
+      // An earlier loaded run can still back the results the planner sees —
+      // say "Loaded" and note the newer run's outcome instead of hiding it.
+      if (bt?.loaded_run) {
+        return (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3 w-3" /> Loaded
+            </span>
+            <span className="text-[10px] text-muted-foreground">(latest run {status})</span>
+          </span>
+        );
+      }
+      return (
+        <span className="font-medium text-destructive">
+          {status === "failed" ? "Failed" : "Cancelled"}
         </span>
       );
     }

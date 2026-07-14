@@ -42,6 +42,7 @@ import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
 import { loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/measures";
 import { itemBreadcrumbLabel } from "./item-analysis/breadcrumb";
+import { clampFutureMonths } from "./item-analysis/monthRange";
 
 // UX-1: deep-state breadcrumbs.
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -237,7 +238,7 @@ export function ItemAnalysisTab() {
   // now produced by the SKU Chat agentic adjustment (approval-gated).
   const aiItem = debouncedSkuItem.trim();
   const aiLoc = debouncedSkuLocation.trim();
-  const { data: aiChampionSaved } = useQuery({
+  const { data: aiChampionSaved, isFetched: aiChampionFetched } = useQuery({
     queryKey: aiChampionKeys.saved(aiItem, aiLoc),
     queryFn: () => fetchAiChampionSaved(aiItem, aiLoc),
     enabled: panels.aiChampion && aiItem.length > 0 && aiLoc.length > 0,
@@ -300,6 +301,25 @@ export function ItemAnalysisTab() {
     const end = skuTimeEnd || skuMonths[skuMonths.length - 1];
     return skuData.series.filter((p) => { const m = String(p.month); return m >= start && m <= end; });
   }, [skuData, skuMonths, skuTimeStart, skuTimeEnd]);
+
+  // Future forecast months (production + AI champion + staging) beyond the
+  // last historical month — the full, unclamped horizon.
+  const skuFutureMonths = useMemo(() => {
+    const lastHistMonth = skuMonths[skuMonths.length - 1] ?? "";
+    const months = new Set<string>();
+    for (const pt of prodForecastData?.forecasts ?? []) {
+      if (pt.forecast_month > lastHistMonth) months.add(pt.forecast_month);
+    }
+    for (const r of aiChampionSaved?.rows ?? []) {
+      if (r.forecast_month && r.forecast_month > lastHistMonth) months.add(r.forecast_month);
+    }
+    for (const points of Object.values(stagingForecastData?.models ?? {})) {
+      for (const pt of points) {
+        if (pt.forecast_month > lastHistMonth) months.add(pt.forecast_month);
+      }
+    }
+    return Array.from(months).sort();
+  }, [skuMonths, prodForecastData, aiChampionSaved, stagingForecastData]);
 
   const mergedFilteredSeries = useMemo(() => {
     const lastHistMonth = skuMonths[skuMonths.length - 1] ?? "";
@@ -366,22 +386,9 @@ export function ItemAnalysisTab() {
       return Object.keys(extras).length > 0 ? { ...pt, ...extras } : pt;
     });
 
-    // Collect all future months from production + staging that are beyond the last historical month
-    const futureMonthSet = new Set<string>();
-    for (const month of prodMap.keys()) {
-      if (month > lastHistMonth) futureMonthSet.add(month);
-    }
-    for (const month of aiMap.keys()) {
-      if (month > lastHistMonth) futureMonthSet.add(month);
-    }
-    for (const monthMap of stagingMaps.values()) {
-      for (const month of monthMap.keys()) {
-        if (month > lastHistMonth) futureMonthSet.add(month);
-      }
-    }
-
-    // Create future points with all available forecast values
-    const futureMonths = Array.from(futureMonthSet).sort();
+    // Future months beyond the last historical month, clamped to an explicit
+    // TO bound so the range control governs forecasts as well as history.
+    const futureMonths = clampFutureMonths(skuFutureMonths, skuTimeEnd);
     const futurePts = futureMonths.map((month) => {
       const pt: Record<string, unknown> = { month };
       if (prodMap.has(month)) pt.production_forecast = prodMap.get(month);
@@ -393,7 +400,7 @@ export function ItemAnalysisTab() {
     });
 
     return [...result, ...futurePts] as Record<string, unknown>[];
-  }, [skuFilteredSeries, skuMonths, prodForecastData, stagingForecastData, candidateForecastData, aiChampionSaved]);
+  }, [skuFilteredSeries, skuMonths, skuFutureMonths, skuTimeEnd, prodForecastData, stagingForecastData, candidateForecastData, aiChampionSaved]);
 
   // AI Champion overlay: present only once a saved adjustment exists for this DFU.
   const aiChampionRows = aiChampionSaved?.rows ?? [];
@@ -590,6 +597,7 @@ export function ItemAnalysisTab() {
                     skuData={skuData}
                     skuFilteredSeries={mergedFilteredSeries}
                     skuMonths={skuMonths}
+                    skuFutureMonths={skuFutureMonths}
                     skuTimeStart={skuTimeStart} setSkuTimeStart={setSkuTimeStart}
                     skuTimeEnd={skuTimeEnd} setSkuTimeEnd={setSkuTimeEnd}
                     skuDefaultStart={skuDefaultStart}
@@ -618,6 +626,20 @@ export function ItemAnalysisTab() {
                     skuMode="item_location"
                     visibleMonths={mergedFilteredSeries.map((p) => String(p.month))}
                   />
+                )}
+                {/* The SHAP/AI Champion toggles must never be silent no-ops —
+                    say why nothing rendered instead of rendering nothing. */}
+                {panels.shap && !selectedModel && (
+                  <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                    {shapModelOptions.length > 0
+                      ? "SHAP is on - choose a model in the SHAP dropdown above to see feature contributions."
+                      : "No SHAP data is available for this DFU."}
+                  </p>
+                )}
+                {panels.aiChampion && aiChampionFetched && !hasAiChampion && (
+                  <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                    No saved AI Champion adjustment exists for this DFU yet.
+                  </p>
                 )}
                 {panels.forecastKpis && (
                   <ModelKpiSection

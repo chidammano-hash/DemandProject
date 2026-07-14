@@ -15,6 +15,8 @@ vi.mock("@/api/queries/core", () => ({
 
 vi.mock("@/api/queries/production-forecast", () => ({
   fetchProductionForecast: vi.fn().mockResolvedValue(null),
+  fetchStagingForecasts: vi.fn().mockResolvedValue({ item_id: "100320", loc: "1401-BULK", models: {} }),
+  fetchCandidateForecasts: vi.fn().mockResolvedValue({ item_id: "100320", loc: "1401-BULK", models: {} }),
 }));
 
 vi.mock("@/api/queries/ai-champion", () => ({
@@ -214,6 +216,33 @@ describe("ItemAnalysisTab", () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain("Points");
     });
+  });
+
+  it("explains why SHAP and AI Champion panels are empty instead of rendering nothing", async () => {
+    const { fetchSkuAnalysis } = await import("@/api/queries");
+    const emptyPayload = await vi.mocked(fetchSkuAnalysis).getMockImplementation()!();
+    vi.mocked(fetchSkuAnalysis).mockResolvedValue({
+      mode: "item_location",
+      item: "100320",
+      location: "1401-BULK",
+      points: 12,
+      models: [],
+      series: [{ month: "2026-06-01", sales_qty: 100 }],
+      model_monthly: {},
+      dfu_attributes: [],
+    });
+
+    try {
+      renderTab();
+      expect(
+        await screen.findByText("No SHAP data is available for this DFU."),
+      ).toBeDefined();
+      expect(
+        await screen.findByText("No saved AI Champion adjustment exists for this DFU yet."),
+      ).toBeDefined();
+    } finally {
+      vi.mocked(fetchSkuAnalysis).mockResolvedValue(emptyPayload);
+    }
   });
 
   it("renders DQ Corrections toggle checkbox", async () => {

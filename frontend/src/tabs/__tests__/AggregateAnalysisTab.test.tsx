@@ -121,8 +121,8 @@ describe("AggregateAnalysisTab", () => {
   it("renders local filter bar with Brand, Category, Item, Location buttons", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "Brand" }).length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByRole("button", { name: "Category" }).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByRole("button", { name: "Filter by Brand" }).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByRole("button", { name: "Filter by Category" }).length).toBeGreaterThanOrEqual(1);
     });
   });
 

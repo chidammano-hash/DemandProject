@@ -1303,7 +1303,8 @@ class JobManager:
         first = pipeline_steps[0]
         job_type = first["job_type"]
         params = first["params"]
-        step_label = first.get("label", JOB_TYPE_REGISTRY[job_type].label)
+        # `or` (not a .get default): steps may carry an explicit label=None.
+        step_label = first.get("label") or JOB_TYPE_REGISTRY[job_type].label
 
         # Store remaining steps in the first job's params
         params["__pipeline_remaining"] = pipeline_steps[1:]
@@ -2974,7 +2975,8 @@ class JobManager:
         future_steps = deepcopy(remaining[1:])
         job_type = next_step["job_type"]
         params = next_step.get("params") or {}
-        step_label = next_step.get("label", JOB_TYPE_REGISTRY[job_type].label)
+        # `or` (not a .get default): steps may carry an explicit label=None.
+        step_label = next_step.get("label") or JOB_TYPE_REGISTRY[job_type].label
         current_step = int(original_params.get("__pipeline_step", 1))
         total_steps = int(
             original_params.get("__pipeline_total_steps", current_step + len(remaining))

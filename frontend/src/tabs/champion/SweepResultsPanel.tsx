@@ -52,6 +52,34 @@ export function SweepResultsPanel({
 
   const members = useMemo(() => lb?.members ?? [], [lb]);
   const recommendedId = sweep?.recommended_experiment_id ?? null;
+
+  // Leaderboard rows for display: a re-run sweep can persist byte-identical
+  // composite members, and backend ranks composites and non-composites in
+  // separate scopes (several rows arrive as rank 1). Collapse identical rows
+  // (preferring the recommended experiment, then the latest) and derive one
+  // dense rank ordered by score so each displayed row has a distinct rank.
+  const rankedMembers = useMemo(() => {
+    const byKey = new Map<string, (typeof members)[number]>();
+    for (const m of members) {
+      const key = [m.strategy, m.is_composite, m.champion_accuracy, m.global_score].join("|");
+      const kept = byKey.get(key);
+      if (
+        !kept ||
+        m.experiment_id === recommendedId ||
+        (kept.experiment_id !== recommendedId && m.experiment_id > kept.experiment_id)
+      ) {
+        byKey.set(key, m);
+      }
+    }
+    const deduped = [...byKey.values()].sort((a, b) => {
+      if (a.global_score == null && b.global_score == null) return 0;
+      if (a.global_score == null) return 1;
+      if (b.global_score == null) return -1;
+      return b.global_score - a.global_score;
+    });
+    return deduped.map((m, i) => ({ ...m, display_rank: m.global_score == null ? null : i + 1 }));
+  }, [members, recommendedId]);
+
   const compositeMember = members.find((m) => m.is_composite) ?? null;
   const bestGlobal = useMemo(
     () => members.filter((m) => !m.is_composite).sort((a, b) => (a.global_rank ?? 999) - (b.global_rank ?? 999))[0] ?? null,
@@ -143,12 +171,12 @@ export function SweepResultsPanel({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {members.map((m) => (
+                {rankedMembers.map((m) => (
                   <TableRow
                     key={m.experiment_id}
                     className={m.experiment_id === recommendedId ? "bg-amber-50 dark:bg-amber-950/30" : undefined}
                   >
-                    <TableCell className="text-xs">{m.global_rank ?? "--"}</TableCell>
+                    <TableCell className="text-xs">{m.display_rank ?? "--"}</TableCell>
                     <TableCell className="text-xs">
                       {m.strategy}
                       {m.is_composite ? <Badge variant="outline" className="ml-1 text-[10px]">composite</Badge> : null}

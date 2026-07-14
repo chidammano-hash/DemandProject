@@ -551,7 +551,16 @@ export function ClusterExperimentsPanel() {
                             isCandidate && "bg-emerald-50 dark:bg-emerald-950/30",
                             !isSelected && "hover:bg-muted/50",
                           )}
+                          tabIndex={0}
+                          aria-selected={isSelected}
+                          aria-label={`Select experiment #${exp.experiment_id} (${exp.label})`}
                           onClick={() => handleRowClick(exp.experiment_id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              handleRowClick(exp.experiment_id);
+                            }
+                          }}
                         >
                           <TableCell className="font-mono text-xs">
                             #{exp.experiment_id}
@@ -595,7 +604,9 @@ export function ClusterExperimentsPanel() {
                           <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
                             {exp.total_dfus?.toLocaleString() ?? "--"}
                           </TableCell>
-                          <TableCell>
+                          {/* min-w keeps the distribution bar intact when the
+                              half-width card forces horizontal scrolling. */}
+                          <TableCell className="min-w-[140px]">
                             {exp.status === "completed" ? (
                               <ClusterDistBar
                                 sizes={exp.cluster_sizes}

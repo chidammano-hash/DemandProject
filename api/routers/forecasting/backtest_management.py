@@ -478,6 +478,7 @@ def get_all_backtest_summary():
     # Fetch latest run per model_id from DB
     # Try to include is_loaded_to_candidate if column exists (graceful fallback)
     latest_runs: dict[str, dict[str, Any]] = {}
+    loaded_runs: dict[str, dict[str, Any]] = {}
     _has_candidate_cols = False
     try:
         with get_conn() as conn, conn.cursor() as cur:
@@ -517,6 +518,26 @@ def get_all_backtest_summary():
                     d["is_loaded_to_candidate"] = row[17]
                     d["candidate_loaded_at"] = row[18].isoformat() if row[18] else None
                 latest_runs[row[1]] = d
+
+            # Latest LOADED run per model. The newest run can be a
+            # failure/cancellation while an earlier run still backs the
+            # loaded results — without this the UI reports "No backtest"
+            # next to loaded accuracy numbers.
+            cur.execute(
+                """
+                SELECT DISTINCT ON (model_id)
+                    id, model_id, job_id, status,
+                    accuracy_pct, wape, bias,
+                    n_predictions, n_dfus, n_timeframes,
+                    metadata, is_loaded_to_db, loaded_at, load_job_id,
+                    started_at, completed_at, created_at
+                FROM backtest_run
+                WHERE is_loaded_to_db
+                ORDER BY model_id, created_at DESC
+                """
+            )
+            for row in cur.fetchall():
+                loaded_runs[row[1]] = _serialize_backtest_run(row)
     except Exception:
         logger.exception("Failed to query backtest_run table")
 
@@ -550,6 +571,23 @@ def get_all_backtest_summary():
         else:
             entry["latest_run"] = None
 
+        # Latest loaded run (may predate a newer failed/cancelled run)
+        if model_id in loaded_runs:
+            loaded = loaded_runs[model_id]
+            entry["loaded_run"] = {
+                "id": loaded["id"],
+                "status": loaded["status"],
+                "accuracy_pct": loaded["accuracy_pct"],
+                "wape": loaded["wape"],
+                "bias": loaded["bias"],
+                "is_loaded_to_db": True,
+                "loaded_at": loaded["loaded_at"],
+                "created_at": loaded["created_at"],
+                "completed_at": loaded["completed_at"],
+            }
+        else:
+            entry["loaded_run"] = None
+
         # Disk metadata
         disk_meta = _read_metadata_from_disk(model_id)
         entry["disk_metadata"] = disk_meta
@@ -560,13 +598,18 @@ def get_all_backtest_summary():
         entry["has_predictions_csv"] = pred_path.exists()
         entry["has_predictions"] = entry["has_predictions_csv"]  # alias for frontend
 
-        # Convenience accuracy/wape from disk metadata or latest run
+        # Convenience accuracy/wape from disk metadata, latest run, or the
+        # latest loaded run (covers a newest run that failed/was cancelled).
         entry["current_accuracy"] = (disk_meta.get("accuracy_pct") if disk_meta else None) or (
             latest_runs[model_id]["accuracy_pct"] if model_id in latest_runs else None
         )
         entry["current_wape"] = (disk_meta.get("wape") if disk_meta else None) or (
             latest_runs[model_id]["wape"] if model_id in latest_runs else None
         )
+        if entry["current_accuracy"] is None and model_id in loaded_runs:
+            entry["current_accuracy"] = loaded_runs[model_id]["accuracy_pct"]
+        if entry["current_wape"] is None and model_id in loaded_runs:
+            entry["current_wape"] = loaded_runs[model_id]["wape"]
 
         result[model_id] = entry
 
@@ -599,14 +642,16 @@ def get_model_runs(model_id: str):
 
             cur.execute(
                 """
-                SELECT id, model_id, job_id, status,
-                       accuracy_pct, wape, bias,
-                       n_predictions, n_dfus, n_timeframes,
-                       metadata, is_loaded_to_db, loaded_at, load_job_id,
-                       started_at, completed_at, created_at
-                FROM backtest_run
-                WHERE model_id = %s
-                ORDER BY created_at DESC
+                SELECT br.id, br.model_id, br.job_id, br.status,
+                       br.accuracy_pct, br.wape, br.bias,
+                       br.n_predictions, br.n_dfus, br.n_timeframes,
+                       br.metadata, br.is_loaded_to_db, br.loaded_at, br.load_job_id,
+                       br.started_at, br.completed_at, br.created_at,
+                       jh.error
+                FROM backtest_run br
+                LEFT JOIN job_history jh ON jh.job_id = br.job_id
+                WHERE br.model_id = %s
+                ORDER BY br.created_at DESC
                 """,
                 (model_id,),
             )
@@ -615,7 +660,12 @@ def get_model_runs(model_id: str):
         logger.exception("Failed to query backtest_run for model %s", model_id)
         raise HTTPException(status_code=500, detail="Database error") from None
 
-    return [_serialize_backtest_run(row) for row in rows]
+    runs = []
+    for row in rows:
+        d = _serialize_backtest_run(row[:17])
+        d["error"] = row[17]
+        runs.append(d)
+    return runs
 
 
 @router.get("/{model_id}/current")
