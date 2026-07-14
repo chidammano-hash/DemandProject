@@ -622,6 +622,26 @@ def _read_subprocess_output(
         output_queue.put(("eof", None))
 
 
+_JOB_PROGRESS_PREFIX = "JOB_PROGRESS_JSON:"
+
+
+def _parse_job_progress(line: str) -> tuple[int, str] | None:
+    """Parse an opt-in structured progress line from a managed subprocess."""
+    if not line.startswith(_JOB_PROGRESS_PREFIX):
+        return None
+    try:
+        payload = json.loads(line.removeprefix(_JOB_PROGRESS_PREFIX))
+        pct = payload["pct"]
+        msg = payload["msg"]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return None
+    if isinstance(pct, bool) or not isinstance(pct, int) or not 0 <= pct <= 100:
+        return None
+    if not isinstance(msg, str) or not msg:
+        return None
+    return pct, msg
+
+
 def _run_subprocess(
     cmd: list[str],
     progress_cb: Callable | None = None,
@@ -770,7 +790,14 @@ def _run_subprocess(
             log_buffer.append(payload)
             if progress_cb and stripped:
                 try:
-                    progress_cb(msg=stripped)
+                    structured_progress = _parse_job_progress(stripped)
+                    if structured_progress is None:
+                        progress_cb(msg=stripped)
+                    else:
+                        progress_cb(
+                            pct=structured_progress[0],
+                            msg=structured_progress[1],
+                        )
                 except JobCancelledError:
                     _terminate_subprocess(proc)
                     raise
@@ -1830,7 +1857,7 @@ def _run_generate_customer_forecast(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run generation-only customer Chronos inference as a durable subprocess."""
+    """Run resumable customer Chronos/Croston batches in a durable subprocess."""
     run_id = str(params.get("run_id") or "")
     if not run_id:
         raise ValueError("Customer forecast generation requires run_id")

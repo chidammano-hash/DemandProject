@@ -7,7 +7,7 @@ import io
 import logging
 import uuid
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, cast
 
 import psycopg
@@ -35,7 +35,8 @@ _RUN_SELECT = """
            history_start, history_end, forecast_start, forecast_end,
            eligible_series, row_count, skipped_series, model_id,
            created_at, started_at, completed_at, error_summary,
-           skip_reason_counts, model_route_counts
+           skip_reason_counts, model_route_counts,
+           total_series, completed_series, total_batches, completed_batches
     FROM customer_forecast_run
 """
 
@@ -45,6 +46,24 @@ def _iso(value: date | datetime | None) -> str | None:
 
 
 def _serialize_run(row: tuple[Any, ...]) -> dict[str, Any]:
+    total_series = int(row[18] or row[8] or 0)
+    completed_series = int(row[19] or (total_series if row[2] == "completed" else 0))
+    total_batches = int(row[20] or 0)
+    completed_batches = int(row[21] or (total_batches if row[2] == "completed" else 0))
+    progress_pct = (
+        100
+        if row[2] == "completed"
+        else min(99, 10 + int(89 * completed_series / total_series))
+        if total_series > 0
+        else 5
+    )
+    eta_seconds: int | None = None
+    if completed_series > 0 and completed_series < total_series and row[13] is not None:
+        started_at = row[13]
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=UTC)
+        elapsed = max((datetime.now(UTC) - started_at).total_seconds(), 1.0)
+        eta_seconds = int((total_series - completed_series) / (completed_series / elapsed))
     return {
         "run_id": row[0],
         "job_id": row[1],
@@ -64,6 +83,12 @@ def _serialize_run(row: tuple[Any, ...]) -> dict[str, Any]:
         "error_summary": row[15],
         "skip_reason_counts": row[16] or {},
         "model_route_counts": row[17] or {},
+        "total_series": total_series,
+        "completed_series": completed_series,
+        "total_batches": total_batches,
+        "completed_batches": completed_batches,
+        "progress_pct": progress_pct,
+        "eta_seconds": eta_seconds,
     }
 
 
@@ -83,7 +108,11 @@ def get_readiness() -> dict[str, Any]:
     try:
         settings, window = _resolved_window()
         with get_read_only_conn() as conn:
-            readiness = load_customer_forecast_readiness(conn, window)
+            readiness = load_customer_forecast_readiness(
+                conn,
+                window,
+                recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+            )
         if not settings["enabled"]:
             readiness["ready"] = False
             readiness["blockers"].insert(0, "Enable customer forecasting in configuration")
@@ -100,7 +129,11 @@ def generate_customer_forecasts() -> JSONResponse:
     try:
         settings, window = _resolved_window()
         with get_conn() as conn:
-            readiness = load_customer_forecast_readiness(conn, window)
+            readiness = load_customer_forecast_readiness(
+                conn,
+                window,
+                recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+            )
             if not settings["enabled"]:
                 readiness["ready"] = False
                 readiness["blockers"].insert(0, "Enable customer forecasting in configuration")
@@ -248,6 +281,86 @@ def cancel_run(run_id: uuid.UUID) -> dict[str, str]:
             status_code=500, detail="customer forecast cancellation failed"
         ) from exc
     return {"run_id": str(run_id), "status": "cancelled"}
+
+
+@router.post("/runs/{run_id}/retry", dependencies=[Depends(require_api_key)])
+def retry_run(run_id: uuid.UUID) -> JSONResponse:
+    """Resume the incomplete batches of a failed or cancelled run."""
+    try:
+        settings = get_customer_forecast_settings()
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT run_status, planning_month, config_checksum, total_batches "
+                "FROM customer_forecast_run WHERE run_id = %s::uuid FOR UPDATE",
+                (str(run_id),),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Customer forecast run not found")
+            if row[0] not in {"failed", "cancelled"} or int(row[3] or 0) <= 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Customer forecast run has no resumable batches",
+                )
+            if row[2] != customer_forecast_config_checksum(settings):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Customer forecast configuration changed; start a new generation",
+                )
+            planning_month = row[1]
+            cur.execute(
+                "UPDATE customer_forecast_batch SET attempt_count = 0 "
+                "WHERE run_id = %s::uuid AND batch_status = 'failed' "
+                "AND attempt_count >= %s",
+                (str(run_id), int(settings["max_batch_attempts"])),
+            )
+            cur.execute(
+                "UPDATE customer_forecast_run SET run_status = 'queued', job_id = NULL, "
+                "completed_at = NULL, error_summary = NULL WHERE run_id = %s::uuid",
+                (str(run_id),),
+            )
+            conn.commit()
+    except HTTPException:
+        raise
+    except (KeyError, TypeError, ValueError, psycopg.Error) as exc:
+        logger.exception("Preparing customer forecast retry failed")
+        raise HTTPException(status_code=500, detail="customer forecast retry failed") from exc
+
+    from common.services.job_registry import JobManager
+
+    try:
+        job_id = JobManager().submit_job(
+            "generate_customer_forecast",
+            {"run_id": str(run_id)},
+            label=f"Customer Forecast · {planning_month:%B %Y} · Resume",
+            triggered_by="api",
+            max_retries=1,
+        )
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE customer_forecast_run SET job_id = %s WHERE run_id = %s::uuid",
+                (job_id, str(run_id)),
+            )
+            conn.commit()
+    except (RuntimeError, ValueError, psycopg.Error) as exc:
+        logger.exception("Submitting customer forecast retry failed")
+        try:
+            with get_conn() as conn:
+                mark_customer_forecast_run_terminal(
+                    conn,
+                    str(run_id),
+                    "failed",
+                    "retry job submission failed",
+                )
+        except psycopg.Error:
+            logger.exception("Marking unsubmitted customer forecast retry failed")
+        raise HTTPException(
+            status_code=500, detail="customer forecast retry submission failed"
+        ) from exc
+    return JSONResponse(
+        status_code=202,
+        content={"run_id": str(run_id), "job_id": job_id, "status": "queued"},
+    )
 
 
 @router.get("/series")

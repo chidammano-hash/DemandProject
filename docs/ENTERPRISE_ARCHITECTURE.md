@@ -560,7 +560,7 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 | Category | Table Count | Examples |
 |---|---|---|
 | Inventory Planning | 12 | `demand_variability`, `safety_stock`, `eoq_cycle_stock`, `replenishment_policy`, `replenishment_exceptions` |
-| Forecasting & Champion | 14+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot`, `customer_forecast_run`, `fact_customer_forecast` |
+| Forecasting & Champion | 16+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast` |
 | AI & Exception | 5 | `ai_insights`, `ai_call_log`, `ai_recommendation_outcomes`, `storyboard_cards` |
 | Operations | 12 | `fact_sop_cycles`, `fact_financial_plan`, `fact_events`, `fact_scenarios` |
 | Platform | 8 | `dim_user`, `dim_role`, `fact_audit_log`, `notification_log`, `webhook_registrations` |
@@ -582,16 +582,21 @@ snapshot candidates so artifact, source-roster, and snapshot lineage is never
 inferred from a legacy status flag.
 
 Customer-level forecasting is a separate generation-only bounded context.
-`customer_forecast_run` and `fact_customer_forecast` persist immutable results
+`customer_forecast_run`, its durable batch/series ledger, and
+`fact_customer_forecast` persist immutable results
 derived from the latest 18 closed customer-demand months for an 18-month
-horizon. Full-history series route to Chronos 2E; all remaining historical
-series route to customer-only Croston/SBA, with per-run and per-row model
-lineage. Croston remains outside the governed algorithm roster. There is
+horizon. Customer-SKUs without sales in the latest six closed months are
+ignored. Active full-history series route to GPU-auto Chronos 2E; remaining
+active series route to customer-only Croston/SBA. Batch transactions and
+`SKIP LOCKED` workers preserve completed work across retry/restart while
+retaining per-run and per-row model lineage. Croston remains outside the
+governed algorithm roster. There is
 deliberately no dependency on the item-location champion, release promotion,
 planner adjustment, or reconciliation workflows.
 The refreshable `mv_customer_demand_series_profile` stores series first/last
-months so readiness and generation retain exact history eligibility while
-scanning only the requested 18-month fact window at request time.
+months plus the last positive-sales month. Readiness and manifest creation use
+that compact profile; only workers read the requested 18-month fact history for
+their claimed batches.
 
 ### 4.3 Data Flow Architecture
 

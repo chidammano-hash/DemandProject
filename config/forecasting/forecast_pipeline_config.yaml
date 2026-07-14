@@ -258,6 +258,12 @@ customer_forecast:
     variant: sba                   # Syntetos-Boylan bias-adjusted Croston forecast
   history_months: 18               # Fully closed monthly periods supplied as context
   horizon_months: 18               # Future monthly periods generated from the planning month
+  recent_sales_lookback_months: 6  # Ignore customer-SKUs with no sales in the latest closed months
+  batch_size: 10000                # Durable customer-SKU series per independently committed batch
+  chronos_workers: 1               # One model owner uses auto-selected MPS/CUDA without duplicate GPU copies
+  cpu_workers: 6                   # Parallel CPU workers for active short-history Croston batches
+  max_batch_attempts: 3            # Failed batch claims allowed before the run requires intervention
+  progress_interval_seconds: 5     # Parent-process polling interval for exact series progress and ETA
 forecast_snapshot:
   lag_count: 6
   contender_count: 3

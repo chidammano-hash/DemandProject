@@ -39,45 +39,49 @@ def test_prepare_customer_history_routes_ineligible_series_to_croston() -> None:
                 "item_id": "ITEM-1",
                 "location_id": "LOC-1",
                 "customer_no": "CUST-1",
-                "startdate": "2025-01-01",
+                "startdate": "2026-03-01",
                 "demand_qty": 8.0,
+                "sales_qty": 8.0,
                 "series_first_month": "2024-10-01",
             },
             {
                 "item_id": "ITEM-1",
                 "location_id": "LOC-1",
                 "customer_no": "CUST-1",
-                "startdate": "2025-03-01",
+                "startdate": "2026-03-01",
                 "demand_qty": 4.0,
+                "sales_qty": 4.0,
                 "series_first_month": "2024-10-01",
             },
             {
                 "item_id": "ITEM-2",
                 "location_id": "LOC-1",
                 "customer_no": "CUST-2",
-                "startdate": "2025-05-01",
+                "startdate": "2026-05-01",
                 "demand_qty": 3.0,
+                "sales_qty": 3.0,
                 "series_first_month": "2025-05-01",
             },
             {
                 "item_id": "ITEM-3",
                 "location_id": "LOC-2",
                 "customer_no": "CUST-3",
-                "startdate": "2025-01-01",
+                "startdate": "2026-03-01",
                 "demand_qty": 0.0,
+                "sales_qty": 0.0,
                 "series_first_month": "2024-01-01",
             },
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
 
-    prepared = prepare_customer_history(frame, window)
+    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
 
     assert prepared.eligible_series_count == 1
-    assert prepared.fallback_series_count == 2
-    assert prepared.forecastable_series_count == 3
+    assert prepared.fallback_series_count == 1
+    assert prepared.forecastable_series_count == 2
     assert len(prepared.model_input) == 18
-    assert len(prepared.fallback_model_input) == 36
+    assert len(prepared.fallback_model_input) == 18
     assert prepared.model_input["qty"].sum() == pytest.approx(12.0)
     assert (
         prepared.model_input.loc[
@@ -85,11 +89,15 @@ def test_prepare_customer_history_routes_ineligible_series_to_croston() -> None:
         ].item()
         == 0.0
     )
-    assert set(prepared.fallback_reason_by_sku.values()) == {
-        "insufficient_history",
-        "no_positive_demand",
-    }
-    assert prepared.skipped_series == []
+    assert set(prepared.fallback_reason_by_sku.values()) == {"insufficient_history"}
+    assert prepared.skipped_series == [
+        {
+            "item_id": "ITEM-3",
+            "location_id": "LOC-2",
+            "customer_no": "CUST-3",
+            "reason": "no_sales_last_6_months",
+        }
+    ]
 
 
 def test_build_croston_forecast_rows_covers_every_fallback_series() -> None:
@@ -101,6 +109,7 @@ def test_build_croston_forecast_rows_covers_every_fallback_series() -> None:
                 "customer_no": "CUST-1",
                 "startdate": "2026-05-01",
                 "demand_qty": 6.0,
+                "sales_qty": 6.0,
                 "series_first_month": "2026-05-01",
             },
             {
@@ -109,12 +118,13 @@ def test_build_croston_forecast_rows_covers_every_fallback_series() -> None:
                 "customer_no": "CUST-2",
                 "startdate": "2025-01-01",
                 "demand_qty": 0.0,
+                "sales_qty": 0.0,
                 "series_first_month": "2024-01-01",
             },
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
-    prepared = prepare_customer_history(frame, window)
+    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
 
     rows = build_croston_forecast_rows(
         prepared,
@@ -122,10 +132,34 @@ def test_build_croston_forecast_rows_covers_every_fallback_series() -> None:
         {"alpha": 0.1, "variant": "sba"},
     )
 
-    assert len(rows) == 36
+    assert len(rows) == 18
     assert set(rows["model_id"]) == {"croston"}
-    assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18, 18]
-    assert rows.loc[rows["customer_no"] == "CUST-2", "forecast_qty"].eq(0.0).all()
+    assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18]
+
+
+def test_series_without_recent_six_month_sales_is_ignored() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUST-1",
+                "startdate": "2025-02-01",
+                "demand_qty": 9.0,
+                "sales_qty": 9.0,
+                "series_first_month": "2024-01-01",
+            }
+        ]
+    )
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+
+    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
+
+    assert prepared.eligible_series_count == 0
+    assert prepared.fallback_series_count == 0
+    assert prepared.forecastable_series_count == 0
+    assert len(prepared.skipped_series) == 1
+    assert prepared.skipped_series[0]["reason"] == "no_sales_last_6_months"
 
 
 def test_prepare_customer_history_rejects_negative_demand() -> None:
@@ -137,6 +171,7 @@ def test_prepare_customer_history_rejects_negative_demand() -> None:
                 "customer_no": "CUST-1",
                 "startdate": "2025-01-01",
                 "demand_qty": -1.0,
+                "sales_qty": 0.0,
                 "series_first_month": "2024-01-01",
             }
         ]
@@ -144,7 +179,7 @@ def test_prepare_customer_history_rejects_negative_demand() -> None:
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
 
     with pytest.raises(ValueError, match="negative demand"):
-        prepare_customer_history(frame, window)
+        prepare_customer_history(frame, window, recent_sales_lookback_months=6)
 
 
 def test_build_customer_forecast_rows_requires_complete_horizon() -> None:
@@ -154,14 +189,15 @@ def test_build_customer_forecast_rows_requires_complete_horizon() -> None:
                 "item_id": "ITEM-1",
                 "location_id": "LOC-1",
                 "customer_no": "CUST-1",
-                "startdate": "2025-01-01",
+                "startdate": "2026-03-01",
                 "demand_qty": 2.0,
+                "sales_qty": 2.0,
                 "series_first_month": "2024-01-01",
             }
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
-    prepared = prepare_customer_history(frame, window)
+    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
     sku_ck = prepared.model_input["sku_ck"].iat[0]
     predictions = pd.DataFrame(
         {
@@ -217,23 +253,28 @@ def test_customer_forecast_migration_defines_run_and_fact_tables() -> None:
     assert "skip_reason_counts" in ddl
 
 
-def test_customer_forecast_readiness_uses_series_profile_and_bounded_fact_scan() -> None:
+def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
     cursor = MagicMock()
-    cursor.fetchone.return_value = (date(2026, 6, 1), 12, 10, 0, 0, 0)
+    cursor.fetchone.return_value = (date(2026, 6, 1), 12, 8, 2, 0, 0, 0)
     conn = MagicMock()
     conn.cursor.return_value.__enter__.return_value = cursor
 
-    readiness = load_customer_forecast_readiness(conn, window)
+    readiness = load_customer_forecast_readiness(
+        conn,
+        window,
+        recent_sales_lookback_months=6,
+    )
 
     sql = cursor.execute.call_args.args[0]
     assert "mv_customer_demand_series_profile" in sql
-    assert "WHERE startdate >= %s AND startdate < %s" in sql
-    assert "WHERE startdate < %s\n            GROUP BY" not in sql
-    assert readiness["eligible_series"] == 10
+    assert "last_sales_month" in sql
+    assert "fact_customer_demand_monthly" not in sql
+    assert readiness["eligible_series"] == 8
     assert readiness["fallback_series"] == 2
-    assert readiness["forecastable_series"] == 12
-    assert readiness["skipped_series"] == 0
+    assert readiness["dormant_series"] == 2
+    assert readiness["forecastable_series"] == 10
+    assert readiness["skipped_series"] == 2
 
 
 def test_customer_forecast_profile_migration_defines_refreshable_series_grain() -> None:
@@ -252,6 +293,32 @@ def test_customer_forecast_route_migration_records_model_composition() -> None:
     assert "ADD COLUMN IF NOT EXISTS model_route_counts JSONB" in ddl
     assert "jsonb_build_object(model_id, eligible_series)" in ddl
     assert "chk_customer_forecast_model_route_counts" in ddl
+
+
+def test_customer_forecast_batch_migration_defines_resumable_work_ledger() -> None:
+    ddl = Path("sql/213_add_customer_forecast_batches.sql").read_text()
+
+    assert "CREATE TABLE IF NOT EXISTS customer_forecast_batch" in ddl
+    assert "CREATE TABLE IF NOT EXISTS customer_forecast_batch_series" in ddl
+    assert "completed_series" in ddl
+    assert "completed_batches" in ddl
+    assert "batch_id" in ddl
+    assert "uq_customer_forecast_batch_route" in ddl
+    assert "idx_customer_forecast_batch_claim" in ddl
+
+
+def test_customer_activity_profile_migration_precomputes_last_sale() -> None:
+    ddl = Path("sql/214_add_customer_series_activity.sql").read_text()
+
+    assert "MAX(startdate) FILTER (WHERE sales_qty > 0) AS last_sales_month" in ddl
+    assert "idx_mv_customer_demand_series_profile_last_sales" in ddl
+
+
+def test_customer_batch_integrity_migration_couples_run_and_batch() -> None:
+    ddl = Path("sql/215_enforce_customer_batch_lineage.sql").read_text()
+
+    assert "UNIQUE (run_id, batch_id)" in ddl
+    assert ddl.count("FOREIGN KEY (run_id, batch_id)") == 2
 
 
 def test_run_window_is_restored_from_the_manifest() -> None:

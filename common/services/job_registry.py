@@ -289,7 +289,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "generate_customer_forecast": JobTypeDef(
         type_id="generate_customer_forecast",
         label="Customer Forecast",
-        description="Generate an immutable 18-month Chronos forecast at customer grain",
+        description="Generate resumable 18-month Chronos/Croston forecasts at customer grain",
         group="forecast",
         callable=_run_generate_customer_forecast,
         params_schema={"run_id": None},

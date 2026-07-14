@@ -11,7 +11,7 @@ from tests.api.conftest import make_pool
 
 @pytest.mark.asyncio
 async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
-    pool, _conn, cursor = make_pool(fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0))
+    pool, _conn, cursor = make_pool(fetchone_return=(date(2026, 6, 1), 12, 8, 2, 0, 0, 0))
 
     cache = InMemoryBackend()
     with (
@@ -36,16 +36,20 @@ async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
     assert payload["history_end"] == "2026-06-30"
     assert payload["forecast_start"] == "2026-07-01"
     assert payload["forecast_end"] == "2027-12-31"
-    assert payload["eligible_series"] == 10
+    assert payload["eligible_series"] == 8
     assert payload["fallback_series"] == 2
-    assert payload["forecastable_series"] == 12
-    assert payload["skipped_series"] == 0
-    assert "fact_customer_demand_monthly" in cursor.execute.call_args.args[0]
+    assert payload["dormant_series"] == 2
+    assert payload["forecastable_series"] == 10
+    assert payload["skipped_series"] == 2
+    readiness_sql = cursor.execute.call_args.args[0]
+    assert "mv_customer_demand_series_profile" in readiness_sql
+    assert "last_sales_month" in readiness_sql
+    assert "fact_customer_demand_monthly" not in readiness_sql
 
 
 @pytest.mark.asyncio
 async def test_generate_creates_run_and_submits_durable_job() -> None:
-    pool, _conn, _cursor = make_pool(fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0))
+    pool, _conn, _cursor = make_pool(fetchone_return=(date(2026, 6, 1), 12, 8, 2, 0, 0, 0))
     manager = MagicMock()
     manager.submit_job.return_value = "job_customer_1"
 
@@ -79,7 +83,7 @@ async def test_generate_creates_run_and_submits_durable_job() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_blocks_when_latest_closed_month_is_missing() -> None:
-    pool, _conn, _cursor = make_pool(fetchone_return=(date(2026, 5, 1), 12, 10, 0, 0, 0))
+    pool, _conn, _cursor = make_pool(fetchone_return=(date(2026, 5, 1), 12, 8, 2, 0, 0, 0))
 
     with (
         patch("api.core._get_pool", return_value=pool),
@@ -121,6 +125,10 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
         None,
         {},
         {"chronos2_enriched": 10, "croston": 2},
+        12,
+        12,
+        2,
+        2,
     )
     pool, _conn, _cursor = make_pool(fetchone_return=run_row)
 
@@ -165,6 +173,10 @@ async def test_export_rejects_an_incomplete_run() -> None:
         created_at,
         "model failed",
         {},
+        12,
+        5,
+        2,
+        1,
         {},
     )
     pool, _conn, _cursor = make_pool(fetchone_return=run_row)
@@ -181,3 +193,36 @@ async def test_export_rejects_an_incomplete_run() -> None:
             )
 
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_retry_resumes_existing_customer_forecast_batches() -> None:
+    pool, _conn, _cursor = make_pool(fetchone_return=("failed", date(2026, 7, 1), "a" * 64, 12))
+    manager = MagicMock()
+    manager.submit_job.return_value = "job_customer_resume"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "api.routers.forecasting.customer_forecast.customer_forecast_config_checksum",
+            return_value="a" * 64,
+        ),
+        patch("common.services.job_registry.JobManager", return_value=manager),
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from api.main import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/customer-forecast/runs/0f2f73e8-9d8c-4f46-8410-2fce54ac68ad/retry"
+            )
+
+    assert response.status_code == 202
+    assert response.json()["job_id"] == "job_customer_resume"
+    manager.submit_job.assert_called_once()
+    assert manager.submit_job.call_args.args[1]["run_id"] == (
+        "0f2f73e8-9d8c-4f46-8410-2fce54ac68ad"
+    )
+    executed_sql = [call.args[0] for call in _cursor.execute.call_args_list]
+    assert any("SET attempt_count = 0" in sql for sql in executed_sql)

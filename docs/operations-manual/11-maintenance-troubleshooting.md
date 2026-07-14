@@ -640,6 +640,8 @@ TRUNCATE TABLE fact_production_forecast CASCADE;
 TRUNCATE TABLE model_promotion_log CASCADE;
 TRUNCATE TABLE forecast_generation_run CASCADE;
 TRUNCATE TABLE fact_customer_forecast CASCADE;
+TRUNCATE TABLE customer_forecast_batch_series CASCADE;
+TRUNCATE TABLE customer_forecast_batch CASCADE;
 TRUNCATE TABLE customer_forecast_run CASCADE;
 TRUNCATE TABLE fact_ai_champion_forecast CASCADE;
 TRUNCATE TABLE ai_champion_run CASCADE;

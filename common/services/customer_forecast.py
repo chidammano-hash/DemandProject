@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -13,9 +12,7 @@ import numpy as np
 import pandas as pd
 
 from common.core.constants import FORECAST_QTY_COL
-from common.core.sql_helpers import read_sql_chunked
 from common.core.utils import get_algorithm_params, load_forecast_pipeline_config
-from common.ml.chronos2_enriched import run_chronos2_enriched
 from common.ml.croston import croston_forecast
 
 _IDENTITY_COLUMNS = ["item_id", "location_id", "customer_no"]
@@ -96,6 +93,12 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         fallback_params = dict(settings["fallback_params"])
         fallback_alpha = float(fallback_params["alpha"])
         fallback_variant = str(fallback_params["variant"])
+        recent_sales_lookback_months = int(settings["recent_sales_lookback_months"])
+        batch_size = int(settings["batch_size"])
+        chronos_workers = int(settings["chronos_workers"])
+        cpu_workers = int(settings["cpu_workers"])
+        max_batch_attempts = int(settings["max_batch_attempts"])
+        progress_interval_seconds = float(settings["progress_interval_seconds"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Customer forecast settings are incomplete") from exc
     if history_months <= 0 or horizon_months <= 0:
@@ -106,6 +109,12 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         raise ValueError("Customer forecast fallback requires croston")
     if not 0.0 < fallback_alpha <= 1.0 or fallback_variant not in {"classic", "sba"}:
         raise ValueError("Customer forecast Croston settings are invalid")
+    if recent_sales_lookback_months <= 0 or recent_sales_lookback_months > history_months:
+        raise ValueError("Customer forecast recent-sales lookback is invalid")
+    if batch_size <= 0 or chronos_workers != 1 or cpu_workers <= 0:
+        raise ValueError("Customer forecast batch worker settings are invalid")
+    if max_batch_attempts <= 0 or progress_interval_seconds <= 0:
+        raise ValueError("Customer forecast batch execution settings are invalid")
     if not isinstance(settings.get("enabled"), bool):
         raise ValueError("Customer forecast enabled setting must be boolean")
     return {
@@ -113,6 +122,12 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         "history_months": history_months,
         "horizon_months": horizon_months,
         "model_id": model_id,
+        "recent_sales_lookback_months": recent_sales_lookback_months,
+        "batch_size": batch_size,
+        "chronos_workers": chronos_workers,
+        "cpu_workers": cpu_workers,
+        "max_batch_attempts": max_batch_attempts,
+        "progress_interval_seconds": progress_interval_seconds,
         "fallback_params": {
             "alpha": fallback_alpha,
             "variant": fallback_variant,
@@ -133,39 +148,36 @@ def customer_forecast_config_checksum(settings: dict[str, Any]) -> str:
 def load_customer_forecast_readiness(
     conn: Any,
     window: CustomerForecastWindow,
+    *,
+    recent_sales_lookback_months: int,
 ) -> dict[str, Any]:
     """Return source freshness and eligibility for the resolved run window."""
     sql = """
-        WITH window_series AS MATERIALIZED (
-            SELECT item_id, location_id, customer_no,
-                   SUM(demand_qty) AS window_demand,
-                   MAX(startdate) AS last_window_month
-            FROM fact_customer_demand_monthly
-            WHERE startdate >= %s AND startdate < %s
-            GROUP BY item_id, location_id, customer_no
-        )
         SELECT
-            MAX(window_series.last_window_month),
+            MAX(last_month),
             COUNT(*),
             COUNT(*) FILTER (
-                WHERE profile.first_month <= %s
-                  AND COALESCE(window_series.window_demand, 0) > 0
+                WHERE first_month <= %s
+                  AND last_sales_month >= %s
+            ),
+            COUNT(*) FILTER (
+                WHERE last_sales_month IS NULL OR last_sales_month < %s
             ),
             0::bigint, -- identity columns are NOT NULL
             0::bigint, -- loader business key is unique at series-month grain
             0::bigint  -- demand_qty has a non-negative CHECK constraint
-        FROM mv_customer_demand_series_profile profile
-        LEFT JOIN window_series USING (item_id, location_id, customer_no)
-        WHERE profile.first_month < %s
+        FROM mv_customer_demand_series_profile
+        WHERE first_month < %s
     """
     history_end_month = window.history_end.replace(day=1)
+    recent_start = _shift_month(window.forecast_start, -recent_sales_lookback_months)
     with conn.cursor() as cur:
         cur.execute(
             sql,
             (
                 window.history_start,
-                window.forecast_start,
-                window.history_start,
+                recent_start,
+                recent_start,
                 window.forecast_start,
             ),
         )
@@ -174,11 +186,13 @@ def load_customer_forecast_readiness(
         latest_month,
         total_series,
         eligible_series,
+        zero_series,
         invalid_keys,
         duplicate_grains,
         negative_rows,
     ) = row or (
         None,
+        0,
         0,
         0,
         0,
@@ -190,7 +204,11 @@ def load_customer_forecast_readiness(
         blockers.append(f"Load customer demand through {window.history_end.strftime('%B %Y')}")
     total_series_count = int(total_series or 0)
     eligible_series_count = int(eligible_series or 0)
-    fallback_series_count = max(total_series_count - eligible_series_count, 0)
+    zero_series_count = int(zero_series or 0)
+    fallback_series_count = max(
+        total_series_count - eligible_series_count - zero_series_count,
+        0,
+    )
     if total_series_count == 0:
         blockers.append("Load customer demand history before generating forecasts")
     if int(invalid_keys or 0) > 0:
@@ -212,8 +230,9 @@ def load_customer_forecast_readiness(
         "total_series": total_series_count,
         "eligible_series": eligible_series_count,
         "fallback_series": fallback_series_count,
-        "forecastable_series": total_series_count,
-        "skipped_series": 0,
+        "dormant_series": zero_series_count,
+        "forecastable_series": eligible_series_count + fallback_series_count,
+        "skipped_series": zero_series_count,
         "invalid_key_rows": int(invalid_keys or 0),
         "duplicate_grains": int(duplicate_grains or 0),
         "negative_rows": int(negative_rows or 0),
@@ -221,39 +240,20 @@ def load_customer_forecast_readiness(
     }
 
 
-def load_customer_history(conn: Any, window: CustomerForecastWindow) -> pd.DataFrame:
-    """Load the bounded fact history plus each series' first observed month."""
-    sql = """
-        SELECT profile.item_id, profile.location_id, profile.customer_no,
-               history.startdate,
-               COALESCE(SUM(history.demand_qty), 0)::double precision AS demand_qty,
-               profile.first_month AS series_first_month
-        FROM mv_customer_demand_series_profile profile
-        LEFT JOIN fact_customer_demand_monthly history
-          ON history.item_id = profile.item_id
-         AND history.location_id = profile.location_id
-         AND history.customer_no = profile.customer_no
-         AND history.startdate >= %s
-         AND history.startdate < %s
-        WHERE profile.first_month < %s
-        GROUP BY profile.item_id, profile.location_id, profile.customer_no,
-                 history.startdate, profile.first_month
-        ORDER BY profile.item_id, profile.location_id, profile.customer_no,
-                 history.startdate
-    """
-    return read_sql_chunked(
-        conn,
-        sql,
-        params=(window.history_start, window.forecast_start, window.forecast_start),
-    )
-
-
 def prepare_customer_history(
     frame: pd.DataFrame,
     window: CustomerForecastWindow,
+    *,
+    recent_sales_lookback_months: int,
 ) -> PreparedCustomerHistory:
     """Validate, filter, and densify customer histories for Chronos."""
-    required = {*_IDENTITY_COLUMNS, "startdate", "demand_qty", "series_first_month"}
+    required = {
+        *_IDENTITY_COLUMNS,
+        "startdate",
+        "demand_qty",
+        "sales_qty",
+        "series_first_month",
+    }
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"Customer history is missing columns: {sorted(missing)}")
@@ -273,6 +273,7 @@ def prepare_customer_history(
     history["startdate"] = pd.to_datetime(history["startdate"], errors="coerce")
     history["series_first_month"] = pd.to_datetime(history["series_first_month"], errors="coerce")
     history["demand_qty"] = pd.to_numeric(history["demand_qty"], errors="coerce")
+    history["sales_qty"] = pd.to_numeric(history["sales_qty"], errors="coerce")
     if history["series_first_month"].isna().any():
         raise ValueError("Customer history contains an invalid first month")
     numeric = history["demand_qty"].to_numpy(dtype=float)
@@ -280,6 +281,9 @@ def prepare_customer_history(
         raise ValueError("Customer history contains non-finite demand")
     if (numeric < 0).any():
         raise ValueError("Customer history contains negative demand")
+    sales_numeric = history["sales_qty"].to_numpy(dtype=float)
+    if not np.isfinite(sales_numeric).all() or (sales_numeric < 0).any():
+        raise ValueError("Customer history contains invalid sales")
 
     calendar = pd.date_range(window.history_start, periods=window.history_months, freq="MS")
     model_frames: list[pd.DataFrame] = []
@@ -298,8 +302,25 @@ def prepare_customer_history(
             & (group["startdate"] < pd.Timestamp(window.forecast_start))
         ]
         monthly = bounded.groupby("startdate", as_index=True)["demand_qty"].sum()
+        monthly_sales = bounded.groupby("startdate", as_index=True)["sales_qty"].sum()
         dense = monthly.reindex(calendar, fill_value=0.0).astype(float)
-        is_chronos_eligible = first_month <= window.history_start and (dense > 0).any()
+        dense_sales = monthly_sales.reindex(calendar, fill_value=0.0).astype(float)
+        recent_start = pd.Timestamp(
+            _shift_month(window.forecast_start, -recent_sales_lookback_months)
+        )
+        has_recent_sales = bool(dense_sales.loc[dense_sales.index >= recent_start].gt(0).any())
+        if not has_recent_sales:
+            skipped.append(
+                {
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "customer_no": customer_no,
+                    "reason": "no_sales_last_6_months",
+                }
+            )
+            continue
+
+        is_chronos_eligible = first_month <= window.history_start
         if is_chronos_eligible:
             sku_ck = f"chronos_customer_series_{len(identities) + 1}"
             identities[sku_ck] = (item_id, location_id, customer_no)
@@ -310,9 +331,7 @@ def prepare_customer_history(
 
         sku_ck = f"croston_customer_series_{len(fallback_identities) + 1}"
         fallback_identities[sku_ck] = (item_id, location_id, customer_no)
-        fallback_reasons[sku_ck] = (
-            "insufficient_history" if first_month > window.history_start else "no_positive_demand"
-        )
+        fallback_reasons[sku_ck] = "insufficient_history"
         fallback_frames.append(
             pd.DataFrame({"sku_ck": sku_ck, "startdate": calendar, "qty": dense.to_numpy()})
         )
@@ -462,7 +481,7 @@ def _resolve_run_window(
             (run_id,),
         )
         row = cur.fetchone()
-    if row is None or row[0] not in {"queued", "generating", "failed"}:
+    if row is None or row[0] not in {"queued", "generating", "failed", "cancelled"}:
         raise RuntimeError("Customer forecast run is missing or not runnable")
     checksum = customer_forecast_config_checksum(settings)
     if row[8] != settings["model_id"] or row[9] != checksum:
@@ -476,123 +495,6 @@ def _resolve_run_window(
     ):
         raise RuntimeError("Customer forecast run window is inconsistent")
     return window, checksum
-
-
-def generate_customer_forecast(
-    conn: Any,
-    run_id: str,
-    *,
-    predictor: Callable[..., pd.DataFrame] = run_chronos2_enriched,
-) -> dict[str, Any]:
-    """Generate and atomically persist one immutable customer forecast run."""
-    settings = get_customer_forecast_settings()
-    if not settings["enabled"]:
-        raise RuntimeError("Customer forecast generation is disabled")
-    window, config_checksum = _resolve_run_window(conn, run_id, settings)
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE customer_forecast_run SET run_status = 'generating', "
-            "started_at = COALESCE(started_at, NOW()), error_summary = NULL "
-            "WHERE run_id = %s::uuid AND run_status IN ('queued', 'generating', 'failed')",
-            (run_id,),
-        )
-        if cur.rowcount != 1:
-            raise RuntimeError("Customer forecast run is missing or not runnable")
-    conn.commit()
-
-    readiness = load_customer_forecast_readiness(conn, window)
-    if not readiness["ready"]:
-        raise RuntimeError(str(readiness["blockers"][0]))
-    raw_history = load_customer_history(conn, window)
-    prepared = prepare_customer_history(raw_history, window)
-    if prepared.forecastable_series_count == 0:
-        raise RuntimeError("No customer series are available for forecasting")
-
-    row_frames: list[pd.DataFrame] = []
-    if prepared.eligible_series_count:
-        params = get_algorithm_params(str(settings["model_id"]))
-        predict_months = [pd.Timestamp(month) for month in window.forecast_months]
-        predictions = predictor(prepared.model_input, predict_months, params)
-        row_frames.append(
-            build_customer_forecast_rows(
-                prepared,
-                predictions,
-                window,
-                model_id=str(settings["model_id"]),
-            )
-        )
-    if prepared.fallback_series_count:
-        fallback_params = dict(settings["fallback_params"])
-        row_frames.append(build_croston_forecast_rows(prepared, window, fallback_params))
-    rows = pd.concat(row_frames, ignore_index=True).sort_values(
-        [*_IDENTITY_COLUMNS, "forecast_month"], ignore_index=True
-    )
-    expected_rows = prepared.forecastable_series_count * window.horizon_months
-    if len(rows) != expected_rows or rows.duplicated([*_IDENTITY_COLUMNS, "forecast_month"]).any():
-        raise RuntimeError("Customer forecast output is incomplete or duplicated")
-
-    source_input = pd.concat(
-        [prepared.model_input, prepared.fallback_model_input], ignore_index=True
-    )
-    source_checksum = _frame_checksum(source_input)
-    skip_reason_counts: dict[str, int] = {}
-    model_route_counts = {
-        str(settings["model_id"]): prepared.eligible_series_count,
-        str(settings["fallback_model_id"]): prepared.fallback_series_count,
-    }
-
-    with conn.transaction(), conn.cursor() as cur:
-        cur.execute("DELETE FROM fact_customer_forecast WHERE run_id = %s::uuid", (run_id,))
-        with cur.copy(
-            "COPY fact_customer_forecast "
-            "(run_id, item_id, location_id, customer_no, forecast_month, forecast_qty, "
-            "lower_bound, upper_bound, model_id, history_end) FROM STDIN"
-        ) as copy:
-            for row in rows.itertuples(index=False):
-                copy.write_row(
-                    (
-                        run_id,
-                        row.item_id,
-                        row.location_id,
-                        row.customer_no,
-                        row.forecast_month.date(),
-                        float(row.forecast_qty),
-                        row.lower_bound,
-                        row.upper_bound,
-                        row.model_id,
-                        window.history_end,
-                    )
-                )
-        cur.execute(
-            "UPDATE customer_forecast_run SET run_status = 'completed', "
-            "eligible_series = %s, row_count = %s, skipped_series = %s, "
-            "skip_reason_counts = %s::jsonb, model_route_counts = %s::jsonb, "
-            "config_checksum = %s, "
-            "source_checksum = %s, completed_at = NOW(), "
-            "error_summary = NULL WHERE run_id = %s::uuid",
-            (
-                prepared.forecastable_series_count,
-                len(rows),
-                len(prepared.skipped_series),
-                json.dumps(skip_reason_counts, sort_keys=True),
-                json.dumps(model_route_counts, sort_keys=True),
-                config_checksum,
-                source_checksum,
-                run_id,
-            ),
-        )
-    return {
-        "run_id": run_id,
-        "eligible_series": prepared.forecastable_series_count,
-        "chronos_series": prepared.eligible_series_count,
-        "croston_series": prepared.fallback_series_count,
-        "row_count": len(rows),
-        "skipped_series": len(prepared.skipped_series),
-        "skip_reason_counts": skip_reason_counts,
-        "model_route_counts": model_route_counts,
-        "forecast_start": window.forecast_start.isoformat(),
-        "forecast_end": window.forecast_end.isoformat(),
-    }
 
 
 def mark_customer_forecast_run_terminal(

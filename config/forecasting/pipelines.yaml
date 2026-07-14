@@ -12,7 +12,7 @@ job_timeouts_seconds:
   chronos2_enriched: 28800  # Foundation backtest is documented at ~6h; allow 8h.
   production_training: 28800   # Three persisted final fits run in one all-or-fail step.
   production_generation: 28800 # Full champion inference can include Chronos routes.
-  customer_forecast: 28800     # Eighteen-month Chronos inference at customer grain.
+  customer_forecast: 86400     # Resumable customer batches may span a full operating day.
   snapshot_contenders: 28800   # Three six-lag contender generations may run serially.
   stale_cluster_tuning: 28800  # Up to 50 trials x 5 folds across stale clusters.
 

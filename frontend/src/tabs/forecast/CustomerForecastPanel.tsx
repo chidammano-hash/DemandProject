@@ -30,6 +30,7 @@ import {
   fetchCustomerForecastSeries,
   fetchLatestCustomerForecastRun,
   generateCustomerForecast,
+  retryCustomerForecastRun,
   type CustomerForecastFilters,
 } from "@/api/queries/customerForecast";
 import { toast } from "@/components/Toaster";
@@ -53,6 +54,13 @@ function statusVariant(status: string | undefined) {
   if (status === "failed" || status === "cancelled") return "critical" as const;
   if (status === "queued" || status === "generating") return "info" as const;
   return "outline" as const;
+}
+
+function formatEta(seconds: number | null | undefined): string {
+  if (seconds == null) return "Calculating ETA";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `ETA ${hours}h ${minutes}m` : `ETA ${minutes}m`;
 }
 
 export function CustomerForecastPanel() {
@@ -85,6 +93,9 @@ export function CustomerForecastPanel() {
   });
   const resultRun = latestRun?.status === "completed" ? latestRun : latestCompletedRunQuery.data;
   const isActive = latestRun?.status === "queued" || latestRun?.status === "generating";
+  const isResumable =
+    (latestRun?.status === "failed" || latestRun?.status === "cancelled") &&
+    (latestRun.total_batches ?? 0) > 0;
 
   const generateMutation = useMutation({
     mutationFn: generateCustomerForecast,
@@ -98,6 +109,14 @@ export function CustomerForecastPanel() {
     mutationFn: cancelCustomerForecastRun,
     onSuccess: async () => {
       toast.info("Customer forecast cancellation requested.");
+      await queryClient.invalidateQueries({ queryKey: customerForecastKeys.latestRun });
+    },
+    onError: (error) => toast.error(formatApiError(error)),
+  });
+  const retryMutation = useMutation({
+    mutationFn: retryCustomerForecastRun,
+    onSuccess: async () => {
+      toast.info("Customer forecast batch resume queued.");
       await queryClient.invalidateQueries({ queryKey: customerForecastKeys.latestRun });
     },
     onError: (error) => toast.error(formatApiError(error)),
@@ -139,9 +158,10 @@ export function CustomerForecastPanel() {
                 <Users className="h-5 w-5" /> Customer Forecast Generation
               </CardTitle>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Generate customer-level demand with Chronos 2E for full-history series and
-                Croston/SBA for the remaining series. Results are read-only and never adjust,
-                reconcile, stage, promote, or replace the item-location champion.
+                Generate customer-level demand with Chronos 2E for active full-history series and
+                Croston/SBA for active shorter histories. Inactive series are ignored. Results are
+                read-only and never adjust, reconcile, stage, promote, or replace the item-location
+                champion.
               </p>
             </div>
             <div className="flex gap-2">
@@ -155,8 +175,17 @@ export function CustomerForecastPanel() {
                 </Button>
               )}
               <Button
-                disabled={!readiness?.ready || isActive || generateMutation.isPending}
-                onClick={() => generateMutation.mutate()}
+                disabled={
+                  !readiness?.ready ||
+                  isActive ||
+                  generateMutation.isPending ||
+                  retryMutation.isPending
+                }
+                onClick={() =>
+                  isResumable && latestRun
+                    ? retryMutation.mutate(latestRun.run_id)
+                    : generateMutation.mutate()
+                }
               >
                 {isActive || generateMutation.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -165,10 +194,10 @@ export function CustomerForecastPanel() {
                 ) : (
                   <Play className="mr-2 h-4 w-4" />
                 )}
-                {isActive || generateMutation.isPending
+                {isActive || generateMutation.isPending || retryMutation.isPending
                   ? "Generation Running"
-                  : latestRun?.status === "failed" || latestRun?.status === "cancelled"
-                    ? "Retry Generation"
+                  : isResumable
+                    ? "Resume Saved Batches"
                     : latestRun?.status === "completed"
                       ? "Generate Again"
                       : "Generate Customer Forecasts"}
@@ -202,6 +231,10 @@ export function CustomerForecastPanel() {
                   detail={`${readiness.eligible_series.toLocaleString()} Chronos 2E · ${readiness.fallback_series.toLocaleString()} Croston`}
                 />
               </div>
+              <p className="text-xs text-muted-foreground">
+                {readiness.dormant_series.toLocaleString()} customer-SKUs ignored because they had
+                no sales in the latest six closed months.
+              </p>
               <div className="flex items-start gap-2 rounded-md border p-3">
                 {readiness.ready ? (
                   <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
@@ -242,6 +275,30 @@ export function CustomerForecastPanel() {
                     )
                     .join(" · ")}
                 </p>
+              )}
+              {(latestRun.total_series ?? 0) > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-xs text-muted-foreground">
+                    {(latestRun.completed_series ?? 0).toLocaleString()} /{" "}
+                    {latestRun.total_series.toLocaleString()} customer-SKUs completed ·{" "}
+                    {(latestRun.completed_batches ?? 0).toLocaleString()} /{" "}
+                    {latestRun.total_batches.toLocaleString()} batches ·{" "}
+                    {formatEta(latestRun.eta_seconds)}
+                  </p>
+                  <div
+                    className="h-2 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                    aria-label="Customer forecast progress"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={latestRun.progress_pct ?? 0}
+                  >
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${latestRun.progress_pct ?? 0}%` }}
+                    />
+                  </div>
+                </div>
               )}
             </div>
             <Badge variant={statusVariant(latestRun.status)} className="capitalize">

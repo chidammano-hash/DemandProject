@@ -194,12 +194,14 @@ Champion, Forecast release, and Period Roll:
 1. Confirm the readiness card shows the latest 18 fully closed months and no
    source blocker. For a July 2026 system month, the input window is January
    2025 through June 2026.
-2. Click **Generate Customer Forecasts**. The
-   `generate_customer_forecast` durable job runs Chronos 2E for every eligible
-   customer series and writes July 2026 through December 2027 in that example.
-3. Monitor the latest run in the same panel. Active runs can be cancelled;
-   failed runs retain their error and expose a retry action.
-4. Choose item, location, and customer to compare actual history with the
+2. Review the coverage split. Customer-SKUs with no sales in the latest six
+   closed months are shown as ignored and produce no rows.
+3. Click **Generate Customer Forecasts**. The durable job builds 10,000-series
+   recovery batches, runs one GPU-auto Chronos worker plus parallel Croston CPU
+   workers, and writes July 2026 through December 2027 in that example.
+4. Monitor exact completed/total customer-SKU and batch counts plus ETA. Active
+   runs can be cancelled; **Resume Saved Batches** preserves completed work.
+5. Choose item, location, and customer to compare actual history with the
    generated result, or export the completed run.
 
 This stage has no edit, AI adjustment, reconciliation, staging, champion, or

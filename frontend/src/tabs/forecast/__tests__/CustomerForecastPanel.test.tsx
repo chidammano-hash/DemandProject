@@ -8,6 +8,7 @@ const mockLatestRun = vi.fn();
 const mockLatestCompletedRun = vi.fn();
 const mockGenerate = vi.fn();
 const mockCancel = vi.fn();
+const mockRetry = vi.fn();
 const mockSeries = vi.fn();
 
 vi.mock("@/api/queries/customerForecast", () => ({
@@ -22,6 +23,7 @@ vi.mock("@/api/queries/customerForecast", () => ({
     completedOnly ? mockLatestCompletedRun() : mockLatestRun(),
   generateCustomerForecast: () => mockGenerate(),
   cancelCustomerForecastRun: (runId: string) => mockCancel(runId),
+  retryCustomerForecastRun: (runId: string) => mockRetry(runId),
   fetchCustomerForecastSeries: (filters: unknown) => mockSeries(filters),
   customerForecastExportUrl: () => "/customer-forecast/export?run_id=run-1",
 }));
@@ -48,10 +50,11 @@ const readiness = {
   horizon_months: 18,
   source_latest_month: "2026-06-01",
   total_series: 12,
-  eligible_series: 10,
+  eligible_series: 8,
   fallback_series: 2,
-  forecastable_series: 12,
-  skipped_series: 0,
+  dormant_series: 2,
+  forecastable_series: 10,
+  skipped_series: 2,
   invalid_key_rows: 0,
   duplicate_grains: 0,
   negative_rows: 0,
@@ -94,8 +97,9 @@ describe("CustomerForecastPanel", () => {
     expect(await screen.findByText("Customer Forecast Generation")).toBeInTheDocument();
     expect(await screen.findByText(/Jan 2025.*Jun 2026/)).toBeInTheDocument();
     expect(screen.getByText(/Jul 2026.*Dec 2027/)).toBeInTheDocument();
-    expect(screen.getByText("12 forecastable series")).toBeInTheDocument();
-    expect(screen.getByText(/10 Chronos 2E.*2 Croston/)).toBeInTheDocument();
+    expect(screen.getByText("10 forecastable series")).toBeInTheDocument();
+    expect(screen.getByText(/8 Chronos 2E.*2 Croston/)).toBeInTheDocument();
+    expect(screen.getByText(/2 customer-SKUs ignored/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Generate Customer Forecasts" }));
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledOnce());
@@ -121,6 +125,12 @@ describe("CustomerForecastPanel", () => {
       error_summary: "Chronos model loading failed",
       skip_reason_counts: {},
       model_route_counts: {},
+      total_series: 10,
+      completed_series: 5,
+      total_batches: 2,
+      completed_batches: 1,
+      progress_pct: 54,
+      eta_seconds: 600,
     });
     const { CustomerForecastPanel } = await import("../CustomerForecastPanel");
     render(
@@ -130,8 +140,9 @@ describe("CustomerForecastPanel", () => {
     );
 
     expect(await screen.findByText("Chronos model loading failed")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry Generation" }));
-    await waitFor(() => expect(mockGenerate).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Resume Saved Batches" }));
+    await waitFor(() => expect(mockRetry).toHaveBeenCalledWith("run-failed"));
+    expect(screen.getByText(/5 \/ 10 customer-SKUs completed/)).toBeInTheDocument();
   });
 
   it("loads a selected customer series and exposes export", async () => {

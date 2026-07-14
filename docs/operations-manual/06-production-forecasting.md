@@ -429,7 +429,7 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 | `scripts/forecasting/generate_production_forecasts.py` | `forecast-generate` | Build an immutable champion release candidate; promotion is a separate API action | `forecast_generation_run` + `fact_production_forecast_staging` |
 | `scripts/forecasting/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/forecasting/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Applies approved planner overrides to an existing saved P50 demand plan, honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
-| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Independently generates 18 customer-level months from the latest 18 closed demand months | `customer_forecast_run` + `fact_customer_forecast` |
+| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 customer-level months in resumable parallel batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
 
 **When to run each:**
 
@@ -449,6 +449,19 @@ export a completed run. The configured contract is fixed at the latest 18
 fully closed months as context and 18 future monthly outputs. For a system date
 in July 2026, that means January 2025–June 2026 history and July 2026–December
 2027 forecast output.
+
+Readiness separates active and ignored series. A customer-SKU with no
+`sales_qty` in January–June 2026 is ignored and writes no forecast rows. Active
+full-history series use Chronos 2E; active short-history series use Croston/SBA.
+Chronos uses its configured `device: auto` selection, preferring MPS/CUDA when
+available. One Chronos model-owner process runs alongside six configured CPU
+workers for Croston batches.
+
+Each 10,000-series batch commits independently. Jobs displays exact completed
+customer-SKU and batch counts plus ETA. Cancellation, worker failure, managed
+retry, or API restart preserves completed batches. Use **Resume Saved Batches**
+for a failed/cancelled manifested run; use a new generation if configuration
+changed. A run becomes readable only after every batch and final row count pass.
 
 This is intentionally not a release layer: it has no backtest, customer
 champion, planner/AI adjustment, reconciliation, staging, or production

@@ -263,6 +263,27 @@ class TestRunSubprocess:
         cb.assert_any_call(msg="Starting")
         cb.assert_any_call(msg="hello")
 
+    def test_structured_progress_line_updates_percentage_and_series_message(self):
+        mock_proc = MagicMock()
+        mock_proc.pid = 1
+        mock_proc.stdout = iter(
+            ['JOB_PROGRESS_JSON:{"pct":37,"msg":"2,500 / 8,395,026 customer-SKUs completed"}\n']
+        )
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 0
+
+        cb = MagicMock()
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid"), \
+             patch("common.services.job_state._append_log"):
+            _run_subprocess(["test"], progress_cb=cb)
+
+        cb.assert_any_call(
+            pct=37,
+            msg="2,500 / 8,395,026 customer-SKUs completed",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: _run_compute_sku_features param mapping

@@ -587,11 +587,12 @@ erDiagram
 |---|---|---|---|
 | `mv_customer_demand_series_profile` | item + location + customer | `fact_customer_demand_monthly` | `sql/211` |
 
-The customer-series profile stores first/last observed months once per series.
-Customer forecast readiness and generation join it to only the resolved
-18-month fact window instead of grouping every historical partition per API
-request. The central MV refresh service rebuilds it after customer-demand
-loads.
+The customer-series profile stores first/last observed months and the last
+positive-sales month once per series. Customer forecast readiness and batch
+manifest creation therefore avoid scanning the partitioned fact table. Each
+worker reads only its assigned series from the resolved 18-month fact window.
+The central MV refresh service rebuilds the profile after customer-demand
+loads; `sql/214` adds the activity field and supporting index.
 
 ### Inventory Planning Tables (12)
 
@@ -601,7 +602,7 @@ loads.
 
 `mv_inventory_forecast_monthly`, `mv_inventory_health_score`, `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout`, `mv_network_balance`, `mv_control_tower_kpis`, `mv_supplier_po_performance`, `mv_po_lead_time_analysis`
 
-### Forecasting & Champion (16)
+### Forecasting & Champion (18)
 
 `fact_candidate_forecast`, `forecast_generation_run`,
 `fact_production_forecast_staging`, `fact_production_forecast`,
@@ -609,7 +610,8 @@ loads.
 `champion_experiment_lag`, `champion_experiment_month`,
 `champion_experiment_comparison`, `champion_promotion_log`,
 `forecast_snapshot_roster`, `fact_forecast_snapshot`, `agg_accuracy_snapshot`,
-`customer_forecast_run`, `fact_customer_forecast`
+`customer_forecast_run`, `customer_forecast_batch`,
+`customer_forecast_batch_series`, `fact_customer_forecast`
 
 - **`fact_candidate_forecast`** — legacy candidate table with no active writer;
   it is not a forward-release source. Historical backtests load to
@@ -631,17 +633,21 @@ loads.
   WAPE-ranked `snapshot_contender` runs, with database-enforced lags 0 through
   5. The separate Period Roll workflow writes and reconciles this archive.
   `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
-- **`customer_forecast_run` / `fact_customer_forecast`** — an independent,
-  generation-only customer forecast manifest and payload. Each historically
-  observed item-location-customer series uses the latest 18 closed demand
-  months to generate 18 future months: full-history series use Chronos 2E and
-  all remaining series use customer-only Croston/SBA. These rows are read-only
-  results; they never reconcile to, stage, promote, or replace the item-
-  location production forecast. Series history bounds are maintained in
-  `mv_customer_demand_series_profile`. DDL:
+- **`customer_forecast_run` / `customer_forecast_batch*` /
+  `fact_customer_forecast`** — an independent, generation-only customer
+  forecast manifest, durable batch ledger, and payload. Active customer series
+  use the latest 18 closed demand months to generate 18 future months:
+  full-history series use Chronos 2E and shorter active histories use
+  customer-only Croston/SBA. Series with no customer sales in the latest six
+  closed months are omitted rather than persisted as zero rows. Completed
+  10,000-series batches are immutable checkpoints and retries process only
+  unfinished batches. These rows are read-only results; they never reconcile
+  to, stage, promote, or replace the item-location production forecast. Series
+  history bounds are maintained in `mv_customer_demand_series_profile`. DDL:
   `sql/210_create_customer_forecast.sql` and
   `sql/211_create_customer_demand_series_profile.sql`, with route lineage in
-  `sql/212_add_customer_forecast_model_routes.sql`.
+  `sql/212_add_customer_forecast_model_routes.sql` and
+  durable batching/activity lineage in `sql/213` through `sql/215`.
 
 ### AI & Exception Tables
 
@@ -780,12 +786,19 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 - Newly promoted `fact_production_forecast` rows carry `source_run_id`, `promotion_log_id`, a distinct production `run_id`, and `lineage_status='verified'`. The promotion transaction hashes candidate and production in the same stable order and requires equality before commit.
 - `customer_forecast_run` records the resolved 18-month closed-history window,
   18-month output window, durable job, cardinalities, Chronos/Croston route
-  counts, model/config versions, and payload lineage. `fact_customer_forecast`
+  counts, ignored dormant series, exact batch/series progress, model/config
+  versions, and payload lineage. `customer_forecast_batch` and
+  `customer_forecast_batch_series` provide durable 10,000-series checkpoints
+  claimed with `SKIP LOCKED`; Chronos uses one GPU-auto model owner while
+  Croston batches run on parallel CPU workers. `fact_customer_forecast`
   is immutable and unique by run,
   item, location, customer, and forecast month; DDL:
-  `sql/210_create_customer_forecast.sql`. The refreshable
-  `mv_customer_demand_series_profile` (`sql/211`) supplies all-history series
-  bounds without request-time full-fact scans.
+  `sql/210_create_customer_forecast.sql`, extended by `sql/213` and `sql/215`.
+  Customer-SKUs
+  without sales in the latest six closed months are ignored. The refreshable
+  `mv_customer_demand_series_profile` (`sql/211`, extended by `sql/214`)
+  supplies all-history bounds and recent-sales activity without request-time
+  full-fact scans.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 - Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
 
@@ -1036,7 +1049,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions` |
 | **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/stage`, `/{model_id}/promote`, `/{model_id}/train` | `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
 | **Forecast Release Readiness** | `/forecast-release/readiness` | `fact_external_forecast_monthly`, `dim_sku`, `champion_experiment`, `cluster_experiment`, `fact_production_forecast`, `fact_forecast_snapshot` |
-| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/series`, `/export` | `fact_customer_demand_monthly`, `customer_forecast_run`, `fact_customer_forecast`, `job` |
+| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/runs/{run_id}/retry`, `/series`, `/export` | `fact_customer_demand_monthly`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast`, `job` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
@@ -2010,11 +2023,14 @@ review surfaces. API
 Forecast** stage generates read-only forecasts at item-location-customer-month
 grain. A run uses the latest 18 fully closed months from
 `fact_customer_demand_monthly`, routes full-history series to Chronos 2E and
-all remaining series to Croston/SBA, and emits exactly 18 future months into
-immutable run-versioned rows. Customer-only Croston is excluded from the
-governed five-model roster. The feature deliberately has no customer champion,
-backtest, adjustment, reconciliation, staging, or production-promotion path.
-API `/customer-forecast`; DDL `sql/210`–`sql/212`; spec
+shorter active histories to Croston/SBA, and emits exactly 18 future months
+into immutable run-versioned rows. Customer series with no sales in the latest
+six closed months are ignored. Durable 10,000-series checkpoints permit retry
+without losing completed work and expose exact completed-series progress and
+ETA. Customer-only Croston is excluded from the governed five-model roster.
+The feature deliberately has no customer champion, backtest, adjustment,
+reconciliation, staging, or production-promotion path. API
+`/customer-forecast`; DDL `sql/210`–`sql/215`; spec
 `docs/specs/02-forecasting/35-customer-level-forecasting.md`.
 
 ### 2. SKU Clustering & Segmentation

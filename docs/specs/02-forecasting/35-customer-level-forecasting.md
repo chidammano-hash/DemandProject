@@ -12,9 +12,10 @@
 ## 1. Goal
 
 Generate monthly customer-level demand forecasts from historical customer demand.
-Each run produces 18 future months for every historically observed
-item-location-customer series, beginning with the month containing the system
-date. Full-history series use Chronos 2E; all remaining series use Croston/SBA.
+Each run produces 18 future months for active item-location-customer series,
+beginning with the month containing the system date. Series with no sales in
+the latest six fully closed months are ignored and produce no forecast rows.
+Full-history active series use Chronos 2E; remaining active series use Croston/SBA.
 
 This feature only generates customer-level forecasts. It does not create a
 consensus plan, adjust an item-location forecast, select or replace a champion,
@@ -49,6 +50,8 @@ month or any future month must never enter the model context.
 - read the latest 18 closed months from the normalized customer-demand fact;
 - generate one 18-month Chronos 2E forecast for each full-history customer
   series and one Croston/SBA forecast for each remaining series;
+- ignore customer-SKUs with no `sales_qty` in the latest six closed months;
+- commit resumable batches and report exact completed customer-SKU counts;
 - persist point forecasts and, when supported, confidence intervals with run
   lineage;
 - expose run status and generated rows for filtering, viewing, and export; and
@@ -82,6 +85,7 @@ files directly.
 | `customer_no` | Customer key within the source location/site |
 | `startdate` | Historical month |
 | `demand_qty` | Forecast target |
+| `sales_qty` | Six-closed-month activity filter only; not the forecast target |
 | `oos_qty` | Historical diagnostic retained by the source fact; not a v1 model input |
 
 The unique output grain is:
@@ -96,7 +100,12 @@ series.
 
 ## 5. Readiness and history preparation
 
-A series is eligible for Chronos 2E when it has all of the following:
+A series enters customer forecasting only when it has positive `sales_qty` in
+the latest six fully closed months. A dormant series is counted as ignored and
+does not create 18 zero rows. This filter does not change or replace the
+separate item-location forecast.
+
+An active series is eligible for Chronos 2E when it has all of the following:
 
 - a valid item, location, and customer key;
 - 18 consecutive closed historical months after monthly densification;
@@ -106,26 +115,27 @@ A series is eligible for Chronos 2E when it has all of the following:
 
 Missing months inside the 18-month window are filled with zero demand. Negative
 quantities are rejected as a data-quality error rather than silently changed.
-Series with insufficient history or no positive demand in the window are
-routed to the configured Croston/SBA fallback. All-zero histories receive a
-valid zero Croston forecast. Invalid keys, duplicate grains, negative demand,
-and missing source freshness remain run-level data-quality blockers.
+Active series with insufficient history are routed to the configured
+Croston/SBA fallback. Invalid keys, duplicate grains, negative demand, and
+missing source freshness remain run-level data-quality blockers.
 
 The run-level readiness response reports:
 
 - the resolved system month and exact history/forecast windows;
 - source freshness through the latest closed month;
-- total forecastable, Chronos-routed, Croston-routed, and skipped series counts;
+- total observed, forecastable, Chronos-routed, Croston-routed, and dormant
+  ignored series counts;
 - unresolved key and duplicate counts;
 - negative-demand row counts; and
 - a clear corrective action when generation cannot start.
 
 The all-history series bounds used by readiness and generation come from
 `mv_customer_demand_series_profile`. The materialized profile is refreshed by
-the standard customer-demand post-load lifecycle, while request-time queries
-scan only the resolved 18-month fact partitions. This keeps the readiness API
-inside the normal statement timeout without weakening the first-observed-month
-eligibility rule.
+the standard customer-demand post-load lifecycle and includes the last
+positive-sales month. Request-time readiness and manifest queries therefore do
+not scan the partitioned fact table. This keeps the readiness API inside the
+normal statement timeout without weakening the first-observed-month or recent-
+sales eligibility rules.
 
 ## 6. Forecast generation
 
@@ -140,16 +150,22 @@ route.
 Generation rules:
 
 1. Resolve the system month and the two date windows once at run start.
-2. Read and validate the 18 closed historical months.
-3. Route full-history, positive-demand series to Chronos 2E and all remaining
-   historical series to Croston/SBA.
-4. Generate exactly 18 consecutive monthly predictions beginning with the
+2. Build the durable active-series manifest from the refreshable series
+   profile, then load only each claimed batch's bounded fact history.
+3. Ignore series with no sales in the latest six closed months. Route active
+   full-history series to Chronos 2E and active short-history series to Croston/SBA.
+4. Claim batches with `FOR UPDATE SKIP LOCKED`. One Chronos worker owns the
+   model and uses `device: auto` (MPS/CUDA when available, CPU otherwise); six
+   configured CPU workers process Croston batches in parallel.
+5. Generate exactly 18 consecutive monthly predictions beginning with the
    resolved forecast start.
-5. Clip point forecasts and interval bounds to zero.
-6. Enforce `lower_bound <= forecast_qty <= upper_bound` when intervals exist.
-7. Validate uniqueness and completeness before marking the run completed.
-8. Persist the completed run atomically so partial output is never exposed as
-   successful.
+6. Clip point forecasts and interval bounds to zero.
+7. Commit each batch's forecast rows, checksum, and completed-series count in
+   one transaction. A failed batch cannot leave partial output.
+8. Resume only unfinished batches after cancellation, failure, retry, or
+   service restart; already completed batches are not recomputed.
+9. Validate every batch and the exact final row count before atomically marking
+   the run completed. Partial output is never exposed as successful.
 
 Either route must fail the affected run on inference errors. It must not replace
 a failed non-zero-history prediction with zero, because zero is a valid demand
@@ -171,6 +187,7 @@ One immutable record per generation request containing:
 - model and configuration version;
 - source-data checksum or equivalent lineage marker;
 - completed and skipped series counts plus Chronos/Croston route counts;
+- total/completed batch and customer-SKU counters for progress and ETA;
 - skipped-series reason counts; and
 - terminal error summary when the run fails.
 
@@ -181,7 +198,14 @@ Run-versioned forecast rows containing:
 - `run_id`, `item_id`, `location_id`, `customer_no`, and `forecast_month`;
 - point forecast quantity;
 - lower and upper bounds when available; and
-- model, history-end, and generated-at lineage.
+- model, batch, history-end, and generated-at lineage.
+
+### `customer_forecast_batch` and `customer_forecast_batch_series`
+
+The batch manifest records route, expected series count, claim attempts,
+status, checksum, row count, and timestamps. The series ledger assigns each
+active customer-SKU to exactly one batch. Completed batch rows are durable
+recovery checkpoints, not temporary UI progress.
 
 Generated runs are immutable. Read APIs default to the latest successfully
 completed run and accept an explicit `run_id` for reproducibility. A failed,
@@ -196,13 +220,15 @@ cancelled, or incomplete run never replaces the latest completed result.
 | GET | `/customer-forecast/runs/latest` | Return the latest run for progress and retry guidance; `completed_only=true` preserves access to the last successful result |
 | GET | `/customer-forecast/runs/{run_id}` | Return status, counts, dates, and errors for one run |
 | POST | `/customer-forecast/runs/{run_id}/cancel` | Request cancellation of an active run |
+| POST | `/customer-forecast/runs/{run_id}/retry` | Resume unfinished batches for a failed/cancelled run with the same configuration |
 | GET | `/customer-forecast/series` | Return history and generated forecast for one item-location-customer selection |
 | GET | `/customer-forecast/export` | Stream generated rows for a completed run and optional filters |
 
 Generation uses the existing durable-job framework for progress, cancellation,
-retry, restart recovery, and terminal-status reconciliation. Retrying the same
-request creates or resumes a clearly identified run without exposing duplicate
-successful rows. Write endpoints use the project API-key guard.
+retry, restart recovery, and terminal-status reconciliation. Retrying a
+manifested run resumes the same run and preserves completed batches. A
+configuration change requires a new generation. Write endpoints use the
+project API-key guard.
 
 ## 9. UI behavior
 
@@ -214,7 +240,8 @@ The view shows:
 - readiness status with actionable blockers;
 - forecastable coverage split between Chronos 2E and Croston;
 - a **Generate Customer Forecasts** action;
-- durable-job progress, cancel, retry, and failure details;
+- exact completed/total customer-SKU and batch progress, throughput ETA,
+  cancel, resumable retry, and failure details;
 - filters for item, location, and customer;
 - an actual-versus-forecast chart with confidence intervals when available;
 - a monthly results table and export action; and
@@ -229,10 +256,14 @@ until that adapter exposes calibrated bounds.
 ## 10. Implementation
 
 - DDL: `sql/210_create_customer_forecast.sql`,
-  `sql/211_create_customer_demand_series_profile.sql`, and
-  `sql/212_add_customer_forecast_model_routes.sql`
+  `sql/211_create_customer_demand_series_profile.sql`,
+  `sql/212_add_customer_forecast_model_routes.sql`, and
+  `sql/213_add_customer_forecast_batches.sql`; existing installations extend
+  the activity profile with `sql/214_add_customer_series_activity.sql`, while
+  `sql/215_enforce_customer_batch_lineage.sql` couples every batch to its run
 - Croston implementation: `common/ml/croston.py`
 - Generation service: `common/services/customer_forecast.py`
+- Batch execution: `common/services/customer_forecast_batches.py`
 - Durable runner: `scripts/forecasting/generate_customer_forecasts.py`
 - API: `api/routers/forecasting/customer_forecast.py`
 - UI: **Forecasting → Customer Forecast**
@@ -244,9 +275,10 @@ until that adapter exposes calibrated bounds.
 
 - A July 2026 run reads January 2025 through June 2026 and forecasts July 2026
   through December 2027.
-- Every historically observed series has exactly 18 consecutive forecast rows.
-- Chronos-eligible series use `chronos2_enriched`; every remaining valid series
-  uses customer-only `croston`, including a zero forecast for all-zero history.
+- Every active series has exactly 18 consecutive forecast rows; series with no
+  sales in the latest six closed months have no output rows.
+- Chronos-eligible active series use `chronos2_enriched`; every remaining active
+  valid series uses customer-only `croston`.
 - Forecasts use `demand_qty`, not `sales_qty`.
 - No current-partial-month or future actual enters the model context.
 - Output is unique at run-item-location-customer-month grain.
@@ -255,6 +287,8 @@ until that adapter exposes calibrated bounds.
 - Model route counts are retained at run level and each forecast row retains its
   actual generating model.
 - Partial, failed, or cancelled runs are not exposed as the latest completed run.
+- Completed batches survive retry/restart, and progress shows exact completed
+  customer-SKU and batch counts with an estimated time remaining.
 - Summing customer rows may provide an item-location total for display, but no
   reconciliation or write to the item-location forecast occurs.
 - The UI contains no AI, planner-adjustment, approval, champion, staging, or

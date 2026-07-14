@@ -21,6 +21,7 @@ export interface CustomerForecastReadiness {
   total_series: number;
   eligible_series: number;
   fallback_series: number;
+  dormant_series: number;
   forecastable_series: number;
   skipped_series: number;
   invalid_key_rows: number;
@@ -48,6 +49,12 @@ export interface CustomerForecastRun {
   error_summary: string | null;
   skip_reason_counts: Record<string, number>;
   model_route_counts: Record<string, number>;
+  total_series: number;
+  completed_series: number;
+  total_batches: number;
+  completed_batches: number;
+  progress_pct: number;
+  eta_seconds: number | null;
 }
 
 export interface CustomerForecastFilters {
@@ -110,6 +117,14 @@ export function cancelCustomerForecastRun(
   runId: string
 ): Promise<{ run_id: string; status: "cancelled" }> {
   return fetchJson(`/customer-forecast/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
+  });
+}
+
+export function retryCustomerForecastRun(
+  runId: string
+): Promise<{ run_id: string; job_id: string; status: "queued" }> {
+  return fetchJson(`/customer-forecast/runs/${encodeURIComponent(runId)}/retry`, {
     method: "POST",
   });
 }
