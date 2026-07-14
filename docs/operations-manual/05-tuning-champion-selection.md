@@ -343,7 +343,7 @@ Optional — use the UI-driven tuning studio to run experiments interactively in
 ### Workflow
 
 1. **Create Experiment** — Click "New Experiment", choose **Quick validation** (default, 1,000 stratified DFUs, target ≤5 minutes) or **Full backtest** (all DFUs, 10 timeframes), select a template, adjust parameters, and submit.
-2. **Monitor or cancel** — Watch the experiment in Run History or Jobs with live logs. Quick runs persist their JobManager ID, so the normal Cancel action terminates the underlying process rather than only changing display status.
+2. **Monitor or cancel** — Watch the experiment in Run History or Jobs with live logs. Quick runs persist their JobManager ID, so the normal Cancel action terminates the underlying process rather than only changing display status. Failed or cancelled rows show their `job_history` failure reason inline under the status badge (full text on hover), and durations render at human scale ("2h 15m", "2d 22h").
 3. **Compare** — Select two completed runs for side-by-side comparison with per-lag, per-cluster, per-month accuracy breakdowns, parameter diffs, and feature diffs
 4. **Promote** — Promote the winning run to production via the confirmation modal (writes to `forecast_pipeline_config.yaml` under `algorithms.<model_id>.params`)
 

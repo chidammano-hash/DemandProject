@@ -127,6 +127,12 @@ Bundle wins from this session:
 | `Skeleton` | Loading shimmer placeholder |
 | `LoadingElement` | Chemistry-themed periodic table loading animation |
 | `KeyboardShortcutHelp` | Modal listing all keyboard shortcuts |
+| `CollapsibleSection` | Card with a collapsible header; the header is a focusable button (`role="button"`, `tabIndex=0`, `aria-expanded`, Enter/Space toggles) named "`<title>` section" |
+
+Interactive-control conventions: click-to-select table rows (cluster experiments, tuning run
+history) are keyboard-operable (`tabIndex=0`, Enter/Space, `aria-selected`); icon-only or
+ambiguous controls (panel toggles, filter dropdown triggers) carry explicit `aria-label`s
+("Toggle KPIs", "Filter by Brand").
 
 ---
 

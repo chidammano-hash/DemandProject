@@ -84,6 +84,15 @@ Monitor multi-hour foundation/DL work in Active Jobs.
   so skipping one model never submits or reloads it.
 - **Accuracy** is shown per row (`GET /backtest-management/summary`); run history via
   `GET /backtest-management/{model_id}/runs`.
+- **Status column vs newest run:** the summary reports both `latest_run` (newest run of any
+  status) and `loaded_run` (newest run with results loaded to the DB).
+  When the newest run failed or was cancelled but an earlier run still backs the loaded
+  results, the row shows **"Loaded (latest run failed/cancelled)"** (never "No backtest")
+  and the per-row Exec accuracy chip falls back to the loaded run's accuracy.
+  "No backtest" appears only when the model has no results at all.
+- **Failure reasons:** run-history rows join `job_history.error`, so a failed or cancelled
+  run shows its failure reason inline under the status badge (full text on hover).
+  Retry is the normal per-row **Run** button.
 - The **accuracy-MV refresh** has no dedicated model-panel button — run
   `make refresh-accuracy-mvs`, or submit a `refresh_forecast_views` job from
   **Workflows → Workflow Library**.
@@ -135,6 +144,9 @@ variants in the **Sweep Builder**; the live counter shows how many candidates th
 (capped at `sweep.max_candidates`, default 24; per-segment scoring adds **no** extra runs). The
 **Sweep Results** panel shows the global leaderboard (with gate-eligibility badges), the per-segment
 winner map, and a "composite vs. best global" headline. Every recommendation is analysis-only.
+The leaderboard collapses byte-identical duplicate composite members (a re-run sweep can persist
+two) and displays one dense, score-ordered rank per row; the backend `global_rank`, which scopes
+composites and non-composites separately, is not shown raw.
 To adopt one, open its completed experiment and use **Select & Assign Champion**; the UI queues the
 governed assignment and never writes production config or champion facts directly. See spec
 `docs/specs/02-forecasting/30-champion-strategy-sweep.md`.
@@ -214,6 +226,10 @@ customer rows and do not change `fact_production_forecast`.
 > on one timeline. Toggle them via the **Staging** and **Backtest** pill rows. The backtest
 > lines read from `GET /forecast/candidate` (`fact_candidate_forecast`); they appear only
 > after a model's predictions have been **Loaded** (Phase 6).
+> The **From/To** range governs the whole axis: **To** offers forecast months beyond history
+> and an explicit bound clamps forecast series too (empty = full horizon), so the visible
+> window always matches the control. If the **SHAP** or **AI Champion** toggle is on but the
+> DFU has no data for it, the tab renders an explanatory note instead of an empty panel.
 
 ---
 

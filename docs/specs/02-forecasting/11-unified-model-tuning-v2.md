@@ -233,18 +233,19 @@ A paginated, sortable table of all tuning runs for the selected model:
 |--------|-------------|----------|
 | # | Run ID | Yes |
 | Label | Human-readable name | Yes |
-| Status | Badge: `running` (blue pulse), `completed` (green), `failed` (red), `queued` (yellow) | Yes |
+| Status | Badge: `running` (blue pulse), `completed` (green), `failed` (red), `queued` (yellow). Failed/cancelled rows show the `job_history` failure reason inline under the badge (truncated, full text on hover); the experiments list payload carries it as `error`. | Yes |
 | Accuracy % | Portfolio or lag-specific accuracy | Yes (default sort DESC) |
 | WAPE % | Weighted Absolute Percentage Error | Yes |
 | Bias % | Forecast bias | Yes |
 | Predictions | Total prediction count | No |
 | DFUs | Unique DFU count | No |
-| Duration | Wall-clock time (formatted: "45m 23s") | Yes |
+| Duration | Wall-clock time at human scale ("45m 23s", "2h 15m", "2d 22h"; never raw minutes) | Yes |
 | Started | Relative time ("2h ago") with tooltip showing absolute time | Yes |
 | Promoted | Crown icon if this run is the current champion | No |
 
 **Row Interactions:**
 - **Single click**: Selects row for comparison (first click = baseline in blue, second click = candidate in green)
+- **Keyboard**: rows are focusable (`tabIndex=0`) and Enter/Space triggers the same selection
 - **Click selected row again**: Deselects it
 - **Click "..." menu**: Shows actions: View Logs, View in Jobs, Promote, Delete
 - **Click "View Logs"**: Opens a slide-over panel with the full execution log (streamed from `job_history.log`)

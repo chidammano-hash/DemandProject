@@ -801,6 +801,7 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
   full-fact scans.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 - Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
+- `/backtest-management/summary` reports `loaded_run` (latest run with `is_loaded_to_db`) alongside `latest_run`, and `current_accuracy`/`current_wape` fall back to it, so a newest failed/cancelled run never masks loaded results in the UI. `/backtest-management/{model_id}/runs` and `/model-tuning/{model}/experiments` join `job_history.error` so failed/cancelled runs carry their failure reason (`error` field). A 404 from `/backtest-management/{model_id}/current` is treated client-side as "no artifacts yet", not an error toast.
 
 ### Database Schema Housekeeping (perf work)
 

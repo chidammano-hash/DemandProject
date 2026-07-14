@@ -293,6 +293,11 @@ In the **Champion** stage (`frontend/src/tabs/champion/`):
   - **Global leaderboard** — Rank, Label, Strategy, Models, Accuracy %, Ceiling %, Gap (bps), Robust
     score, **Gate** badge (✓ eligible / ✗ below margin), Actions (View experiment → reuses existing
     experiment detail/compare; this drill-in is free reuse). Sortable.
+    Display rule: the panel collapses byte-identical duplicate members (same strategy,
+    is_composite, accuracy, and score; a re-run sweep can persist two composites), preferring the
+    recommended experiment and otherwise the latest, then derives one dense display rank ordered by
+    `global_score` descending. The stored `global_rank` ranks composites and non-composites in
+    separate scopes, so it is not rendered raw (it produced several simultaneous "#1" rows).
   - **Per-segment map** — for each segment (smooth / erratic / intermittent / lumpy …): winning
     strategy, segment accuracy, DFU count, and a flag when it fell back to the global winner. Plus a
     headline **"Composite vs. best global"** card showing the delta and which one is recommended.
@@ -377,8 +382,9 @@ generates each constituent forecast, and stages their configured weighted blend 
   promote-winner containment, delete — all with `make_pool` /
   `make_async_pool` and `httpx.AsyncClient` + `ASGITransport`.
 - **Frontend** (`SweepBuilder.test.tsx`, `SweepResultsPanel.test.tsx`): candidate-count preview, global
-  leaderboard render + sort, per-segment map + composite-vs-global card, gate badges, and absence of
-  production-mutation controls (`TestQueryWrapper`, mocked queries).
+  leaderboard render + sort, duplicate-composite collapse + dense display rank, per-segment map +
+  composite-vs-global card, gate badges, and absence of production-mutation controls
+  (`TestQueryWrapper`, mocked queries).
 - `make test-all` green; `make audit-routers` parity for the new prefix.
 
 ---
