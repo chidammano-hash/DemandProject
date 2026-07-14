@@ -139,8 +139,9 @@ export function CustomerForecastPanel() {
                 <Users className="h-5 w-5" /> Customer Forecast Generation
               </CardTitle>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Generate customer-level demand with Chronos 2E. Results are read-only and never
-                adjust, reconcile, stage, promote, or replace the item-location champion.
+                Generate customer-level demand with Chronos 2E for full-history series and
+                Croston/SBA for the remaining series. Results are read-only and never adjust,
+                reconcile, stage, promote, or replace the item-location champion.
               </p>
             </div>
             <div className="flex gap-2">
@@ -197,8 +198,8 @@ export function CustomerForecastPanel() {
                 />
                 <WindowCard
                   label="Coverage"
-                  value={`${readiness.eligible_series.toLocaleString()} eligible series`}
-                  detail={`${readiness.skipped_series.toLocaleString()} series currently ineligible`}
+                  value={`${readiness.forecastable_series.toLocaleString()} forecastable series`}
+                  detail={`${readiness.eligible_series.toLocaleString()} Chronos 2E · ${readiness.fallback_series.toLocaleString()} Croston`}
                 />
               </div>
               <div className="flex items-start gap-2 rounded-md border p-3">
@@ -232,6 +233,16 @@ export function CustomerForecastPanel() {
                 {latestRun.row_count.toLocaleString()} rows ·{" "}
                 {latestRun.eligible_series.toLocaleString()} series
               </p>
+              {Object.keys(latestRun.model_route_counts ?? {}).length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {Object.entries(latestRun.model_route_counts)
+                    .map(
+                      ([model, count]) =>
+                        `${model === "chronos2_enriched" ? "Chronos 2E" : "Croston"} (${count.toLocaleString()})`
+                    )
+                    .join(" · ")}
+                </p>
+              )}
             </div>
             <Badge variant={statusVariant(latestRun.status)} className="capitalize">
               {latestRun.status}
@@ -298,6 +309,14 @@ export function CustomerForecastPanel() {
           )}
           {seriesQuery.data && (
             <>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Forecast method</span>
+                <Badge variant="outline">
+                  {seriesQuery.data.forecast[0]?.model_id === "croston"
+                    ? "Croston/SBA"
+                    : "Chronos 2E"}
+                </Badge>
+              </div>
               <div className="h-72 rounded-md border p-3">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>

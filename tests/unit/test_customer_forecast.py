@@ -10,6 +10,7 @@ import pytest
 from common.core.constants import FORECAST_QTY_COL
 from common.services.customer_forecast import (
     _resolve_run_window,
+    build_croston_forecast_rows,
     build_customer_forecast_rows,
     build_customer_forecast_window,
     load_customer_forecast_readiness,
@@ -31,7 +32,7 @@ def test_customer_forecast_window_uses_closed_history_and_current_month() -> Non
     assert len(window.forecast_months) == 18
 
 
-def test_prepare_customer_history_densifies_and_reports_ineligible_series() -> None:
+def test_prepare_customer_history_routes_ineligible_series_to_croston() -> None:
     frame = pd.DataFrame(
         [
             {
@@ -73,15 +74,58 @@ def test_prepare_customer_history_densifies_and_reports_ineligible_series() -> N
     prepared = prepare_customer_history(frame, window)
 
     assert prepared.eligible_series_count == 1
+    assert prepared.fallback_series_count == 2
+    assert prepared.forecastable_series_count == 3
     assert len(prepared.model_input) == 18
+    assert len(prepared.fallback_model_input) == 36
     assert prepared.model_input["qty"].sum() == pytest.approx(12.0)
-    assert prepared.model_input.loc[
-        prepared.model_input["startdate"] == pd.Timestamp("2025-02-01"), "qty"
-    ].item() == 0.0
-    assert {row["reason"] for row in prepared.skipped_series} == {
+    assert (
+        prepared.model_input.loc[
+            prepared.model_input["startdate"] == pd.Timestamp("2025-02-01"), "qty"
+        ].item()
+        == 0.0
+    )
+    assert set(prepared.fallback_reason_by_sku.values()) == {
         "insufficient_history",
         "no_positive_demand",
     }
+    assert prepared.skipped_series == []
+
+
+def test_build_croston_forecast_rows_covers_every_fallback_series() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUST-1",
+                "startdate": "2026-05-01",
+                "demand_qty": 6.0,
+                "series_first_month": "2026-05-01",
+            },
+            {
+                "item_id": "ITEM-2",
+                "location_id": "LOC-1",
+                "customer_no": "CUST-2",
+                "startdate": "2025-01-01",
+                "demand_qty": 0.0,
+                "series_first_month": "2024-01-01",
+            },
+        ]
+    )
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+    prepared = prepare_customer_history(frame, window)
+
+    rows = build_croston_forecast_rows(
+        prepared,
+        window,
+        {"alpha": 0.1, "variant": "sba"},
+    )
+
+    assert len(rows) == 36
+    assert set(rows["model_id"]) == {"croston"}
+    assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18, 18]
+    assert rows.loc[rows["customer_no"] == "CUST-2", "forecast_qty"].eq(0.0).all()
 
 
 def test_prepare_customer_history_rejects_negative_demand() -> None:
@@ -128,21 +172,37 @@ def test_build_customer_forecast_rows_requires_complete_horizon() -> None:
         }
     )
 
-    rows = build_customer_forecast_rows(prepared, predictions, window)
+    rows = build_customer_forecast_rows(
+        prepared,
+        predictions,
+        window,
+        model_id="chronos2_enriched",
+    )
 
     assert len(rows) == 18
     assert rows["forecast_qty"].sum() == pytest.approx(90.0)
+    assert set(rows["model_id"]) == {"chronos2_enriched"}
     assert rows["forecast_month"].min() == pd.Timestamp("2026-07-01")
     assert rows["forecast_month"].max() == pd.Timestamp("2027-12-01")
-    assert rows[["item_id", "location_id", "customer_no"]].drop_duplicates().to_dict(
-        "records"
-    ) == [{"item_id": "ITEM-1", "location_id": "LOC-1", "customer_no": "CUST-1"}]
+    assert rows[["item_id", "location_id", "customer_no"]].drop_duplicates().to_dict("records") == [
+        {"item_id": "ITEM-1", "location_id": "LOC-1", "customer_no": "CUST-1"}
+    ]
 
     with pytest.raises(RuntimeError, match="complete 18-month forecast"):
-        build_customer_forecast_rows(prepared, predictions.iloc[:-1], window)
+        build_customer_forecast_rows(
+            prepared,
+            predictions.iloc[:-1],
+            window,
+            model_id="chronos2_enriched",
+        )
 
     predictions.loc[0, FORECAST_QTY_COL] = -4.0
-    clipped = build_customer_forecast_rows(prepared, predictions, window)
+    clipped = build_customer_forecast_rows(
+        prepared,
+        predictions,
+        window,
+        model_id="chronos2_enriched",
+    )
     assert clipped["forecast_qty"].min() == 0.0
 
 
@@ -171,6 +231,9 @@ def test_customer_forecast_readiness_uses_series_profile_and_bounded_fact_scan()
     assert "WHERE startdate >= %s AND startdate < %s" in sql
     assert "WHERE startdate < %s\n            GROUP BY" not in sql
     assert readiness["eligible_series"] == 10
+    assert readiness["fallback_series"] == 2
+    assert readiness["forecastable_series"] == 12
+    assert readiness["skipped_series"] == 0
 
 
 def test_customer_forecast_profile_migration_defines_refreshable_series_grain() -> None:
@@ -183,10 +246,20 @@ def test_customer_forecast_profile_migration_defines_refreshable_series_grain() 
     assert "(item_id, location_id, customer_no)" in ddl
 
 
+def test_customer_forecast_route_migration_records_model_composition() -> None:
+    ddl = Path("sql/212_add_customer_forecast_model_routes.sql").read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS model_route_counts JSONB" in ddl
+    assert "jsonb_build_object(model_id, eligible_series)" in ddl
+    assert "chk_customer_forecast_model_route_counts" in ddl
+
+
 def test_run_window_is_restored_from_the_manifest() -> None:
     settings = {
         "enabled": True,
         "model_id": "chronos2_enriched",
+        "fallback_model_id": "croston",
+        "fallback_params": {"alpha": 0.1, "variant": "sba"},
         "history_months": 18,
         "horizon_months": 18,
     }

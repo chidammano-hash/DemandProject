@@ -11,9 +11,7 @@ from tests.api.conftest import make_pool
 
 @pytest.mark.asyncio
 async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
-    pool, _conn, cursor = make_pool(
-        fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0)
-    )
+    pool, _conn, cursor = make_pool(fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0))
 
     cache = InMemoryBackend()
     with (
@@ -28,9 +26,7 @@ async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
 
         from api.main import app
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/customer-forecast/readiness")
 
     assert response.status_code == 200
@@ -41,14 +37,15 @@ async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
     assert payload["forecast_start"] == "2026-07-01"
     assert payload["forecast_end"] == "2027-12-31"
     assert payload["eligible_series"] == 10
+    assert payload["fallback_series"] == 2
+    assert payload["forecastable_series"] == 12
+    assert payload["skipped_series"] == 0
     assert "fact_customer_demand_monthly" in cursor.execute.call_args.args[0]
 
 
 @pytest.mark.asyncio
 async def test_generate_creates_run_and_submits_durable_job() -> None:
-    pool, _conn, _cursor = make_pool(
-        fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0)
-    )
+    pool, _conn, _cursor = make_pool(fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0))
     manager = MagicMock()
     manager.submit_job.return_value = "job_customer_1"
 
@@ -67,9 +64,7 @@ async def test_generate_creates_run_and_submits_durable_job() -> None:
 
         from api.main import app
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/customer-forecast/generate")
 
     assert response.status_code == 202
@@ -84,9 +79,7 @@ async def test_generate_creates_run_and_submits_durable_job() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_blocks_when_latest_closed_month_is_missing() -> None:
-    pool, _conn, _cursor = make_pool(
-        fetchone_return=(date(2026, 5, 1), 12, 10, 0, 0, 0)
-    )
+    pool, _conn, _cursor = make_pool(fetchone_return=(date(2026, 5, 1), 12, 10, 0, 0, 0))
 
     with (
         patch("api.core._get_pool", return_value=pool),
@@ -99,9 +92,7 @@ async def test_generate_blocks_when_latest_closed_month_is_missing() -> None:
 
         from api.main import app
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/customer-forecast/generate")
 
     assert response.status_code == 409
@@ -128,7 +119,8 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
         created_at,
         created_at,
         None,
-        {"insufficient_history": 2},
+        {},
+        {"chronos2_enriched": 10, "croston": 2},
     )
     pool, _conn, _cursor = make_pool(fetchone_return=run_row)
 
@@ -137,9 +129,7 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
 
         from api.main import app
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/customer-forecast/runs/0f2f73e8-9d8c-4f46-8410-2fce54ac68ad"
             )
@@ -147,7 +137,11 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
     assert response.status_code == 200
     assert response.json()["row_count"] == 180
     assert response.json()["model_id"] == "chronos2_enriched"
-    assert response.json()["skip_reason_counts"] == {"insufficient_history": 2}
+    assert response.json()["skip_reason_counts"] == {}
+    assert response.json()["model_route_counts"] == {
+        "chronos2_enriched": 10,
+        "croston": 2,
+    }
 
 
 @pytest.mark.asyncio
@@ -171,6 +165,7 @@ async def test_export_rejects_an_incomplete_run() -> None:
         created_at,
         "model failed",
         {},
+        {},
     )
     pool, _conn, _cursor = make_pool(fetchone_return=run_row)
 
@@ -179,9 +174,7 @@ async def test_export_rejects_an_incomplete_run() -> None:
 
         from api.main import app
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/customer-forecast/export",
                 params={"run_id": "0f2f73e8-9d8c-4f46-8410-2fce54ac68ad"},

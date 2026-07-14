@@ -582,10 +582,13 @@ snapshot candidates so artifact, source-roster, and snapshot lineage is never
 inferred from a legacy status flag.
 
 Customer-level forecasting is a separate generation-only bounded context.
-`customer_forecast_run` and `fact_customer_forecast` persist immutable Chronos
-2E results derived from the latest 18 closed customer-demand months for an
-18-month horizon. There is deliberately no dependency on the item-location
-champion, release promotion, planner adjustment, or reconciliation workflows.
+`customer_forecast_run` and `fact_customer_forecast` persist immutable results
+derived from the latest 18 closed customer-demand months for an 18-month
+horizon. Full-history series route to Chronos 2E; all remaining historical
+series route to customer-only Croston/SBA, with per-run and per-row model
+lineage. Croston remains outside the governed algorithm roster. There is
+deliberately no dependency on the item-location champion, release promotion,
+planner adjustment, or reconciliation workflows.
 The refreshable `mv_customer_demand_series_profile` stores series first/last
 months so readiness and generation retain exact history eligibility while
 scanning only the requested 18-month fact window at request time.

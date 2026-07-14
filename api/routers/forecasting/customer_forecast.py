@@ -35,7 +35,7 @@ _RUN_SELECT = """
            history_start, history_end, forecast_start, forecast_end,
            eligible_series, row_count, skipped_series, model_id,
            created_at, started_at, completed_at, error_summary,
-           skip_reason_counts
+           skip_reason_counts, model_route_counts
     FROM customer_forecast_run
 """
 
@@ -63,6 +63,7 @@ def _serialize_run(row: tuple[Any, ...]) -> dict[str, Any]:
         "completed_at": _iso(row[14]),
         "error_summary": row[15],
         "skip_reason_counts": row[16] or {},
+        "model_route_counts": row[17] or {},
     }
 
 
@@ -89,7 +90,9 @@ def get_readiness() -> dict[str, Any]:
         return readiness
     except (KeyError, TypeError, ValueError, psycopg.Error) as exc:
         logger.exception("Checking customer forecast readiness failed")
-        raise HTTPException(status_code=500, detail="customer forecast readiness check failed") from exc
+        raise HTTPException(
+            status_code=500, detail="customer forecast readiness check failed"
+        ) from exc
 
 
 @router.post("/generate", dependencies=[Depends(require_api_key)])
@@ -100,9 +103,7 @@ def generate_customer_forecasts() -> JSONResponse:
             readiness = load_customer_forecast_readiness(conn, window)
             if not settings["enabled"]:
                 readiness["ready"] = False
-                readiness["blockers"].insert(
-                    0, "Enable customer forecasting in configuration"
-                )
+                readiness["blockers"].insert(0, "Enable customer forecasting in configuration")
             if not readiness["ready"]:
                 raise HTTPException(status_code=409, detail=readiness["blockers"][0])
             run_id = str(uuid.uuid4())
@@ -136,7 +137,9 @@ def generate_customer_forecasts() -> JSONResponse:
         ) from exc
     except (KeyError, TypeError, ValueError, psycopg.Error) as exc:
         logger.exception("Creating customer forecast run failed")
-        raise HTTPException(status_code=500, detail="customer forecast run creation failed") from exc
+        raise HTTPException(
+            status_code=500, detail="customer forecast run creation failed"
+        ) from exc
 
     from common.services.job_registry import JobManager
 
@@ -161,7 +164,9 @@ def generate_customer_forecasts() -> JSONResponse:
                 mark_customer_forecast_run_terminal(conn, run_id, "failed", "job submission failed")
         except psycopg.Error:
             logger.exception("Marking unsubmitted customer forecast run failed")
-        raise HTTPException(status_code=500, detail="customer forecast job submission failed") from exc
+        raise HTTPException(
+            status_code=500, detail="customer forecast job submission failed"
+        ) from exc
 
     return JSONResponse(
         status_code=202,
@@ -218,7 +223,9 @@ def cancel_run(run_id: uuid.UUID) -> dict[str, str]:
         row = _load_run(str(run_id))
     except psycopg.Error as exc:
         logger.exception("Loading customer forecast run for cancellation failed")
-        raise HTTPException(status_code=500, detail="customer forecast cancellation failed") from exc
+        raise HTTPException(
+            status_code=500, detail="customer forecast cancellation failed"
+        ) from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Customer forecast run not found")
     run = _serialize_run(row)
@@ -237,7 +244,9 @@ def cancel_run(run_id: uuid.UUID) -> dict[str, str]:
         raise
     except (RuntimeError, psycopg.Error) as exc:
         logger.exception("Cancelling customer forecast run failed")
-        raise HTTPException(status_code=500, detail="customer forecast cancellation failed") from exc
+        raise HTTPException(
+            status_code=500, detail="customer forecast cancellation failed"
+        ) from exc
     return {"run_id": str(run_id), "status": "cancelled"}
 
 
@@ -286,7 +295,7 @@ def get_series(
                 for month, qty in cur.fetchall()
             ]
             cur.execute(
-                "SELECT forecast_month, forecast_qty, lower_bound, upper_bound "
+                "SELECT forecast_month, forecast_qty, lower_bound, upper_bound, model_id "
                 "FROM fact_customer_forecast "
                 "WHERE run_id = %s::uuid AND item_id = %s AND location_id = %s "
                 "AND customer_no = %s ORDER BY forecast_month",
@@ -298,14 +307,17 @@ def get_series(
                     "forecast_qty": float(qty),
                     "lower_bound": float(lower) if lower is not None else None,
                     "upper_bound": float(upper) if upper is not None else None,
+                    "model_id": model_id,
                 }
-                for month, qty, lower, upper in cur.fetchall()
+                for month, qty, lower, upper, model_id in cur.fetchall()
             ]
     except HTTPException:
         raise
     except psycopg.Error as exc:
         logger.exception("Loading customer forecast series failed")
-        raise HTTPException(status_code=500, detail="customer forecast series lookup failed") from exc
+        raise HTTPException(
+            status_code=500, detail="customer forecast series lookup failed"
+        ) from exc
     if not forecast:
         raise HTTPException(status_code=404, detail="Customer forecast series not found")
     return {
@@ -390,7 +402,5 @@ def export_forecast(
     return StreamingResponse(
         _csv_rows(str(run_id), item_id, location_id, customer_no),
         media_type="text/csv",
-        headers={
-            "Content-Disposition": f'attachment; filename="customer_forecast_{run_id}.csv"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="customer_forecast_{run_id}.csv"'},
     )

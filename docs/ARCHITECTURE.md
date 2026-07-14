@@ -632,14 +632,16 @@ loads.
   5. The separate Period Roll workflow writes and reconciles this archive.
   `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
 - **`customer_forecast_run` / `fact_customer_forecast`** — an independent,
-  generation-only customer forecast manifest and payload. Each eligible
-  item-location-customer series uses the latest 18 closed demand months to
-  generate 18 future months with Chronos 2E. These rows are read-only results;
-  they never reconcile to, stage, promote, or replace the item-location
-  production forecast. Series history bounds are maintained in
+  generation-only customer forecast manifest and payload. Each historically
+  observed item-location-customer series uses the latest 18 closed demand
+  months to generate 18 future months: full-history series use Chronos 2E and
+  all remaining series use customer-only Croston/SBA. These rows are read-only
+  results; they never reconcile to, stage, promote, or replace the item-
+  location production forecast. Series history bounds are maintained in
   `mv_customer_demand_series_profile`. DDL:
   `sql/210_create_customer_forecast.sql` and
-  `sql/211_create_customer_demand_series_profile.sql`.
+  `sql/211_create_customer_demand_series_profile.sql`, with route lineage in
+  `sql/212_add_customer_forecast_model_routes.sql`.
 
 ### AI & Exception Tables
 
@@ -777,8 +779,9 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 - `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, generator-contract metadata, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`. Migration `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready release candidates invalid and non-promotable without deleting their evidence.
 - Newly promoted `fact_production_forecast` rows carry `source_run_id`, `promotion_log_id`, a distinct production `run_id`, and `lineage_status='verified'`. The promotion transaction hashes candidate and production in the same stable order and requires equality before commit.
 - `customer_forecast_run` records the resolved 18-month closed-history window,
-  18-month output window, durable job, cardinalities, model/config versions, and
-  payload lineage. `fact_customer_forecast` is immutable and unique by run,
+  18-month output window, durable job, cardinalities, Chronos/Croston route
+  counts, model/config versions, and payload lineage. `fact_customer_forecast`
+  is immutable and unique by run,
   item, location, customer, and forecast month; DDL:
   `sql/210_create_customer_forecast.sql`. The refreshable
   `mv_customer_demand_series_profile` (`sql/211`) supplies all-history series
@@ -2004,12 +2007,14 @@ review surfaces. API
 **Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
 
 **Customer-Level Forecasting:** the separate **Forecasting → Customer
-Forecast** stage generates read-only Chronos 2E forecasts at
-item-location-customer-month grain. A run uses the latest 18 fully closed
-months from `fact_customer_demand_monthly` and emits exactly 18 future months
-into immutable run-versioned rows. It deliberately has no customer champion,
+Forecast** stage generates read-only forecasts at item-location-customer-month
+grain. A run uses the latest 18 fully closed months from
+`fact_customer_demand_monthly`, routes full-history series to Chronos 2E and
+all remaining series to Croston/SBA, and emits exactly 18 future months into
+immutable run-versioned rows. Customer-only Croston is excluded from the
+governed five-model roster. The feature deliberately has no customer champion,
 backtest, adjustment, reconciliation, staging, or production-promotion path.
-API `/customer-forecast`; DDL `sql/210`; spec
+API `/customer-forecast`; DDL `sql/210`–`sql/212`; spec
 `docs/specs/02-forecasting/35-customer-level-forecasting.md`.
 
 ### 2. SKU Clustering & Segmentation

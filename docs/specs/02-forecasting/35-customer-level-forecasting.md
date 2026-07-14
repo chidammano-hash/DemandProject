@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Implemented |
-| **Model** | Chronos 2 Enriched (`chronos2_enriched`) |
+| **Models** | Chronos 2 Enriched (`chronos2_enriched`) with customer-only Croston/SBA (`croston`) fallback |
 | **History window** | Latest 18 fully closed months |
 | **Forecast horizon** | 18 monthly periods beginning with the current system month |
 | **Forecast grain** | Item + location + customer + forecast month |
@@ -12,8 +12,9 @@
 ## 1. Goal
 
 Generate monthly customer-level demand forecasts from historical customer demand.
-Each run produces 18 future months for every eligible item-location-customer
-series, beginning with the month containing the system date.
+Each run produces 18 future months for every historically observed
+item-location-customer series, beginning with the month containing the system
+date. Full-history series use Chronos 2E; all remaining series use Croston/SBA.
 
 This feature only generates customer-level forecasts. It does not create a
 consensus plan, adjust an item-location forecast, select or replace a champion,
@@ -46,7 +47,8 @@ month or any future month must never enter the model context.
 ### In scope
 
 - read the latest 18 closed months from the normalized customer-demand fact;
-- generate one 18-month Chronos 2E forecast for each eligible customer series;
+- generate one 18-month Chronos 2E forecast for each full-history customer
+  series and one Croston/SBA forecast for each remaining series;
 - persist point forecasts and, when supported, confidence intervals with run
   lineage;
 - expose run status and generated rows for filtering, viewing, and export; and
@@ -94,7 +96,7 @@ series.
 
 ## 5. Readiness and history preparation
 
-A series is eligible when it has all of the following:
+A series is eligible for Chronos 2E when it has all of the following:
 
 - a valid item, location, and customer key;
 - 18 consecutive closed historical months after monthly densification;
@@ -104,14 +106,16 @@ A series is eligible when it has all of the following:
 
 Missing months inside the 18-month window are filled with zero demand. Negative
 quantities are rejected as a data-quality error rather than silently changed.
-Series with insufficient history or no demand are skipped and reported with a
-reason; they do not receive fabricated forecasts.
+Series with insufficient history or no positive demand in the window are
+routed to the configured Croston/SBA fallback. All-zero histories receive a
+valid zero Croston forecast. Invalid keys, duplicate grains, negative demand,
+and missing source freshness remain run-level data-quality blockers.
 
 The run-level readiness response reports:
 
 - the resolved system month and exact history/forecast windows;
 - source freshness through the latest closed month;
-- eligible and skipped series counts;
+- total forecastable, Chronos-routed, Croston-routed, and skipped series counts;
 - unresolved key and duplicate counts;
 - negative-demand row counts; and
 - a clear corrective action when generation cannot start.
@@ -127,25 +131,33 @@ eligibility rule.
 
 Chronos 2E receives one causal 18-month `demand_qty` sequence per eligible
 item-location-customer series. The shared adapter derives its causal calendar
-and Fourier features from those timestamps. V1 does not pass customer PII,
-out-of-stock quantities, future demand, or any other future operational value
-to the model.
+and Fourier features from those timestamps. Series that are not Chronos
+eligible receive a configured Syntetos-Boylan bias-adjusted Croston forecast
+from the same bounded history. V1 does not pass customer PII, out-of-stock
+quantities, future demand, or any other future operational value to either
+route.
 
 Generation rules:
 
 1. Resolve the system month and the two date windows once at run start.
 2. Read and validate the 18 closed historical months.
-3. Generate exactly 18 consecutive monthly predictions beginning with the
+3. Route full-history, positive-demand series to Chronos 2E and all remaining
+   historical series to Croston/SBA.
+4. Generate exactly 18 consecutive monthly predictions beginning with the
    resolved forecast start.
-4. Clip point forecasts and interval bounds to zero.
-5. Enforce `lower_bound <= forecast_qty <= upper_bound` when intervals exist.
-6. Validate uniqueness and completeness before marking the run completed.
-7. Persist the completed run atomically so partial output is never exposed as
+5. Clip point forecasts and interval bounds to zero.
+6. Enforce `lower_bound <= forecast_qty <= upper_bound` when intervals exist.
+7. Validate uniqueness and completeness before marking the run completed.
+8. Persist the completed run atomically so partial output is never exposed as
    successful.
 
-The model must fail the affected run on inference errors. It must not replace a
-failed prediction with zero, because zero is a valid demand forecast and would
-hide the failure.
+Either route must fail the affected run on inference errors. It must not replace
+a failed non-zero-history prediction with zero, because zero is a valid demand
+forecast and would hide the failure.
+
+Croston is scoped only to this customer generation feature. Its parameters live
+outside the governed algorithm roster, so it cannot appear in item-location
+tuning, backtesting, champion selection, staging, or production.
 
 ## 7. Stored output
 
@@ -158,7 +170,7 @@ One immutable record per generation request containing:
 - resolved history start/end and forecast start/end;
 - model and configuration version;
 - source-data checksum or equivalent lineage marker;
-- eligible, completed, and skipped series counts;
+- completed and skipped series counts plus Chronos/Croston route counts;
 - skipped-series reason counts; and
 - terminal error summary when the run fails.
 
@@ -200,12 +212,14 @@ The view shows:
 
 - the system month, 18-month history window, and 18-month forecast window;
 - readiness status with actionable blockers;
+- forecastable coverage split between Chronos 2E and Croston;
 - a **Generate Customer Forecasts** action;
 - durable-job progress, cancel, retry, and failure details;
 - filters for item, location, and customer;
 - an actual-versus-forecast chart with confidence intervals when available;
 - a monthly results table and export action; and
-- the selected run ID and generation timestamp.
+- the selected run ID, generation timestamp, and model used for the selected
+  customer series.
 
 The view is read-only after generation. It has no adjustment, approval,
 promotion, champion, reconciliation, or AI controls. The current Chronos
@@ -214,8 +228,10 @@ until that adapter exposes calibrated bounds.
 
 ## 10. Implementation
 
-- DDL: `sql/210_create_customer_forecast.sql` and
-  `sql/211_create_customer_demand_series_profile.sql`
+- DDL: `sql/210_create_customer_forecast.sql`,
+  `sql/211_create_customer_demand_series_profile.sql`, and
+  `sql/212_add_customer_forecast_model_routes.sql`
+- Croston implementation: `common/ml/croston.py`
 - Generation service: `common/services/customer_forecast.py`
 - Durable runner: `scripts/forecasting/generate_customer_forecasts.py`
 - API: `api/routers/forecasting/customer_forecast.py`
@@ -228,13 +244,16 @@ until that adapter exposes calibrated bounds.
 
 - A July 2026 run reads January 2025 through June 2026 and forecasts July 2026
   through December 2027.
-- Every eligible series has exactly 18 consecutive forecast rows.
+- Every historically observed series has exactly 18 consecutive forecast rows.
+- Chronos-eligible series use `chronos2_enriched`; every remaining valid series
+  uses customer-only `croston`, including a zero forecast for all-zero history.
 - Forecasts use `demand_qty`, not `sales_qty`.
 - No current-partial-month or future actual enters the model context.
 - Output is unique at run-item-location-customer-month grain.
 - Point forecasts and interval bounds are non-negative and ordered correctly.
 - Every row retains run, model, configuration, source, and history-end lineage.
-- Skipped series are counted and returned with a specific reason.
+- Model route counts are retained at run level and each forecast row retains its
+  actual generating model.
 - Partial, failed, or cancelled runs are not exposed as the latest completed run.
 - Summing customer rows may provide an item-location total for display, but no
   reconciliation or write to the item-location forecast occurs.

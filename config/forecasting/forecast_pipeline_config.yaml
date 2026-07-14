@@ -252,6 +252,10 @@ production_forecast:
 customer_forecast:
   enabled: true                    # Enable generation-only customer forecasts
   model_id: chronos2_enriched      # Reuse the governed Chronos 2E adapter
+  fallback_model_id: croston       # Route every non-Chronos-eligible series to Croston/SBA
+  fallback_params:
+    alpha: 0.1                     # Smoothing factor for non-zero demand sizes and intervals
+    variant: sba                   # Syntetos-Boylan bias-adjusted Croston forecast
   history_months: 18               # Fully closed monthly periods supplied as context
   horizon_months: 18               # Future monthly periods generated from the planning month
 forecast_snapshot:

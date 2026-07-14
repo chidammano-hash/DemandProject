@@ -49,7 +49,9 @@ const readiness = {
   source_latest_month: "2026-06-01",
   total_series: 12,
   eligible_series: 10,
-  skipped_series: 2,
+  fallback_series: 2,
+  forecastable_series: 12,
+  skipped_series: 0,
   invalid_key_rows: 0,
   duplicate_grains: 0,
   negative_rows: 0,
@@ -69,7 +71,15 @@ describe("CustomerForecastPanel", () => {
       location_id: "LOC-1",
       customer_no: "CUST-1",
       history: [{ month: "2026-06-01", actual_qty: 8 }],
-      forecast: [{ month: "2026-07-01", forecast_qty: 9, lower_bound: null, upper_bound: null }],
+      forecast: [
+        {
+          month: "2026-07-01",
+          forecast_qty: 9,
+          lower_bound: null,
+          upper_bound: null,
+          model_id: "croston",
+        },
+      ],
     });
   });
 
@@ -84,7 +94,8 @@ describe("CustomerForecastPanel", () => {
     expect(await screen.findByText("Customer Forecast Generation")).toBeInTheDocument();
     expect(await screen.findByText(/Jan 2025.*Jun 2026/)).toBeInTheDocument();
     expect(screen.getByText(/Jul 2026.*Dec 2027/)).toBeInTheDocument();
-    expect(screen.getByText("10 eligible series")).toBeInTheDocument();
+    expect(screen.getByText("12 forecastable series")).toBeInTheDocument();
+    expect(screen.getByText(/10 Chronos 2E.*2 Croston/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Generate Customer Forecasts" }));
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledOnce());
@@ -109,6 +120,7 @@ describe("CustomerForecastPanel", () => {
       completed_at: "2026-07-13T12:02:00Z",
       error_summary: "Chronos model loading failed",
       skip_reason_counts: {},
+      model_route_counts: {},
     });
     const { CustomerForecastPanel } = await import("../CustomerForecastPanel");
     render(
@@ -132,15 +144,16 @@ describe("CustomerForecastPanel", () => {
       history_end: "2026-06-30",
       forecast_start: "2026-07-01",
       forecast_end: "2027-12-31",
-      eligible_series: 10,
-      row_count: 180,
-      skipped_series: 2,
+      eligible_series: 12,
+      row_count: 216,
+      skipped_series: 0,
       model_id: "chronos2_enriched",
       created_at: "2026-07-13T12:00:00Z",
       started_at: "2026-07-13T12:01:00Z",
       completed_at: "2026-07-13T12:02:00Z",
       error_summary: null,
-      skip_reason_counts: { insufficient_history: 2 },
+      skip_reason_counts: {},
+      model_route_counts: { chronos2_enriched: 10, croston: 2 },
     };
     mockLatestRun.mockResolvedValue(completedRun);
     mockLatestCompletedRun.mockResolvedValue(completedRun);
@@ -158,6 +171,7 @@ describe("CustomerForecastPanel", () => {
 
     expect((await screen.findAllByText("Actual demand")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Customer forecast").length).toBeGreaterThan(0);
+    expect(screen.getByText("Croston/SBA")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export CSV" })).toHaveAttribute(
       "href",
       "/customer-forecast/export?run_id=run-1"

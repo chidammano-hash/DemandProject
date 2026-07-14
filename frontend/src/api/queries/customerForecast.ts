@@ -20,6 +20,8 @@ export interface CustomerForecastReadiness {
   source_latest_month: string | null;
   total_series: number;
   eligible_series: number;
+  fallback_series: number;
+  forecastable_series: number;
   skipped_series: number;
   invalid_key_rows: number;
   duplicate_grains: number;
@@ -45,6 +47,7 @@ export interface CustomerForecastRun {
   completed_at: string | null;
   error_summary: string | null;
   skip_reason_counts: Record<string, number>;
+  model_route_counts: Record<string, number>;
 }
 
 export interface CustomerForecastFilters {
@@ -65,6 +68,7 @@ export interface CustomerForecastSeries {
     forecast_qty: number;
     lower_bound: number | null;
     upper_bound: number | null;
+    model_id: string;
   }[];
 }
 
