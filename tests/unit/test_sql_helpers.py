@@ -1,4 +1,5 @@
 """Tests for common/sql_helpers.py — shared SQL helpers."""
+
 import logging
 import time
 from unittest.mock import patch
@@ -6,31 +7,33 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
+from common.core.domain_specs import get_spec
 from common.core.sql_helpers import (
-    NULL_SQL,
-    IQR_OUTLIER_MULTIPLIER,
-    LEAD_TIME_MAX_DAYS,
-    LEAD_TIME_DEFAULT_DAYS,
-    HASH_CHUNK_SIZE,
+    DEFAULT_CHUNK_SIZE,
     EXTERNAL_MODEL_ID,
+    HASH_CHUNK_SIZE,
+    IQR_OUTLIER_MULTIPLIER,
+    LEAD_TIME_DEFAULT_DAYS,
+    LEAD_TIME_MAX_DAYS,
+    NULL_SQL,
     PERCENTILE_MEDIAN,
     PERCENTILE_Q1,
     PERCENTILE_Q3,
-    DEFAULT_CHUNK_SIZE,
     _elapsed,
-    qident,
-    typed_expr,
-    typed_expr_sets,
     business_key_expr,
+    parse_db_json,
+    qident,
     read_sql_chunked,
     stream_query_in_chunks,
+    to_float,
+    typed_expr,
+    typed_expr_sets,
 )
-from common.core.domain_specs import get_spec
-
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
 
 class TestConstants:
     def test_null_sql(self):
@@ -62,6 +65,7 @@ class TestConstants:
 # _elapsed
 # ---------------------------------------------------------------------------
 
+
 class TestElapsed:
     def test_under_one_minute(self):
         t0 = time.time() - 5.3
@@ -84,6 +88,7 @@ class TestElapsed:
 # qident
 # ---------------------------------------------------------------------------
 
+
 class TestQident:
     def test_basic(self):
         assert qident("col") == '"col"'
@@ -98,6 +103,7 @@ class TestQident:
 # ---------------------------------------------------------------------------
 # typed_expr  (spec-based)
 # ---------------------------------------------------------------------------
+
 
 class TestTypedExpr:
     def test_integer_field(self):
@@ -133,6 +139,7 @@ class TestTypedExpr:
 # typed_expr_sets  (legacy set-based overload)
 # ---------------------------------------------------------------------------
 
+
 class TestTypedExprSets:
     def test_integer_field(self):
         result = typed_expr_sets("qty", set(), set(), set(), "s")
@@ -155,6 +162,7 @@ class TestTypedExprSets:
 # business_key_expr
 # ---------------------------------------------------------------------------
 
+
 class TestBusinessKeyExpr:
     def test_single_key(self):
         spec = get_spec("item")
@@ -175,30 +183,98 @@ class TestBusinessKeyExpr:
 def _make_full_frame(n_rows: int = 100) -> pd.DataFrame:
     """Synthetic full-frame baseline used to compare against chunked output."""
     cycle = ["a", "b", "c", "d"]
-    return pd.DataFrame({
-        "item_id": [f"I{i:04d}" for i in range(n_rows)],
-        "qty": [float(i) for i in range(n_rows)],
-        "tag": [cycle[i % 4] for i in range(n_rows)],
-    })
+    return pd.DataFrame(
+        {
+            "item_id": [f"I{i:04d}" for i in range(n_rows)],
+            "qty": [float(i) for i in range(n_rows)],
+            "tag": [cycle[i % 4] for i in range(n_rows)],
+        }
+    )
+
+
+class _FakeStreamingCursor:
+    def __init__(self, rows, columns):
+        self._rows = list(rows)
+        self._offset = 0
+        self.description = [(column,) for column in columns]
+        self.executed = None
+        self.fetch_sizes = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def execute(self, sql, params):
+        self.executed = (sql, params)
+
+    def fetchmany(self, size):
+        self.fetch_sizes.append(size)
+        rows = self._rows[self._offset : self._offset + size]
+        self._offset += len(rows)
+        return rows
+
+
+class _FakeStreamingConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.cursor_name = None
+
+    def cursor(self, *, name):
+        self.cursor_name = name
+        return self._cursor
 
 
 class TestStreamQueryInChunks:
     def test_default_chunk_size_constant(self):
         assert DEFAULT_CHUNK_SIZE == 50_000
 
+    def test_uses_a_named_cursor_instead_of_pandas_dbapi_adapter(self):
+        cursor = _FakeStreamingCursor(
+            rows=[("I0001", 1.0), ("I0002", 2.0)],
+            columns=["item_id", "qty"],
+        )
+        conn = _FakeStreamingConnection(cursor)
+
+        with patch(
+            "pandas.read_sql",
+            side_effect=AssertionError("pandas DBAPI adapter must not be used"),
+        ) as mock_read:
+            chunks = list(
+                stream_query_in_chunks(
+                    conn=conn,
+                    sql="SELECT item_id, qty FROM demand WHERE qty > %s",
+                    params=(0,),
+                    chunk_size=1,
+                )
+            )
+
+        mock_read.assert_not_called()
+        assert conn.cursor_name is not None
+        assert cursor.executed == (
+            "SELECT item_id, qty FROM demand WHERE qty > %s",
+            (0,),
+        )
+        assert [len(chunk) for chunk in chunks] == [1, 1]
+        assert list(chunks[0].columns) == ["item_id", "qty"]
+
     def test_yields_chunks(self):
         """stream_query_in_chunks should yield successive DataFrames."""
         full = _make_full_frame(100)
-        chunks = [full.iloc[0:40], full.iloc[40:80], full.iloc[80:100]]
+        cursor = _FakeStreamingCursor(
+            rows=list(full.itertuples(index=False, name=None)),
+            columns=list(full.columns),
+        )
+        conn = _FakeStreamingConnection(cursor)
 
-        with patch("pandas.read_sql", return_value=iter(chunks)) as mock_read:
-            result = list(stream_query_in_chunks(
-                conn=object(), sql="SELECT 1", params=("p1",), chunk_size=40,
-            ))
+        result = list(
+            stream_query_in_chunks(conn=conn, sql="SELECT 1", params=("p1",), chunk_size=40)
+        )
 
         assert len(result) == 3
-        assert mock_read.call_args.kwargs["chunksize"] == 40
-        assert mock_read.call_args.kwargs["params"] == ("p1",)
+        assert cursor.fetch_sizes == [40, 40, 40, 40]
+        assert cursor.executed == ("SELECT 1", ("p1",))
         # Each yielded chunk is a DataFrame with the original schema
         for chunk in result:
             assert list(chunk.columns) == ["item_id", "qty", "tag"]
@@ -210,12 +286,17 @@ class TestStreamQueryInChunks:
         ever diverges from the unchunked equivalent, this test fails.
         """
         full = _make_full_frame(100)
-        chunks = [full.iloc[0:40].copy(), full.iloc[40:80].copy(), full.iloc[80:100].copy()]
-
-        with patch("pandas.read_sql", return_value=iter(chunks)):
-            streamed = list(stream_query_in_chunks(
-                conn=object(), sql="SELECT 1", chunk_size=40,
-            ))
+        cursor = _FakeStreamingCursor(
+            rows=list(full.itertuples(index=False, name=None)),
+            columns=list(full.columns),
+        )
+        streamed = list(
+            stream_query_in_chunks(
+                conn=_FakeStreamingConnection(cursor),
+                sql="SELECT 1",
+                chunk_size=40,
+            )
+        )
 
         rebuilt = pd.concat(streamed, ignore_index=True)
         pd.testing.assert_frame_equal(
@@ -228,17 +309,25 @@ class TestReadSqlChunked:
     def test_single_chunk_short_circuit(self):
         """Single-chunk results should be returned without unnecessary concat."""
         full = _make_full_frame(50)
-        with patch("pandas.read_sql", return_value=iter([full])):
-            result = read_sql_chunked(conn=object(), sql="SELECT 1")
+        cursor = _FakeStreamingCursor(
+            rows=list(full.itertuples(index=False, name=None)),
+            columns=list(full.columns),
+        )
+        result = read_sql_chunked(conn=_FakeStreamingConnection(cursor), sql="SELECT 1")
         pd.testing.assert_frame_equal(result, full)
 
     def test_multi_chunk_concat_matches_baseline(self):
         """Multi-chunk path concatenates and matches the unchunked baseline."""
         full = _make_full_frame(100)
-        chunks = [full.iloc[0:30].copy(), full.iloc[30:70].copy(), full.iloc[70:100].copy()]
-
-        with patch("pandas.read_sql", return_value=iter(chunks)):
-            result = read_sql_chunked(conn=object(), sql="SELECT 1", chunk_size=30)
+        cursor = _FakeStreamingCursor(
+            rows=list(full.itertuples(index=False, name=None)),
+            columns=list(full.columns),
+        )
+        result = read_sql_chunked(
+            conn=_FakeStreamingConnection(cursor),
+            sql="SELECT 1",
+            chunk_size=30,
+        )
 
         assert len(result) == 100
         pd.testing.assert_frame_equal(
@@ -247,39 +336,36 @@ class TestReadSqlChunked:
         )
 
     def test_empty_result_returns_empty_frame(self):
-        """Empty result-set falls back to a plain pd.read_sql call."""
-        empty = _make_full_frame(0)
-
-        # First call (with chunksize) yields nothing; second call (without)
-        # returns the empty schema-bearing frame.
-        with patch("pandas.read_sql", side_effect=[iter([]), empty]) as mock_read:
-            result = read_sql_chunked(conn=object(), sql="SELECT 1")
+        """Empty result-set preserves the cursor's schema without re-querying."""
+        cursor = _FakeStreamingCursor(
+            rows=[],
+            columns=["item_id", "qty", "tag"],
+        )
+        result = read_sql_chunked(conn=_FakeStreamingConnection(cursor), sql="SELECT 1")
 
         assert len(result) == 0
         assert list(result.columns) == ["item_id", "qty", "tag"]
-        # First call was the chunked attempt, second was the schema-fetch fallback
-        assert mock_read.call_count == 2
-        assert "chunksize" in mock_read.call_args_list[0].kwargs
-        assert "chunksize" not in mock_read.call_args_list[1].kwargs
+        assert cursor.fetch_sizes == [DEFAULT_CHUNK_SIZE]
 
     def test_params_forwarded(self):
-        """Bind params must be passed through to pd.read_sql."""
+        """Bind params must be passed through to the named cursor."""
         full = _make_full_frame(10)
-        with patch("pandas.read_sql", return_value=iter([full])) as mock_read:
-            read_sql_chunked(
-                conn=object(), sql="SELECT 1", params=("a", 42), chunk_size=10,
-            )
-        assert mock_read.call_args.kwargs["params"] == ("a", 42)
-        assert mock_read.call_args.kwargs["chunksize"] == 10
+        cursor = _FakeStreamingCursor(
+            rows=list(full.itertuples(index=False, name=None)),
+            columns=list(full.columns),
+        )
+        read_sql_chunked(
+            conn=_FakeStreamingConnection(cursor),
+            sql="SELECT 1",
+            params=("a", 42),
+            chunk_size=10,
+        )
+        assert cursor.executed == ("SELECT 1", ("a", 42))
+        assert cursor.fetch_sizes == [10, 10]
 
 
 # ---------------------------------------------------------------------------
 # parse_db_json / to_float (shared router coercion helpers)
-# ---------------------------------------------------------------------------
-import pytest
-from common.core.sql_helpers import parse_db_json, to_float
-
-
 class TestParseDbJson:
     def test_none(self):
         assert parse_db_json(None) is None
