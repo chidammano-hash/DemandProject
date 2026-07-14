@@ -131,7 +131,7 @@ async def trigger_portfolio_scan(request: Request):
         agent = AIPlannerAgent(pool, config)
         try:
             agent.run_portfolio_scan(scan_run_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — background boundary logs all scan failures
             log.exception("Portfolio scan failed  scan_run_id=%s", scan_run_id)
 
     _executor.submit(_run)
