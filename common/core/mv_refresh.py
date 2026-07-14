@@ -25,9 +25,9 @@ non-populated or index-less MV falls back to a plain ``REFRESH``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Event
-from typing import Callable, Iterable
 
 import psycopg
 from psycopg import sql as psql
@@ -74,6 +74,7 @@ MV_SOURCES: dict[str, frozenset[str]] = {
     "mv_dq_dashboard": frozenset({"fact_dq_check_results"}),
     "mv_sensing_overrides_active": frozenset({"fact_blended_demand_plan"}),
     "mv_customer_activity_monthly": frozenset({"fact_customer_demand_monthly", "dim_customer"}),
+    "mv_customer_demand_series_profile": frozenset({"fact_customer_demand_monthly"}),
     "mv_customer_filter_options": frozenset({"dim_customer"}),
     "mv_ca_segment_trends": frozenset({"fact_customer_demand_monthly", "dim_customer"}),
     "mv_ca_demand_at_risk": frozenset({"fact_customer_demand_monthly"}),

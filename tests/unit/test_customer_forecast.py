@@ -12,6 +12,7 @@ from common.services.customer_forecast import (
     _resolve_run_window,
     build_customer_forecast_rows,
     build_customer_forecast_window,
+    load_customer_forecast_readiness,
     prepare_customer_history,
 )
 
@@ -154,6 +155,32 @@ def test_customer_forecast_migration_defines_run_and_fact_tables() -> None:
     assert "forecast_qty >= 0" in ddl
     assert "uq_customer_forecast_one_active" in ddl
     assert "skip_reason_counts" in ddl
+
+
+def test_customer_forecast_readiness_uses_series_profile_and_bounded_fact_scan() -> None:
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (date(2026, 6, 1), 12, 10, 0, 0, 0)
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    readiness = load_customer_forecast_readiness(conn, window)
+
+    sql = cursor.execute.call_args.args[0]
+    assert "mv_customer_demand_series_profile" in sql
+    assert "WHERE startdate >= %s AND startdate < %s" in sql
+    assert "WHERE startdate < %s\n            GROUP BY" not in sql
+    assert readiness["eligible_series"] == 10
+
+
+def test_customer_forecast_profile_migration_defines_refreshable_series_grain() -> None:
+    ddl = Path("sql/211_create_customer_demand_series_profile.sql").read_text()
+
+    assert "CREATE MATERIALIZED VIEW mv_customer_demand_series_profile" in ddl
+    assert "MIN(startdate) AS first_month" in ddl
+    assert "MAX(startdate) AS last_month" in ddl
+    assert "UNIQUE INDEX" in ddl
+    assert "(item_id, location_id, customer_no)" in ddl
 
 
 def test_run_window_is_restored_from_the_manifest() -> None:

@@ -660,6 +660,10 @@ TRUNCATE TABLE fact_sales_monthly_original CASCADE;
 -- Group 11b: Customer Demand (parent CASCADE → all partitions + default)
 TRUNCATE TABLE fact_customer_demand_monthly CASCADE;
 
+-- After reloading customer demand, run the standard MV refresh lifecycle.
+-- It rebuilds mv_customer_demand_series_profile, which customer-forecast
+-- readiness and generation require for first/last observed series months.
+
 -- Group 12: Inventory Planning
 TRUNCATE TABLE fact_ss_simulation_results CASCADE;
 TRUNCATE TABLE fact_safety_stock_targets CASCADE;

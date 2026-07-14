@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from common.services.cache import InMemoryBackend
 from tests.api.conftest import make_pool
 
 
@@ -14,8 +15,10 @@ async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
         fetchone_return=(date(2026, 6, 1), 12, 10, 0, 0, 0)
     )
 
+    cache = InMemoryBackend()
     with (
         patch("api.core._get_pool", return_value=pool),
+        patch("common.services.cache.get_cache", return_value=cache),
         patch(
             "api.routers.forecasting.customer_forecast.get_planning_date",
             return_value=date(2026, 7, 13),

@@ -43,7 +43,7 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 
 | # | Strategic Goal | Platform Capability |
 |---|---|---|
-| SG-1 | Unify demand sensing, forecasting, and inventory planning into one analytical platform | 10 data domains, 6 dimension tables, 4 fact tables, 28 materialized views serving 21 interactive UI tabs |
+| SG-1 | Unify demand sensing, forecasting, and inventory planning into one analytical platform | 10 data domains, 6 dimension tables, 4 fact tables, 29 materialized views serving 21 interactive UI tabs |
 | SG-3 | Reduce forecast error through automated model selection and ensemble methods | Expanding-window backtests across the canonical five-model roster and governed champion promotion |
 | SG-4 | Optimize inventory investment by balancing service levels against working capital | Safety stock (Z-score + Monte Carlo), EOQ, 4 replenishment policy types, efficient frontier optimization |
 | SG-5 | Enable proactive exception management through AI-driven insight generation | Claude-powered AI Planning Agent with 10 tools, portfolio-wide scans, 5 insight types |
@@ -548,7 +548,7 @@ erDiagram
 
 | Tier | Views | Refresh Order | Purpose |
 |---|---|---|---|
-| **Tier 1** (Base Aggregates) | `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly` | First | Pre-aggregated KPI queries |
+| **Tier 1** (Base Aggregates) | `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`, `mv_customer_demand_series_profile` | First | Pre-aggregated KPI and customer-series readiness queries |
 | **Tier 2** (Accuracy) | `agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, `agg_dfu_coverage` | After Tier 1 | Forecast accuracy measurement |
 | **Tier 3** (Inventory) | `mv_inventory_health_score`, `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout` | After Tier 2 | Inventory KPI dashboards |
 | **Tier 4** (Cross-Domain) | `mv_inventory_forecast_monthly`, `mv_control_tower_kpis`, `mv_network_balance` | Last | Cross-domain analytics, control tower |
@@ -586,6 +586,9 @@ Customer-level forecasting is a separate generation-only bounded context.
 2E results derived from the latest 18 closed customer-demand months for an
 18-month horizon. There is deliberately no dependency on the item-location
 champion, release promotion, planner adjustment, or reconciliation workflows.
+The refreshable `mv_customer_demand_series_profile` stores series first/last
+months so readiness and generation retain exact history eligibility while
+scanning only the requested 18-month fact window at request time.
 
 ### 4.3 Data Flow Architecture
 

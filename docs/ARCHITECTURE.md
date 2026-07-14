@@ -555,7 +555,7 @@ erDiagram
 
 ---
 
-## 10. All Tables by Category (~169 tables + 28 materialized views)
+## 10. All Tables by Category (~169 tables + 29 materialized views)
 
 ### Core Tables
 
@@ -580,6 +580,18 @@ erDiagram
 | `mv_ca_order_patterns` | customer_no | `mv_customer_activity_monthly` | `sql/182` |
 
 9 of 16 customer-analytics endpoints route through `mv_customer_activity_monthly` when `item_id` is null. Refresh order: refresh `mv_customer_activity_monthly` before the 3 derived MVs.
+
+### Forecasting Materialized Views (1)
+
+| MV | Grain | Source | DDL |
+|---|---|---|---|
+| `mv_customer_demand_series_profile` | item + location + customer | `fact_customer_demand_monthly` | `sql/211` |
+
+The customer-series profile stores first/last observed months once per series.
+Customer forecast readiness and generation join it to only the resolved
+18-month fact window instead of grouping every historical partition per API
+request. The central MV refresh service rebuilds it after customer-demand
+loads.
 
 ### Inventory Planning Tables (12)
 
@@ -624,7 +636,10 @@ erDiagram
   item-location-customer series uses the latest 18 closed demand months to
   generate 18 future months with Chronos 2E. These rows are read-only results;
   they never reconcile to, stage, promote, or replace the item-location
-  production forecast. DDL: `sql/210_create_customer_forecast.sql`.
+  production forecast. Series history bounds are maintained in
+  `mv_customer_demand_series_profile`. DDL:
+  `sql/210_create_customer_forecast.sql` and
+  `sql/211_create_customer_demand_series_profile.sql`.
 
 ### AI & Exception Tables
 
@@ -765,7 +780,9 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
   18-month output window, durable job, cardinalities, model/config versions, and
   payload lineage. `fact_customer_forecast` is immutable and unique by run,
   item, location, customer, and forecast month; DDL:
-  `sql/210_create_customer_forecast.sql`.
+  `sql/210_create_customer_forecast.sql`. The refreshable
+  `mv_customer_demand_series_profile` (`sql/211`) supplies all-history series
+  bounds without request-time full-fact scans.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 - Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
 

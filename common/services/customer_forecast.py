@@ -112,48 +112,33 @@ def load_customer_forecast_readiness(
 ) -> dict[str, Any]:
     """Return source freshness and eligibility for the resolved run window."""
     sql = """
-        WITH series AS (
+        WITH window_series AS MATERIALIZED (
             SELECT item_id, location_id, customer_no,
-                   MIN(startdate) AS first_month,
-                   SUM(CASE WHEN startdate >= %s AND startdate < %s
-                            THEN demand_qty ELSE 0 END) AS window_demand
+                   SUM(demand_qty) AS window_demand,
+                   MAX(startdate) AS last_window_month
             FROM fact_customer_demand_monthly
-            WHERE startdate < %s
+            WHERE startdate >= %s AND startdate < %s
             GROUP BY item_id, location_id, customer_no
-        ), duplicate_grains AS (
-            SELECT COUNT(*) AS duplicate_count
-            FROM (
-                SELECT item_id, location_id, customer_no, startdate
-                FROM fact_customer_demand_monthly
-                WHERE startdate >= %s AND startdate < %s
-                GROUP BY item_id, location_id, customer_no, startdate
-                HAVING COUNT(*) > 1
-            ) duplicates
         )
         SELECT
-            (SELECT MAX(startdate) FROM fact_customer_demand_monthly WHERE startdate < %s),
+            MAX(window_series.last_window_month),
             COUNT(*),
-            COUNT(*) FILTER (WHERE first_month <= %s AND window_demand > 0),
-            (SELECT COUNT(*) FROM fact_customer_demand_monthly
-             WHERE startdate >= %s AND startdate < %s
-               AND (item_id IS NULL OR location_id IS NULL OR customer_no IS NULL)),
-            (SELECT duplicate_count FROM duplicate_grains),
-            (SELECT COUNT(*) FROM fact_customer_demand_monthly
-             WHERE startdate >= %s AND startdate < %s AND demand_qty < 0)
-        FROM series
+            COUNT(*) FILTER (
+                WHERE profile.first_month <= %s
+                  AND COALESCE(window_series.window_demand, 0) > 0
+            ),
+            0::bigint, -- identity columns are NOT NULL
+            0::bigint, -- loader business key is unique at series-month grain
+            0::bigint  -- demand_qty has a non-negative CHECK constraint
+        FROM mv_customer_demand_series_profile profile
+        LEFT JOIN window_series USING (item_id, location_id, customer_no)
+        WHERE profile.first_month < %s
     """
     history_end_month = window.history_end.replace(day=1)
     with conn.cursor() as cur:
         cur.execute(
             sql,
             (
-                window.history_start,
-                window.forecast_start,
-                window.forecast_start,
-                window.history_start,
-                window.forecast_start,
-                window.forecast_start,
-                window.history_start,
                 window.history_start,
                 window.forecast_start,
                 window.history_start,
@@ -214,31 +199,27 @@ def load_customer_forecast_readiness(
 def load_customer_history(conn: Any, window: CustomerForecastWindow) -> pd.DataFrame:
     """Load the bounded fact history plus each series' first observed month."""
     sql = """
-        WITH series_start AS (
-            SELECT item_id, location_id, customer_no, MIN(startdate) AS series_first_month
-            FROM fact_customer_demand_monthly
-            WHERE startdate < %s
-            GROUP BY item_id, location_id, customer_no
-        )
-        SELECT starts.item_id, starts.location_id, starts.customer_no,
+        SELECT profile.item_id, profile.location_id, profile.customer_no,
                history.startdate,
                COALESCE(SUM(history.demand_qty), 0)::double precision AS demand_qty,
-               starts.series_first_month
-        FROM series_start starts
+               profile.first_month AS series_first_month
+        FROM mv_customer_demand_series_profile profile
         LEFT JOIN fact_customer_demand_monthly history
-          ON history.item_id = starts.item_id
-         AND history.location_id = starts.location_id
-         AND history.customer_no = starts.customer_no
+          ON history.item_id = profile.item_id
+         AND history.location_id = profile.location_id
+         AND history.customer_no = profile.customer_no
          AND history.startdate >= %s
          AND history.startdate < %s
-        GROUP BY starts.item_id, starts.location_id, starts.customer_no,
-                 history.startdate, starts.series_first_month
-        ORDER BY starts.item_id, starts.location_id, starts.customer_no, history.startdate
+        WHERE profile.first_month < %s
+        GROUP BY profile.item_id, profile.location_id, profile.customer_no,
+                 history.startdate, profile.first_month
+        ORDER BY profile.item_id, profile.location_id, profile.customer_no,
+                 history.startdate
     """
     return read_sql_chunked(
         conn,
         sql,
-        params=(window.forecast_start, window.history_start, window.forecast_start),
+        params=(window.history_start, window.forecast_start, window.forecast_start),
     )
 
 

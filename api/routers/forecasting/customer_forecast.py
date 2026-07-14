@@ -15,8 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.auth import require_api_key
-from api.core import get_conn
+from api.core import get_conn, get_read_only_conn
 from common.core.planning_date import get_planning_date
+from common.services.cache import cached_sync
 from common.services.customer_forecast import (
     build_customer_forecast_window,
     customer_forecast_config_checksum,
@@ -76,10 +77,11 @@ def _resolved_window() -> tuple[dict[str, Any], Any]:
 
 
 @router.get("/readiness")
+@cached_sync(ttl=300, group="customer_forecast")
 def get_readiness() -> dict[str, Any]:
     try:
         settings, window = _resolved_window()
-        with get_conn() as conn:
+        with get_read_only_conn() as conn:
             readiness = load_customer_forecast_readiness(conn, window)
         if not settings["enabled"]:
             readiness["ready"] = False

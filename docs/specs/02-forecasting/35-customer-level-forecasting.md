@@ -116,6 +116,13 @@ The run-level readiness response reports:
 - negative-demand row counts; and
 - a clear corrective action when generation cannot start.
 
+The all-history series bounds used by readiness and generation come from
+`mv_customer_demand_series_profile`. The materialized profile is refreshed by
+the standard customer-demand post-load lifecycle, while request-time queries
+scan only the resolved 18-month fact partitions. This keeps the readiness API
+inside the normal statement timeout without weakening the first-observed-month
+eligibility rule.
+
 ## 6. Forecast generation
 
 Chronos 2E receives one causal 18-month `demand_qty` sequence per eligible
@@ -207,7 +214,8 @@ until that adapter exposes calibrated bounds.
 
 ## 10. Implementation
 
-- DDL: `sql/210_create_customer_forecast.sql`
+- DDL: `sql/210_create_customer_forecast.sql` and
+  `sql/211_create_customer_demand_series_profile.sql`
 - Generation service: `common/services/customer_forecast.py`
 - Durable runner: `scripts/forecasting/generate_customer_forecasts.py`
 - API: `api/routers/forecasting/customer_forecast.py`
