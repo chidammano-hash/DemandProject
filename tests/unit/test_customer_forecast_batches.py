@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
@@ -11,6 +11,7 @@ from common.services.customer_forecast_batches import (
     _build_batch_rows,
     claim_customer_forecast_batch,
     load_customer_forecast_progress,
+    run_customer_forecast_worker,
 )
 
 
@@ -100,3 +101,52 @@ def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
     assert len(rows) == 18
     assert len(source) == 18
     assert set(rows["model_id"]) == {"croston"}
+
+
+def test_worker_commits_read_transactions_before_claiming_and_persisting() -> None:
+    """Long-lived workers must not retain claims or serialize batch completion."""
+    conn = MagicMock()
+    events: list[str] = []
+    conn.commit.side_effect = lambda: events.append("commit")
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+    batch = CustomerForecastBatch(42, "croston", 0, 1, 1)
+    history = pd.DataFrame([{"demand_qty": 1.0}])
+    rows = pd.DataFrame([{"forecast_qty": 1.0}])
+    source = pd.DataFrame([{"qty": 1.0}])
+
+    with (
+        patch(
+            "common.services.customer_forecast_batches.get_customer_forecast_settings",
+            return_value={"max_batch_attempts": 3},
+        ),
+        patch(
+            "common.services.customer_forecast_batches._resolve_run_window",
+            return_value=(window, "config-checksum"),
+        ),
+        patch(
+            "common.services.customer_forecast_batches.claim_customer_forecast_batch",
+            side_effect=lambda *_args, **_kwargs: (
+                events.append("claim") or (batch if events.count("claim") == 1 else None)
+            ),
+        ),
+        patch(
+            "common.services.customer_forecast_batches.load_customer_forecast_batch_history",
+            side_effect=lambda *_args: events.append("load") or history,
+        ),
+        patch(
+            "common.services.customer_forecast_batches._build_batch_rows",
+            side_effect=lambda *_args: events.append("build") or (rows, source),
+        ),
+        patch(
+            "common.services.customer_forecast_batches._frame_checksum",
+            return_value="source-checksum",
+        ),
+        patch(
+            "common.services.customer_forecast_batches._persist_completed_batch",
+            side_effect=lambda *_args: events.append("persist"),
+        ),
+    ):
+        completed = run_customer_forecast_worker(conn, "run-1", ["croston"])
+
+    assert completed == 1
+    assert events == ["commit", "claim", "load", "commit", "build", "persist", "claim"]

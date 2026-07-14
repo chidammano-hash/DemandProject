@@ -383,6 +383,9 @@ def run_customer_forecast_worker(
     """Claim and commit batches until no eligible work remains."""
     settings = get_customer_forecast_settings()
     window, _checksum = _resolve_run_window(conn, run_id, settings)
+    # ``_resolve_run_window`` performs reads before the explicit claim transaction.
+    # Close that implicit psycopg transaction so each claim can commit independently.
+    conn.commit()
     completed = 0
     while batch := claim_customer_forecast_batch(
         conn,
@@ -392,6 +395,10 @@ def run_customer_forecast_worker(
     ):
         try:
             raw_history = load_customer_forecast_batch_history(conn, batch.batch_id, window)
+            # The server-side history cursor opens another implicit transaction.  It
+            # must end before persistence or one worker retains its claim and the run
+            # progress row lock while every other worker waits behind it.
+            conn.commit()
             rows, source_input = _build_batch_rows(
                 batch,
                 raw_history,
