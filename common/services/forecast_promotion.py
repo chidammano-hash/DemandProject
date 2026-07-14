@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -12,7 +13,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from common.core.constants import CHAMPION_MODEL_ID
+from common.core.constants import CHAMPION_MODEL_ID, CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID
 from common.core.paths import PROJECT_ROOT
 from common.core.utils import load_forecast_pipeline_config
 from common.ml.direct_model_lineage import (
@@ -42,6 +43,20 @@ from common.services.champion_lineage import (
     load_governed_champion_lineage,
 )
 from common.services.cluster_lineage import load_promoted_cluster_population
+from common.services.customer_demand_lineage import customer_demand_snapshot_lock
+from common.services.customer_forecast_blend import (
+    compute_customer_blend_component_stats,
+    load_customer_blend_component_lineage,
+)
+from common.services.customer_forecast_blend_contract import (
+    CUSTOMER_BLEND_CONTRACT_VERSION,
+    CUSTOMER_BLEND_LINEAGE_METADATA_KEY,
+    customer_blend_config_checksum,
+    validate_blend_settings,
+)
+from common.services.customer_forecast_blend_evidence import (
+    compute_customer_forecast_output_stats,
+)
 from common.services.forecast_generation import (
     GENERATOR_CONTRACT_METADATA_KEY,
     GENERATOR_CONTRACT_VERSION,
@@ -134,10 +149,7 @@ def validate_generation_manifest(
     require_staged: bool = True,
 ) -> None:
     """Reject a source manifest that cannot identify one safe release candidate."""
-    if (
-        manifest.generation_purpose != "release_candidate"
-        or manifest.run_status != "ready"
-    ):
+    if manifest.generation_purpose != "release_candidate" or manifest.run_status != "ready":
         raise PromotionConflictError(
             "candidate_run_not_promotable",
             "The selected generation run is not eligible for release.",
@@ -247,9 +259,7 @@ def stage_forecast_run(
     """Approve one immutable generated candidate for later production promotion."""
     with conn.transaction():
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT pg_advisory_xact_lock(hashtext('forecast_release_staging'))"
-            )
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext('forecast_release_staging'))")
             manifest = _load_manifest(cur, source_run_id)
             validate_generation_manifest(
                 manifest,
@@ -260,6 +270,17 @@ def stage_forecast_run(
             )
             stats = compute_staging_payload_stats(cur, source_run_id)
             _validate_manifest_payload(manifest, stats)
+            is_customer_blend = (
+                CUSTOMER_BLEND_LINEAGE_METADATA_KEY in manifest.metadata
+                or _is_customer_blend_payload(cur, manifest.run_id)
+            )
+            if is_customer_blend:
+                _validate_customer_bottom_up_blend(
+                    cur,
+                    manifest=manifest,
+                    pipeline_config=load_forecast_pipeline_config(),
+                    require_lineage=True,
+                )
             status = "already_staged" if manifest.promotion_eligible else "staged"
             if not manifest.promotion_eligible:
                 cur.execute(
@@ -306,11 +327,7 @@ def _validate_direct_model_lineage(
             "The forecast candidate is missing its canonical source-model roster.",
         )
     source_model_ids = set(raw_roster)
-    current = (
-        pipeline_config
-        if pipeline_config is not None
-        else load_forecast_pipeline_config()
-    )
+    current = pipeline_config if pipeline_config is not None else load_forecast_pipeline_config()
     algorithms = current.get("algorithms")
     if not isinstance(algorithms, dict):
         raise PromotionConflictError(
@@ -418,14 +435,10 @@ def _validate_active_model_artifacts(
         if "lgbm_cluster" in raw_roster:
             tree_artifacts = manifest.metadata.get("tree_artifacts")
             tree_entry = (
-                tree_artifacts.get("lgbm_cluster")
-                if isinstance(tree_artifacts, dict)
-                else None
+                tree_artifacts.get("lgbm_cluster") if isinstance(tree_artifacts, dict) else None
             )
             generated_id = (
-                tree_entry.get("artifact_set_id")
-                if isinstance(tree_entry, dict)
-                else None
+                tree_entry.get("artifact_set_id") if isinstance(tree_entry, dict) else None
             )
             if not isinstance(generated_id, str) or not generated_id:
                 raise ValueError("candidate tree artifact ID is missing")
@@ -446,24 +459,16 @@ def _validate_active_model_artifacts(
                 else None
             )
             generated_id = (
-                neural_entry.get("artifact_id")
-                if isinstance(neural_entry, dict)
-                else None
+                neural_entry.get("artifact_id") if isinstance(neural_entry, dict) else None
             )
             algorithm_entry = (
-                algorithms.get(neural_model_id)
-                if isinstance(algorithms, dict)
-                else None
+                algorithms.get(neural_model_id) if isinstance(algorithms, dict) else None
             )
             expected_params = (
-                algorithm_entry.get("params")
-                if isinstance(algorithm_entry, dict)
-                else None
+                algorithm_entry.get("params") if isinstance(algorithm_entry, dict) else None
             )
             history_end = (
-                neural_entry.get("history_end")
-                if isinstance(neural_entry, dict)
-                else None
+                neural_entry.get("history_end") if isinstance(neural_entry, dict) else None
             )
             generated_cohort_checksum = (
                 neural_entry.get("training_cohort_checksum")
@@ -495,9 +500,7 @@ def _validate_active_model_artifacts(
                 model_id=neural_model_id,
                 base_dir=base_dir,
                 expected_params=expected_params,
-                expected_source_sales_batch_id=int(
-                    neural_entry["source_sales_batch_id"]
-                ),
+                expected_source_sales_batch_id=int(neural_entry["source_sales_batch_id"]),
                 expected_data_checksum=str(neural_entry["data_checksum"]),
                 expected_history_end=history_end,
                 expected_training_cohort_checksum=current_cohort.checksum,
@@ -554,6 +557,260 @@ def _validate_tree_model_lineage(
             "candidate_lineage_mismatch",
             "Promoted cluster assignments changed after this forecast candidate was generated.",
         )
+
+
+def _validate_customer_bottom_up_blend(
+    cur: Any,
+    *,
+    manifest: ForecastGenerationManifest,
+    pipeline_config: dict[str, Any],
+    require_lineage: bool = False,
+) -> dict[str, Any] | None:
+    """Require current Croston backtest evidence for a derived customer blend."""
+    recorded = manifest.metadata.get(CUSTOMER_BLEND_LINEAGE_METADATA_KEY)
+    if recorded is None:
+        if require_lineage:
+            raise PromotionConflictError(
+                "customer_blend_lineage_mismatch",
+                "The customer bottom-up blend is missing required lineage metadata.",
+            )
+        return None
+    if not isinstance(recorded, dict):
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The customer bottom-up blend has invalid lineage metadata.",
+        )
+    try:
+        settings = validate_blend_settings(pipeline_config["customer_forecast"])
+        from common.services.customer_forecast import (
+            customer_forecast_config_checksum,
+            get_customer_forecast_settings,
+        )
+        from common.services.customer_forecast_backtest import (
+            compute_customer_backtest_component_stats,
+            customer_backtest_config_checksum,
+            get_customer_backtest_settings,
+        )
+
+        current_customer_settings = get_customer_forecast_settings()
+        current_backtest_settings = get_customer_backtest_settings()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The current customer bottom-up blend policy is invalid.",
+        ) from exc
+    if not settings.promotion_enabled:
+        raise PromotionConflictError(
+            "customer_blend_promotion_disabled",
+            f"Customer blend promotion is disabled: {settings.promotion_reason}.",
+        )
+    required_strings = (
+        "customer_run_id",
+        "customer_config_checksum",
+        "customer_source_checksum",
+        "customer_output_checksum",
+        "source_run_id",
+        "source_production_run_id",
+        "source_production_checksum",
+        "backtest_run_id",
+        "backtest_config_checksum",
+        "backtest_component_checksum",
+        "component_checksum",
+    )
+    required_positive_integers = (
+        "source_customer_demand_batch_id",
+        "customer_output_row_count",
+        "customer_output_series_count",
+        "backtest_component_rows",
+        "row_count",
+        "dfu_count",
+    )
+    required_nonnegative_integers = (
+        "blended_row_count",
+        "fallback_row_count",
+    )
+    if (
+        recorded.get("contract_version") != CUSTOMER_BLEND_CONTRACT_VERSION
+        or recorded.get("model_id") != settings.model_id
+        or recorded.get("config_checksum") != customer_blend_config_checksum(settings)
+        or recorded.get("customer_config_checksum")
+        != customer_forecast_config_checksum(current_customer_settings)
+        or recorded.get("backtest_config_checksum")
+        != customer_backtest_config_checksum(
+            current_backtest_settings,
+            settings,
+            current_customer_settings,
+        )
+        or any(
+            not isinstance(recorded.get(key), str) or not recorded[key] for key in required_strings
+        )
+        or not isinstance(recorded.get("source_promotion_id"), int)
+        or any(
+            type(recorded.get(key)) is not int or recorded[key] <= 0
+            for key in required_positive_integers
+        )
+        or any(
+            type(recorded.get(key)) is not int or recorded[key] < 0
+            for key in required_nonnegative_integers
+        )
+        or not isinstance(recorded.get("backtest_gate"), dict)
+        or recorded["backtest_gate"].get("passed") is not True
+    ):
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The customer bottom-up blend is missing current configuration or backtest lineage.",
+        )
+
+    cur.execute(
+        """SELECT promotion.source_run_id, promotion.production_run_id,
+                  promotion.production_checksum,
+                  customer.config_checksum, customer.source_checksum,
+                  customer.row_count, customer.eligible_series,
+                  backtest.config_checksum, backtest.component_checksum,
+                  backtest.component_rows,
+                  accuracy.gate_passed, accuracy.gate_reason,
+                  customer.source_customer_demand_batch_id,
+                  (
+                      SELECT batch_id
+                      FROM audit_load_batch
+                      WHERE domain = 'customer_demand'
+                        AND status = 'completed'
+                      ORDER BY completed_at DESC NULLS LAST, batch_id DESC
+                      LIMIT 1
+                  ),
+                  (
+                      SELECT source_batch_id
+                      FROM customer_demand_profile_refresh_state
+                      WHERE singleton_id = 1
+                  ),
+                  (
+                      SELECT COUNT(*)
+                      FROM audit_load_batch
+                      WHERE domain = 'customer_demand'
+                        AND status = 'running'
+                  )
+           FROM model_promotion_log promotion
+           JOIN customer_forecast_run customer
+             ON customer.run_id = %s::uuid
+            AND customer.run_status = 'completed'
+           JOIN customer_forecast_backtest_run backtest
+             ON backtest.run_id = %s::uuid
+            AND backtest.run_status = 'completed'
+            AND backtest.customer_run_id = customer.run_id
+            AND backtest.source_promotion_id = promotion.id
+            AND backtest.source_production_run_id = promotion.production_run_id
+           JOIN customer_bottom_up_backtest_accuracy accuracy
+             ON accuracy.backtest_run_id = backtest.run_id
+           WHERE promotion.id = %s
+             AND promotion.is_active = TRUE
+             AND promotion.model_id = 'champion'
+           FOR SHARE OF promotion""",
+        (
+            recorded["customer_run_id"],
+            recorded["backtest_run_id"],
+            int(recorded["source_promotion_id"]),
+        ),
+    )
+    row = cur.fetchone()
+    if row is None or (
+        str(row[0]) != recorded["source_run_id"]
+        or str(row[1]) != recorded["source_production_run_id"]
+        or row[2] != recorded["source_production_checksum"]
+        or row[3] != recorded["customer_config_checksum"]
+        or row[4] != recorded["customer_source_checksum"]
+        or int(row[5]) != recorded["customer_output_row_count"]
+        or int(row[6]) != recorded["customer_output_series_count"]
+        or row[7] != recorded["backtest_config_checksum"]
+        or row[8] != recorded["backtest_component_checksum"]
+        or int(row[9]) != recorded["backtest_component_rows"]
+        or not bool(row[10])
+        or row[12] is None
+        or int(row[12]) != recorded["source_customer_demand_batch_id"]
+        or row[13] is None
+        or int(row[13]) != recorded["source_customer_demand_batch_id"]
+        or row[14] is None
+        or int(row[14]) != recorded["source_customer_demand_batch_id"]
+        or int(row[15] or 0) > 0
+    ):
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The customer forecast, source champion, or accuracy backtest changed after blending.",
+        )
+    try:
+        customer_stats = compute_customer_forecast_output_stats(
+            cur,
+            recorded["customer_run_id"],
+        )
+        backtest_stats = compute_customer_backtest_component_stats(
+            cur,
+            recorded["backtest_run_id"],
+        )
+        source_stats = compute_production_payload_stats(
+            cur,
+            recorded["source_production_run_id"],
+        )
+        component_lineage = load_customer_blend_component_lineage(cur, manifest.run_id)
+    except ValueError as exc:
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The customer blend source evidence could not be verified.",
+        ) from exc
+    if (
+        customer_stats.checksum != recorded["customer_output_checksum"]
+        or customer_stats.row_count != recorded["customer_output_row_count"]
+        or customer_stats.series_count != recorded["customer_output_series_count"]
+        or backtest_stats
+        != (
+            recorded["backtest_component_checksum"],
+            recorded["backtest_component_rows"],
+        )
+        or source_stats.checksum != recorded["source_production_checksum"]
+        or str(component_lineage.customer_run_id) != recorded["customer_run_id"]
+        or str(component_lineage.backtest_run_id) != recorded["backtest_run_id"]
+        or component_lineage.source_promotion_id != recorded["source_promotion_id"]
+        or str(component_lineage.source_production_run_id) != recorded["source_production_run_id"]
+    ):
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The customer forecast, source champion, or backtest payload no longer matches its lineage.",
+        )
+    component_stats = compute_customer_blend_component_stats(cur, manifest.run_id)
+    if component_stats != (
+        recorded["component_checksum"],
+        recorded["row_count"],
+        recorded["dfu_count"],
+        recorded["blended_row_count"],
+        recorded["fallback_row_count"],
+    ):
+        raise PromotionConflictError(
+            "customer_blend_lineage_mismatch",
+            "The customer bottom-up blend components no longer match their manifest.",
+        )
+    return {
+        "customer_run_id": recorded["customer_run_id"],
+        "backtest_run_id": recorded["backtest_run_id"],
+        "source_promotion_id": recorded["source_promotion_id"],
+        "source_customer_demand_batch_id": recorded["source_customer_demand_batch_id"],
+        "customer_output_checksum": customer_stats.checksum,
+        "backtest_component_checksum": backtest_stats[0],
+        "component_checksum": component_stats[0],
+        "backtest_gate": recorded["backtest_gate"],
+    }
+
+
+def _is_customer_blend_payload(cur: Any, run_id: UUID) -> bool:
+    """Identify blend staging rows even when their manifest metadata is missing."""
+    cur.execute(
+        """SELECT EXISTS (
+                   SELECT 1
+                   FROM fact_production_forecast_staging
+                   WHERE run_id = %s::uuid
+                     AND model_id = %s
+               )""",
+        (str(run_id), CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID),
+    )
+    row = cur.fetchone()
+    return row is not None and row[0] is True
 
 
 def _current_release_evidence(cur: Any) -> tuple[Any, ...]:
@@ -626,7 +883,10 @@ def _candidate_coverage(
         active_window_months=active_window_months,
         sales_table=sales_table,
     )
-    query = "WITH " + eligibility.sql + """, candidate_rows AS (
+    query = (
+        "WITH "
+        + eligibility.sql
+        + """, candidate_rows AS (
                  SELECT item_id, loc, forecast_month,
                         forecast_qty, forecast_qty_lower, forecast_qty_upper,
                         model_id
@@ -661,6 +921,7 @@ def _candidate_coverage(
                      OR forecast_qty_upper < forecast_qty)::integer
              FROM served
              JOIN eligible_item_locations USING (item_id, loc)"""
+    )
     cur.execute(
         query,
         (
@@ -904,6 +1165,18 @@ def _validate_candidate_evidence(
         )
 
     pipeline_config = load_forecast_pipeline_config()
+    is_customer_blend = (
+        CUSTOMER_BLEND_LINEAGE_METADATA_KEY in manifest.metadata
+        or _is_customer_blend_payload(cur, manifest.run_id)
+    )
+    customer_blend_checks = _validate_customer_bottom_up_blend(
+        cur,
+        manifest=manifest,
+        pipeline_config=pipeline_config,
+        require_lineage=is_customer_blend,
+    )
+    if customer_blend_checks is not None:
+        checks["customer_bottom_up_blend"] = customer_blend_checks
     _validate_direct_model_lineage(
         cur,
         manifest=manifest,
@@ -1045,6 +1318,37 @@ def _lock_active_release_for_replacement(cur: Any) -> tuple[int | None, dict[str
     }
 
 
+def _promotion_requires_customer_demand_lock(conn: Any, source_run_id: UUID) -> bool:
+    """Identify immutable customer-blend lineage before opening the release snapshot."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT EXISTS (
+                   SELECT 1
+                   FROM forecast_generation_run generation
+                   WHERE generation.run_id = %s::uuid
+                     AND (
+                         generation.metadata ? %s
+                         OR EXISTS (
+                             SELECT 1
+                             FROM fact_production_forecast_staging staging
+                             WHERE staging.run_id = generation.run_id
+                               AND staging.model_id = %s
+                         )
+                     )
+               )""",
+            (
+                str(source_run_id),
+                CUSTOMER_BLEND_LINEAGE_METADATA_KEY,
+                CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID,
+            ),
+        )
+        row = cur.fetchone()
+    # End the preflight transaction so the shared lock is committed before the
+    # subsequent SERIALIZABLE release snapshot begins.
+    conn.commit()
+    return row is not None and row[0] is True
+
+
 def promote_forecast_run(
     conn: Any,
     *,
@@ -1059,7 +1363,16 @@ def promote_forecast_run(
     required_months = int(policy["required_months"])
     production_run_id = UUID(str(uuid.uuid4()))
     plan_version = planning_month.strftime("%Y-%m")
-    with conn.transaction():
+    requires_customer_demand_lock = _promotion_requires_customer_demand_lock(
+        conn,
+        source_run_id,
+    )
+    lineage_lock = (
+        customer_demand_snapshot_lock(conn)
+        if requires_customer_demand_lock
+        else nullcontext()
+    )
+    with lineage_lock, conn.transaction():
         with conn.cursor() as cur:
             cur.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
             cur.execute("SELECT pg_advisory_xact_lock(hashtext('forecast_release_promotion'))")

@@ -118,9 +118,30 @@ export interface CandidateSummary {
 
 export type CandidateSummaryMap = Record<string, CandidateSummary>;
 
+export const CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID = "customer_bottom_up_blend";
+
+export interface CustomerBlendBacktestGateSummary {
+  passed: boolean | null;
+  reason: string | null;
+  common_months: number | null;
+  common_dfus: number | null;
+  champion_wape_pct: number | null;
+  customer_wape_pct: number | null;
+  blend_wape_pct: number | null;
+  blend_wape_degradation_pct: number | null;
+}
+
+export interface CustomerBlendCandidateLineage {
+  customer_run_id: string | null;
+  backtest_run_id: string | null;
+  backtest_gate: CustomerBlendBacktestGateSummary | null;
+}
+
 /** Staging forecast summary per model. */
 export interface StagingSummary {
   model_id: string;
+  candidate_model_id: string;
+  customer_blend_lineage: CustomerBlendCandidateLineage | null;
   source_run_id: string;
   run_status: "ready" | "promoted";
   promotion_eligible: boolean;
@@ -206,7 +227,7 @@ export async function fetchBacktestRuns(modelId: string): Promise<BacktestRun[]>
  * (throwing would surface the global "record not found" error toast).
  */
 export async function fetchBacktestCurrent(
-  modelId: string,
+  modelId: string
 ): Promise<Record<string, unknown> | null> {
   try {
     return await fetchJson<Record<string, unknown>>(`/backtest-management/${modelId}/current`);

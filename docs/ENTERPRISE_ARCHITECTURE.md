@@ -2,7 +2,7 @@
 
 ## Supply Chain Command Center
 
-**TOGAF ADM Framework | Version 1.2 | 2026-07-13**
+**TOGAF ADM Framework | Version 1.2 | 2026-07-14**
 
 | Attribute | Value |
 |---|---|
@@ -10,7 +10,7 @@
 | Classification | Internal |
 | TOGAF Version | 10 |
 | Status | Baselined |
-| Last Updated | 2026-07-13 |
+| Last Updated | 2026-07-14 |
 
 ---
 
@@ -560,7 +560,7 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 | Category | Table Count | Examples |
 |---|---|---|
 | Inventory Planning | 12 | `demand_variability`, `safety_stock`, `eoq_cycle_stock`, `replenishment_policy`, `replenishment_exceptions` |
-| Forecasting & Champion | 16+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast` |
+| Forecasting & Champion | 20+ | `backtest_lag_archive`, `champion_experiment`, `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `forecast_snapshot_roster`, `fact_forecast_snapshot`, `customer_demand_profile_refresh_state`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast`, `customer_forecast_backtest_run`, `customer_bottom_up_backtest_component`, `customer_bottom_up_backtest_accuracy`, `customer_bottom_up_blend_component` |
 | AI & Exception | 5 | `ai_insights`, `ai_call_log`, `ai_recommendation_outcomes`, `storyboard_cards` |
 | Operations | 12 | `fact_sop_cycles`, `fact_financial_plan`, `fact_events`, `fact_scenarios` |
 | Platform | 8 | `dim_user`, `dim_role`, `fact_audit_log`, `notification_log`, `webhook_registrations` |
@@ -581,18 +581,44 @@ Migration 209 advances the active contract to
 snapshot candidates so artifact, source-roster, and snapshot lineage is never
 inferred from a legacy status flag.
 
-Customer-level forecasting is a separate generation-only bounded context.
-`customer_forecast_run`, its durable batch/series ledger, and
-`fact_customer_forecast` persist immutable results
-derived from the latest 18 closed customer-demand months for an 18-month
-horizon. Customer-SKUs without sales in the latest six closed months are
-ignored. Active full-history series route to GPU-auto Chronos 2E; remaining
-active series route to customer-only Croston/SBA. Batch transactions and
-`SKIP LOCKED` workers preserve completed work across retry/restart while
-retaining per-run and per-row model lineage. Croston remains outside the
-governed algorithm roster. There is
-deliberately no dependency on the item-location champion, release promotion,
-planner adjustment, or reconciliation workflows.
+Customer-level forecasting remains a separate immutable generation bounded
+context. `customer_forecast_run`, its durable batch/series ledger, and
+`fact_customer_forecast` use Croston/SBA for every active series, with the
+latest 18 closed customer-demand months producing an 18-month horizon.
+Every new manifest binds the exact latest completed `customer_demand` audit
+batch only when `customer_demand_profile_refresh_state` proves the profile MVs
+represent that batch and no load is active. The loader opens a running audit
+batch before fact mutation, refreshes all dependent MVs, then atomically
+completes and stamps that batch; post-write failure invalidates the marker. If
+the process exits hard, the next canonical load reconciles abandoned running
+batches and clears the marker while holding the exclusive lineage lock. If the
+marker mismatches or a newer load completes, subsequent batch persistence,
+resume, backtest creation, blend readiness, and promotion fail closed until
+regeneration; fact rows remain mutable only while the parent is `generating`.
+Customer-SKUs without sales in the latest six closed months are ignored. Batch
+transactions and `SKIP LOCKED` workers preserve completed work across
+retry/restart while retaining per-run and per-row model lineage. Croston stays
+outside the governed five-model algorithm roster.
+
+Customer backtest and forward-blend evidence generation hold a shared session
+advisory lock before opening their repeatable-read snapshots. The
+customer-demand loader holds the conflicting exclusive lock through fact
+mutation, dependent-MV refresh, and marker publication, eliminating a
+snapshot-to-publication load race while allowing independent readers to run
+concurrently. Customer-blend promotion conditionally holds the same shared lock
+from before its serializable validation snapshot through release commit.
+
+The governed bridge to item-location planning is explicit and evidence-backed.
+`customer_forecast_backtest_run` plus append-only component and accuracy rows
+compare normalized customer bottom-up, source champion, and their 50/50 blend
+over six causal one-month origins. The common-cohort gate requires six months,
+1,000 DFUs, and blend WAPE no worse than champion. A matching passing run can
+produce a `customer_bottom_up_blend` staging draft over the exact active
+production spine; unavailable customer evidence and months beyond the
+18-month customer horizon pass through champion, while customer-only DFUs are
+excluded. Forward component evidence binds the generation, customer run,
+backtest, promotion, and production run. Promotion remains explicit and uses
+the normal transactional release gates; no blend auto-promotes.
 The refreshable `mv_customer_demand_series_profile` stores series first/last
 months plus the last positive-sales month. Readiness and manifest creation use
 that compact profile; only workers read the requested 18-month fact history for
@@ -807,12 +833,12 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 ### 5.3 Component Architecture
 
-#### API Layer (84 Mounted Routers)
+#### API Layer (85 Mounted Routers)
 
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
 | `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
-| `api/routers/forecasting/` | 26 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*` | Accuracy KPIs, SHAP, tuning, champion, immutable release generation, exact-run transactional promotion, and planner-facing post-release quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
+| `api/routers/forecasting/` | 27 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*`, `/customer-forecast/*` | Accuracy KPIs, SHAP, tuning, champion, immutable release generation, exact-run transactional promotion, customer Croston generation, causal bottom-up blend evidence, and planner-facing quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
 | `api/routers/intelligence/` | 3 (incl. `customer_analytics/` package — 5 sub-routers) | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*`, `/customer-analytics/*` | AI agent, forecast explain, market intel. The `customer_analytics.py` god-module was split into `intelligence/customer_analytics/` (5 sub-routers + helpers, 16 GET endpoints preserved). |
@@ -1686,6 +1712,16 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | **Rationale** | Release identity and value equality must be database-verifiable properties, not conclusions inferred from "latest" rows, job order, or counts after the fact. Purpose separation preserves bounded FVA evidence without contaminating promotable inputs. Putting archive and replacement in one transaction eliminates the loss window. |
 | **Consequences** | Pre-manifest staging is deliberately non-promotable, so migration 203 requires a fresh generation. An outgoing release without verifiable production lineage or a complete champion-plus-three archive blocks replacement until repaired. Promotion can serialize behind another release and may abort/retry under PostgreSQL serializable conflicts. The transaction gate re-evaluates WAPE/lift/incumbent/bias policy from exact experiment-stamped historical rows, but it does not stamp a "candidate WAPE" on future rows without actuals. Champion experiment review and the post-release common-cohort scorecard remain visible governance surfaces. |
 
+### ADR-020: Evidence-Gated Customer Bottom-Up Blend
+
+| Attribute | Value |
+|---|---|
+| **Status** | Accepted |
+| **Context** | Customer forecasts predict demand at customer grain, while the active production champion predicts sales at item-location grain. A raw sum would mix target semantics, customer coverage exceeds the governed production population, the customer horizon is shorter than production, and a fixed blend without historical comparison could silently degrade forecast quality. |
+| **Decision** | Use Croston/SBA for all active customer series, aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals an exact source-membership checksum plus series/batch counts, executes under one repeatable-read snapshot, evaluates activity independently at each origin, and selects historical champion rows by their stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. A promoted blend cannot recursively become the source for another blend. |
+| **Rationale** | Explicit normalization prevents unit/target drift, a production spine preserves governed coverage, champion fallback avoids artificial gaps, and immutable component evidence makes every blended quantity reproducible. The historical no-degradation gate converts a plausible hierarchy idea into measured release evidence. |
+| **Consequences** | Customer generation and backtesting are additional durable compute workloads with 24-hour ceilings; full-spine blend generation has an 8-hour ceiling. Any change to customer parameters, weights, normalization, or source release invalidates the matching evidence and requires a fresh backtest and draft. Operators must promote a fresh unblended champion before starting a later customer-blend cycle. Months beyond the 18-month customer horizon receive no customer contribution. The blend is promotable but never auto-promoted. |
+
 ---
 
 ## 10. Governance and Compliance
@@ -1842,6 +1878,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | G-17 | Scale Test Coverage | No quantitative baseline for endpoint cost at >1× data volume | Reproducible scale test harness | **Closed** — scale-test scripts added; baselines captured at 1× and 40× for the customer-analytics endpoints (drove ADR-016) | Closed |
 | G-18 | Weekly Partitioning | `fact_customer_demand_monthly` and similar tables partitioned monthly; growth at 40× scale projects out beyond comfortable per-partition row count | Weekly range partitioning for high-volume facts | **Open (DDL drafted)** — cutover SQL drafted and flagged for DBA review; not yet applied. Migration is destructive enough to require a maintenance window | Open |
 | G-19 | Forecast Release Atomicity | Mutable model-scoped staging, ambient promotion source, orchestration-only outgoing archive, and no exact release checksum | Immutable purpose-scoped generations and one atomic archive→publish transaction | **Closed** — migrations 203/205/206, explicit `source_run_id`, canonical roster and generator contract, serializable advisory-locked promotion, exact candidate/production/archive lineage, and database-enforced active singleton; see ADR-019 | Closed |
+| G-20 | Customer Bottom-Up Governance | Customer forecasts existed only as isolated demand-grain outputs with no target normalization, historical comparison, or governed release bridge | Reproducible normalized customer blend with common-cohort quality gate and immutable release lineage | **Closed** — Croston-only customer generation, migration 216 component/accuracy evidence, production-spine fallback policy, and matching backtest requirement; see ADR-020 | Closed |
 
 ### 11.2 Migration Roadmap
 

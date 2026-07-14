@@ -27,6 +27,8 @@ const neuralAlgo: ForecastAlgorithm = {
 
 const readyCandidate: StagingSummary = {
   model_id: "lgbm_cluster",
+  candidate_model_id: "lgbm_cluster",
+  customer_blend_lineage: null,
   source_run_id: "new-run",
   run_status: "ready",
   promotion_eligible: false,
@@ -38,6 +40,31 @@ const readyCandidate: StagingSummary = {
   last_generated_at: "2026-07-10T12:00:00Z",
   min_forecast_month: "2026-07-01",
   max_forecast_month: "2026-12-01",
+};
+
+const customerBlendCandidate: StagingSummary = {
+  ...readyCandidate,
+  model_id: "champion",
+  candidate_model_id: "customer_bottom_up_blend",
+  source_run_id: "blend-run",
+  promotion_eligible: false,
+  row_count: 24_576,
+  dfu_count: 2_048,
+  source_model_count: 2,
+  customer_blend_lineage: {
+    customer_run_id: "customer-run",
+    backtest_run_id: "backtest-run",
+    backtest_gate: {
+      passed: true,
+      reason: "passed",
+      common_months: 6,
+      common_dfus: 2_048,
+      champion_wape_pct: 12.4,
+      customer_wape_pct: 10.1,
+      blend_wape_pct: 9.8,
+      blend_wape_degradation_pct: -2.6,
+    },
+  },
 };
 
 const perClusterChampion: ChampionExperiment = {
@@ -207,5 +234,19 @@ describe("ModelReadinessCard — Generate All", () => {
 
     expect(screen.getByText("Per-cluster routing")).toBeInTheDocument();
     expect(screen.queryByText("ensemble")).not.toBeInTheDocument();
+  });
+
+  it("shows the governed customer blend identity and gate in champion readiness", () => {
+    renderCard({
+      promotedExperiment: perClusterChampion,
+      championConstituents: perClusterChampion.models,
+      staging: { champion: customerBlendCandidate },
+      championDfuCount: customerBlendCandidate.dfu_count,
+    });
+
+    expect(screen.getByText("Customer Bottom-Up Blend")).toBeInTheDocument();
+    expect(screen.getByText("Governed blend")).toBeInTheDocument();
+    expect(screen.getByText(/Backtest gate passed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Blend WAPE 9.8%/i)).toBeInTheDocument();
   });
 });

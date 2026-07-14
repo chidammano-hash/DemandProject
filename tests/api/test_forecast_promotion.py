@@ -147,6 +147,7 @@ async def test_promote_returns_typed_run_and_checksum_lineage():
         patch(
             "api.routers.forecasting.forecast_promotion.promote_forecast_run", return_value=result
         ) as promote,
+        patch("common.services.cache.invalidate_group") as invalidate,
     ):
         from api.main import app
 
@@ -162,6 +163,10 @@ async def test_promote_returns_typed_run_and_checksum_lineage():
     assert response.json()["production_run_id"] == str(PRODUCTION_RUN_ID)
     assert response.json()["candidate_checksum"] == "c" * 64
     assert promote.call_args.kwargs["source_run_id"] == RUN_ID
+    assert [call.args[0] for call in invalidate.call_args_list] == [
+        "forecast_release",
+        "customer_forecast",
+    ]
 
 
 @pytest.mark.asyncio
@@ -217,6 +222,7 @@ async def test_staging_summary_exposes_latest_candidate_source_run():
             date(2026, 7, 1),
             date(2027, 6, 1),
             3,
+            {},
         )
     ]
     with patch("api.core._get_pool", return_value=pool):
@@ -232,9 +238,76 @@ async def test_staging_summary_exposes_latest_candidate_source_run():
     assert summary["source_run_id"] == str(RUN_ID)
     assert summary["run_status"] == "ready"
     assert summary["promotion_eligible"] is True
+    assert summary["candidate_model_id"] == "champion"
+    assert summary["customer_blend_lineage"] is None
     staging_sql, staging_params = cursor.execute.call_args.args
     assert "metadata ->> %s = %s" in staging_sql
     assert staging_params == (
         GENERATOR_CONTRACT_METADATA_KEY,
         GENERATOR_CONTRACT_VERSION,
     )
+
+
+@pytest.mark.asyncio
+async def test_staging_summary_identifies_customer_blend_and_its_backtest_gate():
+    pool, _, cursor = make_pool()
+    customer_run_id = "00000000-0000-0000-0000-000000000333"
+    backtest_run_id = "00000000-0000-0000-0000-000000000444"
+    cursor.fetchall.return_value = [
+        (
+            "champion",
+            RUN_ID,
+            "ready",
+            False,
+            120,
+            10,
+            date(2026, 7, 1),
+            datetime(2026, 7, 10, tzinfo=UTC),
+            date(2026, 7, 1),
+            date(2027, 6, 1),
+            2,
+            {
+                "customer_bottom_up_blend": {
+                    "model_id": "customer_bottom_up_blend",
+                    "customer_run_id": customer_run_id,
+                    "backtest_run_id": backtest_run_id,
+                    "backtest_gate": {
+                        "passed": True,
+                        "reason": "passed",
+                        "common_months": 6,
+                        "common_dfus": 2048,
+                        "champion_wape_pct": 12.4,
+                        "customer_wape_pct": 10.1,
+                        "blend_wape_pct": 9.8,
+                        "blend_wape_degradation_pct": -2.6,
+                        "internal_only": "not exposed",
+                    },
+                }
+            },
+        )
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/backtest-management/staging-summary")
+
+    assert response.status_code == 200
+    summary = response.json()["champion"]
+    assert summary["candidate_model_id"] == "customer_bottom_up_blend"
+    assert summary["customer_blend_lineage"] == {
+        "customer_run_id": customer_run_id,
+        "backtest_run_id": backtest_run_id,
+        "backtest_gate": {
+            "passed": True,
+            "reason": "passed",
+            "common_months": 6,
+            "common_dfus": 2048,
+            "champion_wape_pct": 12.4,
+            "customer_wape_pct": 10.1,
+            "blend_wape_pct": 9.8,
+            "blend_wape_degradation_pct": -2.6,
+        },
+    }

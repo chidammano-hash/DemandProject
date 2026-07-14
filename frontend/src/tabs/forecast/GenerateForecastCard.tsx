@@ -7,6 +7,10 @@
  */
 import { Play, Loader2 } from "lucide-react";
 
+import {
+  CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID,
+  type CustomerBlendCandidateLineage,
+} from "@/api/queries/backtest-management";
 import type { ProductionForecastVersion } from "@/api/queries/production-forecast";
 import { modelLabel } from "@/lib/model-labels";
 import { timeAgo } from "@/components/shared-tuning-utils";
@@ -28,6 +32,8 @@ interface GenerateForecastCardProps {
   candidateGenerated: boolean;
   candidateStaged: boolean;
   candidateDfuCount?: number;
+  candidateModelId?: string;
+  customerBlendLineage?: CustomerBlendCandidateLineage | null;
   isStaging: boolean;
   isPromoting: boolean;
   isSelectedPromoted: boolean;
@@ -50,6 +56,8 @@ export function GenerateForecastCard({
   candidateGenerated,
   candidateStaged,
   candidateDfuCount,
+  candidateModelId,
+  customerBlendLineage,
   isStaging,
   isPromoting,
   isSelectedPromoted,
@@ -60,7 +68,14 @@ export function GenerateForecastCard({
   onPromote,
   latestVersion,
 }: GenerateForecastCardProps) {
-  const selectedLabel = selectedModel === "champion" ? "Champion" : modelLabel(selectedModel);
+  const isCustomerBlend =
+    candidateGenerated && candidateModelId === CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID;
+  const selectedLabel = isCustomerBlend
+    ? "Customer Bottom-Up Blend"
+    : selectedModel === "champion"
+      ? "Champion"
+      : modelLabel(selectedModel);
+  const customerBlendGate = customerBlendLineage?.backtest_gate;
   return (
     <div className="space-y-4">
       <Card>
@@ -93,6 +108,47 @@ export function GenerateForecastCard({
                 : modelLabel(selectedModel)}
             </span>
           </div>
+
+          {isCustomerBlend ? (
+            <div
+              className="rounded-md border border-blue-200 bg-blue-50/70 p-3 text-xs dark:border-blue-800 dark:bg-blue-950/20"
+              role="status"
+            >
+              <p className="font-medium text-foreground">Customer Bottom-Up Blend</p>
+              <p className="mt-1 text-muted-foreground">
+                Croston customer forecasts blended bottom-up with the warehouse-item champion.
+              </p>
+              <p
+                className={
+                  customerBlendGate?.passed === true
+                    ? "mt-2 font-medium text-emerald-700 dark:text-emerald-300"
+                    : "mt-2 font-medium text-amber-700 dark:text-amber-300"
+                }
+              >
+                {customerBlendGate?.passed === true
+                  ? "Backtest gate passed"
+                  : customerBlendGate?.passed === false
+                    ? "Backtest gate failed"
+                    : "Backtest gate unavailable"}
+                {customerBlendGate?.blend_wape_pct != null
+                  ? ` · Blend WAPE ${customerBlendGate.blend_wape_pct.toFixed(1)}%`
+                  : ""}
+              </p>
+              {customerBlendGate ? (
+                <p className="mt-1 text-muted-foreground">
+                  {customerBlendGate.common_months != null
+                    ? `${customerBlendGate.common_months} common months`
+                    : "Common months unavailable"}
+                  {customerBlendGate.common_dfus != null
+                    ? ` · ${customerBlendGate.common_dfus.toLocaleString()} common DFUs`
+                    : ""}
+                  {customerBlendGate.blend_wape_degradation_pct != null
+                    ? ` · ${customerBlendGate.blend_wape_degradation_pct > 0 ? "+" : ""}${customerBlendGate.blend_wape_degradation_pct.toFixed(1)} pp vs champion`
+                    : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Confidence intervals checkbox */}
           <div className="flex items-center gap-2">

@@ -30,15 +30,85 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/customer-forecast", tags=["customer-forecast"])
 
+_SUBMISSION_RECONCILIATION_GRACE_SECONDS = 300
+
 _RUN_SELECT = """
-    SELECT run_id::text, job_id, run_status, planning_month,
-           history_start, history_end, forecast_start, forecast_end,
-           eligible_series, row_count, skipped_series, model_id,
-           created_at, started_at, completed_at, error_summary,
-           skip_reason_counts, model_route_counts,
-           total_series, completed_series, total_batches, completed_batches
-    FROM customer_forecast_run
+    SELECT run.run_id::text,
+           COALESCE(
+               run.job_id,
+               (
+                   SELECT job.job_id
+                   FROM job_history job
+                   WHERE job.job_type = 'generate_customer_forecast'
+                     AND job.params ->> 'run_id' = run.run_id::text
+                     AND job.created_at >= COALESCE(run.started_at, run.created_at)
+                   ORDER BY job.created_at DESC
+                   LIMIT 1
+               )
+           ),
+           run.run_status, run.planning_month,
+           run.history_start, run.history_end, run.forecast_start, run.forecast_end,
+           run.eligible_series, run.row_count, run.skipped_series, run.model_id,
+           run.created_at, run.started_at, run.completed_at, run.error_summary,
+           run.skip_reason_counts, run.model_route_counts,
+           run.total_series, run.completed_series, run.total_batches, run.completed_batches
+    FROM customer_forecast_run run
 """
+
+
+def _reconcile_customer_forecast_submissions(cur: Any) -> None:
+    """Repair a manifest/job link or retire a stale pre-submission manifest."""
+    cur.execute(
+        """WITH latest_job AS (
+               SELECT DISTINCT ON (job.params ->> 'run_id') job.*
+               FROM job_history job
+               WHERE job.job_type = 'generate_customer_forecast'
+               ORDER BY job.params ->> 'run_id', job.created_at DESC
+           )
+           UPDATE customer_forecast_run run
+           SET job_id = COALESCE(run.job_id, job.job_id),
+               run_status = CASE
+                   WHEN job.status = 'failed' THEN 'failed'
+                   WHEN job.status = 'cancelled' THEN 'cancelled'
+                   WHEN job.status = 'completed' AND run.run_status <> 'completed'
+                   THEN 'failed'
+                   ELSE run.run_status
+               END,
+               error_summary = CASE
+                   WHEN job.status = 'failed' THEN 'managed job failed'
+                   WHEN job.status = 'cancelled' THEN 'managed job cancelled'
+                   WHEN job.status = 'completed' AND run.run_status <> 'completed'
+                   THEN 'managed job completed without a completed customer forecast manifest'
+                   ELSE run.error_summary
+               END,
+               completed_at = CASE
+                   WHEN job.status IN ('failed', 'cancelled', 'completed')
+                   THEN COALESCE(job.completed_at, NOW())
+                   ELSE run.completed_at
+               END
+           FROM latest_job job
+           WHERE run.run_status IN ('queued', 'generating')
+             AND job.params ->> 'run_id' = run.run_id::text
+             AND job.created_at >= COALESCE(run.started_at, run.created_at)"""
+    )
+    cur.execute(
+        """UPDATE customer_forecast_run run
+           SET run_status = 'failed',
+               error_summary = 'job submission was not persisted',
+               completed_at = NOW()
+           WHERE run.run_status = 'queued'
+             AND run.job_id IS NULL
+             AND COALESCE(run.started_at, run.created_at)
+                 < NOW() - (%s * INTERVAL '1 second')
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM job_history job
+                 WHERE job.job_type = 'generate_customer_forecast'
+                   AND job.params ->> 'run_id' = run.run_id::text
+                   AND job.created_at >= COALESCE(run.started_at, run.created_at)
+             )""",
+        (_SUBMISSION_RECONCILIATION_GRACE_SECONDS,),
+    )
 
 
 def _iso(value: date | datetime | None) -> str | None:
@@ -103,7 +173,7 @@ def _resolved_window() -> tuple[dict[str, Any], Any]:
 
 
 @router.get("/readiness")
-@cached_sync(ttl=300, group="customer_forecast")
+@cached_sync(ttl=5, group="customer_forecast")
 def get_readiness() -> dict[str, Any]:
     try:
         settings, window = _resolved_window()
@@ -129,6 +199,8 @@ def generate_customer_forecasts() -> JSONResponse:
     try:
         settings, window = _resolved_window()
         with get_conn() as conn:
+            with conn.cursor() as cur:
+                _reconcile_customer_forecast_submissions(cur)
             readiness = load_customer_forecast_readiness(
                 conn,
                 window,
@@ -145,8 +217,9 @@ def generate_customer_forecasts() -> JSONResponse:
                     "INSERT INTO customer_forecast_run "
                     "(run_id, run_status, planning_month, history_start, history_end, "
                     "forecast_start, forecast_end, history_months, horizon_months, "
-                    "model_id, config_checksum) "
-                    "VALUES (%s::uuid, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "model_id, config_checksum, source_customer_demand_batch_id, started_at) "
+                    "VALUES (%s::uuid, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                    "NOW())",
                     (
                         run_id,
                         window.planning_month,
@@ -158,6 +231,7 @@ def generate_customer_forecasts() -> JSONResponse:
                         window.horizon_months,
                         settings["model_id"],
                         customer_forecast_config_checksum(settings),
+                        int(readiness["source_customer_demand_batch_id"]),
                     ),
                 )
             conn.commit()
@@ -184,12 +258,6 @@ def generate_customer_forecasts() -> JSONResponse:
             triggered_by="api",
             max_retries=1,
         )
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "UPDATE customer_forecast_run SET job_id = %s WHERE run_id = %s::uuid",
-                (job_id, run_id),
-            )
-            conn.commit()
     except (RuntimeError, ValueError, psycopg.Error) as exc:
         logger.exception("Submitting customer forecast job failed")
         try:
@@ -290,7 +358,15 @@ def retry_run(run_id: uuid.UUID) -> JSONResponse:
         settings = get_customer_forecast_settings()
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT run_status, planning_month, config_checksum, total_batches "
+                "SELECT run_status, planning_month, config_checksum, total_batches, "
+                "source_customer_demand_batch_id, "
+                "(SELECT batch_id FROM audit_load_batch "
+                " WHERE domain = 'customer_demand' AND status = 'completed' "
+                " ORDER BY completed_at DESC NULLS LAST, batch_id DESC LIMIT 1), "
+                "(SELECT source_batch_id FROM customer_demand_profile_refresh_state "
+                " WHERE singleton_id = 1), "
+                "(SELECT COUNT(*) FROM audit_load_batch "
+                " WHERE domain = 'customer_demand' AND status = 'running') "
                 "FROM customer_forecast_run WHERE run_id = %s::uuid FOR UPDATE",
                 (str(run_id),),
             )
@@ -307,6 +383,22 @@ def retry_run(run_id: uuid.UUID) -> JSONResponse:
                     status_code=409,
                     detail="Customer forecast configuration changed; start a new generation",
                 )
+            if int(row[7] or 0) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Customer demand load is active; retry after it completes",
+                )
+            if (
+                row[4] is None
+                or row[5] is None
+                or row[6] is None
+                or int(row[4]) != int(row[5])
+                or int(row[4]) != int(row[6])
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Customer demand changed; start a new generation",
+                )
             planning_month = row[1]
             cur.execute(
                 "UPDATE customer_forecast_batch SET attempt_count = 0 "
@@ -316,6 +408,7 @@ def retry_run(run_id: uuid.UUID) -> JSONResponse:
             )
             cur.execute(
                 "UPDATE customer_forecast_run SET run_status = 'queued', job_id = NULL, "
+                "started_at = NOW(), "
                 "completed_at = NULL, error_summary = NULL WHERE run_id = %s::uuid",
                 (str(run_id),),
             )
@@ -336,12 +429,6 @@ def retry_run(run_id: uuid.UUID) -> JSONResponse:
             triggered_by="api",
             max_retries=1,
         )
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "UPDATE customer_forecast_run SET job_id = %s WHERE run_id = %s::uuid",
-                (job_id, str(run_id)),
-            )
-            conn.commit()
     except (RuntimeError, ValueError, psycopg.Error) as exc:
         logger.exception("Submitting customer forecast retry failed")
         try:

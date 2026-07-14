@@ -19,7 +19,7 @@ Everything is triggered from one of two tabs:
 
 | Surface | Sidebar tab | What it drives |
 |---|---|---|
-| **Guided modeling flow** | **Forecasting** (**Clustering → Backtest → Tune → Champion → Forecast → Period Roll → Customer Forecast**) | Phases 5–8: run selectable item-location backtests, control the item-location release, execute the monthly roll, and independently generate customer-level forecasts |
+| **Guided modeling flow** | **Forecasting** (**Clustering → Backtest → Tune → Champion → Forecast → Period Roll → Customer Forecast**) | Phases 5–8: run selectable item-location backtests, control the item-location release, execute the monthly roll, generate customer forecasts, and validate a governed customer bottom-up blend |
 | **AI-guided operations + generic runner** | **Workflows** (**Plan & Run**, **Workflow Library**, **Manual Load**) | Input readiness through clustering, forecasting, archive, and inventory; plus monitoring, chaining, scheduling, and advanced loading |
 
 **Key facts that apply to everything below:**
@@ -199,9 +199,9 @@ already archived planning month.
 
 ### Customer Forecast (separate Forecasting stage)
 
-Open **Forecasting → Customer Forecast** to generate read-only forecasts at
-item-location-customer-month grain. This stage is independent of Backtest,
-Champion, Forecast release, and Period Roll:
+Open **Forecasting → Customer Forecast** to generate immutable forecasts at
+item-location-customer-month grain, validate their item-location blend, and
+prepare a governed draft:
 
 1. Confirm the readiness card shows the latest 18 fully closed months and no
    source blocker. For a July 2026 system month, the input window is January
@@ -209,16 +209,32 @@ Champion, Forecast release, and Period Roll:
 2. Review the coverage split. Customer-SKUs with no sales in the latest six
    closed months are shown as ignored and produce no rows.
 3. Click **Generate Customer Forecasts**. The durable job builds 10,000-series
-   recovery batches, runs one GPU-auto Chronos worker plus parallel Croston CPU
-   workers, and writes July 2026 through December 2027 in that example.
+   recovery batches, runs Croston/SBA on parallel CPU workers, and writes July
+   2026 through December 2027 in that example.
 4. Monitor exact completed/total customer-SKU and batch counts plus ETA. Active
    runs can be cancelled; **Resume Saved Batches** preserves completed work.
 5. Choose item, location, and customer to compare actual history with the
    generated result, or export the completed run.
+6. Confirm the source release is a freshly promoted unblended champion. The UI
+   blocks recursively using a promoted customer blend as the next blend input.
+7. Click **Run Blend Backtest**. Review the six-origin common-cohort WAPE, MAE,
+   bias, and accuracy for **Customer Bottom-Up**, **Source Champion**, and
+   **Customer Blend**. The gate needs six months, 1,000 DFUs, and blend WAPE no
+   worse than champion WAPE.
+8. When the matching backtest passes, click **Generate Customer Blend Draft**.
+   Review coverage and lineage before using the existing stage and explicit
+   promotion actions for the returned generation run.
 
-This stage has no edit, AI adjustment, reconciliation, staging, champion, or
-production-promotion action. Its item-location totals are simple sums of the
-customer rows and do not change `fact_production_forecast`.
+The draft follows the full active production spine. Customer forecasts are
+summed to item-location, converted from demand to sales with the causal
+18-month fulfillment ratio, and blended 50/50 with champion where qualified.
+Missing customer evidence and production months 19–24 pass through champion;
+customer-only DFUs are excluded. Generating the draft does not change
+`fact_production_forecast`, and it never auto-promotes. A changed customer
+configuration, weight, normalization policy, or source release requires a new
+backtest and draft. Stage and promotion revalidate current policy and recompute
+the frozen customer, historical backtest, source-production, and forward blend
+payload checksums.
 
 > **Visualizing the result (Item Analysis tab).** Once generated/promoted, open **Item Analysis**
 > for a DFU to see each model's **future** forecast (`staging_<model>` lines + the promoted
@@ -230,6 +246,10 @@ customer rows and do not change `fact_production_forecast`.
 > and an explicit bound clamps forecast series too (empty = full horizon), so the visible
 > window always matches the control. If the **SHAP** or **AI Champion** toggle is on but the
 > DFU has no data for it, the tab renders an explanatory note instead of an empty panel.
+
+For customer blend review, use the explicit **Customer Bottom-Up**, **Source
+Champion**, and **Customer Blend** overlays. Champion-fallback months must be
+marked as fallback rather than drawn as if customer evidence contributed.
 
 ---
 

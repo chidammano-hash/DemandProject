@@ -8,7 +8,11 @@
 import { Loader2, CheckCircle2, Dumbbell, BarChart3, Crown, RotateCcw } from "lucide-react";
 
 import type { ChampionExperiment } from "@/api/queries/champion-experiments";
-import type { TrainingStatusMap, StagingSummaryMap } from "@/api/queries/backtest-management";
+import {
+  CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID,
+  type TrainingStatusMap,
+  type StagingSummaryMap,
+} from "@/api/queries/backtest-management";
 import { modelLabel, MODEL_TYPE_COLORS } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
@@ -86,7 +90,11 @@ export function ModelReadinessCard({
 }: ModelReadinessCardProps) {
   const isGeneratingAll = generatingModelId === "__all__";
   const releasePublished = activeProductionModelId !== null;
-  const championGenerated = (staging.champion?.row_count ?? 0) > 0;
+  const championCandidate = staging.champion;
+  const championGenerated = (championCandidate?.row_count ?? 0) > 0;
+  const isCustomerBlend =
+    championCandidate?.candidate_model_id === CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID;
+  const customerBlendGate = championCandidate?.customer_blend_lineage?.backtest_gate;
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -198,20 +206,35 @@ export function ModelReadinessCard({
                   <div className="flex items-center gap-1.5">
                     <Crown className="h-3.5 w-3.5 text-amber-600" />
                     <div>
-                      <div className="text-sm font-medium">Champion</div>
+                      <div className="text-sm font-medium">
+                        {isCustomerBlend ? "Customer Bottom-Up Blend" : "Champion"}
+                      </div>
                       <div className="text-[10px] text-muted-foreground">
-                        {championConstituents.join(", ") || "no promoted experiment"}
+                        {isCustomerBlend
+                          ? "Croston customer bottom-up + source champion"
+                          : championConstituents.join(", ") || "no promoted experiment"}
                       </div>
                     </div>
                   </div>
                 </TableCell>
                 <TableCell>
                   <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 text-[10px] px-1.5 py-0">
-                    {championStrategyLabel(promotedExperiment.strategy)}
+                    {isCustomerBlend
+                      ? "Governed blend"
+                      : championStrategyLabel(promotedExperiment.strategy)}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-sm tabular-nums">
-                  {promotedExperiment.champion_accuracy != null ? (
+                  {isCustomerBlend && customerBlendGate?.blend_wape_pct != null ? (
+                    <div>
+                      <div>Blend WAPE {customerBlendGate.blend_wape_pct.toFixed(1)}%</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {customerBlendGate.blend_wape_degradation_pct != null
+                          ? `${customerBlendGate.blend_wape_degradation_pct > 0 ? "+" : ""}${customerBlendGate.blend_wape_degradation_pct.toFixed(1)} pp vs champion`
+                          : "common backtest"}
+                      </div>
+                    </div>
+                  ) : promotedExperiment.champion_accuracy != null ? (
                     `${promotedExperiment.champion_accuracy.toFixed(1)}%`
                   ) : (
                     <span className="text-muted-foreground">--</span>
@@ -241,6 +264,22 @@ export function ModelReadinessCard({
                   ) : (
                     <span className="text-amber-600">Generate a release candidate</span>
                   )}
+                  {isCustomerBlend ? (
+                    <div
+                      className={cn(
+                        "mt-1 text-[10px] font-medium",
+                        customerBlendGate?.passed === true
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-amber-700 dark:text-amber-300"
+                      )}
+                    >
+                      {customerBlendGate?.passed === true
+                        ? "Backtest gate passed"
+                        : customerBlendGate?.passed === false
+                          ? "Backtest gate failed"
+                          : "Backtest gate unavailable"}
+                    </div>
+                  ) : null}
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">

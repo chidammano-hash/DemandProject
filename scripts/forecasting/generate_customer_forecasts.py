@@ -90,15 +90,7 @@ def _run_parallel_workers(run_id: str, settings: dict[str, Any]) -> None:
         with psycopg.connect(**get_db_params()) as conn:
             progress = load_customer_forecast_progress(conn, run_id)
         route_counts = progress["model_route_counts"]
-        if int(route_counts.get(str(settings["model_id"]), 0)) > 0:
-            for _worker_index in range(int(settings["chronos_workers"])):
-                workers.append(
-                    subprocess.Popen(
-                        _worker_command(run_id, [str(settings["model_id"])]),
-                        text=True,
-                    )
-                )
-        cpu_routes = [str(settings["fallback_model_id"])]
+        cpu_routes = [str(settings["model_id"])]
         cpu_series = sum(int(route_counts.get(route, 0)) for route in cpu_routes)
         if cpu_series > 0:
             cpu_worker_count = min(
@@ -171,10 +163,15 @@ def main() -> None:
 
     try:
         result = _run_parent(args.run_id)
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError, psycopg.Error) as exc:
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError, psycopg.Error):
         try:
             with psycopg.connect(**get_db_params()) as conn:
-                mark_customer_forecast_run_terminal(conn, args.run_id, "failed", str(exc))
+                mark_customer_forecast_run_terminal(
+                    conn,
+                    args.run_id,
+                    "failed",
+                    "customer forecast generation failed",
+                )
         except psycopg.Error:
             logger.exception("Marking customer forecast run failed")
         logger.exception("Generating customer forecasts failed")

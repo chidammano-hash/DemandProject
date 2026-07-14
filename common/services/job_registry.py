@@ -70,6 +70,8 @@ from common.services.job_state import (
     _run_etl_pipeline,
     _run_generate_ai_insights,
     _run_generate_customer_forecast,
+    _run_generate_customer_forecast_backtest,
+    _run_generate_customer_forecast_blend,
     _run_generate_exceptions,
     _run_generate_production_forecast,
     _run_generate_storyboard,
@@ -97,6 +99,7 @@ from common.services.job_state import (
     _store_attempt_result,
     _validate_attempt_result,
     bind_job_attempt,
+    finalize_customer_forecast_job_cancellation,
     get_job_log,
     get_job_pid,
     get_job_process_identity,
@@ -104,6 +107,7 @@ from common.services.job_state import (
     process_identity_matches,
     reconcile_backtest_run,
     reconcile_cluster_pipeline_experiment,
+    reconcile_customer_forecast_job,
     reset_job_attempt,
     verify_backtest_artifact_identity,
     verify_backtest_tracking_identity,
@@ -118,6 +122,14 @@ except ImportError:
 import psycopg
 
 logger = logging.getLogger(__name__)
+
+_CUSTOMER_FORECAST_JOB_TYPES = frozenset(
+    {
+        "generate_customer_forecast",
+        "generate_customer_forecast_backtest",
+        "generate_customer_forecast_blend",
+    }
+)
 
 _BACKTEST_JOB_MODELS = {
     "backtest_lgbm": "lgbm_cluster",
@@ -289,11 +301,27 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "generate_customer_forecast": JobTypeDef(
         type_id="generate_customer_forecast",
         label="Customer Forecast",
-        description="Generate resumable 18-month Chronos/Croston forecasts at customer grain",
+        description="Generate resumable 18-month Croston/SBA forecasts at customer grain",
         group="forecast",
         callable=_run_generate_customer_forecast,
         params_schema={"run_id": None},
         default_max_retries=1,
+    ),
+    "generate_customer_forecast_backtest": JobTypeDef(
+        type_id="generate_customer_forecast_backtest",
+        label="Customer Forecast Backtest",
+        description="Compare Croston bottom-up, champion, and blended historical accuracy",
+        group="forecast",
+        callable=_run_generate_customer_forecast_backtest,
+        params_schema={"run_id": None, "customer_run_id": None},
+    ),
+    "generate_customer_forecast_blend": JobTypeDef(
+        type_id="generate_customer_forecast_blend",
+        label="Customer Bottom-Up Blend",
+        description="Generate a backtest-qualified blended champion candidate",
+        group="forecast",
+        callable=_run_generate_customer_forecast_blend,
+        params_schema={"run_id": None, "customer_run_id": None},
     ),
     "prepare_forecast_snapshot_contenders": JobTypeDef(
         type_id="prepare_forecast_snapshot_contenders",
@@ -1453,26 +1481,19 @@ class JobManager:
             logger.info("Cancellation requested for in-process job %s", job_id)
             return True
         type_def = JOB_TYPE_REGISTRY.get(str(job.get("job_type") or ""))
-        self._reconcile_job_terminal_state(
+        terminal_state = self._finalize_job_cancellation(
             job_id,
             type_def,
-            "cancelled",
-        )
-        cancelled = self._db_update_status(
-            job_id,
-            "cancelled",
             expected_status=job["status"],
             expected_attempt_token=job.get("attempt_token"),
-            completed_at=datetime.now(UTC),
-            progress_msg="Cancelled by user",
         )
-        if job["status"] == "queued" and cancelled:
+        if job["status"] == "queued" and terminal_state is not None:
             with self._state_lock:
                 active_group = self._active_jobs.pop(job_id, None)
                 self._cancel_flags.pop(job_id, None)
             if active_group:
                 self._dispatch_next(active_group)
-        return True
+        return terminal_state != "completed"
 
     @staticmethod
     def _kill_process(job_id: str) -> bool:
@@ -1640,6 +1661,50 @@ class JobManager:
             "backtest_nbeats",
         }:
             reconcile_backtest_run(job_id, terminal_status)
+            return
+        if type_def.type_id in _CUSTOMER_FORECAST_JOB_TYPES:
+            reconcile_customer_forecast_job(job_id, type_def.type_id, terminal_status)
+
+    def _finalize_job_cancellation(
+        self,
+        job_id: str,
+        type_def: JobTypeDef | None,
+        *,
+        expected_status: str,
+        expected_attempt_token: str | None,
+        retry_count: int | None = None,
+    ) -> str | None:
+        """Persist and return the winning terminal state for a cancellation race."""
+        if type_def is not None and type_def.type_id in _CUSTOMER_FORECAST_JOB_TYPES:
+            terminal_state = finalize_customer_forecast_job_cancellation(
+                job_id,
+                type_def.type_id,
+                expected_status=expected_status,
+                expected_attempt_token=expected_attempt_token,
+                retry_count=retry_count,
+            )
+            if terminal_state == "completed":
+                logger.info(
+                    "Job %s committed customer forecast success before cancellation",
+                    job_id,
+                )
+            return terminal_state
+
+        self._reconcile_job_terminal_state(job_id, type_def, "cancelled")
+        cancelled_kwargs: dict[str, Any] = {
+            "completed_at": datetime.now(UTC),
+            "progress_msg": "Cancelled by user",
+        }
+        if retry_count is not None:
+            cancelled_kwargs["retry_count"] = retry_count
+        updated = self._db_update_status(
+            job_id,
+            "cancelled",
+            expected_status=expected_status,
+            expected_attempt_token=expected_attempt_token,
+            **cancelled_kwargs,
+        )
+        return "cancelled" if updated else None
 
     def _quarantine_recovered_job(
         self,
@@ -2150,13 +2215,11 @@ class JobManager:
                     cancel_event = self._cancel_flags.get(job_id)
                     if cancel_event and cancel_event.is_set():
                         if self._kill_process(job_id):
-                            self._db_update_status(
+                            self._finalize_job_cancellation(
                                 job_id,
-                                "cancelled",
+                                type_def,
                                 expected_status="running",
                                 expected_attempt_token=attempt_token,
-                                completed_at=datetime.now(UTC),
-                                progress_msg="Cancelled by user (re-adopted job)",
                             )
                             return
                         logger.error(
@@ -2167,13 +2230,11 @@ class JobManager:
                     time.sleep(2)
                 cancel_event = self._cancel_flags.get(job_id)
                 if cancel_event and cancel_event.is_set():
-                    self._db_update_status(
+                    self._finalize_job_cancellation(
                         job_id,
-                        "cancelled",
+                        type_def,
                         expected_status="running",
                         expected_attempt_token=attempt_token,
-                        completed_at=datetime.now(UTC),
-                        progress_msg="Cancelled by user (re-adopted job)",
                     )
                     return
                 job = self._db_get(job_id)
@@ -2395,7 +2456,10 @@ class JobManager:
         params = job.get("params") or {}
         if isinstance(params, str):
             params = json.loads(params)
-        if type_def.type_id == "generate_production_forecast":
+        if type_def.type_id in {
+            "generate_production_forecast",
+            "generate_customer_forecast_blend",
+        }:
             run_id = params.get("run_id")
             if not run_id:
                 raise RuntimeError("Recovered generation is missing run_id")
@@ -2411,6 +2475,26 @@ class JobManager:
             status, row_count, artifact_checksum = row
             if status != "ready" or int(row_count or 0) <= 0 or not artifact_checksum:
                 raise RuntimeError("Recovered generation manifest is not a complete ready run")
+            return
+
+        if type_def.type_id == "generate_customer_forecast_backtest":
+            run_id = params.get("run_id")
+            if not run_id:
+                raise RuntimeError("Recovered customer backtest is missing run_id")
+            with _get_conn() as conn:
+                row = conn.execute(
+                    """SELECT run_status, component_rows, component_checksum
+                       FROM customer_forecast_backtest_run
+                       WHERE run_id = %s::uuid""",
+                    (str(run_id),),
+                ).fetchone()
+            if (
+                row is None
+                or row[0] != "completed"
+                or int(row[1] or 0) <= 0
+                or not row[2]
+            ):
+                raise RuntimeError("Recovered customer backtest is not complete")
             return
 
         if type_def.type_id == "generate_customer_forecast":
@@ -2712,36 +2796,22 @@ class JobManager:
                     break
 
                 except JobCancelledError:
-                    self._reconcile_job_terminal_state(
+                    self._finalize_job_cancellation(
                         job_id,
                         type_def,
-                        "cancelled",
-                    )
-                    self._db_update_status(
-                        job_id,
-                        "cancelled",
                         expected_status="running",
                         expected_attempt_token=attempt_token,
-                        completed_at=datetime.now(UTC),
-                        progress_msg="Cancelled by user",
                         retry_count=retry_count,
                     )
                     break
 
                 except Exception as exc:  # noqa: BLE001,RUF100 — persist worker failures.
                     if cancel_event and cancel_event.is_set():
-                        self._reconcile_job_terminal_state(
+                        self._finalize_job_cancellation(
                             job_id,
                             type_def,
-                            "cancelled",
-                        )
-                        self._db_update_status(
-                            job_id,
-                            "cancelled",
                             expected_status="running",
                             expected_attempt_token=attempt_token,
-                            completed_at=datetime.now(UTC),
-                            progress_msg="Cancelled by user",
                             retry_count=retry_count,
                         )
                         break
@@ -2773,18 +2843,11 @@ class JobManager:
                         )
                         if cancel_event:
                             if cancel_event.wait(delay):
-                                self._reconcile_job_terminal_state(
+                                self._finalize_job_cancellation(
                                     job_id,
                                     type_def,
-                                    "cancelled",
-                                )
-                                self._db_update_status(
-                                    job_id,
-                                    "cancelled",
                                     expected_status="running",
                                     expected_attempt_token=attempt_token,
-                                    completed_at=datetime.now(UTC),
-                                    progress_msg="Cancelled by user",
                                     retry_count=retry_count,
                                 )
                                 break

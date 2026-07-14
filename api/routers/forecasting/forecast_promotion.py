@@ -11,9 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.core.constants import CHAMPION_MODEL_ID
+from common.core.constants import CHAMPION_MODEL_ID, CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID
 from common.core.planning_date import get_planning_date
 from common.core.utils import get_forecastable_model_ids, load_forecast_pipeline_config
+from common.services.customer_forecast_blend_contract import (
+    CUSTOMER_BLEND_LINEAGE_METADATA_KEY,
+)
 from common.services.forecast_generation import (
     GENERATOR_CONTRACT_METADATA_KEY,
     GENERATOR_CONTRACT_VERSION,
@@ -43,6 +46,61 @@ def _validate_forecast_model_id(model_id: str) -> None:
             status_code=404,
             detail=f"Unknown forecast model '{model_id}'. Valid models: {valid_models}",
         )
+
+
+def _json_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _json_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _json_integer(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _staging_candidate_identity(
+    requested_model_id: str, metadata: object
+) -> tuple[str, dict[str, Any] | None]:
+    """Return the governed candidate identity without exposing arbitrary metadata."""
+    if not isinstance(metadata, dict):
+        return requested_model_id, None
+    lineage = metadata.get(CUSTOMER_BLEND_LINEAGE_METADATA_KEY)
+    if (
+        not isinstance(lineage, dict)
+        or lineage.get("model_id") != CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID
+    ):
+        return requested_model_id, None
+
+    raw_gate = lineage.get("backtest_gate")
+    gate: dict[str, Any] | None = None
+    if isinstance(raw_gate, dict):
+        passed = raw_gate.get("passed")
+        reason = raw_gate.get("reason")
+        common_months = raw_gate.get("common_months")
+        common_dfus = raw_gate.get("common_dfus")
+        gate = {
+            "passed": passed if isinstance(passed, bool) else None,
+            "reason": reason if isinstance(reason, str) else None,
+            "common_months": _json_integer(common_months),
+            "common_dfus": _json_integer(common_dfus),
+            "champion_wape_pct": _json_number(raw_gate.get("champion_wape_pct")),
+            "customer_wape_pct": _json_number(raw_gate.get("customer_wape_pct")),
+            "blend_wape_pct": _json_number(raw_gate.get("blend_wape_pct")),
+            "blend_wape_degradation_pct": _json_number(
+                raw_gate.get("blend_wape_degradation_pct")
+            ),
+        }
+    return CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID, {
+        "customer_run_id": _json_string(lineage.get("customer_run_id")),
+        "backtest_run_id": _json_string(lineage.get("backtest_run_id")),
+        "backtest_gate": gate,
+    }
 
 # ---------------------------------------------------------------------------
 # Promotion & Candidate Endpoints
@@ -156,7 +214,12 @@ def get_staging_summary():
                        generation.completed_at,
                        MIN(staging.forecast_month) AS min_forecast_month,
                        MAX(staging.forecast_month) AS max_forecast_month,
-                       generation.candidate_model_count
+                       generation.candidate_model_count,
+                       (
+                           SELECT manifest.metadata
+                           FROM forecast_generation_run manifest
+                           WHERE manifest.run_id = generation.run_id
+                       ) AS metadata
                 FROM ranked_runs generation
                 JOIN fact_production_forecast_staging staging
                   ON staging.run_id = generation.run_id
@@ -181,8 +244,11 @@ def get_staging_summary():
         return {}
     result: dict[str, Any] = {}
     for r in rows:
+        candidate_model_id, customer_blend_lineage = _staging_candidate_identity(r[0], r[11])
         result[r[0]] = {
             "model_id": r[0],
+            "candidate_model_id": candidate_model_id,
+            "customer_blend_lineage": customer_blend_lineage,
             "source_run_id": str(r[1]),
             "run_status": r[2],
             "promotion_eligible": bool(r[3]),
@@ -363,11 +429,17 @@ def promote_model(
 
     try:
         from common.core.mv_refresh import refresh_for_tables
-        from common.services.cache import get_cache
 
         refresh_for_tables(["fact_production_forecast", "fact_forecast_snapshot"])
-        get_cache().invalidate("ds:forecast_release:*")
-    except psycopg.Error:
+    except (OSError, RuntimeError, ValueError, psycopg.Error):
         logger.exception("Post-promotion forecast refresh failed")
+
+    try:
+        from common.services.cache import invalidate_group
+
+        invalidate_group("forecast_release")
+        invalidate_group("customer_forecast")
+    except (OSError, RuntimeError, ValueError):
+        logger.exception("Post-promotion forecast cache invalidation failed")
 
     return ForecastPromotionResponse(**result.__dict__)

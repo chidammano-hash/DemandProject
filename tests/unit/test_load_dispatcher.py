@@ -10,7 +10,7 @@ convergence.
 import os
 import sys
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -150,3 +150,40 @@ class TestValidateArgs:
 
     def test_onetime_ok(self):
         ld._validate_args(self._args(mode="onetime"))  # no raise
+
+
+def test_customer_demand_loader_owns_its_atomic_mv_refresh() -> None:
+    with (
+        patch.object(ld, "_do_onetime"),
+        patch.object(ld, "_last_row_count", return_value=10),
+        patch.object(ld, "_refresh_mvs") as refresh,
+    ):
+        result = ld.process_domain(
+            "customer_demand",
+            "onetime",
+            None,
+            None,
+            False,
+            None,
+        )
+
+    assert result["status"] == "success"
+    refresh.assert_not_called()
+
+
+def test_customer_demand_delta_uses_dedicated_atomic_loader() -> None:
+    changed_files = [(MagicMock(name="source_file"), "a" * 64)]
+    with (
+        patch.object(ld, "_multi_file_changed_files", return_value=changed_files),
+        patch.object(ld, "_normalize_domain") as normalize,
+        patch.object(ld, "_run_loader") as run_loader,
+        patch.object(ld, "_record_multi_file_hashes") as record_hashes,
+        patch.object(ld, "_safe_upsert") as safe_upsert,
+    ):
+        result = ld._do_delta("customer_demand", dry_run=False)
+
+    assert result == "success"
+    normalize.assert_called_once_with("customer_demand", False)
+    run_loader.assert_called_once_with(ld._customer_demand_cmd(), dry_run=False)
+    record_hashes.assert_called_once_with("customer_demand", changed_files)
+    safe_upsert.assert_not_called()

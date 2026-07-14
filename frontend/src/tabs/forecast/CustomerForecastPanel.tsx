@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -40,6 +40,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useChartColors } from "@/hooks/useChartColors";
 import { formatApiError } from "@/lib/formatApiError";
+import { CustomerBottomUpBlendPanel } from "./CustomerBottomUpBlendPanel";
 
 function formatMonth(value: string): string {
   return new Intl.DateTimeFormat("en-US", {
@@ -63,6 +64,16 @@ function formatEta(seconds: number | null | undefined): string {
   return hours > 0 ? `ETA ${hours}h ${minutes}m` : `ETA ${minutes}m`;
 }
 
+function customerModelLabel(modelId: string): string {
+  if (modelId === "croston") return "Croston/SBA";
+  if (modelId === "chronos2_enriched") return "Chronos 2E";
+  return modelId
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export function CustomerForecastPanel() {
   const queryClient = useQueryClient();
   const { chartColors, trendColors } = useChartColors();
@@ -77,6 +88,7 @@ export function CustomerForecastPanel() {
     queryKey: customerForecastKeys.readiness,
     queryFn: fetchCustomerForecastReadiness,
     staleTime: 30_000,
+    refetchInterval: (query) => (query.state.data?.ready ? false : 5_000),
   });
   const latestRunQuery = useQuery({
     queryKey: customerForecastKeys.latestRun,
@@ -91,6 +103,11 @@ export function CustomerForecastPanel() {
     queryKey: customerForecastKeys.latestCompletedRun,
     queryFn: () => fetchLatestCustomerForecastRun(true),
   });
+  useEffect(() => {
+    if (latestRun?.status === "completed") {
+      queryClient.setQueryData(customerForecastKeys.latestCompletedRun, latestRun);
+    }
+  }, [latestRun, queryClient]);
   const resultRun = latestRun?.status === "completed" ? latestRun : latestCompletedRunQuery.data;
   const isActive = latestRun?.status === "queued" || latestRun?.status === "generating";
   const isResumable =
@@ -143,10 +160,21 @@ export function CustomerForecastPanel() {
     }
     return [...points.values()].sort((left, right) => left.month.localeCompare(right.month));
   }, [seriesQuery.data]);
+  const seriesModelLabels = useMemo(
+    () =>
+      Array.from(
+        new Set((seriesQuery.data?.forecast ?? []).map((row) => customerModelLabel(row.model_id)))
+      ),
+    [seriesQuery.data?.forecast]
+  );
 
   const readiness = readinessQuery.data;
   const filtersComplete = Boolean(filters.item_id && filters.location_id && filters.customer_no);
   const exportFilters = resultRun ? { ...filters, run_id: resultRun.run_id } : filters;
+  const tooltipContentStyle = {
+    backgroundColor: chartColors.tooltip_bg,
+    borderColor: chartColors.tooltip_border,
+  };
 
   return (
     <div className="space-y-4">
@@ -158,10 +186,9 @@ export function CustomerForecastPanel() {
                 <Users className="h-5 w-5" /> Customer Forecast Generation
               </CardTitle>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Generate customer-level demand with Chronos 2E for active full-history series and
-                Croston/SBA for active shorter histories. Inactive series are ignored. Results are
-                read-only and never adjust, reconcile, stage, promote, or replace the item-location
-                champion.
+                Generate customer-level demand with Croston/SBA for every active valid series.
+                Inactive series are ignored. Completed forecasts feed the separately validated
+                bottom-up blend workflow without changing customer rows in place.
               </p>
             </div>
             <div className="flex gap-2">
@@ -207,9 +234,11 @@ export function CustomerForecastPanel() {
         </CardHeader>
         <CardContent className="space-y-4">
           {readinessQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">Checking customer-demand readiness…</p>
+            <p role="status" className="text-sm text-muted-foreground">
+              Checking customer-demand readiness…
+            </p>
           ) : readinessQuery.isError ? (
-            <p className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive">
               Readiness could not be checked: {formatApiError(readinessQuery.error)}
             </p>
           ) : readiness ? (
@@ -228,18 +257,25 @@ export function CustomerForecastPanel() {
                 <WindowCard
                   label="Coverage"
                   value={`${readiness.forecastable_series.toLocaleString()} forecastable series`}
-                  detail={`${readiness.eligible_series.toLocaleString()} Chronos 2E · ${readiness.fallback_series.toLocaleString()} Croston`}
+                  detail={`${readiness.croston_series.toLocaleString()} Croston/SBA series`}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
                 {readiness.dormant_series.toLocaleString()} customer-SKUs ignored because they had
                 no sales in the latest six closed months.
               </p>
-              <div className="flex items-start gap-2 rounded-md border p-3">
+              <div
+                role="status"
+                className={`flex items-start gap-2 rounded-md border p-3 ${
+                  readiness.ready
+                    ? "border-success/30 bg-success/5"
+                    : "border-warning/30 bg-warning/10"
+                }`}
+              >
                 {readiness.ready ? (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-600" />
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-success" />
                 ) : (
-                  <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
+                  <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
                 )}
                 <div>
                   <p className="text-sm font-medium">
@@ -270,8 +306,8 @@ export function CustomerForecastPanel() {
                 <p className="text-xs text-muted-foreground">
                   {Object.entries(latestRun.model_route_counts)
                     .map(
-                      ([model, count]) =>
-                        `${model === "chronos2_enriched" ? "Chronos 2E" : "Croston"} (${count.toLocaleString()})`
+                      ([modelId, count]) =>
+                        `${customerModelLabel(modelId)} (${count.toLocaleString()})`
                     )
                     .join(" · ")}
                 </p>
@@ -305,7 +341,9 @@ export function CustomerForecastPanel() {
               {latestRun.status}
             </Badge>
             {latestRun.error_summary && (
-              <p className="w-full text-sm text-destructive">{latestRun.error_summary}</p>
+              <p role="alert" className="w-full text-sm text-destructive">
+                {latestRun.error_summary}
+              </p>
             )}
             {Object.keys(latestRun.skip_reason_counts).length > 0 && (
               <p className="w-full text-xs text-muted-foreground">
@@ -318,6 +356,8 @@ export function CustomerForecastPanel() {
           </CardContent>
         </Card>
       )}
+
+      <CustomerBottomUpBlendPanel customerRunId={resultRun?.run_id ?? null} />
 
       <Card>
         <CardHeader>
@@ -362,56 +402,86 @@ export function CustomerForecastPanel() {
           </div>
 
           {seriesQuery.isError && (
-            <p className="text-sm text-destructive">{formatApiError(seriesQuery.error)}</p>
+            <p role="alert" className="text-sm text-destructive">
+              {formatApiError(seriesQuery.error)}
+            </p>
           )}
           {seriesQuery.data && (
             <>
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-muted-foreground">Forecast method</span>
-                <Badge variant="outline">
-                  {seriesQuery.data.forecast[0]?.model_id === "croston"
-                    ? "Croston/SBA"
-                    : "Chronos 2E"}
-                </Badge>
+                {seriesModelLabels.map((label) => (
+                  <Badge key={label} variant="outline">
+                    {label}
+                  </Badge>
+                ))}
               </div>
-              <div className="h-72 rounded-md border p-3">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" />
-                    <XAxis dataKey="month" tickFormatter={formatMonth} stroke={chartColors.axis} />
-                    <YAxis stroke={chartColors.axis} />
-                    <Tooltip labelFormatter={(value) => formatMonth(String(value))} />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="actual_qty"
-                      name="Actual demand"
-                      stroke={trendColors[0]}
-                      connectNulls
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="forecast_qty"
-                      name="Customer forecast"
-                      stroke={trendColors[1]}
-                      connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div className="rounded-md border p-3">
+                <p className="text-sm font-medium">Customer Demand and Forecast</p>
+                <p className="text-xs text-muted-foreground">
+                  {`${seriesQuery.data.item_id} at ${seriesQuery.data.location_id} · customer ${seriesQuery.data.customer_no} · demand quantity · ${chartData.length.toLocaleString()} months`}
+                </p>
+                <div className="mt-2 h-72" aria-hidden="true">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="month"
+                        tickFormatter={formatMonth}
+                        stroke={chartColors.axis}
+                      />
+                      <YAxis stroke={chartColors.axis} />
+                      <Tooltip
+                        contentStyle={tooltipContentStyle}
+                        labelFormatter={(value) => formatMonth(String(value))}
+                        formatter={(value: number) => Number(value).toLocaleString()}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="actual_qty"
+                        name="Actual demand"
+                        stroke={trendColors[0]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="forecast_qty"
+                        name="Customer forecast"
+                        stroke={trendColors[1]}
+                        strokeDasharray="6 3"
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
+                  <caption className="sr-only">Monthly actual demand and customer forecast</caption>
                   <thead className="bg-muted/50 text-left">
                     <tr>
-                      <th className="px-3 py-2">Month</th>
-                      <th className="px-3 py-2 text-right">Actual demand</th>
-                      <th className="px-3 py-2 text-right">Customer forecast</th>
+                      <th scope="col" className="px-3 py-2">
+                        Month
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-right">
+                        Actual demand
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-right">
+                        Customer forecast
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {chartData.map((row) => (
                       <tr key={row.month} className="border-t">
-                        <td className="px-3 py-2">{formatMonth(row.month)}</td>
+                        <th scope="row" className="px-3 py-2 text-left font-normal">
+                          {formatMonth(row.month)}
+                        </th>
                         <td className="px-3 py-2 text-right">
                           {row.actual_qty?.toLocaleString() ?? "—"}
                         </td>
@@ -453,7 +523,7 @@ function FilterInput({
   return (
     <label className="space-y-1 text-sm font-medium">
       <span>{label}</span>
-      <Input aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} />
+      <Input value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }

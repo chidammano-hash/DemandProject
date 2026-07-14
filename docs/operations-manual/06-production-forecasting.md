@@ -53,6 +53,8 @@ a release source.
 | `fact_production_forecast_staging` | run + purpose + candidate + item + loc + month | Immutable rows; `release_candidate`, `snapshot_contender`, and retained `legacy_invalid` never mix | `sql/122`, extended by `sql/203` |
 | `fact_production_forecast` | plan_version + item + loc + forecast_month | Replaced only inside verified promotion; every new row carries source run, production run, and audit id | `sql/039`, extended by `sql/203` |
 | `model_promotion_log` | one row per promote/demote event | Exact source/release/archive lineage; one active row enforced by unique index | `sql/121`, extended by `sql/203` |
+| `customer_forecast_backtest_run` + bottom-up evidence | run manifest plus DFU-origin-month components and one common-cohort scorecard | Six causal one-step origins; immutable customer/champion/blend components, checksum, metrics, and promotion gate | `sql/216` |
+| `customer_bottom_up_blend_component` | generation + item + loc + month | Immutable forward components bound to customer, backtest, promotion, and production lineage | `sql/216` |
 
 `model_promotion_log.promotion_type` is constrained to `('single', 'champion')`;
 the database enforces at most one `is_active=TRUE` row and at most one promotion
@@ -412,7 +414,7 @@ Response payload:
 |---|---|
 | `GET /backtest-management/promotion-status` | The single active promotion plus source/production/checksum/archive lineage (or `{"promoted": null}`) |
 | `GET /backtest-management/candidate-summary` | Per-model row/DFU/avg-accuracy in `fact_candidate_forecast` |
-| `GET /backtest-management/staging-summary` | Latest immutable release-candidate manifest per requested model, including exact `source_run_id`, status, eligibility, row/DFU/source-model counts, and horizon dates |
+| `GET /backtest-management/staging-summary` | Latest immutable release-candidate manifest per requested model, including exact `source_run_id`, actual `candidate_model_id`, status, eligibility, row/DFU/source-model counts, horizon dates, and a sanitized customer-blend lineage/backtest gate when applicable |
 | `POST /backtest-management/{model_id}/stage` | Validate and approve one exact generated draft for staging; safe to retry |
 
 There is no bypass token. Fix the failed evidence, generate a new candidate when
@@ -429,19 +431,31 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 | `scripts/forecasting/generate_production_forecasts.py` | `forecast-generate` | Build an immutable champion release candidate; promotion is a separate API action | `forecast_generation_run` + `fact_production_forecast_staging` |
 | `scripts/forecasting/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/forecasting/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Applies approved planner overrides to an existing saved P50 demand plan, honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
-| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 customer-level months in resumable parallel batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
+| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 Croston/SBA customer-level months in resumable parallel batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
 
 **When to run each:**
 
 - **Blended** — short horizon (4 weeks). Run weekly once near-real-time demand-sensing signals are refreshed.
 - **Consensus** — only when the selected `plan_version` already exists in `fact_demand_plan`; it remains a historical/imported-plan consumer and is not a producer of quantile forecasts.
 - **Customer Forecast** — run on demand after customer-demand ETL is current.
-  It neither consumes nor changes the item-location production release.
+  The load is current only when no `customer_demand` audit batch is `running`
+  and `customer_demand_profile_refresh_state.source_batch_id` equals the latest
+  completed batch. The loader publishes that marker only after every dependent
+  materialized view refresh succeeds; a post-write failure deletes it. The run
+  records this exact refreshed batch. If a newer load completes during or after
+  generation, start a new customer forecast; persistence, resume, backtest
+  creation, blend readiness, and promotion intentionally reject the stale run.
+  On startup under the exclusive lineage lock, the canonical loader reconciles
+  abandoned `running` audit batches as failed and clears the marker before
+  creating the next batch.
+  Generation does not consume or change production. Run its historical
+  bottom-up backtest next; only passing evidence may create a staged blend
+  draft against the active production spine.
 
 The production, blended, and consensus workflows share the same planning-date semantics so the cycle "as-of" date is consistent. Production uncertainty bands come from the residual-based CI path in `forecast-generate`; the retired standalone synthetic quantile generator is not part of the production cycle.
 The `fact_demand_plan` and `fact_demand_plan_weekly` schemas and read APIs remain available for previously loaded or externally sourced versions.
 
-### 5a. Independent Customer Forecast Generation
+### 5a. Customer Forecast, Bottom-Up Backtest, and Blend Draft
 
 Use **Forecasting → Customer Forecast** to check source readiness, launch the
 durable `generate_customer_forecast` job, inspect one customer series, and
@@ -451,21 +465,72 @@ in July 2026, that means January 2025–June 2026 history and July 2026–Decemb
 2027 forecast output.
 
 Readiness separates active and ignored series. A customer-SKU with no
-`sales_qty` in January–June 2026 is ignored and writes no forecast rows. Active
-full-history series use Chronos 2E; active short-history series use Croston/SBA.
-Chronos uses its configured `device: auto` selection, preferring MPS/CUDA when
-available. One Chronos model-owner process runs alongside six configured CPU
-workers for Croston batches.
+`sales_qty` in January–June 2026 is ignored and writes no forecast rows. Every
+active valid series uses Croston/SBA with the configured `alpha` and `sba`
+variant. Six CPU workers process the durable batches in parallel. Croston is
+customer-scoped and is not added to the canonical five-model competition.
 
 Each 10,000-series batch commits independently. Jobs displays exact completed
 customer-SKU and batch counts plus ETA. Cancellation, worker failure, managed
 retry, or API restart preserves completed batches. Use **Resume Saved Batches**
 for a failed/cancelled manifested run; use a new generation if configuration
-changed. A run becomes readable only after every batch and final row count pass.
+or the completed customer-demand source batch changed. Fact rows can be
+replaced only while their parent run is `generating`. A run becomes readable
+only after every batch, source-lineage, and final row-count check passes.
 
-This is intentionally not a release layer: it has no backtest, customer
-champion, planner/AI adjustment, reconciliation, staging, or production
-promotion. See spec 35 for its eligibility and failure rules.
+If readiness reports an active load, wait for the loader to finish. If it
+reports a missing or stale profile marker, rerun the standard customer-demand
+load; a standalone MV refresh deliberately does not publish source lineage.
+Customer-demand loading also waits while a customer backtest, forward blend,
+or customer-blend promotion holds its shared snapshot lock; this prevents a
+load from crossing an evidence publication boundary.
+
+After customer generation completes:
+
+1. Confirm the active source is a freshly promoted, unblended champion. A
+   promoted `customer_bottom_up_blend` cannot recursively feed another blend.
+2. Call `POST /customer-forecast/backtest/generate`. The durable
+   `generate_customer_forecast_backtest` job evaluates six causal one-month
+   origins with at least six training months and 10,000-customer-series
+   batches. Series activity is re-evaluated at every historical origin rather than inherited
+   from the current customer run. The job rejects source-membership,
+   series-count, or batch-count drift after submission and uses one
+   repeatable-read snapshot for the full multi-batch evaluation.
+3. Inspect `GET /customer-forecast/backtest/latest`. The common-cohort
+   scorecard reports WAPE, MAE, bias, and accuracy for customer bottom-up,
+   source champion, and the 50/50 blend. It passes only with at least six
+   months, 1,000 DFUs, and blend WAPE no worse than champion WAPE.
+4. Confirm `GET /customer-forecast/blend/readiness` is ready, then call
+   `POST /customer-forecast/blend/generate`. The generator sums customer forecasts to item-location,
+   converts demand to sales with a causal 18-month fulfillment ratio, and
+   writes `customer_bottom_up_blend` to the normal immutable staging lifecycle.
+5. Review `GET /customer-forecast/blend/latest` and `/blend/series`. The full
+   active production spine is preserved: qualified customer months blend
+   50/50; missing customer evidence and months 19–24 pass through champion;
+   customer-only DFUs are excluded.
+6. Stage and promote the exact returned generation run through the normal
+   backtest-management actions. Promotion revalidates the matching completed
+   backtest plus every standard release gate, recomputes customer/backtest/
+   source/component payload checksums, and remains an explicit operator action.
+   In **Forecast**, confirm the readiness row and action card say **Customer
+   Bottom-Up Blend** and show the passing common-cohort gate before staging;
+   the API route remains `/backtest-management/champion/...` because the blend
+   occupies the governed champion release slot.
+
+`customer_forecast` and `customer_forecast_backtest` each have a 24-hour job
+ceiling. Full-spine `customer_forecast_blend` generation has an 8-hour ceiling,
+configured in `config/forecasting/pipelines.yaml`. Any change to the customer
+model parameters, normalization, blend weights, or source release requires a
+fresh backtest and draft. There is no bypass or automatic promotion. See spec
+35 for formulas, lineage, and failure rules.
+
+The backtest deliberately keeps one repeatable-read snapshot and shared
+customer-demand/source-promotion locks for its full run. On a full population,
+that can retain an older PostgreSQL MVCC snapshot and make customer-demand
+loads or source replacement wait for several hours. Schedule it outside the
+customer-demand load window, monitor the durable job from **Jobs**, and cancel
+the job normally if the lock must be released; do not start a competing manual
+load or bypass the lineage lock.
 
 ---
 
@@ -719,11 +784,16 @@ ORDER BY src, forecast_month;
 | Blended forecast | `make blended-all` |
 | Consensus plan | `make consensus-generate VERSION=$(date +%Y-%m)` |
 | Customer-level forecast | Open **Forecasting → Customer Forecast**, confirm readiness, then click **Generate Customer Forecasts** |
+| Customer blend backtest | `curl -X POST -H "X-API-Key: $KEY" "$BASE/customer-forecast/backtest/generate"` |
+| Customer blend gate | `curl -s "$BASE/customer-forecast/backtest/latest"` |
+| Generate customer blend draft | `curl -X POST -H "X-API-Key: $KEY" "$BASE/customer-forecast/blend/generate"` |
+| Inspect customer blend | `curl -s "$BASE/customer-forecast/blend/latest"` |
 
 Source-of-truth files referenced in this section:
 
 - `Makefile` (production-forecast targets)
-- `config/forecasting/forecast_pipeline_config.yaml` (`production_forecast:` and `forecast_snapshot:` blocks)
+- `config/forecasting/forecast_pipeline_config.yaml` (`production_forecast:`, `customer_forecast:`, and `forecast_snapshot:` blocks)
+- `config/forecasting/pipelines.yaml` (customer forecast/backtest/blend job ceilings)
 - `scripts/forecasting/generate_production_forecasts.py`
 - `scripts/forecasting/generate_customer_forecasts.py`
 - `scripts/ml/train_production_models.py`
@@ -734,9 +804,11 @@ Source-of-truth files referenced in this section:
 - `api/routers/forecasting/production_forecast.py`
 - `common/services/forecast_promotion.py`
 - `common/services/forecast_lineage.py`
+- `common/services/customer_forecast_blend.py`
 - `sql/039_create_production_forecast.sql`
 - `sql/121_candidate_forecast_and_promotion.sql`
 - `sql/122_create_production_forecast_staging.sql`
 - `sql/203_create_forecast_generation_run.sql`
 - `sql/205_enforce_champion_model_roster.sql`
 - `sql/206_invalidate_pre_canonical_generator_runs.sql`
+- `sql/216_create_customer_bottom_up_blend.sql`

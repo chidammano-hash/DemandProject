@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -13,15 +13,12 @@ import pandas as pd
 import psycopg
 
 from common.core.sql_helpers import read_sql_chunked
-from common.core.utils import get_algorithm_params
-from common.ml.chronos2_enriched import run_chronos2_enriched
 from common.services.customer_forecast import (
     CustomerForecastWindow,
     _frame_checksum,
     _resolve_run_window,
     _shift_month,
     build_croston_forecast_rows,
-    build_customer_forecast_rows,
     get_customer_forecast_settings,
     load_customer_forecast_readiness,
     prepare_customer_history,
@@ -35,6 +32,49 @@ class CustomerForecastBatch:
     route_batch_no: int
     series_count: int
     attempt_count: int
+
+
+def _lock_current_customer_demand_lineage(cur: Any, run_id: str) -> None:
+    """Lock the run and require its exact inactive, refreshed source load."""
+    cur.execute(
+        """SELECT run.source_customer_demand_batch_id,
+                  (
+                      SELECT batch_id
+                      FROM audit_load_batch
+                      WHERE domain = 'customer_demand'
+                        AND status = 'completed'
+                      ORDER BY completed_at DESC NULLS LAST, batch_id DESC
+                      LIMIT 1
+                  ),
+                  (
+                      SELECT source_batch_id
+                      FROM customer_demand_profile_refresh_state
+                      WHERE singleton_id = 1
+                  ),
+                  (
+                      SELECT COUNT(*)
+                      FROM audit_load_batch
+                      WHERE domain = 'customer_demand'
+                        AND status = 'running'
+                  )
+           FROM customer_forecast_run AS run
+           WHERE run.run_id = %s::uuid
+             AND run.run_status = 'generating'
+           FOR UPDATE OF run""",
+        (run_id,),
+    )
+    row = cur.fetchone()
+    if row is not None and int(row[3] or 0) > 0:
+        raise RuntimeError("Customer demand load is active; retry after it completes")
+    if (
+        row is None
+        or row[0] is None
+        or row[1] is None
+        or row[2] is None
+        or int(row[0]) != int(row[1])
+        or int(row[0]) != int(row[2])
+    ):
+        raise RuntimeError("Customer demand changed after run submission; submit a new run")
 
 
 def _recent_start(window: CustomerForecastWindow, settings: dict[str, Any]) -> date:
@@ -85,10 +125,7 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
                 CREATE TEMP TABLE temp_customer_forecast_manifest ON COMMIT DROP AS
                 WITH classified AS (
                     SELECT profile.item_id, profile.location_id, profile.customer_no,
-                           CASE
-                               WHEN profile.first_month <= %s THEN %s
-                               ELSE %s
-                           END AS route_model_id
+                           %s::text AS route_model_id
                     FROM mv_customer_demand_series_profile profile
                     WHERE profile.first_month < %s
                       AND profile.last_sales_month >= %s
@@ -101,9 +138,7 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
                 FROM classified
                 """,
                 (
-                    window.history_start,
                     str(settings["model_id"]),
-                    str(settings["fallback_model_id"]),
                     window.forecast_start,
                     _recent_start(window, settings),
                     int(settings["batch_size"]),
@@ -264,42 +299,23 @@ def _build_batch_rows(
     raw_history: pd.DataFrame,
     window: CustomerForecastWindow,
     settings: dict[str, Any],
-    predictor: Callable[..., pd.DataFrame],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     prepared = prepare_customer_history(
         raw_history,
         window,
         recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
     )
-    route_counts = {
-        str(settings["model_id"]): prepared.eligible_series_count,
-        str(settings["fallback_model_id"]): prepared.fallback_series_count,
-    }
-    if route_counts.get(batch.route_model_id) != batch.series_count:
+    if (
+        batch.route_model_id != settings["model_id"]
+        or prepared.eligible_series_count != batch.series_count
+    ):
         raise RuntimeError("Customer forecast batch route changed after manifest creation")
-
-    if batch.route_model_id == settings["model_id"]:
-        predictions = predictor(
-            prepared.model_input,
-            [pd.Timestamp(month) for month in window.forecast_months],
-            get_algorithm_params(str(settings["model_id"])),
-        )
-        rows = build_customer_forecast_rows(
-            prepared,
-            predictions,
-            window,
-            model_id=str(settings["model_id"]),
-        )
-        source_input = prepared.model_input
-    elif batch.route_model_id == settings["fallback_model_id"]:
-        rows = build_croston_forecast_rows(
-            prepared,
-            window,
-            dict(settings["fallback_params"]),
-        )
-        source_input = prepared.fallback_model_input
-    else:
-        raise RuntimeError("Customer forecast batch has an unsupported route")
+    rows = build_croston_forecast_rows(
+        prepared,
+        window,
+        dict(settings["model_params"]),
+    )
+    source_input = prepared.model_input
     expected_rows = batch.series_count * window.horizon_months
     if (
         len(rows) != expected_rows
@@ -318,6 +334,7 @@ def _persist_completed_batch(
     history_end: Any,
 ) -> None:
     with conn.transaction(), conn.cursor() as cur:
+        _lock_current_customer_demand_lineage(cur, run_id)
         cur.execute(
             "DELETE FROM fact_customer_forecast WHERE run_id = %s::uuid AND batch_id = %s",
             (run_id, batch.batch_id),
@@ -377,8 +394,6 @@ def run_customer_forecast_worker(
     conn: Any,
     run_id: str,
     route_model_ids: Sequence[str],
-    *,
-    predictor: Callable[..., pd.DataFrame] = run_chronos2_enriched,
 ) -> int:
     """Claim and commit batches until no eligible work remains."""
     settings = get_customer_forecast_settings()
@@ -404,7 +419,6 @@ def run_customer_forecast_worker(
                 raw_history,
                 window,
                 settings,
-                predictor,
             )
             _persist_completed_batch(
                 conn,
@@ -474,6 +488,7 @@ def finalize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, Any]
     settings = get_customer_forecast_settings()
     window, config_checksum = _resolve_run_window(conn, run_id, settings)
     with conn.transaction(), conn.cursor() as cur:
+        _lock_current_customer_demand_lineage(cur, run_id)
         cur.execute(
             "SELECT batch_id, route_model_id, route_batch_no, batch_status, "
             "series_count, completed_series, row_count, source_checksum "

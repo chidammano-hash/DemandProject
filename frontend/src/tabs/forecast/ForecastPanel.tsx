@@ -590,6 +590,8 @@ export function ForecastPanel() {
           candidateGenerated={selectedCandidateGenerated}
           candidateStaged={selectedCandidateStaged}
           candidateDfuCount={selectedCandidate?.dfu_count}
+          candidateModelId={selectedCandidate?.candidate_model_id}
+          customerBlendLineage={selectedCandidate?.customer_blend_lineage}
           isStaging={stagingModelId === selectedModel}
           isPromoting={promotingModelId === selectedModel}
           isSelectedPromoted={isSelectedPromoted}

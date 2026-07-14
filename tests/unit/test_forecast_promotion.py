@@ -21,6 +21,10 @@ from common.services.champion_lineage import (
     CANONICAL_CHAMPION_MODELS,
     GOVERNED_CHAMPION_LINEAGE_METADATA_KEY,
 )
+from common.services.customer_forecast_blend_contract import (
+    CUSTOMER_BLEND_CONTRACT_VERSION,
+    CUSTOMER_BLEND_LINEAGE_METADATA_KEY,
+)
 from common.services.forecast_generation import (
     GENERATOR_CONTRACT_METADATA_KEY,
     GENERATOR_CONTRACT_VERSION,
@@ -34,6 +38,7 @@ from common.services.forecast_promotion import (
     _current_release_evidence,
     _lock_active_release_for_replacement,
     _validate_active_model_artifacts,
+    _validate_customer_bottom_up_blend,
     _validate_direct_model_lineage,
     _validate_governed_champion_source,
     _validate_tree_model_lineage,
@@ -44,6 +49,19 @@ from common.services.forecast_promotion import (
 
 RUN_ID = UUID("00000000-0000-0000-0000-000000000111")
 PRODUCTION_RUN_ID = UUID("00000000-0000-0000-0000-000000000222")
+CUSTOMER_RUN_ID = UUID("00000000-0000-0000-0000-000000000333")
+SOURCE_RUN_ID = UUID("00000000-0000-0000-0000-000000000444")
+BACKTEST_RUN_ID = UUID("00000000-0000-0000-0000-000000000555")
+
+_BLEND_CONFIG_CHECKSUM = "blend-config-checksum"
+_CUSTOMER_CONFIG_CHECKSUM = "customer-config-checksum"
+_CUSTOMER_SOURCE_CHECKSUM = "customer-source-checksum"
+_CUSTOMER_OUTPUT_CHECKSUM = "customer-output-checksum"
+_SOURCE_PRODUCTION_CHECKSUM = "source-production-checksum"
+_BACKTEST_CONFIG_CHECKSUM = "backtest-config-checksum"
+_BACKTEST_COMPONENT_CHECKSUM = "backtest-component-checksum"
+_BLEND_COMPONENT_CHECKSUM = "blend-component-checksum"
+_CUSTOMER_DEMAND_BATCH_ID = 91
 
 
 def _pipeline_config(algorithms: dict) -> dict:
@@ -161,6 +179,424 @@ def _manifest(**overrides) -> ForecastGenerationManifest:
     }
     values.update(overrides)
     return ForecastGenerationManifest(**values)
+
+
+def _customer_blend_lineage(**overrides) -> dict:
+    values = {
+        "contract_version": CUSTOMER_BLEND_CONTRACT_VERSION,
+        "model_id": "customer_bottom_up_blend",
+        "config_checksum": _BLEND_CONFIG_CHECKSUM,
+        "customer_run_id": str(CUSTOMER_RUN_ID),
+        "customer_config_checksum": _CUSTOMER_CONFIG_CHECKSUM,
+        "customer_source_checksum": _CUSTOMER_SOURCE_CHECKSUM,
+        "source_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID,
+        "customer_output_checksum": _CUSTOMER_OUTPUT_CHECKSUM,
+        "customer_output_row_count": 216,
+        "customer_output_series_count": 12,
+        "source_promotion_id": 24,
+        "source_run_id": str(SOURCE_RUN_ID),
+        "source_production_run_id": str(PRODUCTION_RUN_ID),
+        "source_production_checksum": _SOURCE_PRODUCTION_CHECKSUM,
+        "backtest_run_id": str(BACKTEST_RUN_ID),
+        "backtest_config_checksum": _BACKTEST_CONFIG_CHECKSUM,
+        "backtest_component_checksum": _BACKTEST_COMPONENT_CHECKSUM,
+        "backtest_component_rows": 72,
+        "component_checksum": _BLEND_COMPONENT_CHECKSUM,
+        "row_count": 288,
+        "dfu_count": 12,
+        "blended_row_count": 216,
+        "fallback_row_count": 72,
+        "backtest_gate": {"passed": True, "reason": "passed"},
+    }
+    values.update(overrides)
+    return values
+
+
+def _customer_blend_db_evidence(**overrides) -> tuple:
+    values = {
+        "source_run_id": SOURCE_RUN_ID,
+        "production_run_id": PRODUCTION_RUN_ID,
+        "source_production_checksum": _SOURCE_PRODUCTION_CHECKSUM,
+        "customer_config_checksum": _CUSTOMER_CONFIG_CHECKSUM,
+        "customer_source_checksum": _CUSTOMER_SOURCE_CHECKSUM,
+        "customer_output_row_count": 216,
+        "customer_output_series_count": 12,
+        "backtest_config_checksum": _BACKTEST_CONFIG_CHECKSUM,
+        "backtest_component_checksum": _BACKTEST_COMPONENT_CHECKSUM,
+        "backtest_component_rows": 72,
+        "gate_passed": True,
+        "gate_reason": "passed",
+        "source_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID,
+        "current_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID,
+        "profile_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID,
+        "active_customer_demand_loads": 0,
+    }
+    values.update(overrides)
+    return (
+        values["source_run_id"],
+        values["production_run_id"],
+        values["source_production_checksum"],
+        values["customer_config_checksum"],
+        values["customer_source_checksum"],
+        values["customer_output_row_count"],
+        values["customer_output_series_count"],
+        values["backtest_config_checksum"],
+        values["backtest_component_checksum"],
+        values["backtest_component_rows"],
+        values["gate_passed"],
+        values["gate_reason"],
+        values["source_customer_demand_batch_id"],
+        values["current_customer_demand_batch_id"],
+        values["profile_customer_demand_batch_id"],
+        values["active_customer_demand_loads"],
+    )
+
+
+@pytest.fixture
+def customer_blend_dependencies(monkeypatch):
+    blend_settings = SimpleNamespace(
+        model_id="customer_bottom_up_blend",
+        promotion_enabled=True,
+        promotion_reason="backtest_accuracy_gate",
+    )
+    customer_settings = {"model_id": "croston", "model_params": {"variant": "sba"}}
+    backtest_settings = SimpleNamespace(lookback_months=6)
+    component_stats = MagicMock(return_value=(_BLEND_COMPONENT_CHECKSUM, 288, 12, 216, 72))
+    customer_output_stats = MagicMock(
+        return_value=SimpleNamespace(
+            checksum=_CUSTOMER_OUTPUT_CHECKSUM,
+            row_count=216,
+            series_count=12,
+        )
+    )
+    backtest_component_stats = MagicMock(return_value=(_BACKTEST_COMPONENT_CHECKSUM, 72))
+    source_production_stats = MagicMock(
+        return_value=SimpleNamespace(checksum=_SOURCE_PRODUCTION_CHECKSUM)
+    )
+    component_lineage = MagicMock(
+        return_value=SimpleNamespace(
+            customer_run_id=CUSTOMER_RUN_ID,
+            backtest_run_id=BACKTEST_RUN_ID,
+            source_promotion_id=24,
+            source_production_run_id=PRODUCTION_RUN_ID,
+        )
+    )
+
+    monkeypatch.setattr(
+        "common.services.forecast_promotion.validate_blend_settings",
+        lambda _config: blend_settings,
+    )
+    monkeypatch.setattr(
+        "common.services.forecast_promotion.customer_blend_config_checksum",
+        lambda _settings: _BLEND_CONFIG_CHECKSUM,
+    )
+    monkeypatch.setattr(
+        "common.services.forecast_promotion.compute_customer_blend_component_stats",
+        component_stats,
+    )
+    monkeypatch.setattr(
+        "common.services.forecast_promotion.compute_customer_forecast_output_stats",
+        customer_output_stats,
+    )
+    monkeypatch.setattr(
+        "common.services.forecast_promotion.compute_production_payload_stats",
+        source_production_stats,
+    )
+    monkeypatch.setattr(
+        "common.services.forecast_promotion.load_customer_blend_component_lineage",
+        component_lineage,
+    )
+    monkeypatch.setattr(
+        "common.services.customer_forecast.get_customer_forecast_settings",
+        lambda: customer_settings,
+    )
+    monkeypatch.setattr(
+        "common.services.customer_forecast.customer_forecast_config_checksum",
+        lambda _settings: _CUSTOMER_CONFIG_CHECKSUM,
+    )
+    monkeypatch.setattr(
+        "common.services.customer_forecast_backtest.get_customer_backtest_settings",
+        lambda: backtest_settings,
+    )
+    monkeypatch.setattr(
+        "common.services.customer_forecast_backtest.customer_backtest_config_checksum",
+        lambda *_args: _BACKTEST_CONFIG_CHECKSUM,
+    )
+    monkeypatch.setattr(
+        "common.services.customer_forecast_backtest.compute_customer_backtest_component_stats",
+        backtest_component_stats,
+    )
+    component_stats.customer_output_stats = customer_output_stats
+    component_stats.backtest_component_stats = backtest_component_stats
+    component_stats.source_production_stats = source_production_stats
+    component_stats.component_lineage = component_lineage
+    return component_stats
+
+
+def test_customer_bottom_up_blend_promotion_accepts_exact_lineage(
+    customer_blend_dependencies,
+):
+    cur = MagicMock()
+    cur.fetchone.return_value = _customer_blend_db_evidence()
+    backtest_gate = {"passed": True, "reason": "passed"}
+    manifest = _manifest(
+        metadata={
+            CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage(
+                backtest_gate=backtest_gate
+            )
+        }
+    )
+
+    result = _validate_customer_bottom_up_blend(
+        cur,
+        manifest=manifest,
+        pipeline_config={"customer_forecast": {}},
+    )
+
+    assert result == {
+        "customer_run_id": str(CUSTOMER_RUN_ID),
+        "backtest_run_id": str(BACKTEST_RUN_ID),
+        "source_promotion_id": 24,
+        "source_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID,
+        "customer_output_checksum": _CUSTOMER_OUTPUT_CHECKSUM,
+        "backtest_component_checksum": _BACKTEST_COMPONENT_CHECKSUM,
+        "component_checksum": _BLEND_COMPONENT_CHECKSUM,
+        "backtest_gate": backtest_gate,
+    }
+    assert cur.execute.call_args.args[1] == (
+        str(CUSTOMER_RUN_ID),
+        str(BACKTEST_RUN_ID),
+        24,
+    )
+    sql = cur.execute.call_args.args[0]
+    assert "promotion.is_active = TRUE" in sql
+    assert "FOR SHARE OF promotion" in sql
+    assert "customer.run_status = 'completed'" in sql
+    assert "backtest.run_status = 'completed'" in sql
+    assert "customer.source_customer_demand_batch_id" in sql
+    assert "domain = 'customer_demand'" in sql
+    assert "customer_demand_profile_refresh_state" in sql
+    assert "status = 'running'" in sql
+    customer_blend_dependencies.customer_output_stats.assert_called_once_with(
+        cur, str(CUSTOMER_RUN_ID)
+    )
+    customer_blend_dependencies.backtest_component_stats.assert_called_once_with(
+        cur, str(BACKTEST_RUN_ID)
+    )
+    customer_blend_dependencies.source_production_stats.assert_called_once_with(
+        cur, str(PRODUCTION_RUN_ID)
+    )
+    customer_blend_dependencies.component_lineage.assert_called_once_with(cur, RUN_ID)
+    customer_blend_dependencies.assert_called_once_with(cur, RUN_ID)
+
+
+def test_customer_bottom_up_blend_promotion_rejects_required_missing_lineage() -> None:
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            MagicMock(),
+            manifest=_manifest(metadata={}),
+            pipeline_config={"customer_forecast": {}},
+            require_lineage=True,
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+
+
+def test_customer_bottom_up_blend_promotion_rejects_current_customer_config_drift(
+    customer_blend_dependencies,
+    monkeypatch,
+):
+    cur = MagicMock()
+    monkeypatch.setattr(
+        "common.services.customer_forecast.customer_forecast_config_checksum",
+        lambda _settings: "changed-customer-config",
+    )
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            cur,
+            manifest=_manifest(
+                metadata={CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage()}
+            ),
+            pipeline_config={"customer_forecast": {}},
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    cur.execute.assert_not_called()
+    customer_blend_dependencies.assert_not_called()
+
+
+def test_customer_bottom_up_blend_promotion_rejects_current_backtest_config_drift(
+    customer_blend_dependencies,
+    monkeypatch,
+):
+    cur = MagicMock()
+    monkeypatch.setattr(
+        "common.services.customer_forecast_backtest.customer_backtest_config_checksum",
+        lambda *_args: "changed-backtest-config",
+    )
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            cur,
+            manifest=_manifest(
+                metadata={CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage()}
+            ),
+            pipeline_config={"customer_forecast": {}},
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    cur.execute.assert_not_called()
+    customer_blend_dependencies.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "evidence_overrides",
+    [
+        pytest.param(
+            {"source_run_id": UUID("00000000-0000-0000-0000-000000000999")},
+            id="source-run",
+        ),
+        pytest.param(
+            {"backtest_config_checksum": "changed-backtest-config"},
+            id="backtest-config",
+        ),
+        pytest.param(
+            {"backtest_component_checksum": "changed-backtest-components"},
+            id="backtest-components",
+        ),
+        pytest.param({"customer_output_row_count": 215}, id="customer-row-count"),
+        pytest.param({"backtest_component_rows": 71}, id="backtest-row-count"),
+        pytest.param({"gate_passed": False}, id="failed-backtest-gate"),
+        pytest.param(
+            {"current_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID + 1},
+            id="customer-demand-batch",
+        ),
+        pytest.param(
+            {"profile_customer_demand_batch_id": _CUSTOMER_DEMAND_BATCH_ID + 1},
+            id="customer-demand-profile-batch",
+        ),
+        pytest.param(
+            {"active_customer_demand_loads": 1},
+            id="active-customer-demand-load",
+        ),
+    ],
+)
+def test_customer_bottom_up_blend_promotion_rejects_stale_persisted_evidence(
+    customer_blend_dependencies,
+    evidence_overrides,
+):
+    cur = MagicMock()
+    cur.fetchone.return_value = _customer_blend_db_evidence(**evidence_overrides)
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            cur,
+            manifest=_manifest(
+                metadata={CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage()}
+            ),
+            pipeline_config={"customer_forecast": {}},
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    customer_blend_dependencies.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("stats_name", "changed_stats"),
+    [
+        pytest.param(
+            "customer_output_stats",
+            SimpleNamespace(
+                checksum="changed-customer-output",
+                row_count=216,
+                series_count=12,
+            ),
+            id="customer-output",
+        ),
+        pytest.param(
+            "backtest_component_stats",
+            ("changed-backtest-components", 72),
+            id="backtest-components",
+        ),
+        pytest.param(
+            "source_production_stats",
+            SimpleNamespace(checksum="changed-source-production"),
+            id="source-production",
+        ),
+    ],
+)
+def test_customer_bottom_up_blend_promotion_recomputes_source_payloads(
+    customer_blend_dependencies,
+    stats_name,
+    changed_stats,
+):
+    cur = MagicMock()
+    cur.fetchone.return_value = _customer_blend_db_evidence()
+    getattr(customer_blend_dependencies, stats_name).return_value = changed_stats
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            cur,
+            manifest=_manifest(
+                metadata={CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage()}
+            ),
+            pipeline_config={"customer_forecast": {}},
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    customer_blend_dependencies.assert_not_called()
+
+
+def test_customer_bottom_up_blend_promotion_rejects_component_checksum_drift(
+    customer_blend_dependencies,
+):
+    cur = MagicMock()
+    cur.fetchone.return_value = _customer_blend_db_evidence()
+    customer_blend_dependencies.return_value = (
+        "changed-blend-components",
+        288,
+        12,
+        216,
+        72,
+    )
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            cur,
+            manifest=_manifest(
+                metadata={CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage()}
+            ),
+            pipeline_config={"customer_forecast": {}},
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    customer_blend_dependencies.assert_called_once_with(cur, RUN_ID)
+
+
+def test_customer_bottom_up_blend_promotion_rejects_component_lineage_drift(
+    customer_blend_dependencies,
+):
+    cur = MagicMock()
+    cur.fetchone.return_value = _customer_blend_db_evidence()
+    customer_blend_dependencies.component_lineage.return_value = SimpleNamespace(
+        customer_run_id=UUID("00000000-0000-0000-0000-000000000999"),
+        backtest_run_id=BACKTEST_RUN_ID,
+        source_promotion_id=24,
+        source_production_run_id=PRODUCTION_RUN_ID,
+    )
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        _validate_customer_bottom_up_blend(
+            cur,
+            manifest=_manifest(
+                metadata={CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage()}
+            ),
+            pipeline_config={"customer_forecast": {}},
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    customer_blend_dependencies.assert_not_called()
 
 
 def test_champion_promotion_requires_same_governed_refresh_lineage():
@@ -470,9 +906,7 @@ def test_promotion_rejects_current_neural_cohort_drift(tmp_path) -> None:
             "common.services.forecast_promotion.load_neural_training_cohort_identity",
             return_value=SimpleNamespace(checksum="e" * 64, dfu_count=2_501),
         ),
-        patch(
-            "common.services.forecast_promotion.read_active_neural_artifact_ref"
-        ) as read_active,
+        patch("common.services.forecast_promotion.read_active_neural_artifact_ref") as read_active,
         pytest.raises(PromotionConflictError) as exc_info,
     ):
         _validate_active_model_artifacts(
@@ -515,6 +949,55 @@ def test_single_model_candidates_enter_transactional_promotion(model_id: str) ->
 
     assert exc_info.value.code == "candidate_run_not_found"
     conn.transaction.assert_called_once()
+
+
+def test_champion_routed_customer_blend_holds_demand_lock_through_promotion() -> None:
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = (True,)
+    tx = conn.transaction.return_value
+    events: list[str] = []
+
+    def execute(sql, *_args):
+        if "pg_advisory_lock_shared" in sql:
+            events.append("lineage_lock")
+        elif "pg_advisory_unlock_shared" in sql:
+            events.append("lineage_unlock")
+        elif "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE" in sql:
+            events.append("snapshot")
+
+    cur.execute.side_effect = execute
+    conn.commit.side_effect = lambda: events.append("commit")
+    conn.rollback.side_effect = lambda: events.append("rollback")
+    tx.__enter__.side_effect = lambda: events.append("transaction_enter") or tx
+    tx.__exit__.side_effect = lambda *_args: events.append("transaction_exit") or False
+
+    with (
+        patch(
+            "common.services.forecast_promotion._load_manifest",
+            side_effect=PromotionConflictError(
+                "candidate_run_not_found",
+                "The selected forecast generation run does not exist.",
+            ),
+        ),
+        pytest.raises(PromotionConflictError),
+    ):
+        promote_forecast_run(
+            conn,
+            # Blend manifests deliberately use the champion candidate identity,
+            # so lock selection must inspect immutable run lineage rather than
+            # relying on this route model id.
+            model_id="champion",
+            source_run_id=RUN_ID,
+            planning_month=date(2026, 7, 1),
+            promoted_by="tester",
+            notes=None,
+            policy={"required_months": 6},
+        )
+
+    assert events.index("lineage_lock") < events.index("transaction_enter")
+    assert events.index("transaction_enter") < events.index("snapshot")
+    assert events.index("transaction_exit") < events.index("lineage_unlock")
 
 
 def test_generated_candidate_must_be_staged_before_production_promotion() -> None:
@@ -570,10 +1053,111 @@ def test_stage_forecast_run_approves_exact_generated_candidate() -> None:
         candidate_checksum="c" * 64,
     )
     stage_update = next(
-        call for call in cur.execute.call_args_list if "SET promotion_eligible = TRUE" in call.args[0]
+        call
+        for call in cur.execute.call_args_list
+        if "SET promotion_eligible = TRUE" in call.args[0]
     )
     assert "promotion_eligible = FALSE" in stage_update.args[0]
     assert stage_update.args[1] == (str(RUN_ID),)
+
+
+def test_stage_customer_blend_requires_current_backtest_lineage() -> None:
+    conn = MagicMock()
+    tx = conn.transaction.return_value
+    tx.__enter__.return_value = tx
+    tx.__exit__.return_value = False
+    cur = conn.cursor.return_value.__enter__.return_value
+    manifest = _manifest(
+        promotion_eligible=False,
+        metadata={
+            **_manifest().metadata,
+            CUSTOMER_BLEND_LINEAGE_METADATA_KEY: _customer_blend_lineage(),
+        },
+    )
+    stats = MagicMock(
+        checksum=manifest.artifact_checksum,
+        row_count=manifest.row_count,
+        dfu_count=manifest.dfu_count,
+        source_model_count=manifest.source_model_count,
+    )
+
+    with (
+        patch(
+            "common.services.forecast_promotion._load_manifest",
+            return_value=manifest,
+        ),
+        patch(
+            "common.services.forecast_promotion.compute_staging_payload_stats",
+            return_value=stats,
+        ),
+        patch(
+            "common.services.forecast_promotion.load_forecast_pipeline_config",
+            return_value={"customer_forecast": {}},
+        ),
+        patch(
+            "common.services.forecast_promotion._validate_customer_bottom_up_blend",
+            side_effect=PromotionConflictError(
+                "customer_blend_lineage_mismatch",
+                "The customer blend backtest is stale.",
+            ),
+        ) as validate_blend,
+        pytest.raises(PromotionConflictError) as exc_info,
+    ):
+        stage_forecast_run(
+            conn,
+            model_id="champion",
+            source_run_id=RUN_ID,
+            planning_month=date(2026, 7, 1),
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    validate_blend.assert_called_once()
+    assert not any(
+        "SET promotion_eligible = TRUE" in call.args[0] for call in cur.execute.call_args_list
+    )
+
+
+def test_stage_detects_customer_blend_payload_when_manifest_lineage_is_missing() -> None:
+    conn = MagicMock()
+    tx = conn.transaction.return_value
+    tx.__enter__.return_value = tx
+    tx.__exit__.return_value = False
+    manifest = _manifest(promotion_eligible=False)
+    stats = MagicMock(
+        checksum=manifest.artifact_checksum,
+        row_count=manifest.row_count,
+        dfu_count=manifest.dfu_count,
+        source_model_count=manifest.source_model_count,
+    )
+
+    with (
+        patch("common.services.forecast_promotion._load_manifest", return_value=manifest),
+        patch(
+            "common.services.forecast_promotion.compute_staging_payload_stats",
+            return_value=stats,
+        ),
+        patch(
+            "common.services.forecast_promotion._is_customer_blend_payload",
+            return_value=True,
+        ),
+        patch(
+            "common.services.forecast_promotion._validate_customer_bottom_up_blend",
+            side_effect=PromotionConflictError(
+                "customer_blend_lineage_mismatch",
+                "The customer blend lineage is missing.",
+            ),
+        ) as validate_blend,
+        pytest.raises(PromotionConflictError) as exc_info,
+    ):
+        stage_forecast_run(
+            conn,
+            model_id="champion",
+            source_run_id=RUN_ID,
+            planning_month=date(2026, 7, 1),
+        )
+
+    assert exc_info.value.code == "customer_blend_lineage_mismatch"
+    assert validate_blend.call_args.kwargs["require_lineage"] is True
 
 
 @pytest.mark.parametrize(

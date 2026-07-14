@@ -1435,6 +1435,10 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE forecast_snapshot_roster CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast_staging CASCADE;' \
 	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
+	  'TRUNCATE TABLE customer_bottom_up_blend_component CASCADE;' \
+	  'TRUNCATE TABLE customer_bottom_up_backtest_accuracy CASCADE;' \
+	  'TRUNCATE TABLE customer_bottom_up_backtest_component CASCADE;' \
+	  'TRUNCATE TABLE customer_forecast_backtest_run CASCADE;' \
 	  'TRUNCATE TABLE model_promotion_log CASCADE;' \
 	  'TRUNCATE TABLE forecast_generation_run CASCADE;' \
 	  'TRUNCATE TABLE fact_customer_forecast CASCADE;' \
@@ -1453,6 +1457,7 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE fact_sales_monthly CASCADE;' \
 	  'TRUNCATE TABLE fact_sales_monthly_original CASCADE;' \
 	  'TRUNCATE TABLE fact_customer_demand_monthly CASCADE;' \
+	  'TRUNCATE TABLE customer_demand_profile_refresh_state CASCADE;' \
 	  'TRUNCATE TABLE fact_ss_simulation_results CASCADE;' \
 	  'TRUNCATE TABLE fact_safety_stock_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_eoq_targets CASCADE;' \

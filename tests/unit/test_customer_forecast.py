@@ -7,12 +7,11 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from common.core.constants import FORECAST_QTY_COL
 from common.services.customer_forecast import (
     _resolve_run_window,
     build_croston_forecast_rows,
-    build_customer_forecast_rows,
     build_customer_forecast_window,
+    get_customer_forecast_settings,
     load_customer_forecast_readiness,
     prepare_customer_history,
 )
@@ -32,7 +31,7 @@ def test_customer_forecast_window_uses_closed_history_and_current_month() -> Non
     assert len(window.forecast_months) == 18
 
 
-def test_prepare_customer_history_routes_ineligible_series_to_croston() -> None:
+def test_prepare_customer_history_routes_every_active_series_to_croston() -> None:
     frame = pd.DataFrame(
         [
             {
@@ -77,19 +76,19 @@ def test_prepare_customer_history_routes_ineligible_series_to_croston() -> None:
 
     prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
 
-    assert prepared.eligible_series_count == 1
-    assert prepared.fallback_series_count == 1
-    assert prepared.forecastable_series_count == 2
-    assert len(prepared.model_input) == 18
-    assert len(prepared.fallback_model_input) == 18
-    assert prepared.model_input["qty"].sum() == pytest.approx(12.0)
+    assert prepared.eligible_series_count == 2
+    assert len(prepared.model_input) == 36
+    assert prepared.model_input["qty"].sum() == pytest.approx(15.0)
+    assert all(
+        str(value).startswith("croston_customer_series_") for value in prepared.identity_by_sku
+    )
     assert (
         prepared.model_input.loc[
             prepared.model_input["startdate"] == pd.Timestamp("2025-02-01"), "qty"
-        ].item()
-        == 0.0
+        ]
+        .eq(0.0)
+        .all()
     )
-    assert set(prepared.fallback_reason_by_sku.values()) == {"insufficient_history"}
     assert prepared.skipped_series == [
         {
             "item_id": "ITEM-3",
@@ -100,7 +99,7 @@ def test_prepare_customer_history_routes_ineligible_series_to_croston() -> None:
     ]
 
 
-def test_build_croston_forecast_rows_covers_every_fallback_series() -> None:
+def test_build_croston_forecast_rows_covers_every_active_series() -> None:
     frame = pd.DataFrame(
         [
             {
@@ -156,8 +155,6 @@ def test_series_without_recent_six_month_sales_is_ignored() -> None:
     prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
 
     assert prepared.eligible_series_count == 0
-    assert prepared.fallback_series_count == 0
-    assert prepared.forecastable_series_count == 0
     assert len(prepared.skipped_series) == 1
     assert prepared.skipped_series[0]["reason"] == "no_sales_last_6_months"
 
@@ -182,66 +179,6 @@ def test_prepare_customer_history_rejects_negative_demand() -> None:
         prepare_customer_history(frame, window, recent_sales_lookback_months=6)
 
 
-def test_build_customer_forecast_rows_requires_complete_horizon() -> None:
-    frame = pd.DataFrame(
-        [
-            {
-                "item_id": "ITEM-1",
-                "location_id": "LOC-1",
-                "customer_no": "CUST-1",
-                "startdate": "2026-03-01",
-                "demand_qty": 2.0,
-                "sales_qty": 2.0,
-                "series_first_month": "2024-01-01",
-            }
-        ]
-    )
-    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
-    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
-    sku_ck = prepared.model_input["sku_ck"].iat[0]
-    predictions = pd.DataFrame(
-        {
-            "sku_ck": [sku_ck] * 18,
-            "startdate": pd.date_range("2026-07-01", periods=18, freq="MS"),
-            FORECAST_QTY_COL: [5.0] * 18,
-            "algorithm_id": ["chronos2_enriched"] * 18,
-        }
-    )
-
-    rows = build_customer_forecast_rows(
-        prepared,
-        predictions,
-        window,
-        model_id="chronos2_enriched",
-    )
-
-    assert len(rows) == 18
-    assert rows["forecast_qty"].sum() == pytest.approx(90.0)
-    assert set(rows["model_id"]) == {"chronos2_enriched"}
-    assert rows["forecast_month"].min() == pd.Timestamp("2026-07-01")
-    assert rows["forecast_month"].max() == pd.Timestamp("2027-12-01")
-    assert rows[["item_id", "location_id", "customer_no"]].drop_duplicates().to_dict("records") == [
-        {"item_id": "ITEM-1", "location_id": "LOC-1", "customer_no": "CUST-1"}
-    ]
-
-    with pytest.raises(RuntimeError, match="complete 18-month forecast"):
-        build_customer_forecast_rows(
-            prepared,
-            predictions.iloc[:-1],
-            window,
-            model_id="chronos2_enriched",
-        )
-
-    predictions.loc[0, FORECAST_QTY_COL] = -4.0
-    clipped = build_customer_forecast_rows(
-        prepared,
-        predictions,
-        window,
-        model_id="chronos2_enriched",
-    )
-    assert clipped["forecast_qty"].min() == 0.0
-
-
 def test_customer_forecast_migration_defines_run_and_fact_tables() -> None:
     ddl = Path("sql/210_create_customer_forecast.sql").read_text()
 
@@ -256,7 +193,7 @@ def test_customer_forecast_migration_defines_run_and_fact_tables() -> None:
 def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
     cursor = MagicMock()
-    cursor.fetchone.return_value = (date(2026, 6, 1), 12, 8, 2, 0, 0, 0)
+    cursor.fetchone.return_value = (date(2026, 6, 1), 12, 10, 2, 0, 0, 0, 91, 91, 0)
     conn = MagicMock()
     conn.cursor.return_value.__enter__.return_value = cursor
 
@@ -269,12 +206,118 @@ def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
     sql = cursor.execute.call_args.args[0]
     assert "mv_customer_demand_series_profile" in sql
     assert "last_sales_month" in sql
+    assert "audit_load_batch" in sql
+    assert "domain = 'customer_demand'" in sql
+    assert "customer_demand_profile_refresh_state" in sql
+    assert "status = 'running'" in sql
+    assert "first_month <=" not in sql
     assert "fact_customer_demand_monthly" not in sql
-    assert readiness["eligible_series"] == 8
-    assert readiness["fallback_series"] == 2
+    assert readiness["eligible_series"] == 10
+    assert readiness["croston_series"] == 10
+    assert "fallback_series" not in readiness
     assert readiness["dormant_series"] == 2
     assert readiness["forecastable_series"] == 10
     assert readiness["skipped_series"] == 2
+    assert readiness["source_customer_demand_batch_id"] == 91
+
+
+def test_customer_forecast_readiness_fails_closed_without_load_lineage() -> None:
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (
+        date(2026, 6, 1),
+        12,
+        10,
+        2,
+        0,
+        0,
+        0,
+        None,
+        None,
+        0,
+    )
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    readiness = load_customer_forecast_readiness(
+        conn,
+        window,
+        recent_sales_lookback_months=6,
+    )
+
+    assert readiness["ready"] is False
+    assert readiness["source_customer_demand_batch_id"] is None
+    assert "completed customer-demand load" in readiness["blockers"][0]
+
+
+@pytest.mark.parametrize(
+    ("profile_batch_id", "active_load_count", "blocker"),
+    [
+        pytest.param(90, 0, "profile", id="stale-profile"),
+        pytest.param(91, 1, "active", id="active-load"),
+    ],
+)
+def test_customer_forecast_readiness_requires_current_inactive_profile_lineage(
+    profile_batch_id: int,
+    active_load_count: int,
+    blocker: str,
+) -> None:
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (
+        date(2026, 6, 1),
+        12,
+        10,
+        2,
+        0,
+        0,
+        0,
+        91,
+        profile_batch_id,
+        active_load_count,
+    )
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    readiness = load_customer_forecast_readiness(
+        conn,
+        window,
+        recent_sales_lookback_months=6,
+    )
+
+    assert readiness["ready"] is False
+    assert blocker in readiness["blockers"][0].lower()
+    assert readiness["profile_customer_demand_batch_id"] == profile_batch_id
+    assert readiness["active_customer_demand_loads"] == active_load_count
+
+
+def test_customer_forecast_settings_are_croston_only() -> None:
+    config = {
+        "customer_forecast": {
+            "enabled": True,
+            "model_id": "croston",
+            "model_params": {"alpha": 0.1, "variant": "sba"},
+            "history_months": 18,
+            "horizon_months": 18,
+            "recent_sales_lookback_months": 6,
+            "batch_size": 10_000,
+            "cpu_workers": 6,
+            "max_batch_attempts": 3,
+            "progress_interval_seconds": 5,
+        }
+    }
+
+    with patch(
+        "common.services.customer_forecast.load_forecast_pipeline_config",
+        return_value=config,
+    ):
+        settings = get_customer_forecast_settings()
+
+    assert settings["model_id"] == "croston"
+    assert settings["model_params"] == {"alpha": 0.1, "variant": "sba"}
+    assert "fallback_model_id" not in settings
+    assert "fallback_params" not in settings
+    assert "chronos_workers" not in settings
 
 
 def test_customer_forecast_profile_migration_defines_refreshable_series_grain() -> None:
@@ -324,9 +367,8 @@ def test_customer_batch_integrity_migration_couples_run_and_batch() -> None:
 def test_run_window_is_restored_from_the_manifest() -> None:
     settings = {
         "enabled": True,
-        "model_id": "chronos2_enriched",
-        "fallback_model_id": "croston",
-        "fallback_params": {"alpha": 0.1, "variant": "sba"},
+        "model_id": "croston",
+        "model_params": {"alpha": 0.1, "variant": "sba"},
         "history_months": 18,
         "horizon_months": 18,
     }
@@ -340,8 +382,12 @@ def test_run_window_is_restored_from_the_manifest() -> None:
         date(2027, 12, 31),
         18,
         18,
-        "chronos2_enriched",
+        "croston",
         "a" * 64,
+        91,
+        91,
+        91,
+        0,
     )
     conn = MagicMock()
     conn.cursor.return_value.__enter__.return_value = cursor
@@ -355,3 +401,48 @@ def test_run_window_is_restored_from_the_manifest() -> None:
     assert window.history_start == date(2025, 1, 1)
     assert window.forecast_end == date(2027, 12, 31)
     assert checksum == "a" * 64
+
+
+def test_run_window_rejects_newer_customer_demand_batch() -> None:
+    settings = {
+        "enabled": True,
+        "model_id": "croston",
+        "model_params": {"alpha": 0.1, "variant": "sba"},
+        "history_months": 18,
+        "horizon_months": 18,
+    }
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (
+        "generating",
+        date(2026, 7, 1),
+        date(2025, 1, 1),
+        date(2026, 6, 30),
+        date(2026, 7, 1),
+        date(2027, 12, 31),
+        18,
+        18,
+        "croston",
+        "a" * 64,
+        91,
+        92,
+        92,
+        0,
+    )
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+
+    with (
+        patch(
+            "common.services.customer_forecast.customer_forecast_config_checksum",
+            return_value="a" * 64,
+        ),
+        pytest.raises(RuntimeError, match="Customer demand changed"),
+    ):
+        _resolve_run_window(conn, "run-1", settings)
+
+
+def test_customer_forecast_script_persists_only_public_failure_summary() -> None:
+    source = Path("scripts/forecasting/generate_customer_forecasts.py").read_text()
+
+    assert '"customer forecast generation failed"' in source
+    assert "str(exc)" not in source

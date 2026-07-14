@@ -10,6 +10,8 @@ import {
 } from "recharts";
 
 import { useChartColors } from "@/hooks/useChartColors";
+import { CustomerBlendLines } from "@/components/CustomerBlendOverlay";
+import { hasCustomerBlendData } from "@/lib/customer-blend-overlay";
 import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import type { SkuAnalysisPayload } from "@/types";
@@ -22,6 +24,7 @@ import {
   STAGING_COLORS,
   STAGING_FALLBACK_COLOR,
   DQ_ORIG_COLOR,
+  SUPPLY_COLORS,
   TOOLTIP_LABELS,
 } from "./colors";
 import type { SupplySeriesDef } from "./measures";
@@ -85,12 +88,10 @@ export function UnifiedChart({
   ropUnits,
 }: UnifiedChartProps) {
   const { chartColors } = useChartColors();
+  const hasCustomerBlend = hasCustomerBlendData(mergedData);
   return (
     <div className="h-[400px] overflow-x-auto overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
-      <div
-        className="h-full"
-        style={{ minWidth: `${Math.max(800, mergedData.length * 40)}px` }}
-      >
+      <div className="h-full" style={{ minWidth: `${Math.max(800, mergedData.length * 40)}px` }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={mergedData} margin={CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
@@ -100,7 +101,13 @@ export function UnifiedChart({
               width={78}
               tickFormatter={formatCompactNumber}
               tick={{ fill: chartColors.axis, fontSize: 11 }}
-              label={{ value: "Units", angle: -90, position: "insideLeft", fontSize: 10, offset: 10 }}
+              label={{
+                value: "Units",
+                angle: -90,
+                position: "insideLeft",
+                fontSize: 10,
+                offset: 10,
+              }}
             />
             {hasRightAxis && (
               <YAxis
@@ -108,7 +115,13 @@ export function UnifiedChart({
                 orientation="right"
                 tick={{ fill: chartColors.axis, fontSize: 11 }}
                 tickFormatter={(v: number) => `${Number(v).toFixed(0)}d`}
-                label={{ value: "Days", angle: 90, position: "insideRight", fontSize: 10, offset: 10 }}
+                label={{
+                  value: "Days",
+                  angle: 90,
+                  position: "insideRight",
+                  fontSize: 10,
+                  offset: 10,
+                }}
               />
             )}
             <Tooltip
@@ -116,7 +129,11 @@ export function UnifiedChart({
                 backgroundColor: chartColors.tooltip_bg,
                 borderColor: chartColors.tooltip_border,
               }}
-              formatter={(value: number, name: string, entry?: { dataKey?: string | number; payload?: Record<string, unknown> }) => {
+              formatter={(
+                value: number,
+                name: string,
+                entry?: { dataKey?: string | number; payload?: Record<string, unknown> }
+              ) => {
                 let label = TOOLTIP_LABELS[name] ?? name;
                 // Resolve staging/backtest model names to readable labels
                 if (name.startsWith("staging_")) {
@@ -132,15 +149,12 @@ export function UnifiedChart({
                   // dataKey (not name) because the line's name is relabelled.
                   label = formatChampionLabel(
                     entry?.payload?.champion_mix as { model: string; weight: number }[] | undefined,
-                    entry?.payload?.champion_source as string | undefined,
+                    entry?.payload?.champion_source as string | undefined
                   );
                 }
                 if (name === "dos" || name === "avg_lead_time")
                   return [`${Number(value).toFixed(1)} days`, label];
-                return [
-                  formatNumber(Number.isFinite(Number(value)) ? Number(value) : null),
-                  label,
-                ];
+                return [formatNumber(Number.isFinite(Number(value)) ? Number(value) : null), label];
               }}
             />
 
@@ -194,7 +208,9 @@ export function UnifiedChart({
               />
             )}
             {models
-              .filter((m) => skuVisibleSeries.has(`forecast_${m}`) && !hiddenDemand.has(`forecast_${m}`))
+              .filter(
+                (m) => skuVisibleSeries.has(`forecast_${m}`) && !hiddenDemand.has(`forecast_${m}`)
+              )
               .map((model, idx) => {
                 const isSelected = selectedModel === model;
                 const isOtherSelected = selectedModel !== null && selectedModel !== model;
@@ -220,19 +236,21 @@ export function UnifiedChart({
                   />
                 );
               })}
-            {hasProdForecast && skuVisibleSeries.has("production_forecast") && !hiddenDemand.has("production_forecast") && (
-              <Line
-                type="monotone"
-                dataKey="production_forecast"
-                yAxisId="left"
-                name="production_forecast"
-                stroke={PROD_FORECAST_COLOR}
-                strokeWidth={2.5}
-                strokeDasharray="6 3"
-                dot={false}
-                activeDot={{ r: 5 }}
-              />
-            )}
+            {hasProdForecast &&
+              skuVisibleSeries.has("production_forecast") &&
+              !hiddenDemand.has("production_forecast") && (
+                <Line
+                  type="monotone"
+                  dataKey="production_forecast"
+                  yAxisId="left"
+                  name="production_forecast"
+                  stroke={PROD_FORECAST_COLOR}
+                  strokeWidth={2.5}
+                  strokeDasharray="6 3"
+                  dot={false}
+                  activeDot={{ r: 5 }}
+                />
+              )}
             {hasAiChampion && skuVisibleSeries.has("ai_champion") && !aiChampionLineHidden && (
               <Line
                 type="monotone"
@@ -247,6 +265,8 @@ export function UnifiedChart({
                 activeDot={{ r: 5 }}
               />
             )}
+
+            {hasCustomerBlend && <CustomerBlendLines yAxisId="left" />}
 
             {/* ---- Staging forecast lines (future) ---- */}
             {stagingModelIds
@@ -339,14 +359,14 @@ export function UnifiedChart({
               <ReferenceLine
                 yAxisId="left"
                 y={ss!}
-                stroke="#8b5cf6"
+                stroke={SUPPLY_COLORS.safety_stock}
                 strokeDasharray="6 3"
                 strokeWidth={1.5}
                 label={{
                   value: `SS ${ss!.toFixed(0)}u`,
                   position: "insideTopLeft",
                   fontSize: 10,
-                  fill: "#8b5cf6",
+                  fill: SUPPLY_COLORS.safety_stock,
                 }}
               />
             )}
@@ -354,14 +374,14 @@ export function UnifiedChart({
               <ReferenceLine
                 yAxisId="left"
                 y={ropUnits}
-                stroke="#f97316"
+                stroke={SUPPLY_COLORS.avg_lead_time}
                 strokeDasharray="4 2"
                 strokeWidth={1.5}
                 label={{
                   value: `ROP ${ropUnits.toFixed(0)}u`,
                   position: "insideBottomLeft",
                   fontSize: 10,
-                  fill: "#f97316",
+                  fill: SUPPLY_COLORS.avg_lead_time,
                 }}
               />
             )}

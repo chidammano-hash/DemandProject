@@ -8,7 +8,9 @@ partition manager) and US15 (change detection) touch this loader.
 import os
 import sys
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -66,3 +68,124 @@ class TestDropPartition:
         cd._drop_partition(cur, date(2024, 7, 1))
         executed = " ".join(str(c.args[0]) for c in cur.execute.call_args_list)
         assert 'DROP TABLE IF EXISTS "fact_customer_demand_monthly_2024_07"' in executed
+
+
+def test_finalize_refreshes_every_dependent_view_before_completing_batch() -> None:
+    conn = MagicMock()
+    cur = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    events: list[str] = []
+    conn.commit.side_effect = lambda: events.append("commit")
+
+    with (
+        patch.object(
+            cd,
+            "mvs_for_tables",
+            return_value=["mv_customer_demand_series_profile"],
+        ),
+        patch.object(
+            cd,
+            "refresh_for_tables",
+            side_effect=lambda *_args, **_kwargs: (
+                events.append("refresh")
+                or {
+                    "refreshed": ["mv_customer_demand_series_profile"],
+                    "failed": [],
+                    "missing": [],
+                }
+            ),
+        ),
+        patch.object(
+            cd,
+            "complete_batch",
+            side_effect=lambda *_args: events.append("complete"),
+        ),
+    ):
+        cd._finalize_customer_demand_load(
+            conn,
+            db_params={"dbname": "demand"},
+            batch_id=91,
+            rows_in=12,
+            rows_out=10,
+        )
+
+    assert events == ["commit", "refresh", "complete", "commit"]
+    marker_call = next(
+        executed
+        for executed in cur.execute.call_args_list
+        if "customer_demand_profile_refresh_state" in executed.args[0]
+    )
+    assert "ON CONFLICT (singleton_id) DO UPDATE" in marker_call.args[0]
+    assert marker_call.args[1] == (91,)
+
+
+def test_finalize_does_not_complete_batch_when_profile_refresh_fails() -> None:
+    conn = MagicMock()
+
+    with (
+        patch.object(
+            cd,
+            "mvs_for_tables",
+            return_value=["mv_customer_demand_series_profile"],
+        ),
+        patch.object(
+            cd,
+            "refresh_for_tables",
+            return_value={
+                "refreshed": [],
+                "failed": ["mv_customer_demand_series_profile"],
+                "missing": [],
+            },
+        ),
+        patch.object(cd, "complete_batch") as complete,
+        pytest.raises(RuntimeError, match="materialized-view refresh failed"),
+    ):
+        cd._finalize_customer_demand_load(
+            conn,
+            db_params={"dbname": "demand"},
+            batch_id=91,
+            rows_in=12,
+            rows_out=10,
+        )
+
+    complete.assert_not_called()
+    assert conn.commit.call_args_list == [call()]
+
+
+def test_post_write_failure_invalidates_profile_marker_with_failed_batch() -> None:
+    conn = MagicMock()
+    cur = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+
+    with patch.object(cd, "fail_batch") as fail:
+        cd._fail_customer_demand_load(
+            conn,
+            batch_id=92,
+            error=RuntimeError("profile refresh failed"),
+            invalidate_profile=True,
+        )
+
+    fail.assert_called_once_with(cur, 92, "profile refresh failed")
+    marker_delete = next(
+        executed
+        for executed in cur.execute.call_args_list
+        if "DELETE FROM customer_demand_profile_refresh_state" in executed.args[0]
+    )
+    assert "singleton_id = 1" in marker_delete.args[0]
+    conn.rollback.assert_called_once_with()
+    conn.commit.assert_called_once_with()
+
+
+def test_reconcile_abandoned_running_batches_invalidates_profile_marker() -> None:
+    cur = MagicMock()
+    cur.rowcount = 2
+
+    reconciled = cd._reconcile_abandoned_customer_demand_loads(cur)
+
+    assert reconciled == 2
+    update_call, marker_delete = cur.execute.call_args_list
+    assert "UPDATE audit_load_batch" in update_call.args[0]
+    assert "domain = 'customer_demand'" in update_call.args[0]
+    assert "status = 'running'" in update_call.args[0]
+    assert "status = 'failed'" in update_call.args[0]
+    assert "DELETE FROM customer_demand_profile_refresh_state" in marker_delete.args[0]

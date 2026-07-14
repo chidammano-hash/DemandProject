@@ -45,10 +45,11 @@ from common.core.etl_helpers import (
     month_bounds,
     monthly_partition_name,
     perf_setting,
-    record_load_batch,
     staging_table_name,
 )
-from common.engines.medallion import file_hash
+from common.core.mv_refresh import mvs_for_tables, refresh_for_tables
+from common.engines.medallion import complete_batch, create_batch, fail_batch, file_hash
+from common.services.customer_demand_lineage import CUSTOMER_DEMAND_LOAD_LOCK_KEY
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,16 @@ _STG = staging_table_name("customer_demand")
 _PG_WORK_MEM = perf_setting("customer_demand_work_mem", "256MB")
 _PG_MAINTENANCE_WORK_MEM = perf_setting("customer_demand_maintenance_work_mem", "512MB")
 _MAX_PARALLEL_WORKERS = perf_setting("customer_demand_max_workers", 6)
+
+
+def _invalidate_customer_forecast_cache() -> None:
+    """Expose customer-demand lineage changes to current-overlay readers."""
+    from common.services.cache import invalidate_group
+
+    try:
+        invalidate_group("customer_forecast")
+    except (OSError, RuntimeError, ValueError):
+        logger.exception("Invalidating customer forecast cache failed")
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +338,81 @@ def _load_default(db_params: dict, cur: psycopg.Cursor, months: dict[date, int])
 # Main
 # ---------------------------------------------------------------------------
 
+def _finalize_customer_demand_load(
+    conn: psycopg.Connection,
+    *,
+    db_params: dict,
+    batch_id: int,
+    rows_in: int,
+    rows_out: int,
+) -> None:
+    """Refresh all dependent MVs before publishing one completed load batch."""
+    conn.commit()
+    _invalidate_customer_forecast_cache()
+    expected = set(mvs_for_tables([_TABLE]))
+    refresh_result = refresh_for_tables([_TABLE], db_params=db_params)
+    refreshed = set(refresh_result["refreshed"])
+    if (
+        refresh_result["failed"]
+        or refresh_result["missing"]
+        or refreshed != expected
+    ):
+        raise RuntimeError("Customer-demand materialized-view refresh failed")
+    with conn.cursor() as cur:
+        complete_batch(cur, batch_id, rows_in, rows_out)
+        cur.execute(
+            """INSERT INTO customer_demand_profile_refresh_state
+                   (singleton_id, source_batch_id, refreshed_at)
+               VALUES (1, %s, NOW())
+               ON CONFLICT (singleton_id) DO UPDATE
+               SET source_batch_id = EXCLUDED.source_batch_id,
+                   refreshed_at = EXCLUDED.refreshed_at""",
+            (batch_id,),
+        )
+    conn.commit()
+    _invalidate_customer_forecast_cache()
+
+
+def _fail_customer_demand_load(
+    conn: psycopg.Connection,
+    *,
+    batch_id: int,
+    error: Exception,
+    invalidate_profile: bool,
+) -> None:
+    """Close a failed batch and invalidate lineage if facts may have changed."""
+    conn.rollback()
+    with conn.cursor() as cur:
+        fail_batch(cur, batch_id, str(error)[:1000])
+        if invalidate_profile:
+            cur.execute(
+                "DELETE FROM customer_demand_profile_refresh_state WHERE singleton_id = 1"
+            )
+    conn.commit()
+    _invalidate_customer_forecast_cache()
+
+
+def _reconcile_abandoned_customer_demand_loads(cur: psycopg.Cursor) -> int:
+    """Fail orphaned load batches after obtaining the exclusive lineage lock."""
+    cur.execute(
+        """UPDATE audit_load_batch
+           SET status = 'failed',
+               completed_at = NOW(),
+               error_message = COALESCE(
+                   error_message,
+                   'Abandoned customer-demand load reconciled by next canonical load'
+               )
+           WHERE domain = 'customer_demand'
+             AND status = 'running'"""
+    )
+    abandoned = max(cur.rowcount, 0)
+    if abandoned:
+        cur.execute(
+            "DELETE FROM customer_demand_profile_refresh_state WHERE singleton_id = 1"
+        )
+    return abandoned
+
+
 def main() -> None:
     load_dotenv()
 
@@ -364,58 +450,109 @@ def main() -> None:
         with conn.cursor() as cur:
             cur.execute(f"SET work_mem = '{_PG_WORK_MEM}'")
             cur.execute(f"SET maintenance_work_mem = '{_PG_MAINTENANCE_WORK_MEM}'")
-
-            # Step 1: Stage + dedup
-            logger.info("Step 1: Staging %s ...", csv_path.name)
-            with profiled_section("stage_csv"):
-                staged = _stage_csv(cur, csv_path)
-            conn.commit()  # commit so staging is visible to parallel workers
-
-            # Step 2: Discover months
-            months = _discover_months(cur)
-            if not months:
-                logger.error("No valid rows in staging")
-                _drop_staging(cur)
+            cur.execute(
+                "SELECT pg_advisory_lock(hashtext(%s))",
+                (CUSTOMER_DEMAND_LOAD_LOCK_KEY,),
+            )
+            abandoned = _reconcile_abandoned_customer_demand_loads(cur)
+            conn.commit()
+            if abandoned:
+                logger.warning(
+                    "Reconciled %d abandoned customer-demand load batch(es)",
+                    abandoned,
+                )
+            batch_id: int | None = None
+            facts_may_have_changed = False
+            try:
+                batch_id = create_batch(
+                    cur,
+                    "customer_demand",
+                    csv_path.name,
+                    file_hash(csv_path),
+                )
                 conn.commit()
-                sys.exit(1)
+                _invalidate_customer_forecast_cache()
 
-            logger.info("Found %s unique rows across %d months",
-                        f"{staged:,}", len(months))
+                # Step 1: Stage + dedup
+                logger.info("Step 1: Staging %s ...", csv_path.name)
+                with profiled_section("stage_csv"):
+                    staged = _stage_csv(cur, csv_path)
+                conn.commit()  # commit so staging is visible to parallel workers
 
-            # Parse --month
-            month_filter: date | None = None
-            if args.month:
-                parts = args.month.split("-")
-                month_filter = date(int(parts[0]), int(parts[1]), 1)
-                if month_filter not in months:
-                    logger.warning("Month %s not in data", month_filter.isoformat())
+                # Step 2: Discover months
+                months = _discover_months(cur)
+                if not months:
                     _drop_staging(cur)
                     conn.commit()
-                    sys.exit(1)
+                    raise ValueError("No valid rows in customer-demand staging")
 
-            # Step 3: Load
-            logger.info("Step 2: Loading into partitions ...")
-            with profiled_section("load_partitions"):
-                if month_filter:
-                    loaded = _load_single_month(db_params, cur, month_filter)
-                elif args.replace:
-                    loaded = _load_replace(db_params, cur, months)
-                else:
-                    loaded = _load_default(db_params, cur, months)
+                logger.info("Found %s unique rows across %d months",
+                            f"{staged:,}", len(months))
 
-            # Step 4: Record batch lineage so customer_demand participates in
-            # incremental change detection (run_pipeline hash comparison).
-            record_load_batch(
-                cur, "customer_demand",
-                source_file=csv_path.name,
-                source_hash=file_hash(csv_path),
-                rows_in=staged,
-                rows_out=loaded,
-            )
+                # Parse --month
+                month_filter: date | None = None
+                if args.month:
+                    parts = args.month.split("-")
+                    month_filter = date(int(parts[0]), int(parts[1]), 1)
+                    if month_filter not in months:
+                        _drop_staging(cur)
+                        conn.commit()
+                        raise ValueError(
+                            f"Month {month_filter.isoformat()} is not present in customer demand"
+                        )
 
-            # Step 5: Cleanup
-            _drop_staging(cur)
-            conn.commit()
+                # Step 3: Load
+                logger.info("Step 2: Loading into partitions ...")
+                facts_may_have_changed = True
+                with profiled_section("load_partitions"):
+                    if month_filter:
+                        loaded = _load_single_month(db_params, cur, month_filter)
+                    elif args.replace:
+                        loaded = _load_replace(db_params, cur, months)
+                    else:
+                        loaded = _load_default(db_params, cur, months)
+
+                # Step 4: cleanup and refresh dependent MVs before the audit
+                # batch and exact profile marker become visible as completed.
+                _drop_staging(cur)
+                _finalize_customer_demand_load(
+                    conn,
+                    db_params=db_params,
+                    batch_id=batch_id,
+                    rows_in=staged,
+                    rows_out=loaded,
+                )
+            except (
+                csv.Error,
+                LookupError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+                psycopg.Error,
+            ) as exc:
+                if batch_id is not None:
+                    try:
+                        _fail_customer_demand_load(
+                            conn,
+                            batch_id=batch_id,
+                            error=exc,
+                            invalidate_profile=facts_may_have_changed,
+                        )
+                    except psycopg.Error:
+                        conn.rollback()
+                        logger.exception("Failed to mark customer-demand load batch failed")
+                logger.exception("Customer-demand load failed")
+                raise
+            finally:
+                try:
+                    cur.execute(
+                        "SELECT pg_advisory_unlock(hashtext(%s))",
+                        (CUSTOMER_DEMAND_LOAD_LOCK_KEY,),
+                    )
+                except psycopg.Error:
+                    conn.rollback()
+                    logger.exception("Failed to release customer-demand load lock")
 
     elapsed = time.time() - t_start
     rate = loaded / max(elapsed, 0.001)

@@ -93,6 +93,7 @@ export interface NamedPipelinesPayload {
 }
 
 export const jobKeys = {
+  detail: (jobId: string | null) => ["jobs", "detail", jobId] as const,
   periodRoll: (pipelineId: string) => ["jobs", "period-roll", pipelineId] as const,
 };
 

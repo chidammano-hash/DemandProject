@@ -637,6 +637,10 @@ TRUNCATE TABLE fact_forecast_snapshot CASCADE;
 TRUNCATE TABLE forecast_snapshot_roster CASCADE;
 TRUNCATE TABLE fact_production_forecast_staging CASCADE;
 TRUNCATE TABLE fact_production_forecast CASCADE;
+TRUNCATE TABLE customer_bottom_up_blend_component CASCADE;
+TRUNCATE TABLE customer_bottom_up_backtest_accuracy CASCADE;
+TRUNCATE TABLE customer_bottom_up_backtest_component CASCADE;
+TRUNCATE TABLE customer_forecast_backtest_run CASCADE;
 TRUNCATE TABLE model_promotion_log CASCADE;
 TRUNCATE TABLE forecast_generation_run CASCADE;
 TRUNCATE TABLE fact_customer_forecast CASCADE;
@@ -661,10 +665,14 @@ TRUNCATE TABLE fact_sales_monthly_original CASCADE;
 
 -- Group 11b: Customer Demand (parent CASCADE → all partitions + default)
 TRUNCATE TABLE fact_customer_demand_monthly CASCADE;
+TRUNCATE TABLE customer_demand_profile_refresh_state CASCADE;
 
--- After reloading customer demand, run the standard MV refresh lifecycle.
--- It rebuilds mv_customer_demand_series_profile, which customer-forecast
--- readiness and generation require for first/last observed series months.
+-- Reload through load_customer_demand_postgres.py. It creates the running
+-- audit row before fact changes, refreshes every dependent MV, and only then
+-- completes the batch plus customer_demand_profile_refresh_state marker.
+-- A subsequent canonical load marks any abandoned running batch failed and
+-- clears the marker before opening its new batch.
+-- Do not stamp the marker manually after a standalone MV refresh.
 
 -- Group 12: Inventory Planning
 TRUNCATE TABLE fact_ss_simulation_results CASCADE;

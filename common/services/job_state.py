@@ -1851,13 +1851,231 @@ def _set_customer_forecast_job_status(
         logger.exception("Reconciling customer forecast job status failed")
 
 
+def _invalidate_customer_forecast_cache() -> None:
+    """Make terminal customer-forecast state visible to all API readers."""
+    from common.services.cache import invalidate_group
+
+    try:
+        invalidate_group("customer_forecast")
+    except (OSError, RuntimeError, ValueError):
+        logger.exception("Invalidating customer forecast cache failed")
+
+
+def finalize_customer_forecast_job_cancellation(
+    job_id: str,
+    job_type: str,
+    *,
+    expected_status: str,
+    expected_attempt_token: str | None,
+    retry_count: int | None = None,
+) -> str | None:
+    """Atomically resolve cancellation against the exact customer manifest."""
+    import psycopg
+
+    if job_type == "generate_customer_forecast":
+        lock_query = """SELECT manifest.run_id::text, manifest.run_status
+                   FROM job_history job
+                   JOIN customer_forecast_run manifest
+                     ON job.params ->> 'run_id' = manifest.run_id::text
+                   WHERE job.job_id = %s
+                     AND job.job_type = %s
+                     AND job.status = %s
+                     AND (%s::text IS NULL OR job.attempt_token = %s)
+                   FOR UPDATE OF job, manifest"""
+        cancel_query = """UPDATE customer_forecast_run
+                          SET run_status = 'cancelled', error_summary = %s,
+                              completed_at = NOW()
+                          WHERE run_id = %s::uuid
+                            AND run_status IN ('queued', 'generating')"""
+        successful_statuses = {"completed"}
+    elif job_type == "generate_customer_forecast_backtest":
+        lock_query = """SELECT manifest.run_id::text, manifest.run_status
+                   FROM job_history job
+                   JOIN customer_forecast_backtest_run manifest
+                     ON job.params ->> 'run_id' = manifest.run_id::text
+                   WHERE job.job_id = %s
+                     AND job.job_type = %s
+                     AND job.status = %s
+                     AND (%s::text IS NULL OR job.attempt_token = %s)
+                   FOR UPDATE OF job, manifest"""
+        cancel_query = """UPDATE customer_forecast_backtest_run
+                          SET run_status = 'cancelled', error_summary = %s,
+                              completed_at = NOW()
+                          WHERE run_id = %s::uuid
+                            AND run_status IN ('queued', 'generating')"""
+        successful_statuses = {"completed"}
+    elif job_type == "generate_customer_forecast_blend":
+        lock_query = """SELECT manifest.run_id::text, manifest.run_status
+                   FROM job_history job
+                   JOIN forecast_generation_run manifest
+                     ON job.params ->> 'run_id' = manifest.run_id::text
+                   WHERE job.job_id = %s
+                     AND job.job_type = %s
+                     AND job.status = %s
+                     AND (%s::text IS NULL OR job.attempt_token = %s)
+                     AND manifest.metadata ? 'customer_bottom_up_blend'
+                   FOR UPDATE OF job, manifest"""
+        cancel_query = """UPDATE forecast_generation_run
+                          SET run_status = 'invalid', promotion_eligible = FALSE,
+                              invalid_reason = %s, completed_at = NOW()
+                          WHERE run_id = %s::uuid
+                            AND run_status = 'generating'
+                            AND metadata ? 'customer_bottom_up_blend'"""
+        successful_statuses = {"ready", "promoted", "archived"}
+    else:
+        raise ValueError("unsupported customer forecast job type")
+
+    try:
+        with _get_conn() as conn, conn.transaction():
+            row = conn.execute(
+                lock_query,
+                (
+                    job_id,
+                    job_type,
+                    expected_status,
+                    expected_attempt_token,
+                    expected_attempt_token,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+
+            run_id, manifest_status = row
+            terminal_state = (
+                "completed"
+                if str(manifest_status) in successful_statuses
+                else "cancelled"
+            )
+            progress_message = (
+                "Completed before cancellation took effect"
+                if terminal_state == "completed"
+                else "Cancelled by user"
+            )
+            if terminal_state == "cancelled":
+                conn.execute(
+                    cancel_query,
+                    ("managed job cancelled", str(run_id)),
+                )
+
+            result = conn.execute(
+                """UPDATE job_history
+                   SET status = %s,
+                       completed_at = NOW(),
+                       progress_pct = CASE
+                           WHEN %s = 'completed' THEN 100
+                           ELSE progress_pct
+                       END,
+                       progress_msg = %s,
+                       retry_count = COALESCE(%s, retry_count),
+                       logs = COALESCE(logs, '[]'::jsonb)
+                           || jsonb_build_array(jsonb_build_object(
+                               'ts', to_char(
+                                   CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+                                   'HH24:MI:SS'
+                               ),
+                               'pct', CASE WHEN %s = 'completed' THEN 100 ELSE 0 END,
+                               'msg', %s
+                           ))
+                   WHERE job_id = %s
+                     AND job_type = %s
+                     AND status = %s
+                     AND (%s::text IS NULL OR attempt_token = %s)""",
+                (
+                    terminal_state,
+                    terminal_state,
+                    progress_message,
+                    retry_count,
+                    terminal_state,
+                    progress_message,
+                    job_id,
+                    job_type,
+                    expected_status,
+                    expected_attempt_token,
+                    expected_attempt_token,
+                ),
+            )
+            if int(result.rowcount or 0) != 1:
+                raise RuntimeError("Atomic customer cancellation lost its locked job row")
+            return terminal_state
+    except (OSError, RuntimeError, ValueError, psycopg.Error):
+        logger.exception("Finalizing atomic customer forecast cancellation failed")
+        return None
+    finally:
+        _invalidate_customer_forecast_cache()
+
+
+def reconcile_customer_forecast_job(
+    job_id: str,
+    job_type: str,
+    terminal_status: str,
+) -> bool:
+    """Reconcile a queued customer job that terminates before its callable starts."""
+    import psycopg
+
+    if job_type not in {
+        "generate_customer_forecast",
+        "generate_customer_forecast_backtest",
+        "generate_customer_forecast_blend",
+    }:
+        raise ValueError("unsupported customer forecast job type")
+    if terminal_status not in {"failed", "cancelled"}:
+        raise ValueError("unsupported customer forecast terminal status")
+
+    error_summary = (
+        "managed job cancelled" if terminal_status == "cancelled" else "managed job failed"
+    )
+    try:
+        with _get_conn() as conn:
+            if job_type == "generate_customer_forecast_blend":
+                result = conn.execute(
+                    """UPDATE forecast_generation_run generation
+                       SET run_status = 'invalid', promotion_eligible = FALSE,
+                           invalid_reason = %s, completed_at = NOW()
+                       FROM job_history job
+                       WHERE job.job_id = %s
+                         AND job.job_type = %s
+                         AND job.params ->> 'run_id' = generation.run_id::text
+                         AND generation.run_status = 'generating'
+                         AND generation.metadata ? 'customer_bottom_up_blend'""",
+                    (error_summary, job_id, job_type),
+                )
+            elif job_type == "generate_customer_forecast":
+                result = conn.execute(
+                    """UPDATE customer_forecast_run run
+                       SET run_status = %s, error_summary = %s, completed_at = NOW()
+                       FROM job_history job
+                       WHERE job.job_id = %s
+                         AND job.job_type = %s
+                         AND job.params ->> 'run_id' = run.run_id::text
+                         AND run.run_status IN ('queued', 'generating')""",
+                    (terminal_status, error_summary, job_id, job_type),
+                )
+            else:
+                result = conn.execute(
+                    """UPDATE customer_forecast_backtest_run run
+                       SET run_status = %s, error_summary = %s, completed_at = NOW()
+                       FROM job_history job
+                       WHERE job.job_id = %s
+                         AND job.job_type = %s
+                         AND job.params ->> 'run_id' = run.run_id::text
+                         AND run.run_status IN ('queued', 'generating')""",
+                    (terminal_status, error_summary, job_id, job_type),
+                )
+            return bool(result.rowcount)
+    except (OSError, RuntimeError, ValueError, psycopg.Error):
+        logger.exception("Reconciling terminal customer forecast job failed")
+        return False
+    finally:
+        _invalidate_customer_forecast_cache()
+
+
 def _run_generate_customer_forecast(
     params: dict[str, Any],
     progress_cb: Callable | None = None,
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run resumable customer Chronos/Croston batches in a durable subprocess."""
+    """Run resumable customer Croston/SBA batches in a durable subprocess."""
     run_id = str(params.get("run_id") or "")
     if not run_id:
         raise ValueError("Customer forecast generation requires run_id")
@@ -1872,24 +2090,153 @@ def _run_generate_customer_forecast(
         run_id,
     ]
     try:
-        output = _run_subprocess(
-            cmd,
-            progress_cb,
-            "Generating customer forecasts",
-            cancel_event=cancel_event,
-            job_id=job_id,
-            timeout_seconds=_subprocess_timeout_seconds("customer_forecast"),
-            env_overrides={"OMP_NUM_THREADS": "1"},
-        )
-    except JobCancelledError:
-        _set_customer_forecast_job_status(run_id, "cancelled", "job cancelled")
-        raise
-    except (OSError, RuntimeError, ValueError):
-        _set_customer_forecast_job_status(run_id, "failed", "managed job failed")
-        raise
+        try:
+            output = _run_subprocess(
+                cmd,
+                progress_cb,
+                "Generating customer forecasts",
+                cancel_event=cancel_event,
+                job_id=job_id,
+                timeout_seconds=_subprocess_timeout_seconds("customer_forecast"),
+                env_overrides={"OMP_NUM_THREADS": "1"},
+            )
+        except JobCancelledError:
+            _set_customer_forecast_job_status(run_id, "cancelled", "job cancelled")
+            raise
+        except (OSError, RuntimeError, ValueError):
+            _set_customer_forecast_job_status(run_id, "failed", "managed job failed")
+            raise
+    finally:
+        _invalidate_customer_forecast_cache()
     if progress_cb:
         progress_cb(pct=100, msg="Customer forecast generation complete")
     return {"run_id": run_id, "output_log": output or "Customer forecast generation completed"}
+
+
+def _run_generate_customer_forecast_backtest(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the immutable Croston/blend accuracy backtest."""
+    import psycopg
+
+    run_id = str(params.get("run_id") or "")
+    if not run_id:
+        raise ValueError("Customer forecast backtest requires run_id")
+    if progress_cb:
+        progress_cb(pct=5, msg="Starting customer forecast accuracy backtest")
+    cmd = [
+        _UV,
+        "run",
+        "python",
+        str(_SCRIPTS_DIR / "forecasting" / "generate_customer_forecast_backtest.py"),
+        "--run-id",
+        run_id,
+    ]
+    try:
+        try:
+            output = _run_subprocess(
+                cmd,
+                progress_cb,
+                "Backtesting customer bottom-up blend",
+                cancel_event=cancel_event,
+                job_id=job_id,
+                timeout_seconds=_subprocess_timeout_seconds("customer_forecast_backtest"),
+            )
+        except JobCancelledError:
+            try:
+                with _get_conn() as conn:
+                    conn.execute(
+                        """UPDATE customer_forecast_backtest_run
+                           SET run_status = 'cancelled', error_summary = %s,
+                               completed_at = NOW()
+                           WHERE run_id = %s::uuid
+                             AND run_status IN ('queued', 'generating')""",
+                        ("job cancelled", run_id),
+                    )
+            except (OSError, RuntimeError, ValueError, psycopg.Error):
+                logger.exception("Marking cancelled customer backtest failed")
+            raise
+        except (OSError, RuntimeError, ValueError):
+            try:
+                with _get_conn() as conn:
+                    conn.execute(
+                        """UPDATE customer_forecast_backtest_run
+                           SET run_status = 'failed', error_summary = %s,
+                               completed_at = NOW()
+                           WHERE run_id = %s::uuid
+                             AND run_status IN ('queued', 'generating')""",
+                        ("managed job failed", run_id),
+                    )
+            except (OSError, RuntimeError, ValueError, psycopg.Error):
+                logger.exception("Marking failed customer backtest failed")
+            raise
+    finally:
+        _invalidate_customer_forecast_cache()
+    if progress_cb:
+        progress_cb(pct=100, msg="Customer forecast accuracy backtest complete")
+    return {"run_id": run_id, "output_log": output or "Customer backtest completed"}
+
+
+def _run_generate_customer_forecast_blend(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Generate one backtest-qualified bottom-up champion candidate."""
+    run_id = str(params.get("run_id") or "")
+    customer_run_id = str(params.get("customer_run_id") or "")
+    if not run_id or not customer_run_id:
+        raise ValueError("Customer forecast blend requires run_id and customer_run_id")
+    if progress_cb:
+        progress_cb(pct=5, msg="Starting customer bottom-up blend generation")
+    cmd = [
+        _UV,
+        "run",
+        "python",
+        str(_SCRIPTS_DIR / "forecasting" / "generate_customer_bottom_up_blend.py"),
+        "--run-id",
+        run_id,
+        "--customer-run-id",
+        customer_run_id,
+    ]
+    try:
+        try:
+            output = _run_subprocess(
+                cmd,
+                progress_cb,
+                "Generating customer bottom-up blend",
+                cancel_event=cancel_event,
+                job_id=job_id,
+                timeout_seconds=_subprocess_timeout_seconds("customer_forecast_blend"),
+            )
+        except JobCancelledError:
+            _invalidate_customer_blend_job_run(run_id, "job cancelled")
+            raise
+        except (OSError, RuntimeError, ValueError):
+            _invalidate_customer_blend_job_run(run_id, "managed job failed")
+            raise
+    finally:
+        _invalidate_customer_forecast_cache()
+    if progress_cb:
+        progress_cb(pct=100, msg="Customer bottom-up blend generation complete")
+    return {"run_id": run_id, "output_log": output or "Customer blend completed"}
+
+
+def _invalidate_customer_blend_job_run(run_id: str, reason: str) -> None:
+    """Reconcile a failed managed job to its pre-reserved blend manifest."""
+    import psycopg
+
+    from common.services.forecast_generation import invalidate_generation_run
+
+    try:
+        with _get_conn() as conn, conn.cursor() as cur:
+            invalidate_generation_run(cur, run_id, reason)
+    except (OSError, RuntimeError, ValueError, psycopg.Error):
+        logger.exception("Invalidating failed customer blend manifest failed")
 
 
 def _run_prepare_forecast_snapshot_contenders(

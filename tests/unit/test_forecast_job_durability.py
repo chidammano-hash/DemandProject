@@ -306,6 +306,247 @@ def test_terminal_cancellation_is_not_retried_or_overwritten() -> None:
     assert "completed" not in statuses
 
 
+@pytest.mark.parametrize(
+    "job_type",
+    [
+        "generate_customer_forecast",
+        "generate_customer_forecast_backtest",
+        "generate_customer_forecast_blend",
+    ],
+)
+def test_late_customer_cancel_after_child_commit_keeps_job_completed(
+    job_type: str,
+) -> None:
+    """A cancellation observed after a successful child commit must lose the race."""
+    manager = _bare_manager()
+    job_id = f"late-cancel-{job_type}"
+    cancel_event = threading.Event()
+    manager._active_jobs[job_id] = "forecast"
+    manager._cancel_flags[job_id] = cancel_event
+    manager._db_update_status = MagicMock(return_value=True)
+    manager._dispatch_next = MagicMock()
+
+    def committed_callable(
+        _params: dict[str, Any],
+        _progress_cb: Callable[..., None],
+        *,
+        cancel_event: threading.Event | None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        assert cancel_event is not None
+        cancel_event.set()
+        return {"run_id": job_id}
+
+    with patch(
+        "common.services.job_registry.finalize_customer_forecast_job_cancellation",
+        return_value="completed",
+    ) as finalize_cancellation:
+        manager._execute_job(
+            job_id,
+            _type_def(committed_callable, type_id=job_type),
+            {},
+            max_retries=2,
+        )
+
+    statuses = [call.args[1] for call in manager._db_update_status.call_args_list]
+    assert "cancelled" not in statuses
+    assert "failed" not in statuses
+    finalize_cancellation.assert_called_once_with(
+        job_id,
+        job_type,
+        expected_status="running",
+        expected_attempt_token=manager._db_update_status.call_args_list[0].kwargs[
+            "attempt_token"
+        ],
+        retry_count=0,
+    )
+
+
+def test_cancel_endpoint_keeps_late_customer_success_completed() -> None:
+    """The synchronous PID cancellation path honors an already-ready blend run."""
+    manager = _bare_manager()
+    job_id = "late-cancel-ready-blend"
+    manager._db_get = MagicMock(
+        return_value={
+            "job_id": job_id,
+            "job_type": "generate_customer_forecast_blend",
+            "status": "running",
+            "pid": 4321,
+            "attempt_token": "attempt-ready",
+        }
+    )
+    manager._kill_process = MagicMock(return_value=True)
+    manager._db_update_status = MagicMock(return_value=True)
+    manager._reconcile_job_terminal_state = MagicMock()
+
+    with patch(
+        "common.services.job_registry.finalize_customer_forecast_job_cancellation",
+        return_value="completed",
+    ) as finalize_cancellation:
+        assert manager.cancel_job(job_id) is False
+
+    finalize_cancellation.assert_called_once_with(
+        job_id,
+        "generate_customer_forecast_blend",
+        expected_status="running",
+        expected_attempt_token="attempt-ready",
+        retry_count=None,
+    )
+    manager._db_update_status.assert_not_called()
+    manager._reconcile_job_terminal_state.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("job_type", "manifest_status"),
+    [
+        ("generate_customer_forecast", "completed"),
+        ("generate_customer_forecast_backtest", "completed"),
+        ("generate_customer_forecast_blend", "ready"),
+        ("generate_customer_forecast_blend", "promoted"),
+        ("generate_customer_forecast_blend", "archived"),
+    ],
+)
+def test_atomic_customer_cancel_locks_manifest_before_success_wins(
+    job_type: str,
+    manifest_status: str,
+) -> None:
+    """A child commit serialized ahead of cancellation completes the managed job."""
+    from common.services.job_state import (
+        finalize_customer_forecast_job_cancellation,
+    )
+
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.__exit__.return_value = False
+    transaction = connection.transaction.return_value
+    transaction.__enter__.return_value = transaction
+    transaction.__exit__.return_value = False
+    locked = MagicMock()
+    locked.fetchone.return_value = ("manifest-run", manifest_status)
+    updated = MagicMock(rowcount=1)
+    results = iter([locked, updated])
+
+    def execute_in_transaction(*_args: Any) -> MagicMock:
+        assert transaction.__enter__.called
+        assert not transaction.__exit__.called
+        return next(results)
+
+    connection.execute.side_effect = execute_in_transaction
+
+    with (
+        patch("common.services.job_state._get_conn", return_value=connection),
+        patch("common.services.job_state._invalidate_customer_forecast_cache"),
+    ):
+        terminal_state = finalize_customer_forecast_job_cancellation(
+            "job-late-success",
+            job_type,
+            expected_status="running",
+            expected_attempt_token="attempt-17",
+            retry_count=1,
+        )
+
+    assert terminal_state == "completed"
+    transaction.__enter__.assert_called_once_with()
+    lock_sql = connection.execute.call_args_list[0].args[0]
+    assert "FOR UPDATE OF job" in lock_sql
+    assert "job.params ->> 'run_id'" in lock_sql
+    assert connection.execute.call_args_list[-1].args[1][0] == "completed"
+    assert len(connection.execute.call_args_list) == 2
+
+
+@pytest.mark.parametrize(
+    ("job_type", "manifest_table"),
+    [
+        ("generate_customer_forecast", "customer_forecast_run"),
+        (
+            "generate_customer_forecast_backtest",
+            "customer_forecast_backtest_run",
+        ),
+        ("generate_customer_forecast_blend", "forecast_generation_run"),
+    ],
+)
+def test_atomic_customer_cancel_updates_manifest_and_job_under_one_lock(
+    job_type: str,
+    manifest_table: str,
+) -> None:
+    """Cancellation winning the row lock makes both terminal writes one transaction."""
+    from common.services.job_state import (
+        finalize_customer_forecast_job_cancellation,
+    )
+
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.__exit__.return_value = False
+    transaction = connection.transaction.return_value
+    transaction.__enter__.return_value = transaction
+    transaction.__exit__.return_value = False
+    locked = MagicMock()
+    locked.fetchone.return_value = ("manifest-run", "generating")
+    manifest_updated = MagicMock(rowcount=1)
+    job_updated = MagicMock(rowcount=1)
+    results = iter([locked, manifest_updated, job_updated])
+
+    def execute_in_transaction(*_args: Any) -> MagicMock:
+        assert transaction.__enter__.called
+        assert not transaction.__exit__.called
+        return next(results)
+
+    connection.execute.side_effect = execute_in_transaction
+
+    with (
+        patch("common.services.job_state._get_conn", return_value=connection),
+        patch("common.services.job_state._invalidate_customer_forecast_cache"),
+    ):
+        terminal_state = finalize_customer_forecast_job_cancellation(
+            "job-cancel-wins",
+            job_type,
+            expected_status="running",
+            expected_attempt_token="attempt-18",
+        )
+
+    assert terminal_state == "cancelled"
+    transaction.__enter__.assert_called_once_with()
+    manifest_sql = connection.execute.call_args_list[1].args[0]
+    assert f"UPDATE {manifest_table}" in manifest_sql
+    job_sql, job_params = connection.execute.call_args_list[2].args
+    assert "UPDATE job_history" in job_sql
+    assert job_params[0] == "cancelled"
+
+
+def test_atomic_customer_cancel_rolls_back_if_job_transition_is_lost() -> None:
+    """A manifest cancellation cannot commit without its matching job transition."""
+    from common.services.job_state import (
+        finalize_customer_forecast_job_cancellation,
+    )
+
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.__exit__.return_value = False
+    transaction = connection.transaction.return_value
+    transaction.__enter__.return_value = transaction
+    transaction.__exit__.return_value = False
+    locked = MagicMock()
+    locked.fetchone.return_value = ("manifest-run", "generating")
+    manifest_updated = MagicMock(rowcount=1)
+    job_update_lost = MagicMock(rowcount=0)
+    connection.execute.side_effect = [locked, manifest_updated, job_update_lost]
+
+    with (
+        patch("common.services.job_state._get_conn", return_value=connection),
+        patch("common.services.job_state._invalidate_customer_forecast_cache"),
+    ):
+        terminal_state = finalize_customer_forecast_job_cancellation(
+            "job-transition-lost",
+            "generate_customer_forecast",
+            expected_status="running",
+            expected_attempt_token="attempt-lost",
+        )
+
+    assert terminal_state is None
+    transaction.__exit__.assert_called_once()
+    assert transaction.__exit__.call_args.args[0] is RuntimeError
+
+
 def test_retry_retains_group_and_cancel_token_until_terminal_exit() -> None:
     """A transient retry must keep its concurrency lease and cancellation token."""
     manager = _bare_manager()
@@ -651,6 +892,49 @@ def test_queued_cancel_race_retains_worker_lease_and_token() -> None:
     assert manager._active_jobs[job_id] == "forecast"
     assert manager._cancel_flags[job_id] is cancel_event
     manager._dispatch_next.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "job_type",
+    [
+        "generate_customer_forecast",
+        "generate_customer_forecast_backtest",
+        "generate_customer_forecast_blend",
+    ],
+)
+def test_queued_customer_cancel_reconciles_reserved_manifest(job_type: str) -> None:
+    """A queued cancellation must still terminate its reserved customer manifest."""
+    manager = _bare_manager()
+    job_id = f"queued-{job_type}"
+    manager._db_get = MagicMock(
+        return_value={
+            "job_id": job_id,
+            "job_type": job_type,
+            "status": "queued",
+            "pid": None,
+            "attempt_token": None,
+        }
+    )
+    manager._kill_process = MagicMock(return_value=True)
+    manager._db_update_status = MagicMock(return_value=True)
+    manager._reconcile_job_terminal_state = MagicMock()
+    manager._dispatch_next = MagicMock()
+
+    with patch(
+        "common.services.job_registry.finalize_customer_forecast_job_cancellation",
+        return_value="cancelled",
+    ) as finalize_cancellation:
+        assert manager.cancel_job(job_id) is True
+
+    finalize_cancellation.assert_called_once_with(
+        job_id,
+        job_type,
+        expected_status="queued",
+        expected_attempt_token=None,
+        retry_count=None,
+    )
+    manager._reconcile_job_terminal_state.assert_not_called()
+    manager._db_update_status.assert_not_called()
 
 
 def test_recovered_process_death_honors_pending_cancellation() -> None:

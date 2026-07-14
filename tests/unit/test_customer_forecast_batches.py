@@ -4,11 +4,13 @@ from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 
 from common.services.customer_forecast import build_customer_forecast_window
 from common.services.customer_forecast_batches import (
     CustomerForecastBatch,
     _build_batch_rows,
+    _persist_completed_batch,
     claim_customer_forecast_batch,
     load_customer_forecast_progress,
     run_customer_forecast_worker,
@@ -54,7 +56,7 @@ def test_progress_reports_exact_customer_skus_and_throughput_eta() -> None:
         450_000,
         datetime.now(UTC) - timedelta(minutes=20),
         None,
-        {"chronos2_enriched": 60_000, "croston": 40_000},
+        {"croston": 100_000},
     )
     conn = _mock_connection(cursor)
 
@@ -84,10 +86,9 @@ def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
         ]
     )
     settings = {
-        "model_id": "chronos2_enriched",
-        "fallback_model_id": "croston",
+        "model_id": "croston",
         "recent_sales_lookback_months": 6,
-        "fallback_params": {"alpha": 0.1, "variant": "sba"},
+        "model_params": {"alpha": 0.1, "variant": "sba"},
     }
 
     rows, source = _build_batch_rows(
@@ -95,7 +96,6 @@ def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
         history,
         window,
         settings,
-        MagicMock(),
     )
 
     assert len(rows) == 18
@@ -150,3 +150,58 @@ def test_worker_commits_read_transactions_before_claiming_and_persisting() -> No
 
     assert completed == 1
     assert events == ["commit", "claim", "load", "commit", "build", "persist", "claim"]
+
+
+def test_batch_persistence_rejects_customer_demand_lineage_drift_before_copy() -> None:
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (91, 92, 92, 0)
+    conn = _mock_connection(cursor)
+    rows = pd.DataFrame(
+        [
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUST-1",
+                "forecast_month": pd.Timestamp("2026-07-01"),
+                "forecast_qty": 1.0,
+                "lower_bound": None,
+                "upper_bound": None,
+                "model_id": "croston",
+            }
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="Customer demand changed"):
+        _persist_completed_batch(
+            conn,
+            "00000000-0000-0000-0000-000000000001",
+            CustomerForecastBatch(42, "croston", 0, 1, 1),
+            rows,
+            "a" * 64,
+            date(2026, 6, 30),
+        )
+
+    cursor.copy.assert_not_called()
+    lineage_sql = cursor.execute.call_args_list[0].args[0]
+    assert "source_customer_demand_batch_id" in lineage_sql
+    assert "audit_load_batch" in lineage_sql
+    assert "customer_demand_profile_refresh_state" in lineage_sql
+    assert "status = 'running'" in lineage_sql
+
+
+def test_batch_persistence_rejects_an_active_customer_demand_load() -> None:
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (91, 91, 91, 1)
+    conn = _mock_connection(cursor)
+
+    with pytest.raises(RuntimeError, match="load is active"):
+        _persist_completed_batch(
+            conn,
+            "00000000-0000-0000-0000-000000000001",
+            CustomerForecastBatch(42, "croston", 0, 1, 1),
+            pd.DataFrame(),
+            "a" * 64,
+            date(2026, 6, 30),
+        )
+
+    cursor.copy.assert_not_called()

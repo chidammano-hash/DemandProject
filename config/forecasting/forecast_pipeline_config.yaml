@@ -250,20 +250,48 @@ production_forecast:
     job_type: generate_production_forecast
     cron: 0 6 2 * *
 customer_forecast:
-  enabled: true                    # Enable generation-only customer forecasts
-  model_id: chronos2_enriched      # Reuse the governed Chronos 2E adapter
-  fallback_model_id: croston       # Route every non-Chronos-eligible series to Croston/SBA
-  fallback_params:
+  enabled: true                    # Enable customer forecasts and governed bottom-up blending
+  model_id: croston                # Customer forecasting uses Croston/SBA only
+  model_params:
     alpha: 0.1                     # Smoothing factor for non-zero demand sizes and intervals
     variant: sba                   # Syntetos-Boylan bias-adjusted Croston forecast
   history_months: 18               # Fully closed monthly periods supplied as context
   horizon_months: 18               # Future monthly periods generated from the planning month
   recent_sales_lookback_months: 6  # Ignore customer-SKUs with no sales in the latest closed months
   batch_size: 10000                # Durable customer-SKU series per independently committed batch
-  chronos_workers: 1               # One model owner uses auto-selected MPS/CUDA without duplicate GPU copies
-  cpu_workers: 6                   # Parallel CPU workers for active short-history Croston batches
+  cpu_workers: 6                   # Parallel CPU workers for active Croston/SBA batches
   max_batch_attempts: 3            # Failed batch claims allowed before the run requires intervention
   progress_interval_seconds: 5     # Parent-process polling interval for exact series progress and ETA
+  backtest:
+    enabled: true
+    lookback_months: 6
+    min_train_months: 6
+    horizon_months: 1
+    batch_size: 10000
+    promotion_thresholds:
+      min_common_months: 6
+      min_common_dfus: 1000
+      max_wape_degradation_pct: 0.0
+  bottom_up_blend:
+    enabled: true
+    model_id: customer_bottom_up_blend
+    customer_weight: 0.5
+    champion_weight: 0.5
+    normalization:
+      method: historical_fulfillment_ratio
+      lookback_months: 18
+      min_demand_qty: 1.0
+      min_ratio: 0.0
+      max_ratio: 1.0
+    coverage:
+      output_population: active_champion
+      missing_customer: champion_fallback
+      customer_only: exclude
+    interval:
+      method: champion_width_shift
+    promotion:
+      enabled: true
+      reason: backtest_accuracy_gate
 forecast_snapshot:
   lag_count: 6
   contender_count: 3

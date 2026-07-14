@@ -38,7 +38,7 @@ import logging
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +80,7 @@ CUSTOMER_DEMAND = "customer_demand"
 
 def _utc_iso() -> str:
     """ISO-8601 UTC timestamp, no microseconds, with trailing 'Z'."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace(
         "+00:00", "Z"
     )
 
@@ -305,7 +305,20 @@ def _do_delta(domain: str, dry_run: bool) -> str | dict[str, Any]:
     {'status':'success', 'inserted':N, 'updated':N, 'deleted':N} when a real
     upsert happened (counts come straight from RETURNING, not a snapshot diff).
     """
-    # Multi-file domains (inventory, customer_demand) — detection + audit
+    if domain == CUSTOMER_DEMAND:
+        changed_files = _multi_file_changed_files(domain)
+        if not changed_files:
+            logger.info("delta: customer_demand unchanged — skipping")
+            return "skipped"
+        logger.info("delta: customer_demand has %d changed file(s)", len(changed_files))
+        _normalize_domain(domain, dry_run)
+        if dry_run:
+            return "success"
+        _run_loader(_customer_demand_cmd(), dry_run=False)
+        _record_multi_file_hashes(domain, changed_files)
+        return "success"
+
+    # Multi-file domains — detection + audit
     # recording is per-file so the scanner correctly reports which files
     # changed and stops perma-flagging the domain after a successful load.
     if _multi_file_glob_pattern(domain):
@@ -433,6 +446,23 @@ def _multi_file_changed_files(domain: str) -> list[tuple]:
     changed = []
     try:
         with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            if domain == CUSTOMER_DEMAND:
+                cur.execute(
+                    """SELECT batch.metadata -> 'source_file_hashes'
+                       FROM customer_demand_profile_refresh_state state
+                       JOIN audit_load_batch batch
+                         ON batch.batch_id = state.source_batch_id
+                       WHERE state.singleton_id = 1
+                         AND batch.domain = 'customer_demand'
+                         AND batch.status = 'completed'"""
+                )
+                row = cur.fetchone()
+                stored_hashes = dict(row[0]) if row and isinstance(row[0], dict) else {}
+                for fp in files:
+                    current = file_hash(fp)
+                    if stored_hashes.get(fp.name) != current:
+                        changed.append((fp, current))
+                return changed
             for fp in files:
                 current = file_hash(fp)
                 cur.execute(
@@ -460,6 +490,26 @@ def _record_multi_file_hashes(domain: str, files_with_hashes: list[tuple]) -> No
         return
     try:
         with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            if domain == CUSTOMER_DEMAND:
+                source_hashes = {fp.name: value for fp, value in files_with_hashes}
+                cur.execute(
+                    """UPDATE audit_load_batch batch
+                       SET metadata = jsonb_set(
+                           COALESCE(batch.metadata, '{}'::jsonb),
+                           '{source_file_hashes}',
+                           COALESCE(batch.metadata -> 'source_file_hashes', '{}'::jsonb)
+                               || %s::jsonb,
+                           TRUE
+                       )
+                       FROM customer_demand_profile_refresh_state state
+                       WHERE state.singleton_id = 1
+                         AND state.source_batch_id = batch.batch_id
+                         AND batch.domain = 'customer_demand'
+                         AND batch.status = 'completed'""",
+                    (json.dumps(source_hashes, sort_keys=True),),
+                )
+                conn.commit()
+                return
             for fp, h in files_with_hashes:
                 cur.execute(
                     "INSERT INTO audit_load_batch "
@@ -593,8 +643,9 @@ def _safe_replace_slice(domain: str, slice_str: str) -> dict[str, Any]:
     from the cleaned CSV. Returns ``{status, inserted, updated, deleted}``.
     Updated is always 0 for slice replace (it's a wipe-and-reload of the slice).
     """
-    from common.core.domain_specs import get_spec
     import csv as csv_mod
+
+    from common.core.domain_specs import get_spec
 
     spec = get_spec(domain)
     table = spec.table
@@ -753,7 +804,11 @@ def process_domain(
                 record["rows_loaded"] = ins + upd
             else:
                 record["rows_loaded"] = _last_row_count(domain)
-            _refresh_mvs(domain)
+            # The customer-demand loader owns refresh + exact profile lineage;
+            # completing its audit batch before a wrapper refresh would expose
+            # stale profile data as current.
+            if domain != "customer_demand":
+                _refresh_mvs(domain)
     except (subprocess.CalledProcessError, psycopg.Error,
             ValueError, FileNotFoundError) as exc:
         record["status"] = "failed"
@@ -946,8 +1001,9 @@ def _safe_upsert(domain: str) -> dict[str, int]:
     delta as additive (removing fact rows by absence is rarely intended and
     expensive across multi-million-row tables).
     """
-    from common.core.domain_specs import get_spec
     import csv as csv_mod
+
+    from common.core.domain_specs import get_spec
 
     spec = get_spec(domain)
     table = spec.table

@@ -592,7 +592,9 @@ positive-sales month once per series. Customer forecast readiness and batch
 manifest creation therefore avoid scanning the partitioned fact table. Each
 worker reads only its assigned series from the resolved 18-month fact window.
 The central MV refresh service rebuilds the profile after customer-demand
-loads; `sql/214` adds the activity field and supporting index.
+loads; `sql/214` adds the activity field and supporting index. The singleton
+`customer_demand_profile_refresh_state` (`sql/216`) binds the refreshed profile
+to one exact completed audit batch.
 
 ### Inventory Planning Tables (12)
 
@@ -602,7 +604,7 @@ loads; `sql/214` adds the activity field and supporting index.
 
 `mv_inventory_forecast_monthly`, `mv_inventory_health_score`, `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout`, `mv_network_balance`, `mv_control_tower_kpis`, `mv_supplier_po_performance`, `mv_po_lead_time_analysis`
 
-### Forecasting & Champion (18)
+### Forecasting & Champion (22)
 
 `fact_candidate_forecast`, `forecast_generation_run`,
 `fact_production_forecast_staging`, `fact_production_forecast`,
@@ -611,7 +613,11 @@ loads; `sql/214` adds the activity field and supporting index.
 `champion_experiment_comparison`, `champion_promotion_log`,
 `forecast_snapshot_roster`, `fact_forecast_snapshot`, `agg_accuracy_snapshot`,
 `customer_forecast_run`, `customer_forecast_batch`,
-`customer_forecast_batch_series`, `fact_customer_forecast`
+`customer_forecast_batch_series`, `fact_customer_forecast`,
+`customer_demand_profile_refresh_state`,
+`customer_forecast_backtest_run`, `customer_bottom_up_backtest_component`,
+`customer_bottom_up_backtest_accuracy`,
+`customer_bottom_up_blend_component`
 
 - **`fact_candidate_forecast`** — legacy candidate table with no active writer;
   it is not a forward-release source. Historical backtests load to
@@ -634,20 +640,51 @@ loads; `sql/214` adds the activity field and supporting index.
   5. The separate Period Roll workflow writes and reconciles this archive.
   `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
 - **`customer_forecast_run` / `customer_forecast_batch*` /
-  `fact_customer_forecast`** — an independent, generation-only customer
-  forecast manifest, durable batch ledger, and payload. Active customer series
-  use the latest 18 closed demand months to generate 18 future months:
-  full-history series use Chronos 2E and shorter active histories use
-  customer-only Croston/SBA. Series with no customer sales in the latest six
-  closed months are omitted rather than persisted as zero rows. Completed
-  10,000-series batches are immutable checkpoints and retries process only
-  unfinished batches. These rows are read-only results; they never reconcile
-  to, stage, promote, or replace the item-location production forecast. Series
-  history bounds are maintained in `mv_customer_demand_series_profile`. DDL:
+  `fact_customer_forecast`** — an immutable customer forecast manifest,
+  durable batch ledger, and payload. Every active customer series uses
+  Croston/SBA over the latest 18 closed demand months to generate 18 future
+  months. Series with no customer sales in the latest six closed months are
+  omitted rather than persisted as zero rows. Completed 10,000-series batches
+  are recovery checkpoints and retries process only unfinished batches.
+  Each new run records the exact latest completed `customer_demand`
+  `audit_load_batch` only when the singleton profile-refresh marker matches and
+  no load is active. The loader creates its running batch before fact mutation,
+  refreshes all dependent MVs, then atomically completes the batch and stamps
+  the marker; any post-write failure invalidates the marker. After a hard exit,
+  the next exclusively locked canonical load marks abandoned running batches
+  failed and clears the marker before starting. A newer completed
+  load, active load, or marker mismatch invalidates persistence, retry,
+  backtest creation, blend readiness, and promotion so mixed-source output
+  cannot become completed evidence. Fact rows can mutate only while the parent
+  run is `generating`.
+  Series history bounds are maintained in
+  `mv_customer_demand_series_profile`. Base DDL:
   `sql/210_create_customer_forecast.sql` and
   `sql/211_create_customer_demand_series_profile.sql`, with route lineage in
   `sql/212_add_customer_forecast_model_routes.sql` and
   durable batching/activity lineage in `sql/213` through `sql/215`.
+- **`customer_forecast_backtest_run` /
+  `customer_bottom_up_backtest_component` /
+  `customer_bottom_up_backtest_accuracy`** — causal six-origin,
+  one-month-ahead historical evidence comparing normalized customer
+  bottom-up, the source champion, and their configured 50/50 blend on a common
+  cohort. The request freezes a checksum of the exact source-series membership
+  plus its series/batch counts, and the full run uses one repeatable-read
+  snapshot. Activity is evaluated
+  independently at each origin and champion
+  selection uses the execution lag stamped on each historical row. The
+  accuracy row freezes WAPE, MAE, bias, accuracy, thresholds, and a
+  no-degradation gate.
+- **`customer_bottom_up_blend_component`** — generation-only forward component
+  evidence keyed to one generation, customer run, passing backtest, source
+  promotion, and production run. The draft follows the full active production
+  spine: qualified customer months blend at 50/50, missing customer evidence
+  and months outside the 18-month customer horizon pass through champion, and
+  customer-only DFUs are excluded. Drafts use normal staging and explicit
+  transactional promotion; no blend auto-promotes or recursively becomes the
+  next blend source. Customer, backtest, source-production, and forward
+  component payloads are checksum-reconciled at stage/promotion. DDL:
+  `sql/216`.
 
 ### AI & Exception Tables
 
@@ -784,23 +821,39 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
 68.  `model_promotion_log` — exact promotion/demotion audit; grain: `(id)` SERIAL PK; includes model/type/version/cardinalities plus `source_run_id`, `production_run_id`, gate report, candidate/production/archive checksums, archive time, and replacement id. Database indexes enforce one active release and one promotion per source run; DDL: `sql/121`, extended by `sql/203_create_forecast_generation_run.sql`
 - `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, generator-contract metadata, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`. Migration `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready release candidates invalid and non-promotable without deleting their evidence.
 - Newly promoted `fact_production_forecast` rows carry `source_run_id`, `promotion_log_id`, a distinct production `run_id`, and `lineage_status='verified'`. The promotion transaction hashes candidate and production in the same stable order and requires equality before commit.
+- Promotion of a `customer_bottom_up_blend` conditionally holds the shared
+  customer-demand session lock from before its serializable snapshot through
+  commit, so no newer demand/profile batch can publish between lineage
+  validation and release publication.
 - `customer_forecast_run` records the resolved 18-month closed-history window,
-  18-month output window, durable job, cardinalities, Chronos/Croston route
-  counts, ignored dormant series, exact batch/series progress, model/config
-  versions, and payload lineage. `customer_forecast_batch` and
+  18-month output window, durable job, cardinalities, ignored dormant series,
+  exact batch/series progress, Croston/SBA model/config versions, the completed
+  customer-demand load batch, matching profile-refresh marker, and payload
+  lineage. An active load, mismatched marker, or later completed
+  customer-demand load makes the run stale and blocks resume, backtest, blend
+  consumption, and promotion until regeneration. `customer_forecast_batch` and
   `customer_forecast_batch_series` provide durable 10,000-series checkpoints
-  claimed with `SKIP LOCKED`; Chronos uses one GPU-auto model owner while
-  Croston batches run on parallel CPU workers. `fact_customer_forecast`
-  is immutable and unique by run,
-  item, location, customer, and forecast month; DDL:
+  claimed with `SKIP LOCKED`; Croston batches run on parallel CPU workers.
+  `fact_customer_forecast` is immutable and unique by run, item, location,
+  customer, and forecast month; DDL:
   `sql/210_create_customer_forecast.sql`, extended by `sql/213` and `sql/215`.
+  Migration `sql/216` adds customer-demand batch/profile lineage, freezes
+  fact-row mutations outside `generating`, and enforces Croston-only new writes
+  while preserving readable legacy rows.
   Customer-SKUs
   without sales in the latest six closed months are ignored. The refreshable
   `mv_customer_demand_series_profile` (`sql/211`, extended by `sql/214`)
   supplies all-history bounds and recent-sales activity without request-time
   full-fact scans.
+- `customer_forecast_backtest_run` and its generation-only, terminally frozen
+  component/accuracy
+  tables persist six causal one-step origins and the matching common-cohort
+  promotion gate. `customer_bottom_up_blend_component` preserves the exact
+  normalized customer, source champion, blend, interval, coverage, backtest,
+  and release lineage behind each staged `customer_bottom_up_blend` row. DDL:
+  `sql/216_create_customer_bottom_up_blend.sql`.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
-- Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
+- Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Staging summary distinguishes the requested release slot from the actual candidate model and exposes a sanitized customer-blend lineage/backtest gate, allowing Forecast readiness and promotion controls to name a `customer_bottom_up_blend` before action. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
 - `/backtest-management/summary` reports `loaded_run` (latest run with `is_loaded_to_db`) alongside `latest_run`, and `current_accuracy`/`current_wape` fall back to it, so a newest failed/cancelled run never masks loaded results in the UI. `/backtest-management/{model_id}/runs` and `/model-tuning/{model}/experiments` join `job_history.error` so failed/cancelled runs carry their failure reason (`error` field). A 404 from `/backtest-management/{model_id}/current` is treated client-side as "no artifacts yet", not an error toast.
 
 ### Database Schema Housekeeping (perf work)
@@ -1028,7 +1081,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Dashboard** | `/dashboard/kpis`, `/trend`, `/heatmap`, `/alerts`, `/top-movers`, `/pipeline-readiness` | `fact_external_forecast_monthly`, `agg_sales_monthly`, `fact_sales_monthly` (inline query), `dim_sku` |
 | **Data Explorer** | `/domains/{domain}/rows`, `/search`, `/filter`, `/meta` | All dimension + fact tables |
 | **Portfolio Analysis** | `/forecast/accuracy/slice`, `/lag-curve`, `/champions/*`, `/shap/*` | `agg_accuracy_by_dim`, `backtest_lag_archive`, `fact_external_forecast_monthly` |
-| **Item Analysis** | `/sku/*`, `/forecast/shap/{model}/sku`, `/inventory/*` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, SHAP CSVs |
+| **Item Analysis** | `/sku/*`, `/forecast/shap/{model}/sku`, `/inventory/*`, `/customer-forecast/blend/series` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, `customer_bottom_up_blend_component`, SHAP CSVs |
 | **Clusters** | `/clustering/list`, `/scenario`, `/scenario/{id}/status` | `dim_sku`, `data/clustering/` |
 | **Inv Planning** (34 panels, 5 view presets) | `/inv-planning/*` (14 router modules) | All `fact_*` inv planning tables + MVs |
 | **Control Tower** | `/control-tower/kpis`, `/alerts`, `/top-critical`, `/trend` | `mv_control_tower_kpis` |
@@ -1047,10 +1100,10 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Unified Model Tuning** | `/model-tuning/{model}/experiments`, `/experiments/{id}`, `/experiments/{id}/lags`, `/experiments/{id}/clusters`, `/experiments/{id}/months`, `/experiments/{id}/logs`, `/compare`, `/templates`, `/promoted`, `/promotions`, `/experiments/{id}/promote`, `/experiments/{id}/cancel` | `lgbm_tuning_run`, `lgbm_tuning_timeframe`, `lgbm_tuning_cluster`, `lgbm_tuning_month`, `lgbm_tuning_comparison` |
 | **Cluster Experiments** | `/cluster-experiments`, `/{id}`, `/compare`, `/templates`, `/completed`, `/{id}/promote`, `/{id}/used-by` | `cluster_experiment`, `cluster_experiment_comparison` |
 | **Champion Experiments** | `/champion-experiments`, `/{id}`, `/{id}/lags`, `/{id}/months`, `/{id}/logs`, `/templates`, `/promoted`, `/promotions`, `/compare`, `/{id}/assign`, retired `/{id}/promote`, retired `/{id}/promote-results`, `/{id}/promote-results/status`, `/{id}/cancel` | `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log` |
-| **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions` |
+| **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill`, `/customer-forecast/blend/series` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions`, `customer_bottom_up_blend_component` |
 | **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/stage`, `/{model_id}/promote`, `/{model_id}/train` | `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
 | **Forecast Release Readiness** | `/forecast-release/readiness` | `fact_external_forecast_monthly`, `dim_sku`, `champion_experiment`, `cluster_experiment`, `fact_production_forecast`, `fact_forecast_snapshot` |
-| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/runs/{run_id}/retry`, `/series`, `/export` | `fact_customer_demand_monthly`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast`, `job` |
+| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/runs/{run_id}/retry`, `/series`, `/export`, `/backtest/generate`, `/backtest/latest`, `/blend/readiness`, `/blend/generate`, `/blend/latest`, `/blend/series` | `fact_customer_demand_monthly`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast`, `customer_forecast_backtest_run`, `customer_bottom_up_backtest_component`, `customer_bottom_up_backtest_accuracy`, `customer_bottom_up_blend_component`, `forecast_generation_run`, `fact_production_forecast_staging`, `job` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
@@ -2021,17 +2074,27 @@ review surfaces. API
 **Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
 
 **Customer-Level Forecasting:** the separate **Forecasting → Customer
-Forecast** stage generates read-only forecasts at item-location-customer-month
-grain. A run uses the latest 18 fully closed months from
-`fact_customer_demand_monthly`, routes full-history series to Chronos 2E and
-shorter active histories to Croston/SBA, and emits exactly 18 future months
-into immutable run-versioned rows. Customer series with no sales in the latest
-six closed months are ignored. Durable 10,000-series checkpoints permit retry
-without losing completed work and expose exact completed-series progress and
-ETA. Customer-only Croston is excluded from the governed five-model roster.
-The feature deliberately has no customer champion, backtest, adjustment,
-reconciliation, staging, or production-promotion path. API
-`/customer-forecast`; DDL `sql/210`–`sql/215`; spec
+Forecast** stage generates immutable Croston/SBA forecasts at
+item-location-customer-month grain. A run uses the latest 18 fully closed
+months from `fact_customer_demand_monthly` and emits exactly 18 future months.
+Customer series with no sales in the latest six closed months are ignored.
+Durable 10,000-series checkpoints permit retry without losing completed work
+and expose exact completed-series progress and ETA. Croston remains outside
+the governed five-model roster. A separate six-origin causal backtest sums
+customer forecasts to item-location, normalizes demand to sales with an
+18-month fulfillment ratio, and compares customer bottom-up, source champion,
+and their 50/50 blend on a common cohort. Historical eligibility is resolved
+at each origin instead of reusing the current forward manifest. Promotion
+requires at least six
+common months, 1,000 common DFUs, and blend WAPE no worse than champion WAPE.
+Passing evidence can generate a `customer_bottom_up_blend` draft on the exact
+active production spine: qualified customer months blend, missing or
+out-of-horizon customer rows pass through champion, and customer-only DFUs are
+excluded. Component evidence is writable only while its parent run is
+generating and is frozen afterward. The draft uses normal staging and explicit
+transactional promotion, never auto-promotes, and cannot recursively source a
+later customer blend. API
+`/customer-forecast`; DDL `sql/210`–`sql/216`; spec
 `docs/specs/02-forecasting/35-customer-level-forecasting.md`.
 
 ### 2. SKU Clustering & Segmentation

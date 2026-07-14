@@ -35,6 +35,52 @@ describe("GenerateForecastCard", () => {
     expect(screen.queryByText(/meta-learner/i)).toBeNull();
   });
 
+  it("identifies a customer bottom-up blend and its gate before staging", () => {
+    render(
+      <GenerateForecastCard
+        selectedModel="champion"
+        effectiveHorizon={24}
+        onHorizonChange={vi.fn()}
+        includeCI
+        onIncludeCIChange={vi.fn()}
+        isSubmitting={false}
+        isForecastRunning={false}
+        candidateGenerated
+        candidateStaged={false}
+        candidateDfuCount={2_048}
+        candidateModelId="customer_bottom_up_blend"
+        customerBlendLineage={{
+          customer_run_id: "customer-run",
+          backtest_run_id: "backtest-run",
+          backtest_gate: {
+            passed: true,
+            reason: "passed",
+            common_months: 6,
+            common_dfus: 2_048,
+            champion_wape_pct: 12.4,
+            customer_wape_pct: 10.1,
+            blend_wape_pct: 9.8,
+            blend_wape_degradation_pct: -2.6,
+          },
+        }}
+        isStaging={false}
+        isPromoting={false}
+        isSelectedPromoted={false}
+        onGenerateForecast={vi.fn()}
+        onStage={vi.fn()}
+        onPromote={vi.fn()}
+        latestVersion={null}
+      />
+    );
+
+    expect(screen.getByText("Customer Bottom-Up Blend")).toBeInTheDocument();
+    expect(screen.getByText(/Backtest gate passed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Blend WAPE 9.8%/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Promote Customer Bottom-Up Blend to Staging/i })
+    ).toBeEnabled();
+  });
+
   it("blocks champion generation until a user-selected champion is assigned", () => {
     render(
       <GenerateForecastCard
