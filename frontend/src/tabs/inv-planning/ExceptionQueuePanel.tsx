@@ -27,7 +27,7 @@ import { toast } from "@/components/Toaster";
 import { useUndoable } from "@/hooks/useUndoable";
 
 function AiTag() {
-  return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-[#0D9488]/10 text-[#0D9488]">AI</span>;
+  return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-chart-8/10 text-chart-8">AI</span>;
 }
 
 const AI_DETECTED_TYPES = new Set(["below_rop", "below_rop_critical", "below_ss", "stockout", "excess", "zero_velocity"]);
@@ -642,7 +642,7 @@ export function ExceptionQueuePanel() {
                     <span className="inline-flex items-center gap-1">
                       {AI_DETECTED_TYPES.has(row.exception_type) && (
                         <>
-                          <span className="inline-block w-2 h-2 rounded-full bg-[#0D9488] mr-0.5" title="AI-detected" />
+                          <span className="inline-block w-2 h-2 rounded-full bg-chart-8 mr-0.5" title="AI-detected" />
                           <AiTag />
                         </>
                       )}

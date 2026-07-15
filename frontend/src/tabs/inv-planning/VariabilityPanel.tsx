@@ -19,10 +19,12 @@ import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatPct } from "@/lib/formatters";
 import { BarChart2 } from "lucide-react";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function VariabilityPanel() {
+  const { roles, fallback } = useChartColors();
   const { filters } = useGlobalFilterContext();
   const gf = {
     brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
@@ -46,12 +48,12 @@ export function VariabilityPanel() {
 
   const pieData = summary
     ? [
-        { name: "Stable", value: summary.by_class.low, color: "#22c55e" },
-        { name: "Moderate", value: summary.by_class.medium, color: "#f59e0b" },
+        { name: "Stable", value: summary.by_class.low, color: roles.good },
+        { name: "Moderate", value: summary.by_class.medium, color: roles.warning },
         {
           name: "Volatile",
           value: (summary.by_class.high ?? 0) + (summary.by_class.lumpy ?? 0),
-          color: "#ef4444",
+          color: roles.error,
         },
       ].filter((d) => d.value > 0)
     : [];

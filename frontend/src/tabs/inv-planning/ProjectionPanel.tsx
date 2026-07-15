@@ -20,6 +20,7 @@ import { DataFreshnessBanner } from "@/components/DataFreshnessBanner";
 import { projectionKeys, fetchProjection, fetchProjectionAtRisk, refreshProjection, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
 import { EmptyState } from "@/components/EmptyState";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const HORIZONS = [30, 60, 90];
 
@@ -42,6 +43,7 @@ const scenarioDescriptions: Record<ScenarioId, string> = {
 const SCENARIO_IDS: ScenarioId[] = ["demand_up_20", "demand_down_20", "lt_double", "emergency_po"];
 
 export function ProjectionPanel() {
+  const { roles, fallback } = useChartColors();
   const { filters: globalFilters } = useGlobalFilterContext();
   const [itemNo, setItemNo] = useState("");
   const [loc, setLoc] = useState("");
@@ -299,7 +301,7 @@ export function ProjectionPanel() {
                   ]}
                 />
                 <Legend />
-                <ReferenceLine y={data.safety_stock} stroke="#f59e0b" strokeDasharray="6 3" label={{ value: "SS", position: "left", fontSize: 11 }} />
+                <ReferenceLine y={data.safety_stock} stroke={roles.warning} strokeDasharray="6 3" label={{ value: "SS", position: "left", fontSize: 11 }} />
                 {planningDateInfo?.is_frozen && (
                   <ReferenceLine
                     x={planningDateInfo.planning_date}
@@ -309,12 +311,12 @@ export function ProjectionPanel() {
                   />
                 )}
                 {stockoutDateNoOrder && (
-                  <ReferenceLine x={stockoutDateNoOrder} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "Stockout", position: "top", fontSize: 10 }} />
+                  <ReferenceLine x={stockoutDateNoOrder} stroke={roles.error} strokeDasharray="4 2" label={{ value: "Stockout", position: "top", fontSize: 10 }} />
                 )}
-                <Bar dataKey="receipts_expected" name="Receipts" fill="#86efac" opacity={0.7} yAxisId={0} />
-                <Line dataKey="no_order_qty" name="No Order" stroke="#ef4444" dot={false} strokeWidth={2} />
-                <Line dataKey="with_open_po_qty" name="With Open PO" stroke="#22c55e" dot={false} strokeWidth={2} />
-                <Line dataKey="with_planned_orders_qty" name="With Planned" stroke="#3b82f6" dot={false} strokeWidth={2} strokeDasharray="5 3" />
+                <Bar dataKey="receipts_expected" name="Receipts" fill={roles.good} opacity={0.7} yAxisId={0} />
+                <Line dataKey="no_order_qty" name="No Order" stroke={roles.error} dot={false} strokeWidth={2} />
+                <Line dataKey="with_open_po_qty" name="With Open PO" stroke={roles.good} dot={false} strokeWidth={2} />
+                <Line dataKey="with_planned_orders_qty" name="With Planned" stroke={roles.forecast} dot={false} strokeWidth={2} strokeDasharray="5 3" />
               </ComposedChart>
             </ResponsiveContainer>
           </div>

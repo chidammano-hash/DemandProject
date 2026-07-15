@@ -15,7 +15,7 @@ import { Radio } from "lucide-react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 function AiTag() {
-  return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-[#0D9488]/10 text-[#0D9488]">AI</span>;
+  return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-chart-8/10 text-chart-8">AI</span>;
 }
 
 const AI_SIGNAL_TYPES = new Set(["demand_acceleration", "demand_deceleration"]);

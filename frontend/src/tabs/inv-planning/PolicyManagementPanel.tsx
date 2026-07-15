@@ -14,6 +14,7 @@ import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { formatFixed, formatPct } from "@/lib/formatters";
 import { EmptyState } from "@/components/EmptyState";
 import { Shield } from "lucide-react";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const POLICY_TYPE_DESCRIPTIONS: Record<string, string> = {
   continuous_rop: "Monitor inventory daily; place an order when on-hand reaches the Reorder Point (ROP)",
@@ -36,6 +37,7 @@ type EditPolicyState = {
 };
 
 export function PolicyManagementPanel() {
+  const { roles, fallback } = useChartColors();
   const queryClient = useQueryClient();
   const [editPolicy, setEditPolicy] = useState<EditPolicyState | null>(null);
   const [autoAssignStatus, setAutoAssignStatus] = useState<string | null>(null);
@@ -182,7 +184,7 @@ export function PolicyManagementPanel() {
                 <circle
                   cx="40" cy="40" r="34"
                   fill="none"
-                  stroke={compliance.assignment_pct >= 80 ? "#22c55e" : compliance.assignment_pct >= 50 ? "#f59e0b" : "#ef4444"}
+                  stroke={compliance.assignment_pct >= 80 ? roles.good : compliance.assignment_pct >= 50 ? roles.warning : roles.error}
                   strokeWidth="8"
                   strokeDasharray={`${(compliance.assignment_pct / 100) * 213.6} 213.6`}
                   strokeLinecap="round"

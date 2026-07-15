@@ -492,7 +492,7 @@ export function SafetyStockPanel() {
 
       {/* Supplier Risk Adjustment note */}
       <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2">
-        <Shield className="w-4 h-4 text-[#0D9488] flex-shrink-0 mt-0.5" />
+        <Shield className="w-4 h-4 text-chart-8 flex-shrink-0 mt-0.5" />
         <span>
           <strong className="text-foreground">Supplier Risk Adjustment:</strong> Items with unreliable supplier delivery times have their safety buffer automatically increased to prevent stockouts.
         </span>

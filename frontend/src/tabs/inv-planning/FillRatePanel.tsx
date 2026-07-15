@@ -22,10 +22,12 @@ import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatInt, formatPct } from "@/lib/formatters";
 import { TrendingUp } from "lucide-react";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function FillRatePanel() {
+  const { roles, fallback } = useChartColors();
   const { filters } = useGlobalFilterContext();
   const gf = {
     brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
@@ -93,8 +95,8 @@ export function FillRatePanel() {
                 formatter={(v: number, name: string) => [`${(v * 100).toFixed(1)}%`, name === "fill_rate" ? "Fill Rate" : name]}
                 labelFormatter={(l: string) => `Month: ${l}`}
               />
-              <Line type="monotone" dataKey="fill_rate" stroke="#3b82f6" dot={false} strokeWidth={2} />
-              <ReferenceLine y={0.98} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "Target 98%", position: "insideTopRight", fontSize: 9, fill: "#ef4444" }} />
+              <Line type="monotone" dataKey="fill_rate" stroke={roles.forecast} dot={false} strokeWidth={2} />
+              <ReferenceLine y={0.98} stroke={roles.error} strokeDasharray="4 2" label={{ value: "Target 98%", position: "insideTopRight", fontSize: 9, fill: roles.error }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

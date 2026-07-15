@@ -14,7 +14,7 @@ import { Map as MapIcon } from "lucide-react";
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 function dosTierColor(dos: number | null): string {
-  if (dos == null) return "bg-gray-100 dark:bg-gray-800";
+  if (dos == null) return "bg-muted";
   if (dos < 7) return "bg-red-400 dark:bg-red-600 text-white";
   if (dos < 15) return "bg-orange-300 dark:bg-orange-600 text-white";
   if (dos < 31) return "bg-yellow-200 dark:bg-yellow-500";

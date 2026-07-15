@@ -39,7 +39,7 @@ export function ReplenishmentPlanPanel() {
   const [page, setPage] = useState(0);
   const [selectedSku, setSelectedSku] = useState<{ item_id: string; loc: string } | null>(null);
 
-  const { chartColors } = useChartColors();
+  const { chartColors, roles, fallback } = useChartColors();
 
   const summaryQ = useQuery({
     queryKey: replenishmentKeys.summary(
@@ -267,12 +267,12 @@ export function ReplenishmentPlanPanel() {
                 <Bar
                   dataKey="avg_forecast_ss"
                   name="Forecast Buffer"
-                  fill="#7c3aed"
+                  fill={roles.ai}
                 />
                 <Bar
                   dataKey="avg_historical_ss"
                   name="Historical Buffer"
-                  fill="#94a3b8"
+                  fill={fallback[0]}
                 />
               </BarChart>
             </ResponsiveContainer>
@@ -461,7 +461,7 @@ export function ReplenishmentPlanPanel() {
                     type="monotone"
                     dataKey="forecast_qty"
                     name="Forecast"
-                    stroke="#2563eb"
+                    stroke={roles.forecast}
                     strokeWidth={2}
                     dot={false}
                   />
@@ -469,7 +469,7 @@ export function ReplenishmentPlanPanel() {
                     type="monotone"
                     dataKey="ss_combined"
                     name="Safety Buffer (Forward)"
-                    stroke="#7c3aed"
+                    stroke={roles.ai}
                     strokeWidth={2}
                     strokeDasharray="5 3"
                     dot={false}
@@ -478,7 +478,7 @@ export function ReplenishmentPlanPanel() {
                     type="monotone"
                     dataKey="historical_ss"
                     name="Safety Buffer (Historical)"
-                    stroke="#94a3b8"
+                    stroke={fallback[0]}
                     strokeWidth={1.5}
                     strokeDasharray="3 2"
                     dot={false}
@@ -487,7 +487,7 @@ export function ReplenishmentPlanPanel() {
                     type="monotone"
                     dataKey="reorder_point"
                     name="Reorder Trigger"
-                    stroke="#f97316"
+                    stroke={fallback[3]}
                     strokeWidth={1.5}
                     dot={false}
                   />

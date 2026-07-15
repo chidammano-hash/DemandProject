@@ -17,6 +17,8 @@ import {
   type HealthSummaryFilters,
 } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { useChartColors } from "@/hooks/useChartColors";
+import type { ChartRoles } from "@/constants/palette";
 import { EmptyState } from "@/components/EmptyState";
 import { severityBadgeClass } from "@/lib/severityBadge";
 
@@ -91,18 +93,20 @@ const SCORE_COMPONENTS: Record<string, { label: string; businessLabel: string; m
 
 function scoreColor(val: number | null | undefined): string {
   if (val == null) return "";
-  if (val >= 20) return "text-green-600";
-  if (val >= 15) return "text-blue-600";
-  if (val >= 10) return "text-amber-600";
-  return "text-red-600";
+  if (val >= 20) return "text-success";
+  if (val >= 15) return "text-info";
+  if (val >= 10) return "text-warning";
+  return "text-destructive";
 }
 
-const TIER_COLORS: Record<string, string> = {
-  healthy:  "#22c55e",
-  monitor:  "#3b82f6",
-  at_risk:  "#f59e0b",
-  critical: "#ef4444",
-};
+function tierColors(roles: ChartRoles): Record<string, string> {
+  return {
+    healthy: roles.good,
+    monitor: roles.reference,
+    at_risk: roles.warning,
+    critical: roles.error,
+  };
+}
 
 const TIER_LABEL: Record<string, string> = {
   healthy:  "Healthy",
@@ -112,6 +116,8 @@ const TIER_LABEL: Record<string, string> = {
 };
 
 export function PortfolioHealthPanel() {
+  const { roles } = useChartColors();
+  const TIER_COLORS = tierColors(roles);
   const [healthTierFilter, setHealthTierFilter] = useState("");
   const [healthDetailOffset, setHealthDetailOffset] = useState(0);
 

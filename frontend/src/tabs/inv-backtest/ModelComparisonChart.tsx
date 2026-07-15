@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import { formatNumber } from "@/lib/formatters";
+import { useChartColors } from "@/hooks/useChartColors";
 import { CHART_MARGIN } from "./invBacktestShared";
 
 export const ModelComparisonChart = memo(function ModelComparisonChart({
@@ -26,6 +27,7 @@ export const ModelComparisonChart = memo(function ModelComparisonChart({
   chartColors: { grid: string; axis: string; tooltip_bg: string; tooltip_border: string };
   trendColors: string[];
 }) {
+  const { roles } = useChartColors();
   if (comparisonData.length === 0) return null;
 
   return (
@@ -69,14 +71,14 @@ export const ModelComparisonChart = memo(function ModelComparisonChart({
             ]}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar yAxisId="left" dataKey="stockout_rate" name="Stockout Rate" fill="#ef4444" barSize={20}>
+          <Bar yAxisId="left" dataKey="stockout_rate" name="Stockout Rate" fill={roles.error} barSize={20}>
             {comparisonData.map((_, idx) => (
-              <Cell key={idx} fill="#ef4444" />
+              <Cell key={idx} fill={roles.error} />
             ))}
           </Bar>
-          <Bar yAxisId="left" dataKey="excess_rate" name="Excess Rate" fill="#f59e0b" barSize={20}>
+          <Bar yAxisId="left" dataKey="excess_rate" name="Excess Rate" fill={roles.warning} barSize={20}>
             {comparisonData.map((_, idx) => (
-              <Cell key={idx} fill="#f59e0b" />
+              <Cell key={idx} fill={roles.warning} />
             ))}
           </Bar>
           <Line

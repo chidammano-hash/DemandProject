@@ -19,10 +19,12 @@ import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatCurrency } from "@/lib/formatters";
 import { DollarSign } from "lucide-react";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function CashFlowPanel() {
+  const { roles, fallback } = useChartColors();
   const { data, isLoading, error } = useQuery({
     queryKey: insightKeys.cashFlow(),
     queryFn: fetchCashFlowTimeline,
@@ -111,21 +113,21 @@ export function CashFlowPanel() {
                   dataKey="po_committed"
                   name="PO Committed"
                   stackId="a"
-                  fill="#3b82f6"
+                  fill={roles.forecast}
                   radius={[0, 0, 0, 0]}
                 />
                 <Bar
                   dataKey="planned_orders"
                   name="Planned Orders"
                   stackId="a"
-                  fill="#8b5cf6"
+                  fill={roles.ai}
                   radius={[0, 0, 0, 0]}
                 />
                 <Bar
                   dataKey="ss_investment"
                   name="SS Investment"
                   stackId="a"
-                  fill="#f59e0b"
+                  fill={roles.warning}
                   radius={[2, 2, 0, 0]}
                 />
               </BarChart>

@@ -53,6 +53,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/Skeleton";
 
 // TodaysPlanBanner is rendered eagerly (always visible at top of tab).
 import { TodaysPlanBanner } from "./inv-planning/TodaysPlanBanner";
@@ -169,8 +170,10 @@ const PurchaseOrdersPanel = lazy(() =>
 
 function PanelLoader() {
   return (
-    <div className="flex items-center justify-center text-sm text-muted-foreground rounded-md border border-dashed h-64">
-      Loading...
+    <div className="space-y-3 rounded-xl border border-border/60 bg-card p-4 shadow-card" aria-busy="true">
+      <Skeleton className="h-5 w-48" />
+      <Skeleton className="h-3 w-72" />
+      <Skeleton className="h-48 w-full" />
     </div>
   );
 }
@@ -197,10 +200,6 @@ const GROUPS = [
     label: "Insights",
     shortLabel: "Insights",
     tooltip: "Cross-domain intelligence: action feed, network view, segment drill-down, scorecard",
-    accent: "text-cyan-600",
-    accentBg: "bg-cyan-600",
-    accentBgMuted: "bg-cyan-50 dark:bg-cyan-950/30",
-    accentBorder: "border-cyan-600",
     tabs: [
       { key: "actionfeed",  label: "Action Feed",      icon: Inbox },
       { key: "netheatmap",  label: "Network Balance",   icon: Map },
@@ -216,10 +215,6 @@ const GROUPS = [
     label: "Daily Operations",
     shortLabel: "Daily Ops",
     tooltip: "Morning routine: triage exceptions, check portfolio health",
-    accent: "text-red-600",
-    accentBg: "bg-red-600",
-    accentBgMuted: "bg-red-50 dark:bg-red-950/30",
-    accentBorder: "border-red-600",
     tabs: [
       { key: "exceptions", label: "Exceptions", icon: AlertTriangle },
       { key: "health",     label: "Health",     icon: Activity },
@@ -230,10 +225,6 @@ const GROUPS = [
     label: "Replenishment Optimization",
     shortLabel: "Optimize",
     tooltip: "EOQ, safety stock, policies, and forward planning",
-    accent: "text-blue-600",
-    accentBg: "bg-blue-600",
-    accentBgMuted: "bg-blue-50 dark:bg-blue-950/30",
-    accentBorder: "border-blue-600",
     tabs: [
       { key: "eoq",          label: "EOQ",          icon: Package2 },
       { key: "policy",       label: "Policy",       icon: Shield },
@@ -245,10 +236,6 @@ const GROUPS = [
     label: "Analytics",
     shortLabel: "Analytics",
     tooltip: "Fill rate, ABC-XYZ, supplier performance, intramonth stockouts",
-    accent: "text-emerald-600",
-    accentBg: "bg-emerald-600",
-    accentBgMuted: "bg-emerald-50 dark:bg-emerald-950/30",
-    accentBorder: "border-emerald-600",
     tabs: [
       { key: "fillrate",   label: "Fill Rate",  icon: TrendingUp },
       { key: "abcxyz",     label: "ABC-XYZ",    icon: Grid3x3 },
@@ -261,10 +248,6 @@ const GROUPS = [
     label: "Planning",
     shortLabel: "Planning",
     tooltip: "Demand forecast, replenishment plan, projection",
-    accent: "text-violet-600",
-    accentBg: "bg-violet-600",
-    accentBgMuted: "bg-violet-50 dark:bg-violet-950/30",
-    accentBorder: "border-violet-600",
     tabs: [
       { key: "safetystock", label: "Safety Stock",      icon: ArchiveX },
       { key: "variability", label: "Variability",       icon: BarChart2 },
@@ -281,10 +264,6 @@ const GROUPS = [
     label: "Demand Intelligence",
     shortLabel: "Sensing",
     tooltip: "Blended demand signals and short-horizon sensing",
-    accent: "text-teal-600",
-    accentBg: "bg-teal-600",
-    accentBgMuted: "bg-teal-50 dark:bg-teal-950/30",
-    accentBorder: "border-teal-600",
     tabs: [
       { key: "echelon", label: "Echelon SS",     icon: Network },
     ],
@@ -294,10 +273,6 @@ const GROUPS = [
     label: "Strategic",
     shortLabel: "Strategic",
     tooltip: "Multi-echelon SS, investment optimization, financial planning",
-    accent: "text-amber-600",
-    accentBg: "bg-amber-600",
-    accentBgMuted: "bg-amber-50 dark:bg-amber-950/30",
-    accentBorder: "border-amber-600",
     tabs: [
       { key: "finance",   label: "Financial Plan", icon: Banknote },
       { key: "events",    label: "Events",         icon: CalendarDays },
@@ -309,10 +284,6 @@ const GROUPS = [
     label: "Order-to-Cash",
     shortLabel: "OTC",
     tooltip: "Planned orders, procurement, purchase order tracking",
-    accent: "text-slate-600",
-    accentBg: "bg-slate-500",
-    accentBgMuted: "bg-slate-50 dark:bg-slate-900/30",
-    accentBorder: "border-slate-500",
     tabs: [
       { key: "overridequeue", label: "Override Queue", icon: Edit3 },
       { key: "procurement",   label: "Procurement",    icon: ShoppingCart },
@@ -411,10 +382,6 @@ export function InvPlanningTab() {
         label: "Daily Essentials",
         shortLabel: "Essentials",
         tooltip: "The 6 panels you need every day",
-        accent: "text-indigo-600" as const,
-        accentBg: "bg-indigo-600" as const,
-        accentBgMuted: "bg-indigo-50 dark:bg-indigo-950/30" as const,
-        accentBorder: "border-indigo-600" as const,
         tabs: matchedTabs as unknown as typeof GROUPS[number]["tabs"],
       }] as unknown as typeof GROUPS;
     }
@@ -589,8 +556,8 @@ export function InvPlanningTab() {
                 className={cn(
                   "flex-shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-all",
                   isActive
-                    ? cn("text-white", group.accentBg, "shadow-sm")
-                    : cn("text-muted-foreground border border-border hover:border-muted-foreground/40 hover:text-foreground"),
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground border border-border hover:border-muted-foreground/40 hover:text-foreground",
                 )}
               >
                 {group.shortLabel}
@@ -617,7 +584,7 @@ export function InvPlanningTab() {
                 className={cn(
                   "flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2",
                   isActive
-                    ? cn("text-foreground", activeGroup.accentBorder)
+                    ? "border-primary text-foreground"
                     : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30",
                 )}
               >
@@ -625,7 +592,7 @@ export function InvPlanningTab() {
                   size={13}
                   className={cn(
                     "flex-shrink-0",
-                    isActive ? activeGroup.accent : "text-muted-foreground",
+                    isActive ? "text-primary" : "text-muted-foreground",
                   )}
                 />
                 <span className="whitespace-nowrap">{tab.label}</span>

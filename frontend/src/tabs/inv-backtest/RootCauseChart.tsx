@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import { LoadingElement } from "@/components/LoadingElement";
+import { useChartColors } from "@/hooks/useChartColors";
 import { CHART_MARGIN } from "./invBacktestShared";
 
 export const RootCauseChart = memo(function RootCauseChart({
@@ -30,6 +31,7 @@ export const RootCauseChart = memo(function RootCauseChart({
   onRootCauseModelChange: (model: string) => void;
   chartColors: { grid: string; axis: string; tooltip_bg: string; tooltip_border: string };
 }) {
+  const { roles, chartColors: chrome } = useChartColors();
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-3">
@@ -71,9 +73,9 @@ export const RootCauseChart = memo(function RootCauseChart({
               }}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="under_forecast" name="Under-Forecast" stackId="a" fill="#ef4444" />
-            <Bar dataKey="over_forecast" name="Over-Forecast" stackId="a" fill="#f59e0b" />
-            <Bar dataKey="exact" name="Exact" stackId="a" fill="#94a3b8" />
+            <Bar dataKey="under_forecast" name="Under-Forecast" stackId="a" fill={roles.error} />
+            <Bar dataKey="over_forecast" name="Over-Forecast" stackId="a" fill={roles.warning} />
+            <Bar dataKey="exact" name="Exact" stackId="a" fill={chrome.axis} />
           </BarChart>
         </ResponsiveContainer>
       ) : null}

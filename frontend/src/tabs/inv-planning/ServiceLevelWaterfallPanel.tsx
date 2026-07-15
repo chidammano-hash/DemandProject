@@ -22,6 +22,7 @@ import type {
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
+import { useChartColors } from "@/hooks/useChartColors";
 import { formatPct } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import { Layers } from "lucide-react";
@@ -33,6 +34,7 @@ const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 // ---------------------------------------------------------------------------
 
 function BridgeChart() {
+  const { roles } = useChartColors();
   const { data, isLoading, error } = useQuery({
     queryKey: insightKeys.serviceLevelBridge(),
     queryFn: () => fetchServiceLevelBridge(),
@@ -41,7 +43,7 @@ function BridgeChart() {
 
   if (error) {
     return (
-      <div className="text-xs text-red-600 p-4">
+      <div className="text-xs text-destructive p-4">
         Failed to load service level bridge: {(error as Error).message}
       </div>
     );
@@ -91,8 +93,8 @@ function BridgeChart() {
   // Assign colors
   for (const bar of chartBars) {
     if (bar.type === "total") bar.fill = "hsl(var(--primary))";
-    else if (bar.type === "positive") bar.fill = "#10b981";
-    else bar.fill = "#ef4444";
+    else if (bar.type === "positive") bar.fill = roles.good;
+    else bar.fill = roles.error;
   }
 
   return (
@@ -267,17 +269,23 @@ function BridgeChart() {
 // Section 2 — Lever Decomposition (existing waterfall)
 // ---------------------------------------------------------------------------
 
-const LEVER_COLORS: Record<string, string> = {
-  base_forecast: "#94a3b8",
-  base_forecast_accuracy: "#94a3b8",
-  ss_buffer: "#3b82f6",
-  ss_buffer_contribution: "#3b82f6",
-  lt_buffer: "#8b5cf6",
-  lt_buffer_contribution: "#8b5cf6",
-  sensing: "#10b981",
-  sensing_adjustment: "#10b981",
-  achieved: "#059669",
-};
+// Lever colors from the semantic palette: the base forecast is muted, the
+// two buffers are petrol/teal levers, sensing is the sky reference signal,
+// achieved lands on emerald good.
+function leverColors(charts: ReturnType<typeof useChartColors>): Record<string, string> {
+  const { roles, fallback } = charts;
+  return {
+    base_forecast: fallback[0],
+    base_forecast_accuracy: fallback[0],
+    ss_buffer: roles.forecast,
+    ss_buffer_contribution: roles.forecast,
+    lt_buffer: roles.ceiling,
+    lt_buffer_contribution: roles.ceiling,
+    sensing: roles.reference,
+    sensing_adjustment: roles.reference,
+    achieved: roles.good,
+  };
+}
 
 const LEVER_LABELS: Record<string, string> = {
   base_forecast: "Base Forecast",
@@ -312,6 +320,8 @@ interface LeverWaterfallBar {
 }
 
 function LeverWaterfall() {
+  const charts = useChartColors();
+  const LEVER_COLORS = leverColors(charts);
   const { data, isLoading, error } = useQuery({
     queryKey: insightKeys.serviceLevelWaterfall(),
     queryFn: fetchServiceLevelWaterfall,
@@ -320,7 +330,7 @@ function LeverWaterfall() {
 
   if (error) {
     return (
-      <div className="text-xs text-red-600 p-4">
+      <div className="text-xs text-destructive p-4">
         Failed to load lever waterfall: {(error as Error).message}
       </div>
     );
@@ -340,7 +350,7 @@ function LeverWaterfall() {
         contribution,
         cumulative,
         base: cumulative - contribution,
-        fill: seg.color || LEVER_COLORS[lever] || "#94a3b8",
+        fill: seg.color || LEVER_COLORS[lever] || charts.fallback[0],
       });
     }
   }

@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/EmptyState";
+import { useChartColors } from "@/hooks/useChartColors";
 import {
   financialPlanKeys,
   fetchBudgetStatus,
@@ -31,6 +32,7 @@ const fmtM = (v: number | null | undefined) =>
   v == null ? "—" : `$${(v / 1_000_000).toFixed(2)}M`;
 
 export function FinancialPlanPanel() {
+  const { roles, fallback } = useChartColors();
   const { data: budgets, isLoading: budgetLoading } = useQuery({
     queryKey: financialPlanKeys.budget({}),
     queryFn: () => fetchBudgetStatus(),
@@ -111,9 +113,9 @@ export function FinancialPlanPanel() {
                 <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 11 }} />
                 <Tooltip formatter={(v: number) => fmtCurrency(v)} />
                 <Legend />
-                <Line type="monotone" dataKey="inventory_value" name="Inv Value" stroke="#3b82f6" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="carrying_cost" name="Carrying Cost" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
-                <Line type="monotone" dataKey="excess_value" name="Excess Value" stroke="#ef4444" dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="inventory_value" name="Inv Value" stroke={roles.forecast} dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="carrying_cost" name="Carrying Cost" stroke={roles.warning} dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="excess_value" name="Excess Value" stroke={roles.error} dot={false} strokeWidth={1.5} />
               </LineChart>
             </ResponsiveContainer>
           )}

@@ -31,6 +31,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { TableSkeleton } from "@/components/Skeleton";
 import { formatFixed, formatInt } from "@/lib/formatters";
 import { insightKeys, fetchProactiveRebalancing } from "@/api/queries/inv-planning-insights";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const PAGE = 50;
 
@@ -58,6 +59,7 @@ const STATUS_BADGE: Record<string, string> = {
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function RebalancingPanel() {
+  const { roles, fallback } = useChartColors();
   const queryClient = useQueryClient();
   const [offset, setOffset] = useState(0);
   const [solver, setSolver] = useState("greedy");
@@ -176,7 +178,7 @@ export function RebalancingPanel() {
   } | undefined;
 
   const urgencyColor = (u: string) =>
-    u === "critical" ? "#ef4444" : u === "high" ? "#f59e0b" : u === "medium" ? "#eab308" : "#6b7280";
+    u === "critical" ? roles.error : u === "high" ? roles.warning : u === "medium" ? roles.warning : fallback[0];
 
   return (
     <div className="space-y-4">
