@@ -23,6 +23,8 @@ export interface TuningRun {
   feature_count: number | null;
   params: Record<string, unknown> | null;
   notes: string | null;
+  /** Failure reason from job_history when the run failed or was cancelled. */
+  error?: string | null;
   is_promoted?: boolean;
   promoted_at?: string | null;
   is_results_promoted?: boolean;

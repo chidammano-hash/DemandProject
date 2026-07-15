@@ -76,7 +76,7 @@ describe("SweepResultsPanel", () => {
     const member = {
       gate_eligible: true, skipped_duplicate: false, strategy_params: {},
       models: ["lgbm_cluster"], metric: "wape", ceiling_accuracy: null,
-      gap_bps: null, status: "completed",
+      gap_bps: null, status: "completed" as const,
     };
     vi.mocked(fetchSweepLeaderboard).mockResolvedValueOnce({
       sweep_id: 1,

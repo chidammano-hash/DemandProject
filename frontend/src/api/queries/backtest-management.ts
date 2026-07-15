@@ -16,7 +16,7 @@ export interface BacktestRun {
   id: number;
   model_id: string;
   job_id: string | null;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   accuracy_pct: number | null;
   wape: number | null;
   bias: number | null;
