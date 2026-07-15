@@ -566,7 +566,7 @@ def _validate_customer_bottom_up_blend(
     pipeline_config: dict[str, Any],
     require_lineage: bool = False,
 ) -> dict[str, Any] | None:
-    """Require current Croston backtest evidence for a derived customer blend."""
+    """Require current rule-router backtest evidence for a derived customer blend."""
     recorded = manifest.metadata.get(CUSTOMER_BLEND_LINEAGE_METADATA_KEY)
     if recorded is None:
         if require_lineage:

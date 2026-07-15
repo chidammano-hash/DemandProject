@@ -223,7 +223,7 @@ async def test_latest_customer_blend_exposes_customer_and_champion_lineage() -> 
     assert "customer_bottom_up_blend_component" not in latest_sql
     assert params[0] == date(2026, 7, 1)
     assert all(isinstance(checksum, str) and len(checksum) == 64 for checksum in params[1:3])
-    assert params[3:5] == (date(2026, 7, 1), "croston")
+    assert params[3:5] == (date(2026, 7, 1), "customer_rule_router")
     assert isinstance(params[5], str) and len(params[5]) == 64
 
 
@@ -454,5 +454,5 @@ async def test_default_customer_blend_series_requires_current_exact_lineage() ->
         date(2026, 7, 1),
     )
     assert all(isinstance(checksum, str) and len(checksum) == 64 for checksum in params[3:5])
-    assert params[5:7] == (date(2026, 7, 1), "croston")
+    assert params[5:7] == (date(2026, 7, 1), "customer_rule_router")
     assert isinstance(params[7], str) and len(params[7]) == 64

@@ -171,7 +171,7 @@ def load_customer_blend_readiness(
         if customer[12] != current_customer_settings["model_id"] or customer[
             9
         ] != customer_forecast_config_checksum(current_customer_settings):
-            blockers.append("Generate a new Croston customer forecast with current configuration")
+            blockers.append("Generate a new rule-routed customer forecast with current configuration")
         if customer[4] != customer[1]:
             blockers.append("The customer forecast window does not start in its planning month")
     if customer is not None and source is not None and source[6] is not None:

@@ -39,6 +39,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useChartColors } from "@/hooks/useChartColors";
+import {
+  CUSTOMER_FORECAST_ROUTE_ORDER,
+  customerForecastModelLabel,
+} from "@/lib/customerForecast";
 import { formatApiError } from "@/lib/formatApiError";
 import { CustomerBottomUpBlendPanel } from "./CustomerBottomUpBlendPanel";
 
@@ -62,16 +66,6 @@ function formatEta(seconds: number | null | undefined): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return hours > 0 ? `ETA ${hours}h ${minutes}m` : `ETA ${minutes}m`;
-}
-
-function customerModelLabel(modelId: string): string {
-  if (modelId === "croston") return "Croston/SBA";
-  if (modelId === "chronos2_enriched") return "Chronos 2E";
-  return modelId
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part[0]?.toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 export function CustomerForecastPanel() {
@@ -163,12 +157,25 @@ export function CustomerForecastPanel() {
   const seriesModelLabels = useMemo(
     () =>
       Array.from(
-        new Set((seriesQuery.data?.forecast ?? []).map((row) => customerModelLabel(row.model_id)))
+        new Set(
+          (seriesQuery.data?.forecast ?? []).map((row) =>
+            customerForecastModelLabel(row.model_id)
+          )
+        )
       ),
     [seriesQuery.data?.forecast]
   );
 
   const readiness = readinessQuery.data;
+  const latestRouteEntries = useMemo(() => {
+    if (!latestRun) return [];
+    if (latestRun.model_id === "customer_rule_router") {
+      return CUSTOMER_FORECAST_ROUTE_ORDER.map(
+        (modelId) => [modelId, latestRun.model_route_counts?.[modelId] ?? 0] as const
+      );
+    }
+    return Object.entries(latestRun.model_route_counts ?? {});
+  }, [latestRun]);
   const filtersComplete = Boolean(filters.item_id && filters.location_id && filters.customer_no);
   const exportFilters = resultRun ? { ...filters, run_id: resultRun.run_id } : filters;
   const tooltipContentStyle = {
@@ -186,9 +193,10 @@ export function CustomerForecastPanel() {
                 <Users className="h-5 w-5" /> Customer Forecast Generation
               </CardTitle>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Generate customer-level demand with Croston/SBA for every active valid series.
-                Inactive series are ignored. Completed forecasts feed the separately validated
-                bottom-up blend workflow without changing customer rows in place.
+                Generate customer-level demand with an ordered rule policy. Demand starting in the
+                latest six months uses a recursive 3-month moving average; series with demand in at
+                least 9 of the latest 12 months repeat their 12-month history; all other active
+                series use recursive Croston/SBA. Inactive series are ignored.
               </p>
             </div>
             <div className="flex gap-2">
@@ -257,7 +265,7 @@ export function CustomerForecastPanel() {
                 <WindowCard
                   label="Coverage"
                   value={`${readiness.forecastable_series.toLocaleString()} forecastable series`}
-                  detail={`${readiness.croston_series.toLocaleString()} Croston/SBA series`}
+                  detail={`${readiness.moving_average_series.toLocaleString()} 3-Month Moving Average · ${readiness.seasonal_repeat_series.toLocaleString()} 12-Month Seasonal Repeat · ${readiness.croston_series.toLocaleString()} Croston/SBA`}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
@@ -302,15 +310,17 @@ export function CustomerForecastPanel() {
                 {latestRun.row_count.toLocaleString()} rows ·{" "}
                 {latestRun.eligible_series.toLocaleString()} series
               </p>
-              {Object.keys(latestRun.model_route_counts ?? {}).length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {Object.entries(latestRun.model_route_counts)
-                    .map(
-                      ([modelId, count]) =>
-                        `${customerModelLabel(modelId)} (${count.toLocaleString()})`
-                    )
-                    .join(" · ")}
-                </p>
+              <p className="text-xs text-muted-foreground">
+                Policy: {customerForecastModelLabel(latestRun.model_id)}
+              </p>
+              {latestRouteEntries.length > 0 && (
+                <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                  {latestRouteEntries.map(([modelId, count]) => (
+                    <span key={modelId}>
+                      {customerForecastModelLabel(modelId)} ({count.toLocaleString()})
+                    </span>
+                  ))}
+                </div>
               )}
               {(latestRun.total_series ?? 0) > 0 && (
                 <div className="mt-2 space-y-1">

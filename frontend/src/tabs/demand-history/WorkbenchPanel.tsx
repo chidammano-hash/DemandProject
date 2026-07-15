@@ -29,6 +29,7 @@ import { customerForecastKeys, fetchCustomerForecastSeries } from "@/api/queries
 import { fetchProductionForecast } from "@/api/queries/production-forecast";
 import { useDemandHistorySelection } from "../DemandHistoryTab";
 import { Skeleton } from "@/components/Skeleton";
+import { customerForecastModelLabel } from "@/lib/customerForecast";
 import { formatInt, formatCompactNumber } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
@@ -376,13 +377,18 @@ export function DemandWorkbenchPanel() {
     queryFn: () => fetchCustomerForecastSeries(customerForecastFilters),
     enabled: customerForecastEnabled,
   });
-  const forecastPoints =
+  const forecastPoints: ForecastPoint[] =
     grain === "item_loc_customer"
       ? (customerForecastQuery.data?.forecast ?? []).map((point) => ({
           forecast_month: point.month,
           forecast_qty: point.forecast_qty,
+          model_id: point.model_id,
         }))
       : (forecastQuery.data?.forecasts ?? []);
+  const forecastLabel =
+    grain === "item_loc_customer" && forecastPoints[0]?.model_id
+      ? customerForecastModelLabel(forecastPoints[0].model_id)
+      : "Forecast";
   const forecastLoading =
     (productionForecastEnabled && forecastQuery.isLoading) ||
     (customerForecastEnabled && customerForecastQuery.isLoading);
@@ -582,7 +588,7 @@ export function DemandWorkbenchPanel() {
                 title={
                   forecastAvailable
                     ? grain === "item_loc_customer"
-                      ? "Overlay the Croston/SBA forecast for this customer series"
+                      ? `Overlay the ${forecastLabel} forecast for this customer series`
                       : grain === "item"
                         ? "Overlay production forecast (sum across all locations)"
                         : "Overlay production forecast for this DFU"
@@ -625,6 +631,7 @@ export function DemandWorkbenchPanel() {
             seriesList={selectedSeriesList}
             forecastPoints={showForecast ? forecastPoints : []}
             forecastLoading={forecastLoading}
+            forecastLabel={forecastLabel}
             chartColors={chartColors}
             trendColors={trendColors}
           />
@@ -642,17 +649,26 @@ export function DemandWorkbenchPanel() {
 interface ForecastPoint {
   forecast_month: string;
   forecast_qty: number | null;
+  model_id?: string;
 }
 
 interface ChartViewProps {
   seriesList: WorkbenchSeries[];
   forecastPoints: ForecastPoint[];
   forecastLoading: boolean;
+  forecastLabel: string;
   chartColors: { grid: string; axis: string; tooltip_bg: string; tooltip_border: string };
   trendColors: string[];
 }
 
-function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, trendColors }: ChartViewProps) {
+function ChartView({
+  seriesList,
+  forecastPoints,
+  forecastLoading,
+  forecastLabel,
+  chartColors,
+  trendColors,
+}: ChartViewProps) {
   const { roles } = useChartColors();
   // Build a unified row[] keyed by month with one column per selected series
   // and an optional `forecast_qty` column.
@@ -722,10 +738,10 @@ function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, t
   const gradientId = isSingle ? `wbGrad-${single.key.replace(/[^a-zA-Z0-9]/g, "_")}` : "";
 
   const seriesNameByDataKey = useMemo(() => {
-    const map: Record<string, string> = { forecast_qty: "Forecast" };
+    const map: Record<string, string> = { forecast_qty: forecastLabel };
     seriesList.forEach((s, i) => { map[`s${i}`] = s.label || s.key; });
     return map;
-  }, [seriesList]);
+  }, [forecastLabel, seriesList]);
 
   return (
     <>
@@ -825,7 +841,7 @@ function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, t
                   strokeWidth={2}
                   strokeDasharray="6 4"
                   dot={{ r: 3, fill: roles.good }}
-                  name="Forecast"
+                  name={forecastLabel}
                   connectNulls
                   isAnimationActive={false}
                 />

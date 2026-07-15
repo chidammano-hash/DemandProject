@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from api.auth import require_api_key
 from api.core import get_conn, get_read_only_conn
 from common.core.planning_date import get_planning_date
+from common.ml.customer_forecast_rules import parse_customer_forecast_rule_parameters
 from common.services.cache import cached_sync
 from common.services.customer_forecast import (
     build_customer_forecast_window,
@@ -182,6 +183,9 @@ def get_readiness() -> dict[str, Any]:
                 conn,
                 window,
                 recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+                rule_params=parse_customer_forecast_rule_parameters(
+                    dict(settings["rule_params"])
+                ),
             )
         if not settings["enabled"]:
             readiness["ready"] = False
@@ -205,6 +209,9 @@ def generate_customer_forecasts() -> JSONResponse:
                 conn,
                 window,
                 recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+                rule_params=parse_customer_forecast_rule_parameters(
+                    dict(settings["rule_params"])
+                ),
             )
             if not settings["enabled"]:
                 readiness["ready"] = False

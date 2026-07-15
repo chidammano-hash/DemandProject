@@ -7,14 +7,34 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from common.ml.customer_forecast_rules import (
+    CROSTON_ROUTE_ID,
+    CUSTOMER_RULE_ROUTER_MODEL_ID,
+    MOVING_AVERAGE_ROUTE_ID,
+    SEASONAL_REPEAT_ROUTE_ID,
+    CustomerForecastRuleParameters,
+)
 from common.services.customer_forecast import (
     _resolve_run_window,
-    build_croston_forecast_rows,
+    build_customer_forecast_rows,
     build_customer_forecast_window,
     get_customer_forecast_settings,
     load_customer_forecast_readiness,
     prepare_customer_history,
 )
+
+_RULE_PARAMS = CustomerForecastRuleParameters(
+    recent_demand_lookback_months=6,
+    moving_average_window_months=3,
+    repeat_history_lookback_months=12,
+    repeat_history_min_demand_months=9,
+)
+_CROSTON_PARAMS = {
+    "alpha": 0.1,
+    "variant": "sba",
+    "recursive": True,
+    "recursive_damping": 0.5,
+}
 
 
 def test_customer_forecast_window_uses_closed_history_and_current_month() -> None:
@@ -31,7 +51,7 @@ def test_customer_forecast_window_uses_closed_history_and_current_month() -> Non
     assert len(window.forecast_months) == 18
 
 
-def test_prepare_customer_history_routes_every_active_series_to_croston() -> None:
+def test_prepare_customer_history_routes_active_series_by_demand_pattern() -> None:
     frame = pd.DataFrame(
         [
             {
@@ -42,6 +62,7 @@ def test_prepare_customer_history_routes_every_active_series_to_croston() -> Non
                 "demand_qty": 8.0,
                 "sales_qty": 8.0,
                 "series_first_month": "2024-10-01",
+                "series_first_demand_month": "2026-03-01",
             },
             {
                 "item_id": "ITEM-1",
@@ -51,6 +72,7 @@ def test_prepare_customer_history_routes_every_active_series_to_croston() -> Non
                 "demand_qty": 4.0,
                 "sales_qty": 4.0,
                 "series_first_month": "2024-10-01",
+                "series_first_demand_month": "2026-03-01",
             },
             {
                 "item_id": "ITEM-2",
@@ -60,6 +82,7 @@ def test_prepare_customer_history_routes_every_active_series_to_croston() -> Non
                 "demand_qty": 3.0,
                 "sales_qty": 3.0,
                 "series_first_month": "2025-05-01",
+                "series_first_demand_month": "2026-05-01",
             },
             {
                 "item_id": "ITEM-3",
@@ -69,19 +92,24 @@ def test_prepare_customer_history_routes_every_active_series_to_croston() -> Non
                 "demand_qty": 0.0,
                 "sales_qty": 0.0,
                 "series_first_month": "2024-01-01",
+                "series_first_demand_month": None,
             },
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
 
-    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
+    prepared = prepare_customer_history(
+        frame,
+        window,
+        recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS,
+    )
 
     assert prepared.eligible_series_count == 2
     assert len(prepared.model_input) == 36
     assert prepared.model_input["qty"].sum() == pytest.approx(15.0)
-    assert all(
-        str(value).startswith("croston_customer_series_") for value in prepared.identity_by_sku
-    )
+    assert set(prepared.route_by_sku.values()) == {MOVING_AVERAGE_ROUTE_ID}
+    assert all(str(value).startswith("customer_series_") for value in prepared.identity_by_sku)
     assert (
         prepared.model_input.loc[
             prepared.model_input["startdate"] == pd.Timestamp("2025-02-01"), "qty"
@@ -99,47 +127,78 @@ def test_prepare_customer_history_routes_every_active_series_to_croston() -> Non
     ]
 
 
-def test_build_croston_forecast_rows_covers_every_active_series() -> None:
+def test_build_customer_forecast_rows_covers_all_three_rule_routes() -> None:
+    dense_months = pd.date_range("2025-07-01", periods=9, freq="MS")
     frame = pd.DataFrame(
         [
             {
                 "item_id": "ITEM-1",
                 "location_id": "LOC-1",
-                "customer_no": "CUST-1",
+                "customer_no": "RECENT",
                 "startdate": "2026-05-01",
                 "demand_qty": 6.0,
                 "sales_qty": 6.0,
                 "series_first_month": "2026-05-01",
+                "series_first_demand_month": "2026-05-01",
+            },
+            *[
+                {
+                    "item_id": "ITEM-2",
+                    "location_id": "LOC-1",
+                    "customer_no": "DENSE",
+                    "startdate": month,
+                    "demand_qty": float(offset + 1),
+                    "sales_qty": float(offset + 1),
+                    "series_first_month": "2025-07-01",
+                    "series_first_demand_month": "2025-07-01",
+                }
+                for offset, month in enumerate(dense_months)
+            ],
+            {
+                "item_id": "ITEM-3",
+                "location_id": "LOC-1",
+                "customer_no": "SPARSE",
+                "startdate": "2025-01-01",
+                "demand_qty": 5.0,
+                "sales_qty": 0.0,
+                "series_first_month": "2025-01-01",
+                "series_first_demand_month": "2025-01-01",
             },
             {
-                "item_id": "ITEM-2",
+                "item_id": "ITEM-3",
                 "location_id": "LOC-1",
-                "customer_no": "CUST-2",
-                "startdate": "2025-01-01",
-                "demand_qty": 0.0,
-                "sales_qty": 0.0,
-                "series_first_month": "2024-01-01",
+                "customer_no": "SPARSE",
+                "startdate": "2026-05-01",
+                "demand_qty": 3.0,
+                "sales_qty": 3.0,
+                "series_first_month": "2025-01-01",
+                "series_first_demand_month": "2025-01-01",
             },
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
-    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
-
-    rows = build_croston_forecast_rows(
-        prepared,
+    prepared = prepare_customer_history(
+        frame,
         window,
-        {
-            "alpha": 0.1,
-            "variant": "sba",
-            "recursive": True,
-            "recursive_damping": 0.5,
-        },
+        recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS,
     )
 
-    assert len(rows) == 18
-    assert set(rows["model_id"]) == {"croston"}
-    assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18]
-    assert rows["forecast_qty"].nunique() > 1
+    rows = build_customer_forecast_rows(
+        prepared,
+        window,
+        rule_params=_RULE_PARAMS,
+        croston_params=_CROSTON_PARAMS,
+    )
+
+    assert len(rows) == 54
+    assert set(rows["model_id"]) == {
+        MOVING_AVERAGE_ROUTE_ID,
+        SEASONAL_REPEAT_ROUTE_ID,
+        CROSTON_ROUTE_ID,
+    }
+    assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18] * 3
+    assert rows.groupby("model_id")["forecast_qty"].nunique().gt(1).all()
 
 
 def test_series_without_recent_six_month_sales_is_ignored() -> None:
@@ -153,12 +212,18 @@ def test_series_without_recent_six_month_sales_is_ignored() -> None:
                 "demand_qty": 9.0,
                 "sales_qty": 9.0,
                 "series_first_month": "2024-01-01",
+                "series_first_demand_month": "2025-02-01",
             }
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
 
-    prepared = prepare_customer_history(frame, window, recent_sales_lookback_months=6)
+    prepared = prepare_customer_history(
+        frame,
+        window,
+        recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS,
+    )
 
     assert prepared.eligible_series_count == 0
     assert len(prepared.skipped_series) == 1
@@ -176,13 +241,60 @@ def test_prepare_customer_history_rejects_negative_demand() -> None:
                 "demand_qty": -1.0,
                 "sales_qty": 0.0,
                 "series_first_month": "2024-01-01",
+                "series_first_demand_month": "2025-01-01",
             }
         ]
     )
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
 
     with pytest.raises(ValueError, match="negative demand"):
-        prepare_customer_history(frame, window, recent_sales_lookback_months=6)
+        prepare_customer_history(
+            frame,
+            window,
+            recent_sales_lookback_months=6,
+            rule_params=_RULE_PARAMS,
+        )
+
+
+@pytest.mark.parametrize(
+    "first_demand_values",
+    [
+        pytest.param([None, "2026-05-01"], id="mixed-null-and-date"),
+        pytest.param([None, None], id="missing-for-positive-demand"),
+        pytest.param(["2026-05-15", "2026-05-15"], id="not-month-start"),
+    ],
+)
+def test_prepare_customer_history_rejects_invalid_first_demand_metadata(
+    first_demand_values: list[str | None],
+) -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUST-1",
+                "startdate": month,
+                "demand_qty": 5.0,
+                "sales_qty": 5.0,
+                "series_first_month": "2025-01-01",
+                "series_first_demand_month": first_demand,
+            }
+            for month, first_demand in zip(
+                ("2026-05-01", "2026-06-01"),
+                first_demand_values,
+                strict=True,
+            )
+        ]
+    )
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
+
+    with pytest.raises(ValueError, match="first demand month"):
+        prepare_customer_history(
+            frame,
+            window,
+            recent_sales_lookback_months=6,
+            rule_params=_RULE_PARAMS,
+        )
 
 
 def test_customer_forecast_migration_defines_run_and_fact_tables() -> None:
@@ -199,7 +311,21 @@ def test_customer_forecast_migration_defines_run_and_fact_tables() -> None:
 def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
     cursor = MagicMock()
-    cursor.fetchone.return_value = (date(2026, 6, 1), 12, 10, 2, 0, 0, 0, 91, 91, 0)
+    cursor.fetchone.return_value = (
+        date(2026, 6, 1),
+        12,
+        10,
+        2,
+        3,
+        4,
+        3,
+        0,
+        0,
+        0,
+        91,
+        91,
+        0,
+    )
     conn = MagicMock()
     conn.cursor.return_value.__enter__.return_value = cursor
 
@@ -207,10 +333,12 @@ def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
         conn,
         window,
         recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS,
     )
 
     sql = cursor.execute.call_args.args[0]
     assert "mv_customer_demand_series_profile" in sql
+    assert "MAX(source_latest_month)" in sql
     assert "last_sales_month" in sql
     assert "audit_load_batch" in sql
     assert "domain = 'customer_demand'" in sql
@@ -219,7 +347,9 @@ def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
     assert "first_month <=" not in sql
     assert "fact_customer_demand_monthly" not in sql
     assert readiness["eligible_series"] == 10
-    assert readiness["croston_series"] == 10
+    assert readiness["moving_average_series"] == 3
+    assert readiness["seasonal_repeat_series"] == 4
+    assert readiness["croston_series"] == 3
     assert "fallback_series" not in readiness
     assert readiness["dormant_series"] == 2
     assert readiness["forecastable_series"] == 10
@@ -235,6 +365,9 @@ def test_customer_forecast_readiness_fails_closed_without_load_lineage() -> None
         12,
         10,
         2,
+        3,
+        4,
+        3,
         0,
         0,
         0,
@@ -249,6 +382,7 @@ def test_customer_forecast_readiness_fails_closed_without_load_lineage() -> None
         conn,
         window,
         recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS,
     )
 
     assert readiness["ready"] is False
@@ -275,6 +409,9 @@ def test_customer_forecast_readiness_requires_current_inactive_profile_lineage(
         12,
         10,
         2,
+        3,
+        4,
+        3,
         0,
         0,
         0,
@@ -289,6 +426,7 @@ def test_customer_forecast_readiness_requires_current_inactive_profile_lineage(
         conn,
         window,
         recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS,
     )
 
     assert readiness["ready"] is False
@@ -297,12 +435,18 @@ def test_customer_forecast_readiness_requires_current_inactive_profile_lineage(
     assert readiness["active_customer_demand_loads"] == active_load_count
 
 
-def test_customer_forecast_settings_are_croston_only() -> None:
+def test_customer_forecast_settings_define_the_complete_rule_router() -> None:
     config = {
         "customer_forecast": {
             "enabled": True,
-            "model_id": "croston",
-            "model_params": {
+            "model_id": "customer_rule_router",
+            "rule_params": {
+                "recent_demand_lookback_months": 6,
+                "moving_average_window_months": 3,
+                "repeat_history_lookback_months": 12,
+                "repeat_history_min_demand_months": 9,
+            },
+            "croston_params": {
                 "alpha": 0.1,
                 "variant": "sba",
                 "recursive": True,
@@ -324,15 +468,19 @@ def test_customer_forecast_settings_are_croston_only() -> None:
     ):
         settings = get_customer_forecast_settings()
 
-    assert settings["model_id"] == "croston"
-    assert settings["model_params"] == {
+    assert settings["model_id"] == CUSTOMER_RULE_ROUTER_MODEL_ID
+    assert settings["rule_params"] == _RULE_PARAMS.as_dict()
+    assert settings["croston_params"] == {
         "alpha": 0.1,
         "variant": "sba",
         "recursive": True,
         "recursive_damping": 0.5,
     }
-    assert "fallback_model_id" not in settings
-    assert "fallback_params" not in settings
+    assert settings["route_model_ids"] == [
+        MOVING_AVERAGE_ROUTE_ID,
+        SEASONAL_REPEAT_ROUTE_ID,
+        CROSTON_ROUTE_ID,
+    ]
     assert "chronos_workers" not in settings
 
 
@@ -380,16 +528,31 @@ def test_customer_batch_integrity_migration_couples_run_and_batch() -> None:
     assert ddl.count("FOREIGN KEY (run_id, batch_id)") == 2
 
 
+def test_customer_rule_router_migration_enables_all_three_series_routes() -> None:
+    ddl = Path("sql/218_enable_customer_rule_router.sql").read_text()
+    compact = " ".join(ddl.split())
+
+    assert "first_demand_month" in ddl
+    assert "demand_months_last_12" in ddl
+    assert "source_latest_month" in ddl
+    assert "CHECK (model_id = 'customer_rule_router') NOT VALID" in ddl
+    assert "'moving_average_3'" in ddl
+    assert "'seasonal_repeat_12'" in ddl
+    assert "customer_model_id = 'customer_rule_router'" in ddl
+    assert "UPDATE customer_forecast_backtest_run SET run_status = 'failed'" in compact
+    assert "WHERE run_status IN ('queued', 'generating')" in compact
+    assert "customer_model_id <> 'customer_rule_router'" in compact
+    assert "UPDATE forecast_generation_run AS generation" in compact
+    assert "generation.metadata ? 'customer_bottom_up_blend'" in compact
+    assert "SET run_status = 'invalid', promotion_eligible = FALSE" in compact
+
+
 def test_run_window_is_restored_from_the_manifest() -> None:
     settings = {
         "enabled": True,
-        "model_id": "croston",
-        "model_params": {
-            "alpha": 0.1,
-            "variant": "sba",
-            "recursive": True,
-            "recursive_damping": 0.5,
-        },
+        "model_id": CUSTOMER_RULE_ROUTER_MODEL_ID,
+        "rule_params": _RULE_PARAMS.as_dict(),
+        "croston_params": _CROSTON_PARAMS,
         "history_months": 18,
         "horizon_months": 18,
     }
@@ -403,7 +566,7 @@ def test_run_window_is_restored_from_the_manifest() -> None:
         date(2027, 12, 31),
         18,
         18,
-        "croston",
+        CUSTOMER_RULE_ROUTER_MODEL_ID,
         "a" * 64,
         91,
         91,
@@ -427,13 +590,9 @@ def test_run_window_is_restored_from_the_manifest() -> None:
 def test_run_window_rejects_newer_customer_demand_batch() -> None:
     settings = {
         "enabled": True,
-        "model_id": "croston",
-        "model_params": {
-            "alpha": 0.1,
-            "variant": "sba",
-            "recursive": True,
-            "recursive_damping": 0.5,
-        },
+        "model_id": CUSTOMER_RULE_ROUTER_MODEL_ID,
+        "rule_params": _RULE_PARAMS.as_dict(),
+        "croston_params": _CROSTON_PARAMS,
         "history_months": 18,
         "horizon_months": 18,
     }
@@ -447,7 +606,7 @@ def test_run_window_rejects_newer_customer_demand_batch() -> None:
         date(2027, 12, 31),
         18,
         18,
-        "croston",
+        CUSTOMER_RULE_ROUTER_MODEL_ID,
         "a" * 64,
         91,
         92,

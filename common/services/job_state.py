@@ -2075,7 +2075,7 @@ def _run_generate_customer_forecast(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run resumable customer Croston/SBA batches in a durable subprocess."""
+    """Run resumable customer rule-routed batches in a durable subprocess."""
     run_id = str(params.get("run_id") or "")
     if not run_id:
         raise ValueError("Customer forecast generation requires run_id")

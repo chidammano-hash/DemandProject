@@ -90,14 +90,16 @@ def _run_parallel_workers(run_id: str, settings: dict[str, Any]) -> None:
         with psycopg.connect(**get_db_params()) as conn:
             progress = load_customer_forecast_progress(conn, run_id)
         route_counts = progress["model_route_counts"]
-        cpu_routes = [str(settings["model_id"])]
+        cpu_routes = [
+            str(route)
+            for route in settings["route_model_ids"]
+            if int(route_counts.get(route, 0)) > 0
+        ]
         cpu_series = sum(int(route_counts.get(route, 0)) for route in cpu_routes)
         if cpu_series > 0:
             cpu_worker_count = min(
                 int(settings["cpu_workers"]),
-                max(
-                    1, (cpu_series + int(settings["batch_size"]) - 1) // int(settings["batch_size"])
-                ),
+                max(1, int(progress["total_batches"])),
             )
             for _worker_index in range(cpu_worker_count):
                 workers.append(

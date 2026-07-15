@@ -113,7 +113,7 @@ export function CustomerBlendBacktestPanel({
               <BarChart3 className="h-5 w-5" /> Bottom-Up Blend Validation
             </CardTitle>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Backtest Croston/SBA customer forecasts against the source champion on one common
+              Backtest rule-routed customer forecasts against the source champion on one common
               cohort. The normalized customer bottom-up signal must be validated before a blend
               draft can be generated.
             </p>

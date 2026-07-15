@@ -116,7 +116,7 @@ export function GenerateForecastCard({
             >
               <p className="font-medium text-foreground">Customer Bottom-Up Blend</p>
               <p className="mt-1 text-muted-foreground">
-                Croston customer forecasts blended bottom-up with the warehouse-item champion.
+                Rule-routed customer forecasts blended bottom-up with the warehouse-item champion.
               </p>
               <p
                 className={

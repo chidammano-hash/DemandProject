@@ -80,7 +80,14 @@ const readiness = {
   source_latest_month: "2026-06-01",
   total_series: 12,
   eligible_series: 10,
-  croston_series: 10,
+  moving_average_series: 3,
+  seasonal_repeat_series: 4,
+  croston_series: 3,
+  model_route_counts: {
+    moving_average_3: 3,
+    seasonal_repeat_12: 4,
+    croston: 3,
+  },
   dormant_series: 2,
   forecastable_series: 10,
   skipped_series: 2,
@@ -119,7 +126,7 @@ describe("CustomerForecastPanel", () => {
           forecast_qty: 9,
           lower_bound: null,
           upper_bound: null,
-          model_id: "croston",
+          model_id: "moving_average_3",
         },
       ],
     });
@@ -137,13 +144,75 @@ describe("CustomerForecastPanel", () => {
     expect(await screen.findByText(/Jan 2025.*Jun 2026/)).toBeInTheDocument();
     expect(screen.getByText(/Jul 2026.*Dec 2027/)).toBeInTheDocument();
     expect(screen.getByText("10 forecastable series")).toBeInTheDocument();
-    expect(screen.getByText("10 Croston/SBA series")).toBeInTheDocument();
+    expect(screen.getByText(/3 3-Month Moving Average/)).toBeInTheDocument();
+    expect(screen.getByText(/4 12-Month Seasonal Repeat/)).toBeInTheDocument();
+    expect(screen.getByText(/3 Croston\/SBA/)).toBeInTheDocument();
+    expect(screen.getByText(/Demand starting in the latest six months/)).toBeInTheDocument();
     expect(screen.queryByText(/Chronos 2E/)).not.toBeInTheDocument();
     expect(screen.getByText(/2 customer-SKUs ignored/)).toBeInTheDocument();
     expect(screen.getByText("Bottom-Up Blend Validation")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Generate Customer Forecasts" }));
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledOnce());
+  });
+
+  it("keeps zero-count rule routes visible in coverage and run composition", async () => {
+    const zeroRouteReadiness = {
+      ...readiness,
+      moving_average_series: 10,
+      seasonal_repeat_series: 0,
+      croston_series: 0,
+      model_route_counts: {
+        moving_average_3: 10,
+        seasonal_repeat_12: 0,
+        croston: 0,
+      },
+    };
+    const completedRun = {
+      run_id: "run-zero-routes",
+      job_id: "job-zero-routes",
+      status: "completed",
+      planning_month: "2026-07-01",
+      history_start: "2025-01-01",
+      history_end: "2026-06-30",
+      forecast_start: "2026-07-01",
+      forecast_end: "2027-12-31",
+      eligible_series: 10,
+      row_count: 180,
+      skipped_series: 0,
+      model_id: "customer_rule_router",
+      created_at: "2026-07-13T12:00:00Z",
+      started_at: "2026-07-13T12:01:00Z",
+      completed_at: "2026-07-13T12:02:00Z",
+      error_summary: null,
+      skip_reason_counts: {},
+      model_route_counts: { moving_average_3: 10 },
+      total_series: 10,
+      completed_series: 10,
+      total_batches: 1,
+      completed_batches: 1,
+      progress_pct: 100,
+      eta_seconds: 0,
+    };
+    mockReadiness.mockResolvedValue(zeroRouteReadiness);
+    mockLatestRun.mockResolvedValue(completedRun);
+    mockLatestCompletedRun.mockResolvedValue(completedRun);
+
+    const { CustomerForecastPanel } = await import("../CustomerForecastPanel");
+    render(
+      <TestQueryWrapper>
+        <CustomerForecastPanel />
+      </TestQueryWrapper>
+    );
+
+    expect(
+      await screen.findByText(
+        "10 3-Month Moving Average · 0 12-Month Seasonal Repeat · 0 Croston/SBA"
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText("3-Month Moving Average (10)")).toBeInTheDocument();
+    expect(screen.getByText("12-Month Seasonal Repeat (0)")).toBeInTheDocument();
+    expect(screen.getByText("Croston/SBA (0)")).toBeInTheDocument();
   });
 
   it("shows failure guidance and retries with a new generation", async () => {
@@ -159,7 +228,7 @@ describe("CustomerForecastPanel", () => {
       eligible_series: 0,
       row_count: 0,
       skipped_series: 0,
-      model_id: "croston",
+      model_id: "customer_rule_router",
       created_at: "2026-07-13T12:00:00Z",
       started_at: "2026-07-13T12:01:00Z",
       completed_at: "2026-07-13T12:02:00Z",
@@ -199,13 +268,17 @@ describe("CustomerForecastPanel", () => {
       eligible_series: 12,
       row_count: 216,
       skipped_series: 0,
-      model_id: "croston",
+      model_id: "customer_rule_router",
       created_at: "2026-07-13T12:00:00Z",
       started_at: "2026-07-13T12:01:00Z",
       completed_at: "2026-07-13T12:02:00Z",
       error_summary: null,
       skip_reason_counts: {},
-      model_route_counts: { croston: 12 },
+      model_route_counts: {
+        moving_average_3: 2,
+        seasonal_repeat_12: 7,
+        croston: 3,
+      },
     };
     mockLatestRun.mockResolvedValue(completedRun);
     mockLatestCompletedRun.mockResolvedValue(completedRun);
@@ -233,8 +306,11 @@ describe("CustomerForecastPanel", () => {
     expect(
       screen.getByText("Monthly actual demand and customer forecast", { selector: "caption" })
     ).toBeInTheDocument();
-    expect(screen.getByText("Croston/SBA")).toBeInTheDocument();
-    expect(screen.getByText("Croston/SBA (12)")).toBeInTheDocument();
+    expect(screen.getByText("3-Month Moving Average")).toBeInTheDocument();
+    expect(screen.getByText("3-Month Moving Average (2)")).toBeInTheDocument();
+    expect(screen.getByText("12-Month Seasonal Repeat (7)")).toBeInTheDocument();
+    expect(screen.getByText("Croston/SBA (3)")).toBeInTheDocument();
+    expect(screen.getByText(/Policy: Customer Rule Router/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export CSV" })).toHaveAttribute(
       "href",
       "/customer-forecast/export?run_id=run-1"
@@ -396,7 +472,7 @@ describe("CustomerForecastPanel", () => {
     mockLatestCompletedRun.mockResolvedValue(legacyRun);
     mockBlendReadiness.mockResolvedValue({
       ready: false,
-      blockers: ["Generate a new Croston customer forecast with current configuration"],
+      blockers: ["Generate a new rule-routed customer forecast with current configuration"],
       customer_run_id: "legacy-run",
       backtest_gate_passed: false,
     });
@@ -437,7 +513,7 @@ describe("CustomerForecastPanel", () => {
     expect(await screen.findByText("Chronos 2E (1)")).toBeInTheDocument();
     expect(await screen.findByText("Chronos 2E")).toBeInTheDocument();
     expect(
-      screen.getByText("Generate a new Croston customer forecast with current configuration")
+      screen.getByText("Generate a new rule-routed customer forecast with current configuration")
     ).toBeInTheDocument();
   });
 });

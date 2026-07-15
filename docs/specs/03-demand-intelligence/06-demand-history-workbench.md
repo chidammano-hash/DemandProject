@@ -35,7 +35,7 @@ The Demand History Workbench provides 5 API endpoint groups for customer-level d
 |---|---|
 | fact_sales_monthly | Canonical item and item-location actual history through the last closed planning month |
 | fact_customer_demand_monthly | Customer-number history for customer-grain decomposition and matrices |
-| fact_customer_forecast | Completed Croston/SBA forecast rows for an exact item-location-customer Workbench overlay |
+| fact_customer_forecast | Completed `customer_rule_router` rows with the persisted `moving_average_3`, `seasonal_repeat_12`, or `croston` route for an exact item-location-customer Workbench overlay |
 | dim_customer | Customer names and attributes for labeling |
 | dim_item | Item descriptions for labeling |
 | dim_location | Location city/state for labeling |

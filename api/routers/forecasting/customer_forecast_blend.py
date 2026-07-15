@@ -1,4 +1,4 @@
-"""Customer Croston backtest and bottom-up blended champion API."""
+"""Customer rule-router backtest and bottom-up blended champion API."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def _reconcile_customer_backtest_submissions(cur: Any) -> None:
     dependencies=[Depends(require_api_key)],
 )
 def generate_customer_backtest() -> JSONResponse:
-    """Queue one config-bound rolling Croston/blend accuracy backtest."""
+    """Queue one config-bound rolling rule-router/blend accuracy backtest."""
     try:
         settings = get_customer_backtest_settings()
         customer_settings = get_customer_forecast_settings()
@@ -169,7 +169,7 @@ def generate_customer_backtest() -> JSONResponse:
             if customer is None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Complete a current Croston customer forecast before backtesting",
+                    detail="Complete a current rule-routed customer forecast before backtesting",
                 )
             customer_run_id = str(customer[0])
             cur.execute(

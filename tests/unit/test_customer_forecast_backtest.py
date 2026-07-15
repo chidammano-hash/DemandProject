@@ -10,7 +10,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from common.ml.croston import croston_forecast
+from common.ml.customer_forecast_rules import (
+    CustomerForecastRuleParameters,
+    forecast_customer_demand,
+    select_customer_forecast_route,
+)
+
+_RULE_PARAMS = CustomerForecastRuleParameters(
+    recent_demand_lookback_months=6,
+    moving_average_window_months=3,
+    repeat_history_lookback_months=12,
+    repeat_history_min_demand_months=9,
+)
 
 
 def _backtest_service():
@@ -52,6 +63,7 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
             "startdate": months,
             "demand_qty": [0.0] * 6 + [10.0] + [0.0] * 11,
             "sales_qty": [0.0] * 6 + [8.0] + [0.0] * 11,
+            "series_first_demand_month": [date(2025, 7, 1)] * 18,
         }
     )
     window = service.CustomerForecastWindow(
@@ -65,13 +77,14 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
         forecast_months=(),
     )
 
-    result = service.build_croston_backtest_batch(
+    result = service.build_customer_rule_backtest_batch(
         history,
         window,
         evaluation_months=6,
         min_train_months=6,
         recent_sales_lookback_months=6,
-        params={
+        rule_params=_RULE_PARAMS.as_dict(),
+        croston_params={
             "alpha": 0.1,
             "variant": "sba",
             "recursive": True,
@@ -80,11 +93,11 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
     )
 
     assert result["forecast_month"].tolist() == [date(2026, 1, 1)]
-    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([0.5 * (9.5 / 7.0)])
+    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([0.0])
 
 
-def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None:
-    """The full-population backtest must use the vectorized Croston recurrence."""
+def test_backtest_batch_does_not_call_scalar_rules_per_series_origin() -> None:
+    """The full-population backtest must keep its vectorized recurrence."""
     service = _backtest_service()
     months = pd.date_range("2025-01-01", periods=18, freq="MS")
     history = pd.DataFrame(
@@ -95,6 +108,7 @@ def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None
             "startdate": list(months) * 2,
             "demand_qty": ([0.0] * 6 + [10.0] + [0.0] * 11) * 2,
             "sales_qty": ([0.0] * 6 + [8.0] + [0.0] * 11) * 2,
+            "series_first_demand_month": [date(2025, 7, 1)] * 36,
         }
     )
     window = service.CustomerForecastWindow(
@@ -109,17 +123,18 @@ def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None
     )
 
     with patch(
-        "common.services.customer_forecast_backtest_croston.croston_forecast",
-        side_effect=AssertionError("scalar Croston path used"),
+        "common.services.customer_forecast_backtest_rules.forecast_customer_demand",
+        side_effect=AssertionError("scalar customer rule path used"),
         create=True,
     ):
-        result = service.build_croston_backtest_batch(
+        result = service.build_customer_rule_backtest_batch(
             history,
             window,
             evaluation_months=6,
             min_train_months=6,
             recent_sales_lookback_months=6,
-            params={
+            rule_params=_RULE_PARAMS.as_dict(),
+            croston_params={
                 "alpha": 0.1,
                 "variant": "sba",
                 "recursive": True,
@@ -131,7 +146,7 @@ def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None
 
 
 @pytest.mark.parametrize("variant", ["classic", "sba"])
-def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
+def test_vectorized_backtest_matches_scalar_rule_router(variant: str) -> None:
     service = _backtest_service()
     rng = np.random.default_rng(42)
     months = pd.date_range("2025-01-01", periods=18, freq="MS")
@@ -144,6 +159,8 @@ def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
     sales = demand.copy()
     rows: list[dict[str, object]] = []
     for series_no in range(8):
+        positive_positions = np.flatnonzero(demand[series_no] > 0)
+        first_demand_month = months[int(positive_positions[0])].date()
         for month_no, month in enumerate(months):
             rows.append(
                 {
@@ -153,6 +170,7 @@ def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
                     "startdate": month,
                     "demand_qty": demand[series_no, month_no],
                     "sales_qty": sales[series_no, month_no],
+                    "series_first_demand_month": first_demand_month,
                 }
             )
     history = pd.DataFrame.from_records(rows)
@@ -173,13 +191,14 @@ def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
         "recursive_damping": 0.5,
     }
 
-    result = service.build_croston_backtest_batch(
+    result = service.build_customer_rule_backtest_batch(
         history,
         window,
         evaluation_months=6,
         min_train_months=6,
         recent_sales_lookback_months=6,
-        params=params,
+        rule_params=_RULE_PARAMS.as_dict(),
+        croston_params=params,
     )
 
     expected_rows: list[dict[str, object]] = []
@@ -187,16 +206,27 @@ def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
         for forecast_index in range(12, 18):
             if not (sales[series_no, forecast_index - 6 : forecast_index] > 0).any():
                 continue
+            first_positive = int(np.flatnonzero(demand[series_no] > 0)[0])
+            recent_start_index = forecast_index - _RULE_PARAMS.recent_demand_lookback_months
+            demand_started_recently = recent_start_index <= first_positive < forecast_index
+            history = demand[series_no, :forecast_index]
+            route_model_id = select_customer_forecast_route(
+                history,
+                demand_started_within_recent_window=demand_started_recently,
+                params=_RULE_PARAMS,
+            )
             expected_rows.append(
                 {
                     "item_id": f"ITEM-{series_no // 2}",
                     "loc": "LOC-1",
                     "forecast_origin": months[forecast_index - 1].date(),
                     "forecast_month": months[forecast_index].date(),
-                    "raw_customer_demand_qty": croston_forecast(
-                        demand[series_no, :forecast_index],
+                    "raw_customer_demand_qty": forecast_customer_demand(
+                        history,
                         horizon=1,
-                        params=params,
+                        route_model_id=route_model_id,
+                        rule_params=_RULE_PARAMS,
+                        croston_params=params,
                     )[0],
                     "customer_series_count": 1,
                 }
@@ -214,6 +244,114 @@ def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
         .sort_values(["item_id", "loc", "forecast_month"], ignore_index=True)
     )
     pd.testing.assert_frame_equal(result, expected, check_dtype=False, rtol=1e-12, atol=1e-12)
+
+
+def test_backtest_recent_route_includes_the_exact_six_month_boundary() -> None:
+    service = _backtest_service()
+    months = pd.date_range("2025-01-01", periods=18, freq="MS")
+    demand_by_item = {
+        "BOUNDARY": [0.0] * 11 + [6.0] + [0.0] * 4 + [3.0, 0.0],
+        "OLDER": [0.0] * 10 + [6.0] + [0.0] * 5 + [3.0, 0.0],
+    }
+    first_demand_by_item = {
+        "BOUNDARY": date(2025, 12, 1),
+        "OLDER": date(2025, 11, 1),
+    }
+    rows: list[dict[str, object]] = []
+    for item_id, demand in demand_by_item.items():
+        for month, quantity in zip(months, demand, strict=True):
+            rows.append(
+                {
+                    "item_id": item_id,
+                    "location_id": "LOC-1",
+                    "customer_no": "CUSTOMER-1",
+                    "startdate": month,
+                    "demand_qty": quantity,
+                    "sales_qty": quantity,
+                    "series_first_demand_month": first_demand_by_item[item_id],
+                }
+            )
+    window = service.CustomerForecastWindow(
+        planning_month=date(2026, 7, 1),
+        history_start=date(2025, 1, 1),
+        history_end=date(2026, 6, 1),
+        forecast_start=date(2026, 7, 1),
+        forecast_end=date(2027, 12, 1),
+        history_months=18,
+        horizon_months=18,
+        forecast_months=(),
+    )
+
+    result = service.build_customer_rule_backtest_batch(
+        pd.DataFrame.from_records(rows),
+        window,
+        evaluation_months=1,
+        min_train_months=6,
+        recent_sales_lookback_months=6,
+        rule_params=_RULE_PARAMS.as_dict(),
+        croston_params={
+            "alpha": 0.1,
+            "variant": "sba",
+            "recursive": True,
+            "recursive_damping": 0.5,
+        },
+    )
+
+    assert result["item_id"].tolist() == ["BOUNDARY", "OLDER"]
+    assert result["forecast_month"].tolist() == [date(2026, 6, 1)] * 2
+    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([1.0, 1.7578571428571428])
+
+
+def test_backtest_rejects_inconsistent_first_demand_metadata() -> None:
+    service = _backtest_service()
+    history = pd.DataFrame(
+        [
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUSTOMER-1",
+                "startdate": date(2025, 1, 1),
+                "demand_qty": 1.0,
+                "sales_qty": 1.0,
+                "series_first_demand_month": date(2025, 1, 1),
+            },
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUSTOMER-1",
+                "startdate": date(2025, 2, 1),
+                "demand_qty": 1.0,
+                "sales_qty": 1.0,
+                "series_first_demand_month": date(2025, 2, 1),
+            },
+        ]
+    )
+    window = service.CustomerForecastWindow(
+        planning_month=date(2026, 7, 1),
+        history_start=date(2025, 1, 1),
+        history_end=date(2026, 6, 1),
+        forecast_start=date(2026, 7, 1),
+        forecast_end=date(2027, 12, 1),
+        history_months=18,
+        horizon_months=18,
+        forecast_months=(),
+    )
+
+    with pytest.raises(ValueError, match="inconsistent first demand months"):
+        service.build_customer_rule_backtest_batch(
+            history,
+            window,
+            evaluation_months=6,
+            min_train_months=6,
+            recent_sales_lookback_months=6,
+            rule_params=_RULE_PARAMS.as_dict(),
+            croston_params={
+                "alpha": 0.1,
+                "variant": "sba",
+                "recursive": True,
+                "recursive_damping": 0.5,
+            },
+        )
 
 
 def test_customer_backtest_progress_line_is_parseable() -> None:

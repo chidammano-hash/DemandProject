@@ -58,34 +58,58 @@ describe("DemandWorkbenchPanel customer forecast", () => {
           forecast_qty: 5420.4119,
           lower_bound: null,
           upper_bound: null,
-          model_id: "croston",
+          model_id: "seasonal_repeat_12",
         },
       ],
     });
     fetchProductionForecast.mockResolvedValue({ forecasts: [] });
   });
 
-  it("enables Forecast and loads the selected customer series", async () => {
-    render(
-      <TestQueryWrapper>
-        <DemandWorkbenchPanel />
-      </TestQueryWrapper>
-    );
+  it.each([
+    ["moving_average_3", "3-Month Moving Average"],
+    ["seasonal_repeat_12", "12-Month Seasonal Repeat"],
+    ["croston", "Croston/SBA"],
+  ])(
+    "loads the selected customer series and identifies the %s route",
+    async (modelId, modelLabel) => {
+      fetchCustomerForecastSeries.mockResolvedValue({
+        forecast: [
+          {
+            month: "2026-07-01",
+            forecast_qty: 5420.4119,
+            lower_bound: null,
+            upper_bound: null,
+            model_id: modelId,
+          },
+        ],
+      });
+      render(
+        <TestQueryWrapper>
+          <DemandWorkbenchPanel />
+        </TestQueryWrapper>
+      );
 
-    fireEvent.click(screen.getByRole("button", { name: "Item + Loc + Cust" }));
-    fireEvent.click(await screen.findByText("ABC LIQUORS#145(ABC WAREHOUSE)"));
+      fireEvent.click(screen.getByRole("button", { name: "Item + Loc + Cust" }));
+      fireEvent.click(await screen.findByText("ABC LIQUORS#145(ABC WAREHOUSE)"));
 
-    const checkbox = screen.getByRole("checkbox", { name: "Forecast" });
-    expect(checkbox).toBeEnabled();
-    fireEvent.click(checkbox);
+      const checkbox = screen.getByRole("checkbox", { name: "Forecast" });
+      expect(checkbox).toBeEnabled();
+      fireEvent.click(checkbox);
 
-    await waitFor(() =>
-      expect(fetchCustomerForecastSeries).toHaveBeenCalledWith({
-        item_id: "84587",
-        location_id: "1401-BULK",
-        customer_no: "5726",
-      })
-    );
-    expect(fetchProductionForecast).not.toHaveBeenCalled();
-  });
+      await waitFor(() =>
+        expect(fetchCustomerForecastSeries).toHaveBeenCalledWith({
+          item_id: "84587",
+          location_id: "1401-BULK",
+          customer_no: "5726",
+        })
+      );
+      await waitFor(() =>
+        expect(checkbox.closest("label")).toHaveAttribute(
+          "title",
+          `Overlay the ${modelLabel} forecast for this customer series`
+        )
+      );
+      expect(fetchProductionForecast).not.toHaveBeenCalled();
+    }
+  );
 });

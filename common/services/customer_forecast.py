@@ -12,7 +12,18 @@ import numpy as np
 import pandas as pd
 
 from common.core.utils import load_forecast_pipeline_config
-from common.ml.croston import croston_forecast, parse_croston_parameters
+from common.ml.croston import parse_croston_parameters
+from common.ml.customer_forecast_rules import (
+    CROSTON_ROUTE_ID,
+    CUSTOMER_FORECAST_ROUTE_IDS,
+    CUSTOMER_RULE_ROUTER_MODEL_ID,
+    MOVING_AVERAGE_ROUTE_ID,
+    SEASONAL_REPEAT_ROUTE_ID,
+    CustomerForecastRuleParameters,
+    forecast_customer_demand,
+    parse_customer_forecast_rule_parameters,
+    select_customer_forecast_route,
+)
 
 _IDENTITY_COLUMNS = ["item_id", "location_id", "customer_no"]
 
@@ -33,6 +44,7 @@ class CustomerForecastWindow:
 class PreparedCustomerHistory:
     model_input: pd.DataFrame
     identity_by_sku: dict[str, tuple[str, str, str]]
+    route_by_sku: dict[str, str]
     skipped_series: list[dict[str, str]]
 
     @property
@@ -77,8 +89,8 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         history_months = int(settings["history_months"])
         horizon_months = int(settings["horizon_months"])
         model_id = str(settings["model_id"])
-        model_params = dict(settings["model_params"])
-        croston_params = parse_croston_parameters(model_params)
+        rule_params = parse_customer_forecast_rule_parameters(dict(settings["rule_params"]))
+        croston_params = parse_croston_parameters(dict(settings["croston_params"]))
         recent_sales_lookback_months = int(settings["recent_sales_lookback_months"])
         batch_size = int(settings["batch_size"])
         cpu_workers = int(settings["cpu_workers"])
@@ -88,8 +100,13 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         raise ValueError("Customer forecast settings are incomplete") from exc
     if history_months <= 0 or horizon_months <= 0:
         raise ValueError("Customer forecast history and horizon must be positive")
-    if model_id != "croston":
-        raise ValueError("Customer forecasting requires croston")
+    if model_id != CUSTOMER_RULE_ROUTER_MODEL_ID:
+        raise ValueError("Customer forecasting requires the customer rule router")
+    if (
+        rule_params.recent_demand_lookback_months > history_months
+        or rule_params.repeat_history_lookback_months > history_months
+    ):
+        raise ValueError("Customer forecast rules exceed the available history")
     if recent_sales_lookback_months <= 0 or recent_sales_lookback_months > history_months:
         raise ValueError("Customer forecast recent-sales lookback is invalid")
     if batch_size <= 0 or cpu_workers <= 0:
@@ -108,12 +125,14 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         "cpu_workers": cpu_workers,
         "max_batch_attempts": max_batch_attempts,
         "progress_interval_seconds": progress_interval_seconds,
-        "model_params": {
+        "rule_params": rule_params.as_dict(),
+        "croston_params": {
             "alpha": croston_params.alpha,
             "variant": croston_params.variant,
             "recursive": croston_params.recursive,
             "recursive_damping": croston_params.recursive_damping,
         },
+        "route_model_ids": list(CUSTOMER_FORECAST_ROUTE_IDS),
     }
 
 
@@ -121,7 +140,8 @@ def customer_forecast_config_checksum(settings: dict[str, Any]) -> str:
     generation_keys = (
         "enabled",
         "model_id",
-        "model_params",
+        "rule_params",
+        "croston_params",
         "history_months",
         "horizon_months",
         "recent_sales_lookback_months",
@@ -130,10 +150,7 @@ def customer_forecast_config_checksum(settings: dict[str, Any]) -> str:
         "max_batch_attempts",
         "progress_interval_seconds",
     )
-    payload = {
-        "customer_forecast": {key: settings[key] for key in generation_keys},
-        "croston": settings["model_params"],
-    }
+    payload = {"customer_forecast": {key: settings[key] for key in generation_keys}}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -143,17 +160,33 @@ def load_customer_forecast_readiness(
     window: CustomerForecastWindow,
     *,
     recent_sales_lookback_months: int,
+    rule_params: CustomerForecastRuleParameters,
 ) -> dict[str, Any]:
     """Return source freshness and eligibility for the resolved run window."""
     sql = """
         SELECT
-            MAX(last_month),
+            MAX(source_latest_month),
             COUNT(*),
             COUNT(*) FILTER (
                 WHERE last_sales_month >= %s
             ),
             COUNT(*) FILTER (
                 WHERE last_sales_month IS NULL OR last_sales_month < %s
+            ),
+            COUNT(*) FILTER (
+                WHERE last_sales_month >= %s
+                  AND first_demand_month >= %s
+                  AND first_demand_month < %s
+            ),
+            COUNT(*) FILTER (
+                WHERE last_sales_month >= %s
+                  AND (first_demand_month IS NULL OR first_demand_month < %s)
+                  AND demand_months_last_12 >= %s
+            ),
+            COUNT(*) FILTER (
+                WHERE last_sales_month >= %s
+                  AND (first_demand_month IS NULL OR first_demand_month < %s)
+                  AND demand_months_last_12 < %s
             ),
             0::bigint, -- identity columns are NOT NULL
             0::bigint, -- loader business key is unique at series-month grain
@@ -182,12 +215,25 @@ def load_customer_forecast_readiness(
     """
     history_end_month = window.history_end.replace(day=1)
     recent_start = _shift_month(window.forecast_start, -recent_sales_lookback_months)
+    recent_demand_start = _shift_month(
+        window.forecast_start,
+        -rule_params.recent_demand_lookback_months,
+    )
     with conn.cursor() as cur:
         cur.execute(
             sql,
             (
                 recent_start,
                 recent_start,
+                recent_start,
+                recent_demand_start,
+                window.forecast_start,
+                recent_start,
+                recent_demand_start,
+                rule_params.repeat_history_min_demand_months,
+                recent_start,
+                recent_demand_start,
+                rule_params.repeat_history_min_demand_months,
                 window.forecast_start,
             ),
         )
@@ -197,6 +243,9 @@ def load_customer_forecast_readiness(
         total_series,
         eligible_series,
         zero_series,
+        moving_average_series,
+        seasonal_repeat_series,
+        croston_series,
         invalid_keys,
         duplicate_grains,
         negative_rows,
@@ -205,6 +254,9 @@ def load_customer_forecast_readiness(
         active_customer_demand_loads,
     ) = row or (
         None,
+        0,
+        0,
+        0,
         0,
         0,
         0,
@@ -230,6 +282,13 @@ def load_customer_forecast_readiness(
     total_series_count = int(total_series or 0)
     eligible_series_count = int(eligible_series or 0)
     zero_series_count = int(zero_series or 0)
+    route_counts = {
+        MOVING_AVERAGE_ROUTE_ID: int(moving_average_series or 0),
+        SEASONAL_REPEAT_ROUTE_ID: int(seasonal_repeat_series or 0),
+        CROSTON_ROUTE_ID: int(croston_series or 0),
+    }
+    if sum(route_counts.values()) != eligible_series_count:
+        blockers.append("Customer forecast route profile is inconsistent")
     if total_series_count == 0:
         blockers.append("Load customer demand history before generating forecasts")
     if int(invalid_keys or 0) > 0:
@@ -261,7 +320,10 @@ def load_customer_forecast_readiness(
         "active_customer_demand_loads": int(active_customer_demand_loads or 0),
         "total_series": total_series_count,
         "eligible_series": eligible_series_count,
-        "croston_series": eligible_series_count,
+        "moving_average_series": route_counts[MOVING_AVERAGE_ROUTE_ID],
+        "seasonal_repeat_series": route_counts[SEASONAL_REPEAT_ROUTE_ID],
+        "croston_series": route_counts[CROSTON_ROUTE_ID],
+        "model_route_counts": route_counts,
         "dormant_series": zero_series_count,
         "forecastable_series": eligible_series_count,
         "skipped_series": zero_series_count,
@@ -277,14 +339,16 @@ def prepare_customer_history(
     window: CustomerForecastWindow,
     *,
     recent_sales_lookback_months: int,
+    rule_params: CustomerForecastRuleParameters,
 ) -> PreparedCustomerHistory:
-    """Validate, filter, and densify active customer histories for Croston/SBA."""
+    """Validate, filter, densify, and route active customer histories."""
     required = {
         *_IDENTITY_COLUMNS,
         "startdate",
         "demand_qty",
         "sales_qty",
         "series_first_month",
+        "series_first_demand_month",
     }
     missing = required - set(frame.columns)
     if missing:
@@ -293,6 +357,7 @@ def prepare_customer_history(
         return PreparedCustomerHistory(
             model_input=pd.DataFrame(columns=["sku_ck", "startdate", "qty"]),
             identity_by_sku={},
+            route_by_sku={},
             skipped_series=[],
         )
     if frame[_IDENTITY_COLUMNS].isna().any(axis=1).any():
@@ -301,10 +366,19 @@ def prepare_customer_history(
     history = frame.copy()
     history["startdate"] = pd.to_datetime(history["startdate"], errors="coerce")
     history["series_first_month"] = pd.to_datetime(history["series_first_month"], errors="coerce")
+    raw_first_demand = history["series_first_demand_month"]
+    history["series_first_demand_month"] = pd.to_datetime(raw_first_demand, errors="coerce")
     history["demand_qty"] = pd.to_numeric(history["demand_qty"], errors="coerce")
     history["sales_qty"] = pd.to_numeric(history["sales_qty"], errors="coerce")
     if history["series_first_month"].isna().any():
         raise ValueError("Customer history contains an invalid first month")
+    if (raw_first_demand.notna() & history["series_first_demand_month"].isna()).any():
+        raise ValueError("Customer history contains an invalid first demand month")
+    first_demand_metadata = history["series_first_demand_month"].dropna()
+    if not first_demand_metadata.eq(
+        first_demand_metadata.dt.to_period("M").dt.to_timestamp()
+    ).all():
+        raise ValueError("Customer history first demand month must start a month")
     numeric = history["demand_qty"].to_numpy(dtype=float)
     if not np.isfinite(numeric).all():
         raise ValueError("Customer history contains non-finite demand")
@@ -317,7 +391,18 @@ def prepare_customer_history(
     calendar = pd.date_range(window.history_start, periods=window.history_months, freq="MS")
     model_frames: list[pd.DataFrame] = []
     identities: dict[str, tuple[str, str, str]] = {}
+    routes: dict[str, str] = {}
     skipped: list[dict[str, str]] = []
+    forecast_start = pd.Timestamp(window.forecast_start)
+    recent_sales_start = pd.Timestamp(
+        _shift_month(window.forecast_start, -recent_sales_lookback_months)
+    )
+    recent_demand_start = pd.Timestamp(
+        _shift_month(
+            window.forecast_start,
+            -rule_params.recent_demand_lookback_months,
+        )
+    )
     grouped = history.groupby(_IDENTITY_COLUMNS, sort=True, dropna=False)
     for identity, group in grouped:
         item_id, location_id, customer_no = (str(value) for value in identity)
@@ -330,10 +415,9 @@ def prepare_customer_history(
         monthly_sales = bounded.groupby("startdate", as_index=True)["sales_qty"].sum()
         dense = monthly.reindex(calendar, fill_value=0.0).astype(float)
         dense_sales = monthly_sales.reindex(calendar, fill_value=0.0).astype(float)
-        recent_start = pd.Timestamp(
-            _shift_month(window.forecast_start, -recent_sales_lookback_months)
+        has_recent_sales = bool(
+            dense_sales.loc[dense_sales.index >= recent_sales_start].gt(0).any()
         )
-        has_recent_sales = bool(dense_sales.loc[dense_sales.index >= recent_start].gt(0).any())
         if not has_recent_sales:
             skipped.append(
                 {
@@ -345,8 +429,40 @@ def prepare_customer_history(
             )
             continue
 
-        sku_ck = f"croston_customer_series_{len(identities) + 1}"
+        first_demand_values = group["series_first_demand_month"].drop_duplicates()
+        if len(first_demand_values) != 1:
+            raise ValueError("Customer history contains inconsistent first demand months")
+        first_demand_value = first_demand_values.iloc[0]
+        observed_first_demand = group.loc[
+            group["startdate"].notna() & group["demand_qty"].gt(0),
+            "startdate",
+        ].min()
+        if pd.isna(first_demand_value):
+            if pd.notna(observed_first_demand):
+                raise ValueError("Customer history first demand month contradicts demand history")
+            first_demand_month = None
+        else:
+            first_demand_month = pd.Timestamp(first_demand_value)
+        if (
+            first_demand_month is not None
+            and pd.notna(observed_first_demand)
+            and first_demand_month > observed_first_demand
+        ):
+            raise ValueError(
+                "Customer history first demand month contradicts demand history"
+            )
+        demand_started_within_recent_window = bool(
+            first_demand_month is not None
+            and recent_demand_start <= first_demand_month < forecast_start
+        )
+        route_model_id = select_customer_forecast_route(
+            dense.to_numpy(dtype=float),
+            demand_started_within_recent_window=demand_started_within_recent_window,
+            params=rule_params,
+        )
+        sku_ck = f"customer_series_{len(identities) + 1}"
         identities[sku_ck] = (item_id, location_id, customer_no)
+        routes[sku_ck] = route_model_id
         model_frames.append(
             pd.DataFrame({"sku_ck": sku_ck, "startdate": calendar, "qty": dense.to_numpy()})
         )
@@ -360,24 +476,30 @@ def prepare_customer_history(
         pd.Timestamp(window.history_end).to_period("M").to_timestamp()
     )
     return PreparedCustomerHistory(
-        model_input,
-        identities,
-        skipped,
+        model_input=model_input,
+        identity_by_sku=identities,
+        route_by_sku=routes,
+        skipped_series=skipped,
     )
 
 
-def build_croston_forecast_rows(
+def build_customer_forecast_rows(
     prepared: PreparedCustomerHistory,
     window: CustomerForecastWindow,
-    params: dict[str, Any],
+    *,
+    rule_params: CustomerForecastRuleParameters,
+    croston_params: dict[str, Any],
 ) -> pd.DataFrame:
-    """Forecast every active customer series with configured Croston/SBA."""
+    """Forecast every active customer series with its selected rule route."""
     frames: list[pd.DataFrame] = []
     for sku_ck, group in prepared.model_input.groupby("sku_ck", sort=False):
-        forecast = croston_forecast(
+        route_model_id = prepared.route_by_sku[str(sku_ck)]
+        forecast = forecast_customer_demand(
             group.sort_values("startdate")["qty"].to_numpy(dtype=float),
             horizon=window.horizon_months,
-            params=params,
+            route_model_id=route_model_id,
+            rule_params=rule_params,
+            croston_params=croston_params,
         )
         identity = prepared.identity_by_sku[str(sku_ck)]
         frames.append(
@@ -388,7 +510,7 @@ def build_croston_forecast_rows(
                     "forecast_qty": forecast,
                     "lower_bound": None,
                     "upper_bound": None,
-                    "model_id": "croston",
+                    "model_id": route_model_id,
                 }
             )
         )

@@ -1,6 +1,8 @@
 import { buildSearchParams } from "./helpers";
 import { fetchJson } from "./request";
 
+import type { CustomerForecastRouteModelId } from "@/lib/customerForecast";
+
 export type CustomerForecastRunStatus =
   | "queued"
   | "generating"
@@ -20,7 +22,10 @@ export interface CustomerForecastReadiness {
   source_latest_month: string | null;
   total_series: number;
   eligible_series: number;
+  moving_average_series: number;
+  seasonal_repeat_series: number;
   croston_series: number;
+  model_route_counts: Record<CustomerForecastRouteModelId, number>;
   dormant_series: number;
   forecastable_series: number;
   skipped_series: number;
@@ -75,7 +80,7 @@ export interface CustomerForecastSeries {
     forecast_qty: number;
     lower_bound: number | null;
     upper_bound: number | null;
-    model_id: string;
+    model_id: CustomerForecastRouteModelId | "chronos2_enriched";
   }[];
 }
 

@@ -301,7 +301,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "generate_customer_forecast": JobTypeDef(
         type_id="generate_customer_forecast",
         label="Customer Forecast",
-        description="Generate resumable 18-month Croston/SBA forecasts at customer grain",
+        description="Generate resumable 18-month rule-routed forecasts at customer grain",
         group="forecast",
         callable=_run_generate_customer_forecast,
         params_schema={"run_id": None},
@@ -310,7 +310,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "generate_customer_forecast_backtest": JobTypeDef(
         type_id="generate_customer_forecast_backtest",
         label="Customer Forecast Backtest",
-        description="Compare Croston bottom-up, champion, and blended historical accuracy",
+        description="Compare rule-routed bottom-up, champion, and blended historical accuracy",
         group="forecast",
         callable=_run_generate_customer_forecast_backtest,
         params_schema={"run_id": None, "customer_run_id": None},

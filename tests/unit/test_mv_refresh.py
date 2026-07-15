@@ -4,6 +4,7 @@ The DDL-consistency tests are the mechanical enforcement of the rule
 "every materialized view lives in MV_SOURCES": adding a CREATE MATERIALIZED
 VIEW to sql/ without registering it here fails the suite.
 """
+
 from __future__ import annotations
 
 import re
@@ -21,27 +22,78 @@ from common.core.mv_refresh import (
     refresh_materialized_views,
     refresh_tiers,
 )
-
 from common.core.paths import PROJECT_ROOT
 
 SQL_DIR = PROJECT_ROOT / "sql"
 
 _CREATE_RE = re.compile(r"CREATE MATERIALIZED VIEW (?:IF NOT EXISTS )?(\w+)", re.I)
 _DROP_RE = re.compile(r"DROP MATERIALIZED VIEW (?:IF EXISTS )?(\w+)", re.I)
+_RENAME_RE = re.compile(
+    r"ALTER MATERIALIZED VIEW (\w+)\s+RENAME TO (\w+)",
+    re.I,
+)
 
 
 def _live_mvs_from_ddl() -> set[str]:
-    """MVs whose last CREATE comes after their last DROP, in migration order."""
-    last_event: dict[str, str] = {}  # mv -> "create" | "drop"
+    """MVs left live by creates, drops, and atomic replacement renames."""
+    live: set[str] = set()
     for path in sorted(SQL_DIR.glob("*.sql")):
         if not path.is_file():
             continue
         text = path.read_text()
-        events = [(m.start(), "create", m.group(1)) for m in _CREATE_RE.finditer(text)]
-        events += [(m.start(), "drop", m.group(1)) for m in _DROP_RE.finditer(text)]
-        for _, kind, name in sorted(events):
-            last_event[name.lower()] = kind
-    return {mv for mv, kind in last_event.items() if kind == "create"}
+        events: list[tuple[int, str, str, str | None]] = [
+            (match.start(), "create", match.group(1), None) for match in _CREATE_RE.finditer(text)
+        ]
+        events.extend(
+            (match.start(), "drop", match.group(1), None) for match in _DROP_RE.finditer(text)
+        )
+        events.extend(
+            (match.start(), "rename", match.group(1), match.group(2))
+            for match in _RENAME_RE.finditer(text)
+        )
+        for _, kind, raw_name, raw_new_name in sorted(events):
+            name = raw_name.lower()
+            if kind == "create":
+                live.add(name)
+            elif kind == "drop":
+                live.discard(name)
+            elif name in live and raw_new_name is not None:
+                live.remove(name)
+                live.add(raw_new_name.lower())
+    return live
+
+
+def _live_mv_bodies_from_ddl() -> dict[str, str]:
+    """Return latest live MV definitions, carrying bodies through renames."""
+    bodies: dict[str, str] = {}
+    create_body_re = re.compile(
+        r"CREATE MATERIALIZED VIEW (?:IF NOT EXISTS )?(\w+)\s+AS(.*?)(?=;)",
+        re.S | re.I,
+    )
+    for path in sorted(SQL_DIR.glob("*.sql")):
+        if not path.is_file():
+            continue
+        text = re.sub(r"--.*", "", path.read_text())
+        events: list[tuple[int, str, str, str | None]] = [
+            (match.start(), "create", match.group(1), match.group(2))
+            for match in create_body_re.finditer(text)
+        ]
+        events.extend(
+            (match.start(), "drop", match.group(1), None) for match in _DROP_RE.finditer(text)
+        )
+        events.extend(
+            (match.start(), "rename", match.group(1), match.group(2))
+            for match in _RENAME_RE.finditer(text)
+        )
+        for _, kind, raw_name, value in sorted(events):
+            name = raw_name.lower()
+            if kind == "create" and value is not None:
+                bodies[name] = value
+            elif kind == "drop":
+                bodies.pop(name, None)
+            elif kind == "rename" and name in bodies and value is not None:
+                bodies[value.lower()] = bodies.pop(name)
+    return bodies
 
 
 class TestMapMatchesDdl:
@@ -55,8 +107,7 @@ class TestMapMatchesDdl:
     def test_no_registered_mv_is_retired_or_unknown(self):
         unknown = set(MV_SOURCES) - _live_mvs_from_ddl()
         assert not unknown, (
-            f"MV_SOURCES entries with no live CREATE MATERIALIZED VIEW in sql/: "
-            f"{sorted(unknown)}"
+            f"MV_SOURCES entries with no live CREATE MATERIALIZED VIEW in sql/: {sorted(unknown)}"
         )
 
     def test_map_order_is_topological(self):
@@ -70,18 +121,7 @@ class TestMapMatchesDdl:
             seen.add(mv)
 
     def test_declared_sources_appear_in_ddl_body(self):
-        # Latest definition body per MV.
-        bodies: dict[str, str] = {}
-        for path in sorted(SQL_DIR.glob("*.sql")):
-            if not path.is_file():
-                continue
-            text = re.sub(r"--.*", "", path.read_text())
-            for m in re.finditer(
-                r"CREATE MATERIALIZED VIEW (?:IF NOT EXISTS )?(\w+)\s+AS(.*?)(?=;)",
-                text,
-                re.S | re.I,
-            ):
-                bodies[m.group(1).lower()] = m.group(2)
+        bodies = _live_mv_bodies_from_ddl()
         for mv, sources in MV_SOURCES.items():
             body = bodies.get(mv, "")
             assert body, f"No CREATE body found in sql/ for {mv}"
@@ -191,9 +231,7 @@ class TestRefreshExecution:
     def test_refreshes_concurrently_when_populated(self):
         ctx, cur = _mock_conn([("agg_sales_monthly", True)])
         with patch("common.core.mv_refresh.psycopg.connect", return_value=ctx):
-            result = refresh_materialized_views(
-                ["agg_sales_monthly"], db_params={"host": "x"}
-            )
+            result = refresh_materialized_views(["agg_sales_monthly"], db_params={"host": "x"})
         assert result["refreshed"] == ["agg_sales_monthly"]
         executed = " ".join(str(c.args[0]) for c in cur.execute.call_args_list)
         assert "CONCURRENTLY" in executed
@@ -201,29 +239,22 @@ class TestRefreshExecution:
     def test_plain_refresh_when_not_populated(self):
         ctx, cur = _mock_conn([("agg_sales_monthly", False)])
         with patch("common.core.mv_refresh.psycopg.connect", return_value=ctx):
-            result = refresh_materialized_views(
-                ["agg_sales_monthly"], db_params={"host": "x"}
-            )
+            result = refresh_materialized_views(["agg_sales_monthly"], db_params={"host": "x"})
         assert result["refreshed"] == ["agg_sales_monthly"]
         refresh_calls = [
-            str(c.args[0]) for c in cur.execute.call_args_list
-            if "REFRESH" in str(c.args[0])
+            str(c.args[0]) for c in cur.execute.call_args_list if "REFRESH" in str(c.args[0])
         ]
         assert refresh_calls and all("CONCURRENTLY" not in c for c in refresh_calls)
 
     def test_missing_mv_is_skipped(self):
         ctx, _ = _mock_conn([])
         with patch("common.core.mv_refresh.psycopg.connect", return_value=ctx):
-            result = refresh_materialized_views(
-                ["agg_sales_monthly"], db_params={"host": "x"}
-            )
+            result = refresh_materialized_views(["agg_sales_monthly"], db_params={"host": "x"})
         assert result["missing"] == ["agg_sales_monthly"]
         assert result["refreshed"] == []
 
     def test_failure_does_not_block_remaining_mvs(self):
-        ctx, cur = _mock_conn(
-            [("agg_sales_monthly", True), ("agg_forecast_monthly", True)]
-        )
+        ctx, cur = _mock_conn([("agg_sales_monthly", True), ("agg_forecast_monthly", True)])
 
         def _execute(stmt, *args):
             text = str(stmt)

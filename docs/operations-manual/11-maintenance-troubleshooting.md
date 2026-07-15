@@ -344,6 +344,21 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 3. **Tier 3**: `mv_supplier_po_performance`, `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`, `agg_dfu_naive_scale`
 4. **Tier 4**: `mv_inventory_health_score`, `mv_control_tower_kpis`
 
+`mv_customer_demand_series_profile` is refreshed by the canonical
+customer-demand load rather than by a standalone operator refresh. Migration
+218 rebuilds it with `first_demand_month`, `demand_months_last_12`, and the
+global source-latest anchor, which drive fail-closed readiness and the frozen
+`customer_rule_router` forward route manifest.
+Apply it in a maintenance window: the migration side-builds and atomically
+swaps the profile while holding the customer-demand advisory lock, so it needs
+temporary disk for a second profile even though the final exclusive MV lock is
+short.
+If the profile marker is missing or stale, rerun the standard customer-demand
+load so the MV refresh and `customer_demand_profile_refresh_state` update publish
+atomically; do not stamp the marker manually. Migration 218 also marks any
+queued/generating pre-router customer run or backtest failed and invalidates a
+generating blend tied to legacy customer evidence. Start a new customer
+forecast instead of trying to resume any of those manifests.
 
 ### Data Retention Policies
 
@@ -582,7 +597,7 @@ Run as a single SQL transaction. Ordered by FK dependency (children before paren
 
 > **Note:** `fact_inventory_snapshot` is monthly RANGE-partitioned (2025-01 through 2026-03 + default). TRUNCATE on the parent cascades to all partitions automatically.
 
-> **Note:** Derived materialized views (the accuracy MVs — `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`, **`agg_dfu_naive_scale`** — and the inventory/CA MVs) are **not** in `db-truncate-data`: Postgres rejects `TRUNCATE TABLE` on a materialized view ("is not a table"), which would abort the single-transaction reset. Their stale rows are invalidated when the source facts (`fact_sales_monthly`, `fact_external_forecast_monthly`) are truncated and re-emptied/repopulated on the next refresh (`refresh-mvs-tiered` / `refresh-accuracy-mvs`).
+> **Note:** Derived materialized views (the accuracy MVs — `agg_accuracy_by_dim`, `agg_accuracy_by_dfu`, `agg_dfu_coverage`, **`agg_dfu_naive_scale`** — the inventory/CA MVs, and `mv_customer_demand_series_profile`) are **not** in `db-truncate-data`: Postgres rejects `TRUNCATE TABLE` on a materialized view ("is not a table"), which would abort the single-transaction reset. Their stale rows are invalidated when the source facts are truncated and re-emptied/repopulated on the next applicable refresh. Accuracy views use `refresh-mvs-tiered` / `refresh-accuracy-mvs`; the customer profile and its source-batch marker publish through the canonical customer-demand load.
 
 ```bash
 docker compose exec -T postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 <<'EOSQL'

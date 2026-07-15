@@ -13,12 +13,18 @@ import pandas as pd
 import psycopg
 
 from common.core.sql_helpers import read_sql_chunked
+from common.ml.customer_forecast_rules import (
+    CROSTON_ROUTE_ID,
+    MOVING_AVERAGE_ROUTE_ID,
+    SEASONAL_REPEAT_ROUTE_ID,
+    parse_customer_forecast_rule_parameters,
+)
 from common.services.customer_forecast import (
     CustomerForecastWindow,
     _frame_checksum,
     _resolve_run_window,
     _shift_month,
-    build_croston_forecast_rows,
+    build_customer_forecast_rows,
     get_customer_forecast_settings,
     load_customer_forecast_readiness,
     prepare_customer_history,
@@ -94,6 +100,7 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
         conn,
         window,
         recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+        rule_params=parse_customer_forecast_rule_parameters(dict(settings["rule_params"])),
     )
     if not readiness["ready"]:
         raise RuntimeError(str(readiness["blockers"][0]))
@@ -125,7 +132,14 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
                 CREATE TEMP TABLE temp_customer_forecast_manifest ON COMMIT DROP AS
                 WITH classified AS (
                     SELECT profile.item_id, profile.location_id, profile.customer_no,
-                           %s::text AS route_model_id
+                           CASE
+                               WHEN profile.first_demand_month >= %s
+                                AND profile.first_demand_month < %s
+                               THEN %s::text
+                               WHEN profile.demand_months_last_12 >= %s
+                               THEN %s::text
+                               ELSE %s::text
+                           END AS route_model_id
                     FROM mv_customer_demand_series_profile profile
                     WHERE profile.first_month < %s
                       AND profile.last_sales_month >= %s
@@ -138,7 +152,15 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
                 FROM classified
                 """,
                 (
-                    str(settings["model_id"]),
+                    _shift_month(
+                        window.forecast_start,
+                        -int(settings["rule_params"]["recent_demand_lookback_months"]),
+                    ),
+                    window.forecast_start,
+                    MOVING_AVERAGE_ROUTE_ID,
+                    int(settings["rule_params"]["repeat_history_min_demand_months"]),
+                    SEASONAL_REPEAT_ROUTE_ID,
+                    CROSTON_ROUTE_ID,
                     window.forecast_start,
                     _recent_start(window, settings),
                     int(settings["batch_size"]),
@@ -173,10 +195,17 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
             (run_id,),
         )
         route_rows = cur.fetchall()
-        route_counts = {str(row[0]): int(row[1]) for row in route_rows}
+        route_counts = {
+            str(route_model_id): 0 for route_model_id in settings["route_model_ids"]
+        }
+        route_counts.update({str(row[0]): int(row[1]) for row in route_rows})
         total_series = sum(route_counts.values())
         total_batches = sum(int(row[2]) for row in route_rows)
-        if total_series <= 0 or total_series != int(readiness["forecastable_series"]):
+        if (
+            total_series <= 0
+            or total_series != int(readiness["forecastable_series"])
+            or route_counts != readiness["model_route_counts"]
+        ):
             raise RuntimeError("Customer forecast batch manifest is incomplete")
         cur.execute(
             "SELECT COALESCE(SUM(completed_series), 0), "
@@ -274,7 +303,8 @@ def load_customer_forecast_batch_history(
                history.startdate,
                COALESCE(SUM(history.demand_qty), 0)::double precision AS demand_qty,
                COALESCE(SUM(history.sales_qty), 0)::double precision AS sales_qty,
-               profile.first_month AS series_first_month
+               profile.first_month AS series_first_month,
+               profile.first_demand_month AS series_first_demand_month
         FROM customer_forecast_batch_series series
         JOIN mv_customer_demand_series_profile profile
           USING (item_id, location_id, customer_no)
@@ -286,7 +316,7 @@ def load_customer_forecast_batch_history(
          AND history.startdate < %s
         WHERE series.batch_id = %s
         GROUP BY series.item_id, series.location_id, series.customer_no,
-                 history.startdate, profile.first_month
+                 history.startdate, profile.first_month, profile.first_demand_month
         ORDER BY series.item_id, series.location_id, series.customer_no,
                  history.startdate
         """,
@@ -300,20 +330,23 @@ def _build_batch_rows(
     window: CustomerForecastWindow,
     settings: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rule_params = parse_customer_forecast_rule_parameters(dict(settings["rule_params"]))
     prepared = prepare_customer_history(
         raw_history,
         window,
         recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+        rule_params=rule_params,
     )
     if (
-        batch.route_model_id != settings["model_id"]
+        set(prepared.route_by_sku.values()) != {batch.route_model_id}
         or prepared.eligible_series_count != batch.series_count
     ):
         raise RuntimeError("Customer forecast batch route changed after manifest creation")
-    rows = build_croston_forecast_rows(
+    rows = build_customer_forecast_rows(
         prepared,
         window,
-        dict(settings["model_params"]),
+        rule_params=rule_params,
+        croston_params=dict(settings["croston_params"]),
     )
     source_input = prepared.model_input
     expected_rows = batch.series_count * window.horizon_months
@@ -506,12 +539,19 @@ def finalize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, Any]
         if completed_series != total_series or row_count != expected_rows:
             raise RuntimeError("Customer forecast batch totals are incomplete")
         cur.execute(
-            "SELECT COUNT(*) FROM fact_customer_forecast WHERE run_id = %s::uuid",
+            "SELECT model_id, COUNT(*) FROM fact_customer_forecast "
+            "WHERE run_id = %s::uuid GROUP BY model_id ORDER BY model_id",
             (run_id,),
         )
-        persisted_rows = int((cur.fetchone() or (0,))[0])
-        if persisted_rows != expected_rows:
-            raise RuntimeError("Customer forecast persisted rows are incomplete")
+        persisted_route_rows = {str(row[0]): int(row[1]) for row in cur.fetchall()}
+        expected_route_rows: dict[str, int] = {}
+        for batch in batches:
+            route_model_id = str(batch[1])
+            expected_route_rows[route_model_id] = expected_route_rows.get(route_model_id, 0) + (
+                int(batch[4]) * window.horizon_months
+            )
+        if persisted_route_rows != expected_route_rows:
+            raise RuntimeError("Customer forecast persisted route rows are incomplete")
         checksum_payload = [[str(row[1]), int(row[2]), str(row[7])] for row in batches]
         source_checksum = hashlib.sha256(
             json.dumps(checksum_payload, separators=(",", ":")).encode("utf-8")

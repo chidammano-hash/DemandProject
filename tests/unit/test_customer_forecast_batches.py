@@ -6,6 +6,11 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from common.ml.customer_forecast_rules import (
+    CROSTON_ROUTE_ID,
+    MOVING_AVERAGE_ROUTE_ID,
+    SEASONAL_REPEAT_ROUTE_ID,
+)
 from common.services.customer_forecast import build_customer_forecast_window
 from common.services.customer_forecast_batches import (
     CustomerForecastBatch,
@@ -15,6 +20,28 @@ from common.services.customer_forecast_batches import (
     load_customer_forecast_progress,
     run_customer_forecast_worker,
 )
+
+_SETTINGS = {
+    "model_id": "customer_rule_router",
+    "route_model_ids": [
+        MOVING_AVERAGE_ROUTE_ID,
+        SEASONAL_REPEAT_ROUTE_ID,
+        CROSTON_ROUTE_ID,
+    ],
+    "recent_sales_lookback_months": 6,
+    "rule_params": {
+        "recent_demand_lookback_months": 6,
+        "moving_average_window_months": 3,
+        "repeat_history_lookback_months": 12,
+        "repeat_history_min_demand_months": 9,
+    },
+    "croston_params": {
+        "alpha": 0.1,
+        "variant": "sba",
+        "recursive": True,
+        "recursive_damping": 0.5,
+    },
+}
 
 
 def _mock_connection(cursor: MagicMock) -> MagicMock:
@@ -56,7 +83,11 @@ def test_progress_reports_exact_customer_skus_and_throughput_eta() -> None:
         450_000,
         datetime.now(UTC) - timedelta(minutes=20),
         None,
-        {"croston": 100_000},
+        {
+            MOVING_AVERAGE_ROUTE_ID: 20_000,
+            SEASONAL_REPEAT_ROUTE_ID: 50_000,
+            CROSTON_ROUTE_ID: 30_000,
+        },
     )
     conn = _mock_connection(cursor)
 
@@ -69,9 +100,91 @@ def test_progress_reports_exact_customer_skus_and_throughput_eta() -> None:
     assert 3500 <= progress["eta_seconds"] <= 3700
 
 
-def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
+@pytest.mark.parametrize(
+    ("route_model_id", "history"),
+    [
+        pytest.param(
+            MOVING_AVERAGE_ROUTE_ID,
+            [
+                {
+                    "startdate": date(2026, 5, 1),
+                    "demand_qty": 4.0,
+                    "sales_qty": 4.0,
+                    "series_first_month": date(2026, 5, 1),
+                    "series_first_demand_month": date(2026, 5, 1),
+                }
+            ],
+            id="moving-average",
+        ),
+        pytest.param(
+            SEASONAL_REPEAT_ROUTE_ID,
+            [
+                {
+                    "startdate": month.date(),
+                    "demand_qty": float(offset + 1),
+                    "sales_qty": float(offset + 1),
+                    "series_first_month": date(2025, 7, 1),
+                    "series_first_demand_month": date(2025, 7, 1),
+                }
+                for offset, month in enumerate(pd.date_range("2025-07-01", periods=9, freq="MS"))
+            ],
+            id="seasonal-repeat",
+        ),
+        pytest.param(
+            CROSTON_ROUTE_ID,
+            [
+                {
+                    "startdate": date(2025, 1, 1),
+                    "demand_qty": 8.0,
+                    "sales_qty": 0.0,
+                    "series_first_month": date(2025, 1, 1),
+                    "series_first_demand_month": date(2025, 1, 1),
+                },
+                {
+                    "startdate": date(2026, 5, 1),
+                    "demand_qty": 4.0,
+                    "sales_qty": 4.0,
+                    "series_first_month": date(2025, 1, 1),
+                    "series_first_demand_month": date(2025, 1, 1),
+                },
+            ],
+            id="croston",
+        ),
+    ],
+)
+def test_rule_batch_builds_all_horizon_rows_from_one_history_frame(
+    route_model_id: str,
+    history: list[dict[str, object]],
+) -> None:
     window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
-    batch = CustomerForecastBatch(42, "croston", 0, 1, 1)
+    batch = CustomerForecastBatch(42, route_model_id, 0, 1, 1)
+    frame = pd.DataFrame(
+        [
+            {
+                "item_id": "ITEM-1",
+                "location_id": "LOC-1",
+                "customer_no": "CUST-1",
+                **row,
+            }
+            for row in history
+        ]
+    )
+
+    rows, source = _build_batch_rows(
+        batch,
+        frame,
+        window,
+        _SETTINGS,
+    )
+
+    assert len(rows) == 18
+    assert len(source) == 18
+    assert set(rows["model_id"]) == {route_model_id}
+    assert rows["forecast_qty"].nunique() > 1
+
+
+def test_batch_rejects_a_route_that_no_longer_matches_its_source_history() -> None:
+    window = build_customer_forecast_window(date(2026, 7, 13), 18, 18)
     history = pd.DataFrame(
         [
             {
@@ -82,31 +195,18 @@ def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
                 "demand_qty": 4.0,
                 "sales_qty": 4.0,
                 "series_first_month": date(2026, 5, 1),
+                "series_first_demand_month": date(2026, 5, 1),
             }
         ]
     )
-    settings = {
-        "model_id": "croston",
-        "recent_sales_lookback_months": 6,
-        "model_params": {
-            "alpha": 0.1,
-            "variant": "sba",
-            "recursive": True,
-            "recursive_damping": 0.5,
-        },
-    }
 
-    rows, source = _build_batch_rows(
-        batch,
-        history,
-        window,
-        settings,
-    )
-
-    assert len(rows) == 18
-    assert len(source) == 18
-    assert set(rows["model_id"]) == {"croston"}
-    assert rows["forecast_qty"].nunique() > 1
+    with pytest.raises(RuntimeError, match="route changed"):
+        _build_batch_rows(
+            CustomerForecastBatch(42, CROSTON_ROUTE_ID, 0, 1, 1),
+            history,
+            window,
+            _SETTINGS,
+        )
 
 
 def test_worker_commits_read_transactions_before_claiming_and_persisting() -> None:

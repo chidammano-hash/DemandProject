@@ -585,14 +585,16 @@ erDiagram
 
 | MV | Grain | Source | DDL |
 |---|---|---|---|
-| `mv_customer_demand_series_profile` | item + location + customer | `fact_customer_demand_monthly` | `sql/211` |
+| `mv_customer_demand_series_profile` | item + location + customer | `fact_customer_demand_monthly` | `sql/211`, extended by `sql/214` and `sql/218` |
 
-The customer-series profile stores first/last observed months and the last
-positive-sales month once per series. Customer forecast readiness and batch
-manifest creation therefore avoid scanning the partitioned fact table. Each
-worker reads only its assigned series from the resolved 18-month fact window.
-The central MV refresh service rebuilds the profile after customer-demand
-loads; `sql/214` adds the activity field and supporting index. The singleton
+The customer-series profile stores first/last observed months, the global
+source-latest anchor, the last positive-sales month, the first positive-demand
+month, and the trailing-12 positive-demand-month count once per series. Customer forecast readiness and
+rule-specific batch manifest creation therefore avoid scanning the partitioned
+fact table. Each worker reads only its assigned series from the resolved
+18-month fact window. The central MV refresh service rebuilds the profile after
+customer-demand loads; `sql/214` adds activity indexing and `sql/218` adds the
+ordered rule-router features/index. The singleton
 `customer_demand_profile_refresh_state` (`sql/216`) binds the refreshed profile
 to one exact completed audit batch.
 
@@ -644,14 +646,17 @@ to one exact completed audit batch.
   `agg_accuracy_snapshot` joins those rows to closed actuals for common-DFU live FVA.
 - **`customer_forecast_run` / `customer_forecast_batch*` /
   `fact_customer_forecast`** — an immutable customer forecast manifest,
-  durable batch ledger, and payload. Every active customer series uses
-  recursive Croston/SBA over the latest 18 closed demand months to generate 18
-  future months. Each horizon step recursively damps the prior projected demand
-  toward the bias-corrected Croston long-run rate; the configured recurrence is
-  part of generation and backtest checksums. Series with no customer sales in
-  the latest six closed months are omitted rather than persisted as zero rows.
-  Completed 10,000-series batches
-  are recovery checkpoints and retries process only unfinished batches.
+  durable batch ledger, and payload. The run-level
+  `customer_rule_router` first limits eligibility to series with positive sales
+  in the latest six closed months, then freezes one ordered route per series:
+  a demand start in that six-month window uses recursive
+  `moving_average_3`; otherwise at least nine positive-demand months in the
+  trailing 12 uses `seasonal_repeat_12`; the remainder uses recursive
+  Croston/SBA. Every route reads the latest 18 closed demand months and emits 18
+  future months. Rule thresholds and Croston recurrence are part of generation
+  and backtest checksums. Ineligible series are omitted rather than persisted
+  as zero rows. Completed 10,000-series batches are recovery checkpoints and
+  retries process only unfinished batches.
   Each new run records the exact latest completed `customer_demand`
   `audit_load_batch` only when the singleton profile-refresh marker matches and
   no load is active. The loader creates its running batch before fact mutation,
@@ -669,6 +674,8 @@ to one exact completed audit batch.
   `sql/211_create_customer_demand_series_profile.sql`, with route lineage in
   `sql/212_add_customer_forecast_model_routes.sql` and
   durable batching/activity lineage in `sql/213` through `sql/215`.
+  Migration `sql/218_enable_customer_rule_router.sql` adds the rule features,
+  run/backtest router identity, and three allowed per-series route IDs.
 - **`customer_forecast_backtest_run` /
   `customer_bottom_up_backtest_component` /
   `customer_bottom_up_backtest_accuracy`** — causal six-origin,
@@ -676,9 +683,9 @@ to one exact completed audit batch.
   bottom-up, the source champion, and their configured 50/50 blend on a common
   cohort. The request freezes a checksum of the exact source-series membership
   plus its series/batch counts, and the full run uses one repeatable-read
-  snapshot. Activity is evaluated
-  independently at each origin and champion
-  selection uses the execution lag stamped on each historical row. The
+  snapshot. Eligibility and ordered route selection are evaluated causally and
+  independently at each origin rather than copied from the forward manifest.
+  Champion selection uses the execution lag stamped on each historical row. The
   accuracy row freezes WAPE, MAE, bias, accuracy, thresholds, and a
   no-degradation gate.
 - **`customer_bottom_up_blend_component`** — generation-only forward component
@@ -852,24 +859,32 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
   validation and release publication.
 - `customer_forecast_run` records the resolved 18-month closed-history window,
   18-month output window, durable job, cardinalities, ignored dormant series,
-  exact batch/series progress, Croston/SBA model/config versions, the completed
-  customer-demand load batch, matching profile-refresh marker, and payload
-  lineage. An active load, mismatched marker, or later completed
-  customer-demand load makes the run stale and blocks resume, backtest, blend
-  consumption, and promotion until regeneration. `customer_forecast_batch` and
+  exact batch/series progress, `customer_rule_router` config and per-route
+  counts, the completed customer-demand load batch, matching profile-refresh
+  marker, and payload lineage. An active load, mismatched marker, or later
+  completed customer-demand load makes the run stale and blocks resume,
+  backtest, blend consumption, and promotion until regeneration.
+  `customer_forecast_batch` and
   `customer_forecast_batch_series` provide durable 10,000-series checkpoints
-  claimed with `SKIP LOCKED`; Croston batches run on parallel CPU workers.
+  claimed with `SKIP LOCKED`; `moving_average_3`, `seasonal_repeat_12`, and
+  `croston` batches share the parallel CPU workers. A series' forward route is
+  frozen in this ledger and on its fact rows.
   `fact_customer_forecast` is immutable and unique by run, item, location,
   customer, and forecast month; DDL:
   `sql/210_create_customer_forecast.sql`, extended by `sql/213` and `sql/215`.
   Migration `sql/216` adds customer-demand batch/profile lineage, freezes
-  fact-row mutations outside `generating`, and enforces Croston-only new writes
-  while preserving readable legacy rows.
-  Customer-SKUs
-  without sales in the latest six closed months are ignored. The refreshable
-  `mv_customer_demand_series_profile` (`sql/211`, extended by `sql/214`)
-  supplies all-history bounds and recent-sales activity without request-time
-  full-fact scans.
+  fact-row mutations outside `generating`, and preserves readable legacy rows.
+  Migration `sql/218` enables the `customer_rule_router` run/backtest identity
+  and the three allowed per-series routes; active pre-router customer runs and
+  backtests are failed and generating blends tied to them are invalidated
+  because their configuration checksum cannot be resumed safely.
+  Customer-SKUs without sales in the latest six closed months are ignored. The
+  refreshable
+  `mv_customer_demand_series_profile` (`sql/211`, extended by `sql/214` and
+  `sql/218`) supplies all-history bounds, recent-sales activity, first positive
+  demand, and trailing-12 positive-demand counts without request-time full-fact
+  scans. The repeated global source-latest anchor makes future-dated source
+  rows fail freshness even when their series is outside the run population.
 - `customer_forecast_backtest_run` and its generation-only, terminally frozen
   component/accuracy
   tables persist six causal one-step origins and the matching common-cohort
@@ -2128,17 +2143,20 @@ review surfaces. API
 **Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
 
 **Customer-Level Forecasting:** the separate **Forecasting → Customer
-Forecast** stage generates immutable recursive Croston/SBA forecasts at
-item-location-customer-month grain. A run uses the latest 18 fully closed
-months from `fact_customer_demand_monthly` and emits exactly 18 future months.
-The latest closed monthly demand initializes a damped recursive path that
-converges toward the SBA long-run rate; each projected month becomes the state
-for the next horizon step.
-Customer series with no sales in the latest six closed months are ignored.
+Forecast** stage generates immutable deterministic forecasts at
+item-location-customer-month grain. A `customer_rule_router` run uses the latest
+18 fully closed months from `fact_customer_demand_monthly` and emits exactly 18
+future months. Eligible series have positive sales in the latest six closed
+months. Ordered routing then assigns recent demand starts to a recursive
+three-calendar-month moving average, series with at least nine positive-demand
+months in the trailing 12 to a repeated last-12-actual-month cycle, and the
+intermittent remainder to recursive Croston/SBA. Ineligible series are ignored.
 Durable 10,000-series checkpoints permit retry without losing completed work
-and expose exact completed-series progress and ETA. Croston remains outside
-the governed five-model roster. A separate six-origin causal backtest sums
-customer forecasts to item-location, normalizes demand to sales with an
+and expose exact completed-series progress, route composition, and ETA. All
+three customer routes remain outside the governed five-model roster. A separate
+six-origin causal backtest re-evaluates eligibility and routing from each
+origin's available history, then sums customer forecasts to item-location,
+normalizes demand to sales with an
 18-month fulfillment ratio, and compares customer bottom-up, source champion,
 and their 50/50 blend on a common cohort. Historical eligibility is resolved
 at each origin instead of reusing the current forward manifest. Promotion
@@ -2159,7 +2177,7 @@ auto-promotes, and cannot recursively source a later customer blend.
 Portfolio Analysis and Item Analysis visualize the exact historical backtest,
 shadow future, source champion, and blended future through
 `/customer-forecast/blend/trend`; Item Analysis also consumes the run-aware
-staging overlay. API `/customer-forecast`; DDL `sql/210`–`sql/217`; spec
+staging overlay. API `/customer-forecast`; DDL `sql/210`–`sql/218`; spec
 `docs/specs/02-forecasting/35-customer-level-forecasting.md`.
 
 ### 2. SKU Clustering & Segmentation

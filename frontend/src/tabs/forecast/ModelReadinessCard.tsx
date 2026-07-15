@@ -211,7 +211,7 @@ export function ModelReadinessCard({
                       </div>
                       <div className="text-[10px] text-muted-foreground">
                         {isCustomerBlend
-                          ? "Croston customer bottom-up + source champion"
+                          ? "Rule-routed customer bottom-up + source champion"
                           : championConstituents.join(", ") || "no promoted experiment"}
                       </div>
                     </div>

@@ -206,22 +206,29 @@ prepare a governed draft:
 1. Confirm the readiness card shows the latest 18 fully closed months and no
    source blocker. For a July 2026 system month, the input window is January
    2025 through June 2026.
-2. Review the coverage split. Customer-SKUs with no sales in the latest six
-   closed months are shown as ignored and produce no rows.
+2. Review the coverage split. Customer-SKUs with no positive sales in the
+   latest six closed months are shown as ignored and produce no rows. Eligible
+   series are split into `moving_average_3`, `seasonal_repeat_12`, and
+   `croston` route counts.
 3. Click **Generate Customer Forecasts**. The durable job builds 10,000-series
-   recovery batches, runs recursive Croston/SBA on parallel CPU workers, and
-   writes July 2026 through December 2027 in that example. Each customer path
-   recursively converges from the latest closed demand toward its SBA rate.
+   recovery batches and writes July 2026 through December 2027 in that example.
+   The ordered `customer_rule_router` sends a series whose earliest positive
+   demand is in the latest six closed months to a recursive three-month moving
+   average; otherwise a series with at least nine positive-demand months in the
+   trailing 12 repeats its last 12 actual months; the remainder uses recursive
+   Croston/SBA. The selected production route is frozen for the run.
 4. Monitor exact completed/total customer-SKU and batch counts plus ETA. Active
    runs can be cancelled; **Resume Saved Batches** preserves completed work.
 5. Choose item, location, and customer to compare actual history with the
-   generated result, or export the completed run.
+   generated result and its persisted route, or export the completed run.
 6. Confirm the source release is a freshly promoted unblended champion. The UI
    blocks recursively using a promoted customer blend as the next blend input.
 7. Click **Run Blend Backtest**. Review the six-origin common-cohort WAPE, MAE,
    bias, and accuracy for **Customer Bottom-Up**, **Source Champion**, and
    **Customer Blend**. The gate needs six months, 1,000 DFUs, and blend WAPE no
-   worse than champion WAPE.
+   worse than champion WAPE. Each historical origin re-evaluates positive-sales
+   eligibility and the ordered route from only the history available then; it
+   does not reuse the frozen forward route.
 8. When the matching backtest passes, click **Generate Customer Blend Draft**.
    Review coverage and lineage before using the existing stage and explicit
    promotion actions for the returned generation run.

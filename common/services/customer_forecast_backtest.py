@@ -1,4 +1,4 @@
-"""Rolling Croston backtests and warehouse-item blend accuracy evidence."""
+"""Rolling customer rule-router backtests and warehouse-item blend evidence."""
 
 from __future__ import annotations
 
@@ -24,11 +24,11 @@ from common.services.customer_forecast import (
     _shift_month,
     get_customer_forecast_settings,
 )
-from common.services.customer_forecast_backtest_croston import (
-    build_croston_backtest_batch,
-)
 from common.services.customer_forecast_backtest_population import (
     compute_customer_backtest_source_population,
+)
+from common.services.customer_forecast_backtest_rules import (
+    build_customer_rule_backtest_batch,
 )
 from common.services.customer_forecast_blend_contract import (
     CustomerBlendSettings,
@@ -116,7 +116,8 @@ def customer_backtest_config_checksum(
         "backtest": settings.as_lineage(),
         "blend": blend.as_lineage(),
         "customer_model_id": customer_settings["model_id"],
-        "customer_model_params": customer_settings["model_params"],
+        "customer_rule_params": customer_settings["rule_params"],
+        "customer_croston_params": customer_settings["croston_params"],
         "recent_sales_lookback_months": customer_settings["recent_sales_lookback_months"],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -191,7 +192,8 @@ def _load_origin_causal_batch_history(
         """SELECT series.item_id, series.location_id, series.customer_no,
                   history.startdate,
                   COALESCE(SUM(history.demand_qty), 0)::double precision AS demand_qty,
-                  COALESCE(SUM(history.sales_qty), 0)::double precision AS sales_qty
+                  COALESCE(SUM(history.sales_qty), 0)::double precision AS sales_qty,
+                  series.first_demand_month AS series_first_demand_month
            FROM temp_customer_backtest_series series
            LEFT JOIN fact_customer_demand_monthly history
              ON history.item_id = series.item_id
@@ -201,7 +203,7 @@ def _load_origin_causal_batch_history(
             AND history.startdate < %s
            WHERE series.route_batch_no = %s
            GROUP BY series.item_id, series.location_id, series.customer_no,
-                    history.startdate
+                    history.startdate, series.first_demand_month
            ORDER BY series.item_id, series.location_id, series.customer_no,
                     history.startdate""",
         params=(window.history_start, window.forecast_start, route_batch_no),
@@ -215,7 +217,7 @@ def generate_customer_forecast_backtest(
     run_id: UUID,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> CustomerBacktestResult:
-    """Build immutable Croston, champion, and blended common-cohort evidence."""
+    """Build immutable rule-router, champion, and blended common-cohort evidence."""
     settings = get_customer_backtest_settings()
     customer_settings = get_customer_forecast_settings()
     blend_settings = get_customer_blend_settings()
@@ -342,6 +344,7 @@ def generate_customer_forecast_backtest(
         cur.execute(
             """CREATE TEMP TABLE temp_customer_backtest_series ON COMMIT DROP AS
                SELECT profile.item_id, profile.location_id, profile.customer_no,
+                      profile.first_demand_month,
                       ((ROW_NUMBER() OVER (
                           ORDER BY profile.item_id, profile.location_id,
                                    profile.customer_no
@@ -397,13 +400,14 @@ def generate_customer_forecast_backtest(
                 route_batch_no=route_batch_no,
                 window=window,
             )
-            rows = build_croston_backtest_batch(
+            rows = build_customer_rule_backtest_batch(
                 batch_history,
                 window,
                 evaluation_months=settings.lookback_months,
                 min_train_months=settings.min_train_months,
                 recent_sales_lookback_months=int(customer_settings["recent_sales_lookback_months"]),
-                params=dict(customer_settings["model_params"]),
+                rule_params=dict(customer_settings["rule_params"]),
+                croston_params=dict(customer_settings["croston_params"]),
             )
             cur.execute("TRUNCATE temp_customer_backtest_batch")
             if not rows.empty:

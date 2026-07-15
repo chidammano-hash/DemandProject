@@ -229,7 +229,7 @@ describe("CustomerBottomUpBlendPanel", () => {
     });
   });
 
-  it("shows Croston-only common-cohort accuracy and queues a current qualified draft", async () => {
+  it("shows rule-routed common-cohort accuracy and queues a current qualified draft", async () => {
     const { CustomerBottomUpBlendPanel } = await import("../CustomerBottomUpBlendPanel");
     render(
       <TestQueryWrapper>

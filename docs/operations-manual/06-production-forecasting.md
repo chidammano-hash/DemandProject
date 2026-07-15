@@ -53,7 +53,7 @@ a release source.
 | `fact_production_forecast_staging` | run + purpose + candidate + item + loc + month | Immutable run-scoped rows; `release_candidate`, `snapshot_contender`, and review-only `shadow_candidate` evidence never mix with retained `legacy_invalid` rows | `sql/122`, extended by `sql/203` and `sql/217` |
 | `fact_production_forecast` | plan_version + item + loc + forecast_month | Replaced only inside verified promotion; every new row carries source run, production run, and audit id | `sql/039`, extended by `sql/203` |
 | `model_promotion_log` | one row per promote/demote event | Exact source/release/archive lineage; one active row enforced by unique index | `sql/121`, extended by `sql/203` |
-| `customer_forecast_backtest_run` + bottom-up evidence | run manifest plus DFU-origin-month components and one common-cohort scorecard | Six causal one-step origins; immutable customer/champion/blend components, checksum, metrics, and promotion gate | `sql/216` |
+| `customer_forecast_backtest_run` + bottom-up evidence | run manifest plus DFU-origin-month components and one common-cohort scorecard | Six causal one-step origins; immutable customer/champion/blend components, checksum, metrics, and promotion gate | `sql/216`; rule-router contract extended by `sql/218` |
 | `customer_bottom_up_blend_component` | generation + item + loc + month | Immutable forward components bound to customer, backtest, promotion, and production lineage | `sql/216` |
 
 `model_promotion_log.promotion_type` is constrained to `('single', 'champion')`;
@@ -445,7 +445,7 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 | `scripts/forecasting/generate_production_forecasts.py` | `forecast-generate` | Build an immutable champion release candidate; promotion is a separate API action | `forecast_generation_run` + `fact_production_forecast_staging` |
 | `scripts/forecasting/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/forecasting/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Applies approved planner overrides to an existing saved P50 demand plan, honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
-| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 Croston/SBA customer-level months in resumable parallel batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
+| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 customer-level months through the ordered `customer_rule_router` in resumable parallel route batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
 
 **When to run each:**
 
@@ -479,12 +479,21 @@ in July 2026, that means January 2025–June 2026 history and July 2026–Decemb
 2027 forecast output.
 
 Readiness separates active and ignored series. A customer-SKU with no
-`sales_qty` in January–June 2026 is ignored and writes no forecast rows. Every
-active valid series uses recursive Croston/SBA with the configured `alpha`,
-`sba` variant, and `recursive_damping`. The latest closed demand starts the
-path; each projected month feeds the next step while converging toward the SBA
-long-run rate. Six CPU workers process the durable batches in parallel. Croston
-is customer-scoped and is not added to the canonical five-model competition.
+`sales_qty` in January–June 2026 is ignored and writes no forecast rows. The
+coverage card splits each eligible series under the ordered
+`customer_rule_router` policy:
+
+1. If its earliest positive demand is in January–June 2026, use
+   `moving_average_3`. Each future value is the mean of the latest three
+   calendar-month states and is appended before calculating the next month.
+2. Otherwise, if at least nine of July 2025–June 2026 have positive demand, use
+   `seasonal_repeat_12` and repeat those last 12 actual months cyclically.
+3. Otherwise, use recursive `croston` with the configured SBA `alpha` and
+   `recursive_damping`.
+
+The production route is frozen in the 10,000-series batch manifest and on its
+forecast rows. Six CPU workers share the route batches in parallel. These
+customer-scoped routes are not added to the canonical five-model competition.
 
 Each 10,000-series batch commits independently. Jobs displays exact completed
 customer-SKU and batch counts plus ETA. Cancellation, worker failure, managed
@@ -494,10 +503,16 @@ or the completed customer-demand source batch changed. Fact rows can be
 replaced only while their parent run is `generating`. A run becomes readable
 only after every batch, source-lineage, and final row-count check passes.
 
-The recursive settings are part of the customer and backtest checksums. After
-enabling recursion or changing its damping, do not resume or reuse an older
-flat run: generate a new customer forecast, rerun the blend backtest, and
+The ordered thresholds and Croston recursive settings are part of the customer
+and backtest checksums. After changing any of them, do not resume or reuse an
+older run: generate a new customer forecast, rerun the blend backtest, and
 generate a new blend draft only if the no-WAPE-degradation gate passes.
+Migration 218 enforces this cutover by marking queued/generating pre-router
+customer runs and backtests failed and invalidating a generating blend tied to
+legacy customer evidence. Completed legacy `croston` runs remain readable, but
+they are not current `customer_rule_router` evidence and cannot satisfy new
+blend or backtest readiness. Apply the migration in a maintenance window with
+temporary disk for a side-built copy of the customer profile MV.
 
 If readiness reports an active load, wait for the loader to finish. If it
 reports a missing or stale profile marker, rerun the standard customer-demand
@@ -513,8 +528,9 @@ After customer generation completes:
 2. Call `POST /customer-forecast/backtest/generate`. The durable
    `generate_customer_forecast_backtest` job evaluates six causal one-month
    origins with at least six training months and 10,000-customer-series
-   batches. Series activity is re-evaluated at every historical origin rather than inherited
-   from the current customer run. The job rejects source-membership,
+   batches. Series eligibility and the full ordered route policy are
+   re-evaluated from data available at every historical origin rather than
+   inherited from the current customer run. The job rejects source-membership,
    series-count, or batch-count drift after submission and uses one
    repeatable-read snapshot for the full multi-batch evaluation.
 3. Inspect `GET /customer-forecast/backtest/latest`. The common-cohort
@@ -869,6 +885,8 @@ Source-of-truth files referenced in this section:
 - `config/forecasting/pipelines.yaml` (customer forecast/backtest/blend job ceilings)
 - `scripts/forecasting/generate_production_forecasts.py`
 - `scripts/forecasting/generate_customer_forecasts.py`
+- `common/ml/customer_forecast_rules.py`
+- `common/services/customer_forecast_backtest_rules.py`
 - `scripts/ml/train_production_models.py`
 - `common/ml/tree_artifacts.py`
 - `common/ml/neural_artifacts.py`
@@ -886,3 +904,4 @@ Source-of-truth files referenced in this section:
 - `sql/206_invalidate_pre_canonical_generator_runs.sql`
 - `sql/216_create_customer_bottom_up_blend.sql`
 - `sql/217_add_customer_bottom_up_shadow_staging.sql`
+- `sql/218_enable_customer_rule_router.sql`
