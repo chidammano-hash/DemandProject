@@ -153,7 +153,7 @@ export function FinancialPlanPanel() {
                         <td className="px-3 py-2 text-xs">{fmtCurrency(b.committed_spend)}</td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2" title="Budget utilization: committed spend ÷ total budget cap. ≥80% = AT RISK, >100% = BREACHED">
-                            <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-[60px]">
+                            <div className="flex-1 bg-muted rounded-full h-1.5 min-w-[60px]">
                               <div
                                 className={`h-1.5 rounded-full ${budgetStatus === "BREACHED" ? "bg-red-500" : budgetStatus === "AT RISK" ? "bg-amber-500" : "bg-green-500"}`}
                                 style={{ width: `${Math.min(100, b.utilization_pct)}%` }}

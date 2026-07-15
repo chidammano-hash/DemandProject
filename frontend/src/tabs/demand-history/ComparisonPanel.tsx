@@ -86,7 +86,7 @@ export function ComparisonPanel() {
           value={inputItem}
           onChange={(e) => setInputItem(e.target.value)}
           placeholder="Item ID"
-          className="px-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 w-40"
+          className="px-3 py-1.5 text-sm border rounded-md bg-white w-40"
         />
         <input
           type="text"
@@ -94,7 +94,7 @@ export function ComparisonPanel() {
           value={inputLoc}
           onChange={(e) => setInputLoc(e.target.value)}
           placeholder="Location"
-          className="px-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 w-40"
+          className="px-3 py-1.5 text-sm border rounded-md bg-white w-40"
         />
         <button
           type="button"
@@ -142,7 +142,7 @@ export function ComparisonPanel() {
                     borderTop: s.dash ? `2px dashed ${s.color}` : `2px solid ${s.color}`,
                   }}
                 />
-                <span className="text-gray-700 dark:text-gray-300">{s.label}</span>
+                <span className="text-foreground/80">{s.label}</span>
               </label>
             ))}
           </div>

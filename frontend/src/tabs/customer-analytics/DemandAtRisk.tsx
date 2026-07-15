@@ -11,15 +11,16 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { formatCompactKMB as fmtNum } from "@/lib/formatters";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
-const BAR_COLORS: Record<string, string> = {
-  total: "#22c55e",
-  risk: "#ef4444",
-  secure: "#22c55e",
+const BAR_ROLES: Record<string, string> = {
+  total: "good",
+  risk: "error",
+  secure: "good",
 };
 
 // Backend returns `waterfall` as [{category, value}, ...] with categories:
@@ -34,6 +35,7 @@ const CATEGORY_META: Record<string, { label: string; type: string }> = {
 };
 
 export function DemandAtRisk({ filters }: Props) {
+  const { roles, fallback } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.demandAtRisk(filters),
     queryFn: () => fetchCustomerAnalyticsDemandAtRisk(filters),
@@ -91,7 +93,7 @@ export function DemandAtRisk({ filters }: Props) {
               />
               <Bar dataKey="displayValue" radius={[4, 4, 0, 0]}>
                 {chartData.map((d, i) => (
-                  <Cell key={i} fill={BAR_COLORS[d.type] ?? "#94a3b8"} />
+                  <Cell key={i} fill={roles[BAR_ROLES[d.type] as keyof typeof roles] ?? fallback[0]} />
                 ))}
               </Bar>
             </BarChart>

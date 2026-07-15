@@ -23,9 +23,9 @@ const STATUS_STYLES: Record<ExperimentStatus, string> = {
   failed:
     "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
   queued:
-    "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+    "bg-muted text-foreground/80",
   cancelled:
-    "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+    "bg-muted text-foreground/80",
 };
 
 export function StatusBadge({ status }: { status: string }) {
@@ -33,7 +33,7 @@ export function StatusBadge({ status }: { status: string }) {
     <Badge
       className={cn(
         "text-[10px] font-medium px-2 py-0.5",
-        STATUS_STYLES[status as ExperimentStatus] ?? "bg-gray-100 text-gray-700",
+        STATUS_STYLES[status as ExperimentStatus] ?? "bg-muted text-foreground/80",
       )}
       aria-label={`Status: ${status}`}
     >

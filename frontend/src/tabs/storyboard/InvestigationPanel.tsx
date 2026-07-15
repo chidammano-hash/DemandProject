@@ -296,7 +296,7 @@ export function InvestigationPanel({
                     className={cn(
                       "inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 transition-colors disabled:opacity-50",
                       detailData.exception.status === "dismissed"
-                        ? "bg-gray-200 border-gray-300 text-gray-700 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
+                        ? "bg-muted border-border text-foreground/80"
                         : "hover:bg-muted"
                     )}
                     disabled={statusMutation.isPending || detailData.exception.status === "dismissed"}

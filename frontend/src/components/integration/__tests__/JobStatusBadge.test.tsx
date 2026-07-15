@@ -6,11 +6,11 @@ import type { Job } from "../../../api/queries/integration";
 type JobStatus = Job["status"];
 
 const STATUS_COLORS: Record<JobStatus, string> = {
-  queued: "gray",
-  running: "blue",
-  success: "green",
-  failed: "red",
-  skipped: "yellow",
+  queued: "bg-muted",
+  running: "text-info",
+  success: "text-success",
+  failed: "text-destructive",
+  skipped: "text-warning",
 };
 
 describe("JobStatusBadge", () => {

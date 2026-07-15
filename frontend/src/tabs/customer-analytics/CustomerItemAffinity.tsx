@@ -9,12 +9,14 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
 export function CustomerItemAffinity({ filters }: Props) {
+  const { sequential } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.affinity(filters),
     queryFn: () => fetchCustomerAnalyticsAffinity(filters),
@@ -118,7 +120,7 @@ export function CustomerItemAffinity({ filters }: Props) {
         orient: "horizontal" as const,
         left: "center",
         bottom: 0,
-        inRange: { color: ["#eff6ff", "#3b82f6", "#1e3a5f"] },
+        inRange: { color: [...sequential] },
       },
       series: [{
         type: "heatmap",

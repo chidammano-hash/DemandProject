@@ -39,7 +39,7 @@ const URGENCY_BADGE: Record<string, string> = {
   critical: "bg-red-100 text-red-800",
   high: "bg-amber-100 text-amber-800",
   medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-neutral-100 text-neutral-600",
+  low: "bg-muted text-muted-foreground",
 };
 
 const URGENCY_ROW_BG: Record<string, string> = {
@@ -360,7 +360,7 @@ export function RebalancingPanel() {
                         </span>
                       </td>
                       <td className="py-1 pr-2 text-center">
-                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${STATUS_BADGE[t.status] ?? "bg-neutral-100 text-neutral-600"}`}>
+                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${STATUS_BADGE[t.status] ?? "bg-muted text-muted-foreground"}`}>
                           {t.status}
                         </span>
                       </td>

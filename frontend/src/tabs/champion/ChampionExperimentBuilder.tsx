@@ -845,7 +845,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                             </div>
                             <div className="flex items-center gap-1.5">
                               <span
-                                className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_BADGE_COLORS[algoType] ?? "bg-gray-100 text-gray-600"}`}
+                                className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_BADGE_COLORS[algoType] ?? "bg-muted text-muted-foreground"}`}
                               >
                                 {algoType.replace("_", " ")}
                               </span>

@@ -209,13 +209,13 @@ function ExceptionDetailCard({
           </button>
           <button
             onClick={() => navigateWithContext("projection")}
-            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors"
+            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-border text-foreground/80 hover:bg-muted dark:hover:bg-muted transition-colors"
           >
             View Inventory Projection
           </button>
           <button
             onClick={() => navigateWithContext("safetystock")}
-            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors"
+            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-border text-foreground/80 hover:bg-muted dark:hover:bg-muted transition-colors"
           >
             Review Safety Stock
           </button>

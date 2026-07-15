@@ -144,7 +144,7 @@ export function CheckCatalogPanel({ checkList, domainFilter }: CheckCatalogPanel
             {filteredChecks.map((c: DQCheck) => {
               const st = STATUS_ICON[c.last_status ?? ""] ?? {
                 icon: MinusCircle,
-                color: "text-gray-400",
+                color: "text-muted-foreground/60",
                 label: c.last_status ?? "Not run",
               };
               const Icon = st.icon;

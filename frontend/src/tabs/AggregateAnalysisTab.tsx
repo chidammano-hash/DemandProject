@@ -50,6 +50,7 @@ import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
 import { ErrorDecompositionPanel } from "./accuracy/ErrorDecompositionPanel";
+import { useChartColors } from "@/hooks/useChartColors";
 
 // Extracted sub-components
 import {
@@ -58,7 +59,7 @@ import {
   PANEL_DEFAULTS,
   FILTERS,
   EMPTY_FILTERS,
-  HEATMAP_SCALE,
+
   hasActiveFilters,
   type HmGrain,
   type LocalFilters,
@@ -72,6 +73,7 @@ interface AggregateAnalysisTabProps {
 }
 
 export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
+  const { heatmap } = useChartColors();
   // --------------- local filter state ---------------
   const [filters, setFilters] = useState<LocalFilters>(EMPTY_FILTERS);
   const debouncedFilters = useDebounce(filters, 300);
@@ -380,7 +382,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
 
   // --------------- Derived dashboard data ---------------
   const kpi = kpiQ.data;
-  const colorScale = useMemo(() => makeHeatmapScale(HEATMAP_SCALE), []);
+  const colorScale = useMemo(() => makeHeatmapScale(heatmap), [heatmap]);
   const heatmapRows = heatmapQ.data?.rows ?? [];
   const heatmapLabels = heatmapQ.data?.period_labels ?? [];
 

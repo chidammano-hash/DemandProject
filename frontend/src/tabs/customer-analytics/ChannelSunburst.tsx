@@ -11,6 +11,7 @@ import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
 import { formatCompactKMB as fmtNum } from "@/lib/formatters";
 import { togglePillClass } from "./togglePill";
+import { useChartColors } from "@/hooks/useChartColors";
 
 type SunburstMetric = "demand" | "customers";
 
@@ -18,19 +19,9 @@ interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
-// Distinct palette for top-level channels
-const CHANNEL_PALETTE = [
-  "#3b82f6", // blue
-  "#8b5cf6", // violet
-  "#06b6d4", // cyan
-  "#f59e0b", // amber
-  "#10b981", // emerald
-  "#ef4444", // red
-  "#ec4899", // pink
-  "#64748b", // slate
-];
-
 export function ChannelSunburst({ filters }: Props) {
+  // Distinct top-level channel colors from the mode-aware series ramp.
+  const { series: CHANNEL_PALETTE } = useChartColors();
   const [sunburstMetric, setSunburstMetric] = useState<SunburstMetric>("demand");
 
   const { data, isLoading } = useQuery({

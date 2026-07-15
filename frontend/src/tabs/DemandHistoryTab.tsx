@@ -56,7 +56,7 @@ export default function DemandHistoryTab() {
     <SelectionContext.Provider value={{ itemId, loc, setSelection }}>
       <div className="flex flex-col h-full">
         {/* Sub-navigation */}
-        <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b dark:border-gray-700">
+        <div className="flex items-center gap-1 px-4 pt-3 pb-2 border-b">
           {PANELS.map((p) => (
             <button
               key={p.id}
@@ -64,7 +64,7 @@ export default function DemandHistoryTab() {
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 activePanel === p.id
                   ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-                  : "text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                  : "text-muted-foreground hover:bg-muted dark:hover:bg-muted"
               }`}
             >
               {p.label}
@@ -73,7 +73,7 @@ export default function DemandHistoryTab() {
 
           {/* Active selection badge */}
           {itemId && loc && (
-            <span className="ml-auto text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-gray-600 dark:text-gray-400">
+            <span className="ml-auto text-xs bg-muted px-2 py-1 rounded text-muted-foreground">
               {itemId} @ {loc}
             </span>
           )}

@@ -23,7 +23,7 @@ type ViewMode = "absolute" | "percent";
 
 export function DecompositionPanel() {
   const { itemId, loc, setSelection } = useDemandHistorySelection();
-  const { trendColors, chartColors } = useChartColors();
+  const { trendColors, chartColors, fallback } = useChartColors();
   const [viewMode, setViewMode] = useState<ViewMode>("percent");
   const [inputItem, setInputItem] = useState(itemId);
   const [inputLoc, setInputLoc] = useState(loc);
@@ -67,14 +67,14 @@ export function DecompositionPanel() {
           value={inputItem}
           onChange={(e) => setInputItem(e.target.value)}
           placeholder="Item ID"
-          className="px-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 w-40"
+          className="px-3 py-1.5 text-sm border rounded-md bg-white w-40"
         />
         <input
           type="text"
           value={inputLoc}
           onChange={(e) => setInputLoc(e.target.value)}
           placeholder="Location"
-          className="px-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 w-40"
+          className="px-3 py-1.5 text-sm border rounded-md bg-white w-40"
         />
         <button
           onClick={handleApply}
@@ -193,7 +193,7 @@ export function DecompositionPanel() {
                 <Line
                   type="monotone"
                   dataKey="cumulative_pct"
-                  stroke="#94a3b8"
+                  stroke={fallback[0]}
                   strokeWidth={1.5}
                   dot={false}
                   name="Cumulative %"

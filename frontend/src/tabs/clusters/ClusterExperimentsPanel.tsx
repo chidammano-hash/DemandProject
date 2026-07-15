@@ -58,6 +58,8 @@ import {
 
 import { ClusterExperimentBuilder } from "./ClusterExperimentBuilder";
 import { ClusterExperimentDetail } from "./ClusterExperimentDetail";
+import { useChartColors } from "@/hooks/useChartColors";
+import { PALETTE, type ColorMode } from "@/constants/palette";
 import { ClusterComparisonPanel } from "./ClusterComparisonPanel";
 import { ClusterPromoteModal } from "./ClusterPromoteModal";
 
@@ -90,13 +92,13 @@ function StatusBadge({ status }: { status: ClusterExperimentStatus }) {
     queued:
       "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
     cancelled:
-      "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+      "bg-muted text-foreground/80",
   };
   return (
     <Badge
       className={cn(
         "text-[10px] font-medium px-2 py-0.5",
-        styles[status] ?? "bg-gray-100 text-gray-700",
+        styles[status] ?? "bg-muted text-foreground/80",
       )}
       aria-label={`Status: ${status}`}
     >
@@ -139,11 +141,11 @@ function timeAgo(dateStr: string | null): string {
   return `${days}d ago`;
 }
 
-const CLUSTER_COLORS = [
-  "#2563EB", "#f59e0b", "#10b981", "#ef4444", "#0891B2",
-  "#06b6d4", "#ec4899", "#14b8a6", "#f97316", "#84cc16",
-  "#8b5cf6", "#d946ef", "#64748b", "#a3e635",
-];
+// Cluster identity ramp: the 8 mode-aware series colors followed by the
+// muted fallback ramp (14 distinct hues; cluster ids cycle through them).
+function clusterRamp(mode: ColorMode): string[] {
+  return [...PALETTE[mode].charts.series, ...PALETTE[mode].charts.fallback];
+}
 
 function ClusterDistBar({
   sizes,
@@ -152,6 +154,8 @@ function ClusterDistBar({
   sizes: Record<string, number> | null;
   profiles: Array<{ label: string; count: number; pct_of_total: number }> | null;
 }) {
+  const { theme } = useChartColors();
+  const CLUSTER_COLORS = clusterRamp(theme);
   const entries = profiles
     ? profiles.map((p) => ({ label: p.label, count: p.count, pct: p.pct_of_total }))
     : sizes

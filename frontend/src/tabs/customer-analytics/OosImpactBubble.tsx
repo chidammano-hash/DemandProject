@@ -10,6 +10,7 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
 import { togglePillClass } from "./togglePill";
+import { useChartColors } from "@/hooks/useChartColors";
 
 type Grain = "customer" | "state";
 
@@ -20,10 +21,10 @@ interface Props {
 }
 
 const CHANNEL_COLORS: Record<string, string> = {
-  "On Premise": "#6366f1",
-  "Off Premise": "#f59e0b",
-  Unknown: "#94a3b8",
-  All: "#3b82f6",
+  "On Premise": "forecast",
+  "Off Premise": "warning",
+  Unknown: "actual",
+  All: "reference",
 };
 
 function getColor(channel: string): string {
@@ -37,6 +38,7 @@ function hashCode(s: string): number {
 }
 
 export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
+  const { roles, chartColors: chrome } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.oosImpact(grain, filters),
     queryFn: () => fetchCustomerAnalyticsOosImpact(grain, filters),
@@ -109,13 +111,13 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
               position: "insideBottomRight" as const,
               formatter: "Critical",
               fontSize: 11,
-              color: "#dc2626",
+              color: roles.error,
               fontStyle: "italic" as const,
             },
           },
           markLine: {
             silent: true,
-            lineStyle: { type: "dashed" as const, color: "#94a3b8" },
+            lineStyle: { type: "dashed" as const, color: chrome.axis },
             data: [{ yAxis: 90 }],
           },
         },

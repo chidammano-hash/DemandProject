@@ -45,7 +45,7 @@ export function ExceptionCard({
           {EXCEPTION_TYPE_LABELS[exception.exception_type] ?? exception.exception_type}
         </span>
         <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[exception.status] ?? "bg-gray-400"}`} />
+          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[exception.status] ?? "bg-muted-foreground/50"}`} />
           {exception.status}
         </span>
         <span className="text-[10px] text-muted-foreground">{daysAgo(exception.generated_at)}</span>

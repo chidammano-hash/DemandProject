@@ -122,7 +122,7 @@ const CAUSE_COLORS: Record<string, string> = {
   "Safety Stock Shortfall": "bg-red-500",
   "Demand Spike (>20% above forecast)": "bg-orange-500",
   "Lead Time Delay": "bg-yellow-500",
-  "Other / Data Gap": "bg-gray-400",
+  "Other / Data Gap": "bg-muted-foreground/50",
 };
 
 function GapWaterfall({
@@ -161,7 +161,7 @@ function GapWaterfall({
             <div className="w-44 text-xs truncate" title={d.cause}>{d.cause}</div>
             <div className="flex-1 bg-muted rounded h-4 overflow-hidden">
               <div
-                className={`${CAUSE_COLORS[d.cause] ?? "bg-gray-400"} h-4 rounded transition-all`}
+                className={`${CAUSE_COLORS[d.cause] ?? "bg-muted-foreground/50"} h-4 rounded transition-all`}
                 style={{ width: `${Math.min((Math.abs(d.impact_pct) / maxImpact) * 100, 100)}%` }}
               />
             </div>

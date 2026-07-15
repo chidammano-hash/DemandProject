@@ -14,6 +14,7 @@ import { useDashboardFilter } from "./DashboardFilterContext";
 import { ExportButtons } from "./ExportButtons";
 import { formatCompactKMB as fmtCompact, formatInt as fmtNum } from "@/lib/formatters";
 import { togglePillClass } from "./togglePill";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const statesGeoJSON = usStatesGeo as unknown as GeoJSON.FeatureCollection;
 
@@ -44,12 +45,12 @@ function choroplethColor(val: number, maxVal: number): string {
   return `rgb(${SCALE[idx].join(",")})`;
 }
 
-function fillRateColor(fr: number): string {
-  if (fr >= 95) return "#22c55e";
-  if (fr >= 90) return "#84cc16";
-  if (fr >= 85) return "#eab308";
-  if (fr >= 80) return "#f97316";
-  return "#ef4444";
+function fillRateColor(fr: number, heatmap: string[]): string {
+  if (fr >= 95) return heatmap[0];
+  if (fr >= 90) return heatmap[1];
+  if (fr >= 85) return heatmap[2];
+  if (fr >= 80) return heatmap[3];
+  return heatmap[4];
 }
 
 function bubbleRadius(val: number, maxVal: number): number {
@@ -133,6 +134,7 @@ interface Props {
 }
 
 export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, onGroupByChange }: Props) {
+  const { heatmap } = useChartColors();
   const { dispatch } = useDashboardFilter();
   const geoRef = useRef(0);
 
@@ -285,7 +287,7 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
                   key={`cluster-${i}`}
                   center={[c.lat, c.lon]}
                   radius={bubbleRadius(c.total_demand, maxClusterDemand)}
-                  pathOptions={{ color: fillRateColor(c.fill_rate), fillColor: fillRateColor(c.fill_rate), fillOpacity: 0.7, weight: 1 }}
+                  pathOptions={{ color: fillRateColor(c.fill_rate, heatmap), fillColor: fillRateColor(c.fill_rate, heatmap), fillOpacity: 0.7, weight: 1 }}
                 >
                   <Tooltip>
                     <b>{c.count} locations</b>
@@ -300,7 +302,7 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
                   key={`${loc.label}-${i}`}
                   center={[loc.lat!, loc.lon!]}
                   radius={bubbleRadius(loc[metric] ?? loc.demand_qty, maxVal)}
-                  pathOptions={{ color: fillRateColor(loc.fill_rate), fillColor: fillRateColor(loc.fill_rate), fillOpacity: 0.7, weight: 1 }}
+                  pathOptions={{ color: fillRateColor(loc.fill_rate, heatmap), fillColor: fillRateColor(loc.fill_rate, heatmap), fillOpacity: 0.7, weight: 1 }}
                 >
                   <Tooltip>
                     <b>{loc.label}</b>

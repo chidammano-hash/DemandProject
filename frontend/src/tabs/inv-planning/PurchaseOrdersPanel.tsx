@@ -153,7 +153,7 @@ export function PurchaseOrdersPanel() {
                     <td className="py-1.5 px-2">{r.loc}</td>
                     <td className="py-1.5 px-2 truncate max-w-[150px]">{r.supplier_name ?? r.supplier_id}</td>
                     <td className="py-1.5 px-2">
-                      <span className={`px-1.5 py-0.5 rounded text-xs ${r.is_closed ? "bg-gray-100" : "bg-blue-100 text-blue-700"}`}>
+                      <span className={`px-1.5 py-0.5 rounded text-xs ${r.is_closed ? "bg-muted" : "bg-blue-100 text-blue-700"}`}>
                         {r.is_closed ? "Closed" : "Open"}
                       </span>
                     </td>

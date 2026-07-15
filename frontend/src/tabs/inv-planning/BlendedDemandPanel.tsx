@@ -156,7 +156,7 @@ export function BlendedDemandPanel() {
                           className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
                             r.alpha_weight > 0.7 ? "bg-blue-100 text-blue-700" :
                             r.alpha_weight > 0.3 ? "bg-cyan-100 text-cyan-700" :
-                            "bg-gray-100 text-gray-600"
+                            "bg-muted text-muted-foreground"
                           }`}
                         >
                           {r.alpha_weight.toFixed(2)}

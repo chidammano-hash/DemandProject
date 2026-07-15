@@ -178,7 +178,7 @@ export function ShapPanel({
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">
                     Top 15 features — <span className="text-sky-500 font-medium">■ selected</span>{" "}
-                    <span className="text-gray-400 font-medium">■ dropped</span>
+                    <span className="text-muted-foreground/60 font-medium">■ dropped</span>
                   </p>
                   <ResponsiveContainer
                     width="100%"

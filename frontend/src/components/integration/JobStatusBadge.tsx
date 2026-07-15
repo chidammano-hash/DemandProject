@@ -2,17 +2,13 @@ import type { Job } from "../../api/queries/integration";
 
 type JobStatus = Job["status"];
 
+// Token tints are mode-correct in light, soft, and dark — no dark: siblings.
 const STATUS_STYLES: Record<JobStatus, string> = {
-  queued:
-    "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  running:
-    "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-  success:
-    "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
-  failed:
-    "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
-  skipped:
-    "bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300",
+  queued: "bg-muted text-muted-foreground",
+  running: "bg-info/10 text-info",
+  success: "bg-success/10 text-success",
+  failed: "bg-destructive/10 text-destructive",
+  skipped: "bg-warning/10 text-warning",
 };
 
 const PILL_BASE =

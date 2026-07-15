@@ -9,6 +9,7 @@ import {
 import type { CustomerAnalyticsFilters, RankedCustomer } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { formatCompactKMB as fmtNum } from "@/lib/formatters";
+import { useChartColors } from "@/hooks/useChartColors";
 
 const ROW_HEIGHT = 28;
 const VIEWPORT_HEIGHT = 480;
@@ -17,6 +18,7 @@ const VIEWPORT_HEIGHT = 480;
 // gain is small, but ranking grows to topN=200+ quickly when planners change
 // the sort, and DOM-row count was the largest paint-time cost on this card.
 function VirtualizedRankingTable({ rows, maxDemand }: { rows: RankedCustomer[]; maxDemand: number }) {
+  const { heatmap } = useChartColors();
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -56,7 +58,7 @@ function VirtualizedRankingTable({ rows, maxDemand }: { rows: RankedCustomer[]; 
               <div className="bg-muted rounded-sm h-3">
                 <div
                   className="h-3 rounded-sm"
-                  style={{ width: `${barWidth}%`, backgroundColor: fillRateColor(c.fill_rate) }}
+                  style={{ width: `${barWidth}%`, backgroundColor: fillRateColor(c.fill_rate, heatmap) }}
                 />
               </div>
               <span className={`text-right tabular-nums font-medium ${c.fill_rate < 90 ? "text-red-600" : "text-green-600"}`}>
@@ -80,12 +82,12 @@ interface Props {
   onSortChange: (s: SortMode) => void;
 }
 
-function fillRateColor(fr: number): string {
-  if (fr >= 95) return "#22c55e";
-  if (fr >= 90) return "#84cc16";
-  if (fr >= 85) return "#eab308";
-  if (fr >= 80) return "#f97316";
-  return "#ef4444";
+function fillRateColor(fr: number, heatmap: string[]): string {
+  if (fr >= 95) return heatmap[0];
+  if (fr >= 90) return heatmap[1];
+  if (fr >= 85) return heatmap[2];
+  if (fr >= 80) return heatmap[3];
+  return heatmap[4];
 }
 
 export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {

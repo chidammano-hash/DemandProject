@@ -79,7 +79,7 @@ export function DemandSignalsPanel() {
   const PRIORITY_COLORS: Record<string, string> = {
     urgent: "bg-red-100 text-red-800",
     watch: "bg-amber-100 text-amber-800",
-    normal: "bg-neutral-100 text-neutral-600",
+    normal: "bg-muted text-muted-foreground",
   };
 
   const SIGNAL_TYPE_LABELS: Record<string, string> = {
@@ -223,7 +223,7 @@ export function DemandSignalsPanel() {
                         <span className="inline-flex items-center gap-1">
                           <span
                             className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                              SIGNAL_TYPE_COLORS[r.signal_type] ?? "bg-neutral-100 text-neutral-600"
+                              SIGNAL_TYPE_COLORS[r.signal_type] ?? "bg-muted text-muted-foreground"
                             }`}
                           >
                             {SIGNAL_TYPE_LABELS[r.signal_type] ?? r.signal_type.replace(/_/g, " ")}

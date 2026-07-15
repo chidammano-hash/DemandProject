@@ -18,7 +18,7 @@ import {
 const STATUS_COLORS: Record<string, string> = {
   approved: "bg-green-100 text-green-700",
   pending: "bg-amber-100 text-amber-700",
-  draft: "bg-gray-100 text-gray-600",
+  draft: "bg-muted text-muted-foreground",
   rejected: "bg-red-100 text-red-700",
 };
 
@@ -34,7 +34,7 @@ function EventRow({ ev }: { ev: CalendarEvent }) {
     <tr className="border-t hover:bg-muted/30 transition-colors">
       <td className="px-3 py-2 font-medium text-sm">{ev.event_name}</td>
       <td className="px-3 py-2">
-        <span className={`text-xs px-1.5 py-0.5 rounded ${EVENT_TYPE_COLORS[ev.event_type] ?? "bg-gray-100 text-gray-600"}`}>
+        <span className={`text-xs px-1.5 py-0.5 rounded ${EVENT_TYPE_COLORS[ev.event_type] ?? "bg-muted text-muted-foreground"}`}>
           {ev.event_type}
         </span>
       </td>
@@ -50,7 +50,7 @@ function EventRow({ ev }: { ev: CalendarEvent }) {
         )}
       </td>
       <td className="px-3 py-2">
-        <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_COLORS[ev.status] ?? "bg-gray-100 text-gray-600"}`}>
+        <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_COLORS[ev.status] ?? "bg-muted text-muted-foreground"}`}>
           {ev.status}
         </span>
       </td>

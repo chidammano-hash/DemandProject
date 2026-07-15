@@ -11,6 +11,7 @@ import type {
   TreemapNode,
 } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -21,10 +22,10 @@ interface Props {
 // numeric index into a node's `value` array — a treemap node's `value` is a
 // scalar, so the old `dimension: "fill_rate"` resolved every node out-of-range
 // and painted the whole treemap transparent/blank (U7.1).
-const RAMP_LOW = "#ef4444"; // red — band floor
-const RAMP_MID = "#eab308"; // amber — band midpoint
-const RAMP_HIGH = "#22c55e"; // green — band ceiling
-const NEUTRAL = "#94a3b8"; // slate — node with no fill_rate
+
+
+
+
 
 // Business band the ramp spans. Real fill rates cluster in ~95-100%, so a 0-100
 // ramp painted every node the same green and the legend (0%..100%) implied a
@@ -46,16 +47,20 @@ function lerp(a: number, b: number, t: number): number {
 /** Map a fill rate to a ramp color across {@link FILL_RATE_BAND}. Values below
  *  the band floor clamp to red; above the ceiling clamp to green. Exported for
  *  unit testing the band mapping (U3.11). */
-export function fillRateColor(fr: number | undefined): string {
-  if (fr == null || Number.isNaN(fr)) return NEUTRAL;
+export function fillRateColor(
+  fr: number | undefined,
+  heatmap: readonly string[],
+  fallback: readonly string[],
+): string {
+  if (fr == null || Number.isNaN(fr)) return fallback[0];
   const [lo, hi] = FILL_RATE_BAND;
   // Normalize within the band rather than 0-100 so the 95-100 spread is visible.
   const pct = Math.max(0, Math.min(1, (fr - lo) / (hi - lo)));
   // Two-segment ramp: low->mid for the bottom half, mid->high for the top half.
   const [from, to, t] =
     pct <= 0.5
-      ? ([hexToRgb(RAMP_LOW), hexToRgb(RAMP_MID), pct / 0.5] as const)
-      : ([hexToRgb(RAMP_MID), hexToRgb(RAMP_HIGH), (pct - 0.5) / 0.5] as const);
+      ? ([hexToRgb(heatmap[4]), hexToRgb(heatmap[2]), pct / 0.5] as const)
+      : ([hexToRgb(heatmap[2]), hexToRgb(heatmap[0]), (pct - 0.5) / 0.5] as const);
   const [r, g, b] = from.map((c, i) => lerp(c, to[i], t));
   return `rgb(${r}, ${g}, ${b})`;
 }
@@ -67,19 +72,24 @@ type ColoredNode = Omit<TreemapNode, "children"> & {
 
 /** Recursively attach an explicit `itemStyle.color` (mapped from `fill_rate`) to
  *  every node so the treemap draws without a fragile `visualMap` binding. */
-function colorizeTree(nodes: TreemapNode[]): ColoredNode[] {
+function colorizeTree(
+  nodes: TreemapNode[],
+  heatmap: readonly string[],
+  fallback: readonly string[],
+): ColoredNode[] {
   return nodes.map((node) => {
     const { children, ...rest } = node;
     const colored: ColoredNode = {
       ...rest,
-      itemStyle: { color: fillRateColor(node.fill_rate) },
+      itemStyle: { color: fillRateColor(node.fill_rate, heatmap, fallback) },
     };
-    if (children) colored.children = colorizeTree(children);
+    if (children) colored.children = colorizeTree(children, heatmap, fallback);
     return colored;
   });
 }
 
 export function CustomerTreemap({ filters }: Props) {
+  const { heatmap, fallback } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.treemap(filters),
     queryFn: () => fetchCustomerAnalyticsTreemap(filters),
@@ -102,7 +112,7 @@ export function CustomerTreemap({ filters }: Props) {
         type: "treemap",
         // Each node carries an explicit itemStyle.color mapped from fill_rate —
         // no visualMap.dimension (U7.1). A static legend below shows the ramp.
-        data: colorizeTree(data?.tree ?? []),
+        data: colorizeTree(data?.tree ?? [], heatmap, fallback),
         leafDepth: 2,
         roam: false,
         animation: false, // skip layout animation on large trees
@@ -146,7 +156,7 @@ export function CustomerTreemap({ filters }: Props) {
               <span
                 aria-hidden
                 className="h-2 w-40 rounded"
-                style={{ background: `linear-gradient(to right, ${RAMP_LOW}, ${RAMP_MID}, ${RAMP_HIGH})` }}
+                style={{ background: `linear-gradient(to right, ${heatmap[4]}, ${heatmap[2]}, ${heatmap[0]})` }}
               />
               <span>{FILL_RATE_BAND[1]}% fill rate</span>
             </div>

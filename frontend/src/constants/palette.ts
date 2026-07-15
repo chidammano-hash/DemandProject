@@ -36,9 +36,9 @@ export type ColorMode = "light" | "soft" | "dark";
 export interface ChartRoles {
   /** Historical truth (sales, shipments): neutral ink. */
   actual: string;
-  /** Any forward forecast line: primary indigo. */
+  /** Any forward forecast line: primary petrol. */
   forecast: string;
-  /** The promoted champion forecast: same indigo as forecast. */
+  /** The promoted champion forecast: same petrol as forecast. */
   champion: string;
   /** Ceiling / capacity / upper bounds: teal. */
   ceiling: string;
@@ -50,7 +50,7 @@ export interface ChartRoles {
   good: string;
   /** External / reference feeds: sky. */
   reference: string;
-  /** AI-generated series or adjustments: violet (distinct from indigo). */
+  /** AI-generated series or adjustments: violet (reserved for AI). */
   ai: string;
 }
 
@@ -66,6 +66,8 @@ export interface ChartPaletteSpec {
   tooltipBorder: string;
   /** Good -> bad, 5 stops. */
   heatmapScale: readonly string[];
+  /** Low -> high intensity, 3 stops in the brand petrol family. */
+  sequential: readonly string[];
 }
 
 export interface ModePalette {
@@ -286,6 +288,7 @@ export const PALETTE: Record<ColorMode, ModePalette> = {
       tooltipBg: "#FFFFFF",
       tooltipBorder: "#E7EAF2",
       heatmapScale: ["#0C8A5F", "#7CCFAC", "#E8C468", "#EE9080", "#DC2626"],
+      sequential: ["#E8F1F8", "#1D5F85", "#0E293C"],
     },
   },
   soft: {
@@ -299,6 +302,7 @@ export const PALETTE: Record<ColorMode, ModePalette> = {
       tooltipBg: "#FDFCF9",
       tooltipBorder: "#E6E0D4",
       heatmapScale: ["#0B7E58", "#8AD0AE", "#DDAE4A", "#E08A7A", "#C42F2F"],
+      sequential: ["#EAEFF2", "#1A5876", "#0C2635"],
     },
   },
   dark: {
@@ -312,6 +316,7 @@ export const PALETTE: Record<ColorMode, ModePalette> = {
       tooltipBg: "#181B2E",
       tooltipBorder: "#252941",
       heatmapScale: ["#34D399", "#A7F3D0", "#FBBF24", "#F87171", "#EF4444"],
+      sequential: ["#16283A", "#4BA3DC", "#CFE8FA"],
     },
   },
 };

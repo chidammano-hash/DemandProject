@@ -10,6 +10,7 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
 import { togglePillClass } from "./togglePill";
+import { useChartColors } from "@/hooks/useChartColors";
 
 type HeatmapMetric = "demand_qty" | "customer_count" | "fill_rate";
 type ValueMode = "absolute" | "percentile";
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props) {
+  const { heatmap, sequential } = useChartColors();
   const [metric, setMetric] = useState<HeatmapMetric>(initialMetric);
   const [valueMode, setValueMode] = useState<ValueMode>("absolute");
   const [sortCol, setSortCol] = useState<string | null>(null);
@@ -118,8 +120,8 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
         bottom: 0,
         inRange: {
           color: metric === "fill_rate"
-            ? ["#ef4444", "#eab308", "#22c55e"]
-            : ["#eff6ff", "#3b82f6", "#1e3a5f"],
+            ? [heatmap[4], heatmap[2], heatmap[0]]
+            : [...sequential],
         },
       },
       series: [

@@ -12,12 +12,14 @@ import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics"
 import { useMemo } from "react";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
 }
 
 export function OrderPatterns({ filters }: Props) {
+  const { roles } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.orderPatterns(filters),
     queryFn: () => fetchCustomerAnalyticsOrderPatterns(filters),
@@ -96,7 +98,7 @@ export function OrderPatterns({ filters }: Props) {
         type: "scatter",
         data: points.map((p) => [p.avg_interval, p.cv, p.total_orders, p.customer]),
         symbolSize: (val: number[]) => 6 + 16 * Math.sqrt(val[2] / maxOrders),
-        itemStyle: { color: "#6366f1", opacity: 0.65 },
+        itemStyle: { color: roles.forecast, opacity: 0.65 },
         emphasis: { itemStyle: { opacity: 1 } },
       }],
     };
@@ -125,7 +127,7 @@ export function OrderPatterns({ filters }: Props) {
                   <XAxis dataKey="bin" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip />
-                  <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill={roles.forecast} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

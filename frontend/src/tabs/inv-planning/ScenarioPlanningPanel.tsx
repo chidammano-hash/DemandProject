@@ -21,7 +21,7 @@ const STATUS_COLORS: Record<string, string> = {
   running: "bg-blue-100 text-blue-700",
   queued: "bg-amber-100 text-amber-700",
   failed: "bg-red-100 text-red-700",
-  draft: "bg-gray-100 text-gray-600",
+  draft: "bg-muted text-muted-foreground",
 };
 
 const DISRUPTION_LABELS: Record<string, string> = {
@@ -134,7 +134,7 @@ export function ScenarioPlanningPanel() {
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-medium text-sm">{s.scenario_name}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_COLORS[s.status] ?? "bg-gray-100 text-gray-600"}`}>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_COLORS[s.status] ?? "bg-muted text-muted-foreground"}`}>
                         {s.status}
                       </span>
                     </div>

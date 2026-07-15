@@ -98,7 +98,6 @@ export function trendDirection(delta: number | null): "up" | "down" | "flat" {
   return delta > 0 ? "up" : "down";
 }
 
-export const HEATMAP_SCALE = ["#16a34a", "#65a30d", "#eab308", "#f97316", "#dc2626"];
 
 /**
  * F3.2 / U3.6 — accuracy = 100 − WAPE goes strongly negative when the forecast

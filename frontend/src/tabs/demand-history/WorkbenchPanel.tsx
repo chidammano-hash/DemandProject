@@ -248,7 +248,7 @@ function TreeNode({
       className={`group w-full text-left px-3 py-2 text-sm rounded-lg transition-all ${
         isSelected
           ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800"
-          : "hover:bg-gray-50 dark:hover:bg-gray-800/60 text-gray-700 dark:text-gray-300"
+          : "hover:bg-muted dark:hover:bg-muted text-foreground/80"
       }`}
       title={`${formatSeriesTitle(series)} — ${isSelected ? "click to deselect (cmd/ctrl-click for overlay)" : "click to select (cmd/ctrl-click to add overlay, max 3)"}`}
     >
@@ -283,7 +283,7 @@ function TreeNode({
 
 export function DemandWorkbenchPanel() {
   const { itemId, loc, setSelection } = useDemandHistorySelection();
-  const { trendColors, chartColors } = useChartColors();
+  const { trendColors, chartColors, roles } = useChartColors();
 
   const [grain, setGrain] = useState<WorkbenchGrain>("item");
   const [search, setSearch] = useState("");
@@ -424,7 +424,7 @@ export function DemandWorkbenchPanel() {
     <div className="flex gap-4">
       {/* Left rail — capped to chart height so 50 rows scroll inside the rail
           rather than stretching the page. */}
-      <div className={`${railWidth} flex-shrink-0 border-r dark:border-gray-700 flex flex-col transition-all duration-150 h-[480px]`}>
+      <div className={`${railWidth} flex-shrink-0 border-r flex flex-col transition-all duration-150 h-[480px]`}>
         {/* Collapse toggle */}
         <div className="flex items-center justify-between mb-2">
           {!railCollapsed && (
@@ -434,7 +434,7 @@ export function DemandWorkbenchPanel() {
           )}
           <button
             onClick={() => setRailCollapsed((v) => !v)}
-            className="p-1 rounded hover:bg-muted dark:hover:bg-gray-800 text-muted-foreground ml-auto"
+            className="p-1 rounded hover:bg-muted dark:hover:bg-muted text-muted-foreground ml-auto"
             title={railCollapsed ? "Expand rail" : "Collapse rail"}
           >
             {railCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
@@ -452,7 +452,7 @@ export function DemandWorkbenchPanel() {
                   className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
                     grain === g
                       ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-                      : "text-muted-foreground hover:bg-muted dark:hover:bg-gray-800"
+                      : "text-muted-foreground hover:bg-muted dark:hover:bg-muted"
                   }`}
                 >
                   {GRAIN_LABELS[g]}
@@ -469,8 +469,8 @@ export function DemandWorkbenchPanel() {
                   onClick={() => setPeriod(p.value)}
                   className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${
                     period === p.value
-                      ? "bg-muted text-gray-800 dark:bg-gray-700 dark:text-gray-100"
-                      : "text-muted-foreground hover:bg-muted dark:hover:bg-gray-800"
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted dark:hover:bg-muted"
                   }`}
                 >
                   {p.label}
@@ -486,7 +486,7 @@ export function DemandWorkbenchPanel() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search items..."
-                className="w-full pl-8 pr-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900"
+                className="w-full pl-8 pr-3 py-1.5 text-sm border rounded-md bg-white"
               />
             </div>
 
@@ -548,7 +548,7 @@ export function DemandWorkbenchPanel() {
 
             {/* Drill-down (only when a single series is selected) */}
             {canDrillDown && selectedKeys.length === 1 && (
-              <div className="mt-3 pt-3 border-t dark:border-gray-700 pr-3">
+              <div className="mt-3 pt-3 border-t pr-3">
                 <button
                   onClick={() => handleDrillDown(selectedKeys[0])}
                   className="w-full flex items-center justify-between px-3 py-2.5 text-xs rounded-lg bg-gradient-to-r from-blue-50 to-blue-100/50 hover:from-blue-100 hover:to-blue-100 dark:from-blue-900/30 dark:to-blue-900/20 dark:hover:from-blue-900/50 dark:hover:to-blue-900/30 text-blue-700 dark:text-blue-300 font-medium transition-all"
@@ -576,7 +576,7 @@ export function DemandWorkbenchPanel() {
               <label
                 className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded ${
                   forecastAvailable
-                    ? "text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-muted dark:hover:bg-gray-800"
+                    ? "text-foreground/80 cursor-pointer hover:bg-muted dark:hover:bg-muted"
                     : "text-muted-foreground cursor-not-allowed"
                 }`}
                 title={
@@ -602,7 +602,7 @@ export function DemandWorkbenchPanel() {
               </label>
               <button
                 onClick={() => exportSeriesCsv(selectedSeriesList)}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded text-muted-foreground dark:text-gray-300 hover:bg-muted dark:hover:bg-gray-800"
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded text-muted-foreground hover:bg-muted dark:hover:bg-muted"
                 title="Download visible series as CSV"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -653,6 +653,7 @@ interface ChartViewProps {
 }
 
 function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, trendColors }: ChartViewProps) {
+  const { roles } = useChartColors();
   // Build a unified row[] keyed by month with one column per selected series
   // and an optional `forecast_qty` column.
   const { rows, headerStats } = useMemo(() => {
@@ -739,15 +740,15 @@ function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, t
               <span className="text-[11px] text-muted-foreground">Loading forecast...</span>
             )}
           </div>
-          <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground dark:text-gray-400">
+          <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
             <span>
-              Period: <span className="text-gray-700 dark:text-gray-200 tabular-nums">{formatMonthShort(headerStats.first)} - {formatMonthShort(headerStats.last)}</span> ({headerStats.count} mo)
+              Period: <span className="text-foreground/80 tabular-nums">{formatMonthShort(headerStats.first)} - {formatMonthShort(headerStats.last)}</span> ({headerStats.count} mo)
             </span>
             <span>
-              Mean: <span className="text-gray-700 dark:text-gray-200 tabular-nums">{formatCompactNumber(headerStats.mean)}</span>/mo
+              Mean: <span className="text-foreground/80 tabular-nums">{formatCompactNumber(headerStats.mean)}</span>/mo
             </span>
             <span>
-              Peak: <span className="text-gray-700 dark:text-gray-200 tabular-nums">{formatCompactNumber(headerStats.peak)}</span>{" "}
+              Peak: <span className="text-foreground/80 tabular-nums">{formatCompactNumber(headerStats.peak)}</span>{" "}
               <span className="text-muted-foreground">({formatMonthShort(headerStats.peakMonth)})</span>
             </span>
           </div>
@@ -820,10 +821,10 @@ function ChartView({ seriesList, forecastPoints, forecastLoading, chartColors, t
                 <Line
                   type="linear"
                   dataKey="forecast_qty"
-                  stroke="#059669"
+                  stroke={roles.good}
                   strokeWidth={2}
                   strokeDasharray="6 4"
-                  dot={{ r: 3, fill: "#059669" }}
+                  dot={{ r: 3, fill: roles.good }}
                   name="Forecast"
                   connectNulls
                   isAnimationActive={false}

@@ -169,7 +169,7 @@ export function AlgorithmSelectionCard({
                     <Badge
                       className={cn(
                         "text-[10px] px-1.5 py-0",
-                        MODEL_TYPE_COLORS[algo.type] ?? "bg-gray-100 text-gray-700"
+                        MODEL_TYPE_COLORS[algo.type] ?? "bg-muted text-foreground/80"
                       )}
                     >
                       {algo.type}

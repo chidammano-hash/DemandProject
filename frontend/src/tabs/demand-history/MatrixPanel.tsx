@@ -9,14 +9,14 @@ import type { MatrixDim, MatrixMetric } from "@/api/queries/demand-history";
 
 /** 6-stop heatmap from gray (zero) through cool blue to deep indigo. */
 function cellStyle(value: number, max: number): { bg: string; text: string } {
-  if (max === 0 || value === 0) return { bg: "", text: "text-gray-300 dark:text-gray-600" };
+  if (max === 0 || value === 0) return { bg: "", text: "text-muted-foreground/50" };
   const pct = Math.min(value / max, 1);
   if (pct > 0.85) return { bg: "bg-indigo-700", text: "text-white font-semibold" };
   if (pct > 0.65) return { bg: "bg-blue-600", text: "text-white" };
   if (pct > 0.45) return { bg: "bg-blue-400", text: "text-white" };
-  if (pct > 0.25) return { bg: "bg-blue-200 dark:bg-blue-800", text: "text-gray-900 dark:text-gray-100" };
-  if (pct > 0.1)  return { bg: "bg-blue-100 dark:bg-blue-900/40", text: "text-gray-700 dark:text-gray-300" };
-  return { bg: "bg-blue-50 dark:bg-blue-950/30", text: "text-muted-foreground dark:text-gray-400" };
+  if (pct > 0.25) return { bg: "bg-blue-200 dark:bg-blue-800", text: "text-foreground" };
+  if (pct > 0.1)  return { bg: "bg-blue-100 dark:bg-blue-900/40", text: "text-foreground/80" };
+  return { bg: "bg-blue-50 dark:bg-blue-950/30", text: "text-muted-foreground" };
 }
 
 const METRIC_LABELS: Record<MatrixMetric, string> = {
@@ -81,7 +81,7 @@ export function MatrixPanel() {
           <select
             value={rowDim}
             onChange={(e) => setRowDim(e.target.value as MatrixDim)}
-            className="px-2 py-1 text-sm border dark:border-gray-700 rounded bg-white dark:bg-gray-900"
+            className="px-2 py-1 text-sm border rounded bg-white"
           >
             <option value="item">Item</option>
             <option value="location">Location</option>
@@ -93,7 +93,7 @@ export function MatrixPanel() {
           <select
             value={colDim}
             onChange={(e) => setColDim(e.target.value as MatrixDim)}
-            className="px-2 py-1 text-sm border dark:border-gray-700 rounded bg-white dark:bg-gray-900"
+            className="px-2 py-1 text-sm border rounded bg-white"
           >
             <option value="item">Item</option>
             <option value="location">Location</option>
@@ -105,7 +105,7 @@ export function MatrixPanel() {
           <select
             value={metric}
             onChange={(e) => setMetric(e.target.value as MatrixMetric)}
-            className="px-2 py-1 text-sm border dark:border-gray-700 rounded bg-white dark:bg-gray-900"
+            className="px-2 py-1 text-sm border rounded bg-white"
           >
             <option value="demand_qty">Demand Qty</option>
             <option value="sales_qty">Sales Qty</option>
@@ -117,7 +117,7 @@ export function MatrixPanel() {
           <select
             value={months}
             onChange={(e) => setMonths(Number(e.target.value))}
-            className="px-2 py-1 text-sm border dark:border-gray-700 rounded bg-white dark:bg-gray-900"
+            className="px-2 py-1 text-sm border rounded bg-white"
           >
             <option value={3}>3</option>
             <option value={6}>6</option>
@@ -139,9 +139,9 @@ export function MatrixPanel() {
       )}
 
       {data && (
-        <div className="overflow-auto max-h-[600px] border dark:border-gray-700 rounded-lg">
+        <div className="overflow-auto max-h-[600px] border rounded-lg">
           {/* Legend */}
-          <div className="sticky top-0 z-20 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-[10px] text-muted-foreground">
+          <div className="sticky top-0 z-20 bg-white border-b px-3 py-1.5 flex items-center gap-3 text-[10px] text-muted-foreground">
             <span className="font-medium">{METRIC_LABELS[metric]}:</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-50 dark:bg-blue-950/30 border" /> Low</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-200" /> Medium</span>
@@ -150,15 +150,15 @@ export function MatrixPanel() {
             <span className="ml-auto text-muted-foreground">{data.rows.length} rows x {data.cols.length} cols</span>
           </div>
           <table className="text-xs w-full">
-            <thead className="sticky top-8 bg-white dark:bg-gray-900 z-10">
+            <thead className="sticky top-8 bg-white z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b dark:border-gray-700 min-w-[120px]">
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b min-w-[120px]">
                   {rowDim} / {colDim}
                 </th>
                 {data.cols.map((col) => (
                   <th
                     key={col}
-                    className="px-2 py-2 text-center font-medium text-muted-foreground border-b dark:border-gray-700 min-w-[70px]"
+                    className="px-2 py-2 text-center font-medium text-muted-foreground border-b min-w-[70px]"
                     title={data.col_labels[col] || col}
                   >
                     <span className="truncate block max-w-[80px]">
@@ -172,9 +172,9 @@ export function MatrixPanel() {
               {data.rows.map((row, ri) => {
                 const rowTotal = data.cells[ri]?.reduce((a, b) => a + b, 0) ?? 0;
                 return (
-                  <tr key={row} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30">
+                  <tr key={row} className="hover:bg-muted dark:hover:bg-muted">
                     <td
-                      className="px-3 py-1.5 font-medium text-gray-700 dark:text-gray-300 border-b dark:border-gray-700/50 truncate max-w-[140px]"
+                      className="px-3 py-1.5 font-medium text-foreground/80 border-b truncate max-w-[140px]"
                       title={`${data.row_labels[row] || row} — Total: ${formatInt(rowTotal)}`}
                     >
                       {data.row_labels[row] || row}
@@ -185,7 +185,7 @@ export function MatrixPanel() {
                         <td
                           key={ci}
                           {...interactiveRowProps(() => handleCellClick(ri, ci))}
-                          className={`px-2 py-1.5 text-center border-b dark:border-gray-700/50 cursor-pointer tabular-nums transition-colors ${style.bg} ${style.text}`}
+                          className={`px-2 py-1.5 text-center border-b cursor-pointer tabular-nums transition-colors ${style.bg} ${style.text}`}
                           title={`${data.row_labels[row] || row} x ${data.col_labels[data.cols[ci]] || data.cols[ci]}: ${formatInt(val)}`}
                         >
                           {val > 0 ? formatInt(val) : "—"}

@@ -27,5 +27,6 @@ export function useChartColors() {
     roles: charts.roles,
     fallback: [...charts.fallback],
     heatmap: [...charts.heatmapScale],
+    sequential: [...charts.sequential],
   };
 }

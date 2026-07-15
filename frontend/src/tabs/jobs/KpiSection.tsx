@@ -63,7 +63,7 @@ export function KpiSection({ stats }: { stats: JobStats }) {
         label="Total Jobs"
         value={stats.total}
         icon={BarChart3}
-        color="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+        color="bg-muted text-muted-foreground"
         subtitle={stats.last_24h.submitted > 0 ? `${stats.last_24h.submitted} today` : undefined}
       />
       <KpiCard

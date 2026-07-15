@@ -14,7 +14,7 @@ export function RecommendedActionCard({ severity, title, action, onNavigate }: R
     critical: "border-red-200 bg-red-50 dark:bg-red-900/10",
     high: "border-amber-200 bg-amber-50 dark:bg-amber-900/10",
     medium: "border-blue-200 bg-blue-50 dark:bg-blue-900/10",
-    info: "border-gray-200 bg-gray-50 dark:bg-gray-800/50",
+    info: "border-border bg-muted/50",
   };
 
   return (

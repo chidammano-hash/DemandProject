@@ -178,7 +178,7 @@ export function EchelonPanel() {
                       <td className="px-3 py-2 font-medium">{r.cascade_risk_score?.toFixed(1) ?? "—"}</td>
                       <td className="px-3 py-2">
                         {r.cascade_risk_severity ? (
-                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${SEVERITY_COLORS[r.cascade_risk_severity] ?? "bg-gray-100 text-gray-600"}`}>
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${SEVERITY_COLORS[r.cascade_risk_severity] ?? "bg-muted text-muted-foreground"}`}>
                             {r.cascade_risk_severity.toUpperCase()}
                           </span>
                         ) : "—"}

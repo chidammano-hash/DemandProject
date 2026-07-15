@@ -33,6 +33,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { LoadingElement } from "@/components/LoadingElement";
+import { useChartColors } from "@/hooks/useChartColors";
+import { PALETTE, type ColorMode } from "@/constants/palette";
 import type { PCAScatterData } from "@/api/queries";
 
 // ---------------------------------------------------------------------------
@@ -116,12 +118,15 @@ function MetricRow({
   );
 }
 
-const PCA_COLORS = [
-  "#2563EB", "#f59e0b", "#10b981", "#ef4444", "#0891B2",
-  "#06b6d4", "#ec4899", "#14b8a6", "#f97316", "#84cc16",
-];
+// Cluster identity ramp: the 8 mode-aware series colors followed by the
+// muted fallback ramp (14 distinct hues; cluster ids cycle through them).
+function clusterRamp(mode: ColorMode): string[] {
+  return [...PALETTE[mode].charts.series, ...PALETTE[mode].charts.fallback];
+}
 
 function PCAScatterChart({ pca }: { pca: PCAScatterData }) {
+  const { theme } = useChartColors();
+  const PCA_COLORS = clusterRamp(theme);
   const byCluster = new Map<number, { pc1: number; pc2: number }[]>();
   for (const pt of pca.points) {
     const arr = byCluster.get(pt.cluster) ?? [];
@@ -178,7 +183,7 @@ function VerdictBadge({ verdict }: { verdict: string }) {
       ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
       : v === "DEGRADED"
         ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-        : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+        : "bg-muted text-foreground/80";
   return (
     <Badge className={cn("text-xs font-semibold px-3 py-1", variant)}>
       {v}

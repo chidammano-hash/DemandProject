@@ -152,7 +152,7 @@ function VerdictBadge({ verdict }: { verdict: string }) {
       ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
       : v === "DEGRADED"
         ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-        : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+        : "bg-muted text-foreground/80";
   return (
     <Badge className={cn("text-xs font-semibold px-3 py-1", variant)}>
       {v}

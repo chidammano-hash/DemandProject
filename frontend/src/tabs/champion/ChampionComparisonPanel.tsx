@@ -244,7 +244,7 @@ type VerdictValue = "a_better" | "b_better" | "mixed";
 const VERDICT_STYLES: Record<VerdictValue, string> = {
   a_better: "bg-blue-100 text-blue-800",
   b_better: "bg-emerald-100 text-emerald-800",
-  mixed: "bg-gray-100 text-gray-800",
+  mixed: "bg-muted text-foreground",
 };
 
 const VERDICT_LABELS: Record<VerdictValue, string> = {

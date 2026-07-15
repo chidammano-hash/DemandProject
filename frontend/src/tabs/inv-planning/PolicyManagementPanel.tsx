@@ -246,7 +246,7 @@ export function PolicyManagementPanel() {
                 </button>
               </div>
               <span
-                className={`self-start rounded px-1.5 py-0.5 text-xs font-medium ${POLICY_TYPE_COLORS[policy.policy_type] ?? "bg-gray-100 text-gray-700"}`}
+                className={`self-start rounded px-1.5 py-0.5 text-xs font-medium ${POLICY_TYPE_COLORS[policy.policy_type] ?? "bg-muted text-foreground/80"}`}
                 title={POLICY_TYPE_DESCRIPTIONS[policy.policy_type] ?? ""}
               >
                 {policy.policy_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { CustomerTreemap } from "../CustomerTreemap";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 
@@ -43,7 +44,11 @@ vi.mock("@/api/queries/customer-analytics", async () => {
 
 function wrap(node: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+  return (
+    <ThemeProvider value={{ theme: "light" }}>
+      <QueryClientProvider client={qc}>{node}</QueryClientProvider>
+    </ThemeProvider>
+  );
 }
 
 const filters = {} as CustomerAnalyticsFilters;
@@ -99,7 +104,10 @@ describe("CustomerTreemap (U7.1 — must not use the broken visualMap.dimension 
 
 describe("CustomerTreemap fill-rate band (U3.11 — 0-100 ramp hides the 95-100 spread)", () => {
   it("anchors the color ramp to a business band, not 0-100, so a 95% node differs from a 99% node", async () => {
-    const { fillRateColor, FILL_RATE_BAND } = await import("../CustomerTreemap");
+    const { fillRateColor: fillRateColorFn, FILL_RATE_BAND } = await import("../CustomerTreemap");
+    const { PALETTE } = await import("@/constants/palette");
+    const { heatmapScale, fallback } = PALETTE.light.charts;
+    const fillRateColor = (fr: number | undefined) => fillRateColorFn(fr, heatmapScale, fallback);
     // The real data sits entirely in ~95-100%; a 0-100 ramp paints it all green.
     // The band must NOT be the full 0-100 range.
     expect(FILL_RATE_BAND[0]).toBeGreaterThan(0);

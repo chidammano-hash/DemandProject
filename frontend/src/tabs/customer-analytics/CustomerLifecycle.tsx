@@ -12,6 +12,7 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
 import { PanelStateGate } from "@/components/PanelStateGate";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -27,6 +28,7 @@ interface LifecycleResponse {
 }
 
 export function CustomerLifecycle({ filters }: Props) {
+  const { roles, fallback, heatmap } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.lifecycle(filters),
     queryFn: () => fetchCustomerAnalyticsLifecycle(filters),
@@ -75,7 +77,7 @@ export function CustomerLifecycle({ filters }: Props) {
         orient: "horizontal" as const,
         left: "center",
         bottom: 0,
-        inRange: { color: ["#fee2e2", "#fef08a", "#bbf7d0", "#22c55e"] },
+        inRange: { color: [heatmap[3], heatmap[2], heatmap[1], heatmap[0]] },
       },
       series: [{
         type: "heatmap",
@@ -89,9 +91,9 @@ export function CustomerLifecycle({ filters }: Props) {
   const waterfallData = waterfallBars;
 
   const waterfallColors: Record<string, string> = {
-    new: "#22c55e",
-    churned: "#ef4444",
-    net: "#94a3b8",
+    new: roles.good,
+    churned: roles.error,
+    net: fallback[0],
   };
 
   return (
@@ -122,7 +124,7 @@ export function CustomerLifecycle({ filters }: Props) {
                   <Tooltip formatter={(v: number) => v.toLocaleString()} />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                     {waterfallData.map((d, i) => (
-                      <Cell key={i} fill={waterfallColors[d.type] ?? "#94a3b8"} />
+                      <Cell key={i} fill={waterfallColors[d.type] ?? fallback[0]} />
                     ))}
                   </Bar>
                 </BarChart>
