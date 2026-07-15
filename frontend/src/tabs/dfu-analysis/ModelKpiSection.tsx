@@ -172,7 +172,9 @@ export function ModelKpiSection({
                       {kpi.months_covered} mo
                     </span>
                   </div>
-                  <div className="grid grid-cols-5 gap-2">
+                  {/* Wrap on narrow cards: a rigid 5-up grid overflows and the
+                      uppercase labels/values collide across cells. */}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3 xl:grid-cols-5">
                     <div>
                       <p className="text-xs uppercase text-muted-foreground">
                         Accuracy
