@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
+
+FloatArray: TypeAlias = NDArray[np.float64]
 
 
 @dataclass(frozen=True)
@@ -42,14 +45,14 @@ def croston_forecast(
     history: np.ndarray,
     *,
     horizon: int,
-    params: dict[str, Any],
-) -> np.ndarray:
+    params: dict[str, Any] | CrostonParameters,
+) -> FloatArray:
     """Return a configured Croston/SBA forecast for one non-negative series."""
-    settings = parse_croston_parameters(params)
+    settings = params if isinstance(params, CrostonParameters) else parse_croston_parameters(params)
     if horizon <= 0:
         raise ValueError("Croston horizon must be positive")
 
-    values = np.asarray(history, dtype=float)
+    values: FloatArray = np.asarray(history, dtype=np.float64)
     if values.ndim != 1 or not np.isfinite(values).all():
         raise ValueError("Croston history must be a finite one-dimensional array")
     if (values < 0).any():
@@ -57,7 +60,8 @@ def croston_forecast(
 
     nonzero_positions = np.flatnonzero(values > 0)
     if len(nonzero_positions) == 0:
-        return np.zeros(horizon, dtype=float)
+        empty_forecast: FloatArray = np.zeros(horizon, dtype=np.float64)
+        return empty_forecast
 
     first_position = int(nonzero_positions[0])
     demand_size = float(values[first_position])
@@ -75,12 +79,14 @@ def croston_forecast(
         forecast *= 1.0 - settings.alpha / 2.0
     long_run_rate = max(forecast, 0.0)
     if not settings.recursive:
-        return np.full(horizon, long_run_rate, dtype=float)
+        level_forecast: FloatArray = np.full(horizon, long_run_rate, dtype=np.float64)
+        return level_forecast
 
     # Closed form of F[h] = d*F[h-1] + (1-d)*rate. This preserves the
     # recursive state contract without adding 18 Python iterations for every
     # one of the millions of customer series in a production run.
-    horizon_steps = np.arange(1, horizon + 1, dtype=float)
-    damping_weights = np.power(settings.recursive_damping, horizon_steps)
-    predictions = long_run_rate + damping_weights * (float(values[-1]) - long_run_rate)
-    return np.maximum(predictions, 0.0)
+    horizon_steps: FloatArray = np.arange(1, horizon + 1, dtype=np.float64)
+    damping_weights: FloatArray = np.power(settings.recursive_damping, horizon_steps)
+    predictions: FloatArray = long_run_rate + damping_weights * (float(values[-1]) - long_run_rate)
+    result: FloatArray = np.maximum(predictions, 0.0)
+    return result

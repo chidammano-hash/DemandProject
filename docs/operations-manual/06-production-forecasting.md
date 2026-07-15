@@ -445,7 +445,7 @@ These scripts produce **additional** forecast layers that sit alongside (or down
 | `scripts/forecasting/generate_production_forecasts.py` | `forecast-generate` | Build an immutable champion release candidate; promotion is a separate API action | `forecast_generation_run` + `fact_production_forecast_staging` |
 | `scripts/forecasting/compute_blended_forecast.py` | `blended-all` | Blends short-horizon demand-sensing signals with the statistical baseline using a linearly decaying alpha over a 4-week sensing horizon | `fact_blended_forecast` |
 | `scripts/forecasting/generate_consensus_plan.py` | `consensus-generate VERSION=<v>` | Applies approved planner overrides to an existing saved P50 demand plan, honoring the override-priority chain (`CAPACITY_LOCK` > `PROMO`/`LAUNCH` > `PHASE_OUT`/`MARKET_EVENT` > `MANUAL`) | `fact_consensus_plan` |
-| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 customer-level months through the ordered `customer_rule_router` in resumable parallel route batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
+| `scripts/forecasting/generate_customer_forecasts.py` | Forecasting → Customer Forecast | Generates 18 customer-level months through the customer-only `customer_rule_router_v2` in resumable parallel statistical-route batches for customer-SKUs with sales in the latest six closed months | `customer_forecast_run` + batch ledger + `fact_customer_forecast` |
 
 **When to run each:**
 
@@ -481,15 +481,22 @@ in July 2026, that means January 2025–June 2026 history and July 2026–Decemb
 Readiness separates active and ignored series. A customer-SKU with no
 `sales_qty` in January–June 2026 is ignored and writes no forecast rows. The
 coverage card splits each eligible series under the ordered
-`customer_rule_router` policy:
+`customer_rule_router_v2` policy:
 
-1. If its earliest positive demand is in January–June 2026, use
-   `moving_average_3`. Each future value is the mean of the latest three
-   calendar-month states and is appended before calculating the next month.
-2. Otherwise, if at least nine of July 2025–June 2026 have positive demand, use
-   `seasonal_repeat_12` and repeat those last 12 actual months cyclically.
-3. Otherwise, use recursive `croston` with the configured SBA `alpha` and
-   `recursive_damping`.
+1. First positive demand no more than six months old → recursive
+   `moving_average_3`.
+2. Otherwise, fewer than three positive-demand observations →
+   `trailing_average_6`; never estimate a Croston interval from one or two
+   events.
+3. Otherwise, at least 24 causal months and a seasonal-naive WAPE at least 5%
+   better than SES → `seasonal_repeat_12`. The configured 18-month context
+   cannot pass this gate, so its current count is zero.
+4. Otherwise, `ADI >= 1.32` plus either a zero gap greater than `1.5 * ADI` or
+   recent-six occurrence no more than 50% of prior-six occurrence → `tsb`.
+5. Otherwise, `ADI >= 1.32` and positive-size `CV² >= 0.49` → `adida`.
+6. Otherwise, remaining `ADI >= 1.32` demand → `croston` (SBA).
+7. Otherwise, a latest-six versus prior-six mean change of at least 20% →
+   `holt_damped`; remaining regular demand → `ses`.
 
 The production route is frozen in the 10,000-series batch manifest and on its
 forecast rows. Six CPU workers share the route batches in parallel. These
@@ -503,16 +510,17 @@ or the completed customer-demand source batch changed. Fact rows can be
 replaced only while their parent run is `generating`. A run becomes readable
 only after every batch, source-lineage, and final row-count check passes.
 
-The ordered thresholds and Croston recursive settings are part of the customer
+The ordered thresholds and all statistical parameters are part of the customer
 and backtest checksums. After changing any of them, do not resume or reuse an
 older run: generate a new customer forecast, rerun the blend backtest, and
 generate a new blend draft only if the no-WAPE-degradation gate passes.
-Migration 218 enforces this cutover by marking queued/generating pre-router
-customer runs and backtests failed and invalidating a generating blend tied to
-legacy customer evidence. Completed legacy `croston` runs remain readable, but
-they are not current `customer_rule_router` evidence and cannot satisfy new
-blend or backtest readiness. Apply the migration in a maintenance window with
-temporary disk for a side-built copy of the customer profile MV.
+Migration 219 enforces the v2 cutover by retiring queued/generating v1 customer
+runs and backtests and invalidating linked generating/ready blends. Completed
+v1 runs/backtests remain readable and promoted blends are untouched, but v1
+evidence cannot satisfy current v2 readiness. Apply migration 219 in a
+maintenance window with temporary disk for the side-built second copy of
+`mv_customer_demand_series_profile`; its final swap occurs under the existing
+customer-demand advisory lock.
 
 If readiness reports an active load, wait for the loader to finish. If it
 reports a missing or stale profile marker, rerun the standard customer-demand
@@ -905,3 +913,4 @@ Source-of-truth files referenced in this section:
 - `sql/216_create_customer_bottom_up_blend.sql`
 - `sql/217_add_customer_bottom_up_shadow_staging.sql`
 - `sql/218_enable_customer_rule_router.sql`
+- `sql/219_enable_customer_rule_router_v2.sql`

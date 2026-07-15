@@ -348,7 +348,7 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 customer-demand load rather than by a standalone operator refresh. Migration
 218 rebuilds it with `first_demand_month`, `demand_months_last_12`, and the
 global source-latest anchor, which drive fail-closed readiness and the frozen
-`customer_rule_router` forward route manifest.
+v1 forward route manifest.
 Apply it in a maintenance window: the migration side-builds and atomically
 swaps the profile while holding the customer-demand advisory lock, so it needs
 temporary disk for a second profile even though the final exclusive MV lock is
@@ -359,6 +359,27 @@ atomically; do not stamp the marker manually. Migration 218 also marks any
 queued/generating pre-router customer run or backtest failed and invalidates a
 generating blend tied to legacy customer evidence. Start a new customer
 forecast instead of trying to resume any of those manifests.
+
+Migration 219 repeats the side-build/swap pattern for
+`customer_rule_router_v2`. It preserves the v1 fields and adds last-demand
+month; trailing-18 event count, sum, and sum of squares; recent/prior-six event
+counts and sums; and the seasonal-validation flag. Windows are anchored on the
+global latest source month. Because the configured history remains 18 months,
+`seasonal_repeat_validated` is hard-false in this profile version. Enabling the
+route later requires both a generation/backtest context of at least 24 months
+and a follow-up profile implementation that records the causal seasonal
+challenger's configured WAPE improvement.
+Apply migration 219 during a maintenance window with temporary disk for both
+the live profile and `mv_customer_demand_series_profile_router_v2`. The
+customer-demand advisory transaction lock prevents a loader or evidence writer
+from crossing the atomic swap.
+
+The v2 cutover retires queued/generating v1 forward runs and pending/running
+batches, queued/generating v1 backtests, and linked generating/ready blend
+manifests. Completed v1 forward/backtest evidence stays readable and promoted
+blends are not changed. After migration 219, restart the API, generate a new v2
+customer forecast, rerun the causal blend backtest, and create a fresh blend
+draft only if its gate passes.
 
 ### Data Retention Policies
 

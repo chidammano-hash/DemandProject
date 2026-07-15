@@ -8,10 +8,15 @@ import pandas as pd
 import pytest
 
 from common.ml.customer_forecast_rules import (
+    ADIDA_ROUTE_ID,
     CROSTON_ROUTE_ID,
     CUSTOMER_RULE_ROUTER_MODEL_ID,
+    HOLT_DAMPED_ROUTE_ID,
     MOVING_AVERAGE_ROUTE_ID,
     SEASONAL_REPEAT_ROUTE_ID,
+    SES_ROUTE_ID,
+    TRAILING_AVERAGE_ROUTE_ID,
+    TSB_ROUTE_ID,
     CustomerForecastRuleParameters,
 )
 from common.services.customer_forecast import (
@@ -26,14 +31,31 @@ from common.services.customer_forecast import (
 _RULE_PARAMS = CustomerForecastRuleParameters(
     recent_demand_lookback_months=6,
     moving_average_window_months=3,
+    trailing_average_window_months=6,
+    minimum_positive_demand_months=3,
     repeat_history_lookback_months=12,
-    repeat_history_min_demand_months=9,
+    seasonal_min_history_months=24,
+    seasonal_min_wape_improvement_pct=5.0,
+    intermittent_adi_threshold=1.32,
+    lumpy_cv2_threshold=0.49,
+    decay_gap_adi_multiplier=1.5,
+    declining_occurrence_ratio=0.5,
+    trend_relative_change_threshold=0.2,
 )
 _CROSTON_PARAMS = {
     "alpha": 0.1,
     "variant": "sba",
     "recursive": True,
     "recursive_damping": 0.5,
+}
+_STATISTICAL_PARAMS = {
+    "tsb_demand_alpha": 0.1,
+    "tsb_probability_alpha": 0.1,
+    "adida_alpha": 0.1,
+    "ses_alpha": 0.2,
+    "holt_level_alpha": 0.3,
+    "holt_trend_alpha": 0.1,
+    "holt_damping": 0.9,
 }
 
 
@@ -127,7 +149,7 @@ def test_prepare_customer_history_routes_active_series_by_demand_pattern() -> No
     ]
 
 
-def test_build_customer_forecast_rows_covers_all_three_rule_routes() -> None:
+def test_build_customer_forecast_rows_covers_selected_v2_routes() -> None:
     dense_months = pd.date_range("2025-07-01", periods=9, freq="MS")
     frame = pd.DataFrame(
         [
@@ -189,16 +211,17 @@ def test_build_customer_forecast_rows_covers_all_three_rule_routes() -> None:
         window,
         rule_params=_RULE_PARAMS,
         croston_params=_CROSTON_PARAMS,
+        statistical_params=_STATISTICAL_PARAMS,
     )
 
     assert len(rows) == 54
     assert set(rows["model_id"]) == {
         MOVING_AVERAGE_ROUTE_ID,
-        SEASONAL_REPEAT_ROUTE_ID,
-        CROSTON_ROUTE_ID,
+        TSB_ROUTE_ID,
+        TRAILING_AVERAGE_ROUTE_ID,
     }
     assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18] * 3
-    assert rows.groupby("model_id")["forecast_qty"].nunique().gt(1).all()
+    assert rows["forecast_qty"].ge(0).all()
 
 
 def test_series_without_recent_six_month_sales_is_ignored() -> None:
@@ -316,9 +339,14 @@ def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
         12,
         10,
         2,
-        3,
-        4,
-        3,
+        2,
+        1,
+        0,
+        2,
+        1,
+        1,
+        2,
+        1,
         0,
         0,
         0,
@@ -347,9 +375,14 @@ def test_customer_forecast_readiness_uses_precomputed_series_activity() -> None:
     assert "first_month <=" not in sql
     assert "fact_customer_demand_monthly" not in sql
     assert readiness["eligible_series"] == 10
-    assert readiness["moving_average_series"] == 3
-    assert readiness["seasonal_repeat_series"] == 4
-    assert readiness["croston_series"] == 3
+    assert readiness["moving_average_series"] == 2
+    assert readiness["trailing_average_series"] == 1
+    assert readiness["seasonal_repeat_series"] == 0
+    assert readiness["tsb_series"] == 2
+    assert readiness["adida_series"] == 1
+    assert readiness["croston_series"] == 1
+    assert readiness["ses_series"] == 2
+    assert readiness["holt_damped_series"] == 1
     assert "fallback_series" not in readiness
     assert readiness["dormant_series"] == 2
     assert readiness["forecastable_series"] == 10
@@ -365,9 +398,14 @@ def test_customer_forecast_readiness_fails_closed_without_load_lineage() -> None
         12,
         10,
         2,
-        3,
-        4,
-        3,
+        2,
+        1,
+        0,
+        2,
+        1,
+        1,
+        2,
+        1,
         0,
         0,
         0,
@@ -409,9 +447,14 @@ def test_customer_forecast_readiness_requires_current_inactive_profile_lineage(
         12,
         10,
         2,
-        3,
-        4,
-        3,
+        2,
+        1,
+        0,
+        2,
+        1,
+        1,
+        2,
+        1,
         0,
         0,
         0,
@@ -439,12 +482,20 @@ def test_customer_forecast_settings_define_the_complete_rule_router() -> None:
     config = {
         "customer_forecast": {
             "enabled": True,
-            "model_id": "customer_rule_router",
+            "model_id": "customer_rule_router_v2",
             "rule_params": {
                 "recent_demand_lookback_months": 6,
                 "moving_average_window_months": 3,
+                "trailing_average_window_months": 6,
+                "minimum_positive_demand_months": 3,
                 "repeat_history_lookback_months": 12,
-                "repeat_history_min_demand_months": 9,
+                "seasonal_min_history_months": 24,
+                "seasonal_min_wape_improvement_pct": 5.0,
+                "intermittent_adi_threshold": 1.32,
+                "lumpy_cv2_threshold": 0.49,
+                "decay_gap_adi_multiplier": 1.5,
+                "declining_occurrence_ratio": 0.5,
+                "trend_relative_change_threshold": 0.2,
             },
             "croston_params": {
                 "alpha": 0.1,
@@ -452,6 +503,7 @@ def test_customer_forecast_settings_define_the_complete_rule_router() -> None:
                 "recursive": True,
                 "recursive_damping": 0.5,
             },
+            "statistical_params": _STATISTICAL_PARAMS,
             "history_months": 18,
             "horizon_months": 18,
             "recent_sales_lookback_months": 6,
@@ -476,10 +528,16 @@ def test_customer_forecast_settings_define_the_complete_rule_router() -> None:
         "recursive": True,
         "recursive_damping": 0.5,
     }
+    assert settings["statistical_params"] == _STATISTICAL_PARAMS
     assert settings["route_model_ids"] == [
         MOVING_AVERAGE_ROUTE_ID,
+        TRAILING_AVERAGE_ROUTE_ID,
         SEASONAL_REPEAT_ROUTE_ID,
+        TSB_ROUTE_ID,
+        ADIDA_ROUTE_ID,
         CROSTON_ROUTE_ID,
+        SES_ROUTE_ID,
+        HOLT_DAMPED_ROUTE_ID,
     ]
     assert "chronos_workers" not in settings
 

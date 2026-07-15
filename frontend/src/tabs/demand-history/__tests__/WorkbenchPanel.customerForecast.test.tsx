@@ -67,8 +67,13 @@ describe("DemandWorkbenchPanel customer forecast", () => {
 
   it.each([
     ["moving_average_3", "3-Month Moving Average"],
+    ["trailing_average_6", "6-Month Trailing Average"],
     ["seasonal_repeat_12", "12-Month Seasonal Repeat"],
+    ["tsb", "TSB"],
+    ["adida", "ADIDA"],
     ["croston", "Croston/SBA"],
+    ["ses", "Simple Exponential Smoothing"],
+    ["holt_damped", "Damped Holt"],
   ])(
     "loads the selected customer series and identifies the %s route",
     async (modelId, modelLabel) => {

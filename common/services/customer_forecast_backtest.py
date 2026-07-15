@@ -118,6 +118,7 @@ def customer_backtest_config_checksum(
         "customer_model_id": customer_settings["model_id"],
         "customer_rule_params": customer_settings["rule_params"],
         "customer_croston_params": customer_settings["croston_params"],
+        "customer_statistical_params": customer_settings["statistical_params"],
         "recent_sales_lookback_months": customer_settings["recent_sales_lookback_months"],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -408,6 +409,7 @@ def generate_customer_forecast_backtest(
                 recent_sales_lookback_months=int(customer_settings["recent_sales_lookback_months"]),
                 rule_params=dict(customer_settings["rule_params"]),
                 croston_params=dict(customer_settings["croston_params"]),
+                statistical_params=dict(customer_settings["statistical_params"]),
             )
             cur.execute("TRUNCATE temp_customer_backtest_batch")
             if not rows.empty:

@@ -19,9 +19,26 @@ from common.ml.customer_forecast_rules import (
 _RULE_PARAMS = CustomerForecastRuleParameters(
     recent_demand_lookback_months=6,
     moving_average_window_months=3,
+    trailing_average_window_months=6,
+    minimum_positive_demand_months=3,
     repeat_history_lookback_months=12,
-    repeat_history_min_demand_months=9,
+    seasonal_min_history_months=24,
+    seasonal_min_wape_improvement_pct=5.0,
+    intermittent_adi_threshold=1.32,
+    lumpy_cv2_threshold=0.49,
+    decay_gap_adi_multiplier=1.5,
+    declining_occurrence_ratio=0.5,
+    trend_relative_change_threshold=0.2,
 )
+_STATISTICAL_PARAMS = {
+    "tsb_demand_alpha": 0.1,
+    "tsb_probability_alpha": 0.1,
+    "adida_alpha": 0.1,
+    "ses_alpha": 0.2,
+    "holt_level_alpha": 0.3,
+    "holt_trend_alpha": 0.1,
+    "holt_damping": 0.9,
+}
 
 
 def _backtest_service():
@@ -90,6 +107,7 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
             "recursive": True,
             "recursive_damping": 0.5,
         },
+        statistical_params=_STATISTICAL_PARAMS,
     )
 
     assert result["forecast_month"].tolist() == [date(2026, 1, 1)]
@@ -140,6 +158,7 @@ def test_backtest_batch_does_not_call_scalar_rules_per_series_origin() -> None:
                 "recursive": True,
                 "recursive_damping": 0.5,
             },
+            statistical_params=_STATISTICAL_PARAMS,
         )
 
     assert not result.empty
@@ -199,6 +218,7 @@ def test_vectorized_backtest_matches_scalar_rule_router(variant: str) -> None:
         recent_sales_lookback_months=6,
         rule_params=_RULE_PARAMS.as_dict(),
         croston_params=params,
+        statistical_params=_STATISTICAL_PARAMS,
     )
 
     expected_rows: list[dict[str, object]] = []
@@ -214,6 +234,7 @@ def test_vectorized_backtest_matches_scalar_rule_router(variant: str) -> None:
                 history,
                 demand_started_within_recent_window=demand_started_recently,
                 params=_RULE_PARAMS,
+                effective_history_months=forecast_index - first_positive,
             )
             expected_rows.append(
                 {
@@ -227,6 +248,8 @@ def test_vectorized_backtest_matches_scalar_rule_router(variant: str) -> None:
                         route_model_id=route_model_id,
                         rule_params=_RULE_PARAMS,
                         croston_params=params,
+                        statistical_params=_STATISTICAL_PARAMS,
+                        effective_history_months=forecast_index - first_positive,
                     )[0],
                     "customer_series_count": 1,
                 }
@@ -295,11 +318,12 @@ def test_backtest_recent_route_includes_the_exact_six_month_boundary() -> None:
             "recursive": True,
             "recursive_damping": 0.5,
         },
+        statistical_params=_STATISTICAL_PARAMS,
     )
 
     assert result["item_id"].tolist() == ["BOUNDARY", "OLDER"]
     assert result["forecast_month"].tolist() == [date(2026, 6, 1)] * 2
-    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([1.0, 1.7578571428571428])
+    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([1.0, 0.5])
 
 
 def test_backtest_rejects_inconsistent_first_demand_metadata() -> None:
@@ -351,6 +375,7 @@ def test_backtest_rejects_inconsistent_first_demand_metadata() -> None:
                 "recursive": True,
                 "recursive_damping": 0.5,
             },
+            statistical_params=_STATISTICAL_PARAMS,
         )
 
 

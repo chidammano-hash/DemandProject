@@ -208,15 +208,16 @@ prepare a governed draft:
    2025 through June 2026.
 2. Review the coverage split. Customer-SKUs with no positive sales in the
    latest six closed months are shown as ignored and produce no rows. Eligible
-   series are split into `moving_average_3`, `seasonal_repeat_12`, and
-   `croston` route counts.
+   series are split into all eight v2 route counts. A zero
+   `seasonal_repeat_12` count is expected with the current 18-month context;
+   repeat-12 requires at least 24 months and validated seasonal lift.
 3. Click **Generate Customer Forecasts**. The durable job builds 10,000-series
    recovery batches and writes July 2026 through December 2027 in that example.
-   The ordered `customer_rule_router` sends a series whose earliest positive
-   demand is in the latest six closed months to a recursive three-month moving
-   average; otherwise a series with at least nine positive-demand months in the
-   trailing 12 repeats its last 12 actual months; the remainder uses recursive
-   Croston/SBA. The selected production route is frozen for the run.
+   The customer-only `customer_rule_router_v2` sends recent starts to MA(3),
+   histories with fewer than three events to a trailing-six-month average,
+   intermittent demand to TSB/ADIDA/Croston according to occurrence decay, ADI,
+   and CV², materially trending regular demand to damped Holt, and remaining
+   regular demand to SES. The selected production route is frozen for the run.
 4. Monitor exact completed/total customer-SKU and batch counts plus ETA. Active
    runs can be cancelled; **Resume Saved Batches** preserves completed work.
 5. Choose item, location, and customer to compare actual history with the
@@ -227,11 +228,16 @@ prepare a governed draft:
    bias, and accuracy for **Customer Bottom-Up**, **Source Champion**, and
    **Customer Blend**. The gate needs six months, 1,000 DFUs, and blend WAPE no
    worse than champion WAPE. Each historical origin re-evaluates positive-sales
-   eligibility and the ordered route from only the history available then; it
-   does not reuse the frozen forward route.
+   eligibility, age, event evidence, ADI, CV², decay, and trend gates from only
+   the history available then; it does not reuse the frozen forward route.
 8. When the matching backtest passes, click **Generate Customer Blend Draft**.
    Review coverage and lineage before using the existing stage and explicit
    promotion actions for the returned generation run.
+
+After applying migration 219, restart the API and begin at step 1 with a new
+v2 run. Active v1 runs/backtests and their linked unpublished blends are retired
+by the cutover and cannot be resumed; completed v1 results remain available for
+historical review.
 
 The draft follows the full active production spine. Customer forecasts are
 summed to item-location, converted from demand to sales with the causal

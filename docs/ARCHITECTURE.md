@@ -647,16 +647,18 @@ to one exact completed audit batch.
 - **`customer_forecast_run` / `customer_forecast_batch*` /
   `fact_customer_forecast`** — an immutable customer forecast manifest,
   durable batch ledger, and payload. The run-level
-  `customer_rule_router` first limits eligibility to series with positive sales
-  in the latest six closed months, then freezes one ordered route per series:
-  a demand start in that six-month window uses recursive
-  `moving_average_3`; otherwise at least nine positive-demand months in the
-  trailing 12 uses `seasonal_repeat_12`; the remainder uses recursive
-  Croston/SBA. Every route reads the latest 18 closed demand months and emits 18
-  future months. Rule thresholds and Croston recurrence are part of generation
-  and backtest checksums. Ineligible series are omitted rather than persisted
-  as zero rows. Completed 10,000-series batches are recovery checkpoints and
-  retries process only unfinished batches.
+  `customer_rule_router_v2` first limits eligibility to series with positive
+  sales in the latest six closed months, then freezes one customer-only route
+  per series. Ordered causal diagnostics separate recent-start and evidence-
+  poor histories (`moving_average_3`, `trailing_average_6`), validated annual
+  seasonality (`seasonal_repeat_12`), intermittent demand (`tsb`, `adida`,
+  Croston/SBA), and regular level/trend demand (`ses`, `holt_damped`). The
+  current 18-month context cannot satisfy the seasonal route's 24-month
+  validation gate, so that route remains visible with a zero count. Every
+  route emits 18 future months. Rule thresholds and statistical parameters are
+  part of generation and backtest checksums. Ineligible series are omitted
+  rather than persisted as zero rows. Completed 10,000-series batches are
+  recovery checkpoints and retries process only unfinished batches.
   Each new run records the exact latest completed `customer_demand`
   `audit_load_batch` only when the singleton profile-refresh marker matches and
   no load is active. The loader creates its running batch before fact mutation,
@@ -674,8 +676,10 @@ to one exact completed audit batch.
   `sql/211_create_customer_demand_series_profile.sql`, with route lineage in
   `sql/212_add_customer_forecast_model_routes.sql` and
   durable batching/activity lineage in `sql/213` through `sql/215`.
-  Migration `sql/218_enable_customer_rule_router.sql` adds the rule features,
-  run/backtest router identity, and three allowed per-series route IDs.
+  Migration `sql/218_enable_customer_rule_router.sql` adds the v1 rule fields.
+  Migration `sql/219_enable_customer_rule_router_v2.sql` side-builds and swaps
+  the extended profile, enforces the v2 run/backtest identity and eight route
+  IDs for new rows, and preserves readable completed v1 evidence.
 - **`customer_forecast_backtest_run` /
   `customer_bottom_up_backtest_component` /
   `customer_bottom_up_backtest_accuracy`** — causal six-origin,
@@ -859,32 +863,36 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
   validation and release publication.
 - `customer_forecast_run` records the resolved 18-month closed-history window,
   18-month output window, durable job, cardinalities, ignored dormant series,
-  exact batch/series progress, `customer_rule_router` config and per-route
+  exact batch/series progress, `customer_rule_router_v2` config and per-route
   counts, the completed customer-demand load batch, matching profile-refresh
   marker, and payload lineage. An active load, mismatched marker, or later
   completed customer-demand load makes the run stale and blocks resume,
   backtest, blend consumption, and promotion until regeneration.
   `customer_forecast_batch` and
   `customer_forecast_batch_series` provide durable 10,000-series checkpoints
-  claimed with `SKIP LOCKED`; `moving_average_3`, `seasonal_repeat_12`, and
-  `croston` batches share the parallel CPU workers. A series' forward route is
-  frozen in this ledger and on its fact rows.
+  claimed with `SKIP LOCKED`; all eight customer-only route families share the
+  parallel CPU workers. A series' forward route is frozen in this ledger and
+  on its fact rows.
   `fact_customer_forecast` is immutable and unique by run, item, location,
   customer, and forecast month; DDL:
   `sql/210_create_customer_forecast.sql`, extended by `sql/213` and `sql/215`.
   Migration `sql/216` adds customer-demand batch/profile lineage, freezes
   fact-row mutations outside `generating`, and preserves readable legacy rows.
-  Migration `sql/218` enables the `customer_rule_router` run/backtest identity
-  and the three allowed per-series routes; active pre-router customer runs and
-  backtests are failed and generating blends tied to them are invalidated
-  because their configuration checksum cannot be resumed safely.
+  Migration `sql/218` enables the v1 router. Migration `sql/219` enables
+  `customer_rule_router_v2` and eight allowed per-series routes for new rows;
+  active v1 customer runs/backtests are retired and linked generating/ready
+  blends are invalidated because their configuration checksum cannot be
+  resumed safely. Completed v1 runs and backtests remain readable, and promoted
+  blends are untouched.
   Customer-SKUs without sales in the latest six closed months are ignored. The
   refreshable
   `mv_customer_demand_series_profile` (`sql/211`, extended by `sql/214` and
-  `sql/218`) supplies all-history bounds, recent-sales activity, first positive
-  demand, and trailing-12 positive-demand counts without request-time full-fact
-  scans. The repeated global source-latest anchor makes future-dated source
-  rows fail freshness even when their series is outside the run population.
+  `sql/218` and `sql/219`) supplies all-history bounds, recent-sales activity,
+  first/last positive demand, trailing-18 distribution statistics, recent and
+  prior six-month occurrence/quantity statistics, and the seasonal-validation
+  gate without request-time full-fact scans. The repeated global source-latest
+  anchor makes future-dated source rows fail freshness even when their series
+  is outside the run population.
 - `customer_forecast_backtest_run` and its generation-only, terminally frozen
   component/accuracy
   tables persist six causal one-step origins and the matching common-cohort
@@ -2144,16 +2152,19 @@ review surfaces. API
 
 **Customer-Level Forecasting:** the separate **Forecasting → Customer
 Forecast** stage generates immutable deterministic forecasts at
-item-location-customer-month grain. A `customer_rule_router` run uses the latest
-18 fully closed months from `fact_customer_demand_monthly` and emits exactly 18
-future months. Eligible series have positive sales in the latest six closed
-months. Ordered routing then assigns recent demand starts to a recursive
-three-calendar-month moving average, series with at least nine positive-demand
-months in the trailing 12 to a repeated last-12-actual-month cycle, and the
-intermittent remainder to recursive Croston/SBA. Ineligible series are ignored.
+item-location-customer-month grain. A `customer_rule_router_v2` run uses the
+latest 18 fully closed months from `fact_customer_demand_monthly` and emits
+exactly 18 future months. Eligible series have positive sales in the latest six
+closed months. Ordered routing assigns recent starts to recursive MA(3), fewer
+than three demand events to a trailing-six-month average, decaying intermittent
+demand to TSB, erratic intermittent demand to ADIDA, stable intermittent demand
+to Croston/SBA, materially trending regular demand to damped Holt, and the
+regular remainder to SES. Seasonal repeat additionally requires at least 24
+months and a validated 5% WAPE improvement over SES, so it is inactive under
+the current 18-month context. Ineligible series are ignored.
 Durable 10,000-series checkpoints permit retry without losing completed work
 and expose exact completed-series progress, route composition, and ETA. All
-three customer routes remain outside the governed five-model roster. A separate
+eight customer routes remain outside the governed five-model roster. A separate
 six-origin causal backtest re-evaluates eligibility and routing from each
 origin's available history, then sums customer forecasts to item-location,
 normalizes demand to sales with an

@@ -15,9 +15,14 @@ _READY_PROFILE_ROW = (
     12,
     10,
     2,
-    3,
-    4,
-    3,
+    2,
+    1,
+    0,
+    2,
+    1,
+    1,
+    2,
+    1,
     0,
     0,
     0,
@@ -43,7 +48,7 @@ def _completed_customer_run_row() -> tuple[object, ...]:
         3,
         54,
         0,
-        "customer_rule_router",
+        "customer_rule_router_v2",
         completed_at,
         completed_at,
         completed_at,
@@ -87,13 +92,23 @@ async def test_readiness_resolves_july_history_and_forecast_windows() -> None:
     assert payload["forecast_start"] == "2026-07-01"
     assert payload["forecast_end"] == "2027-12-31"
     assert payload["eligible_series"] == 10
-    assert payload["moving_average_series"] == 3
-    assert payload["seasonal_repeat_series"] == 4
-    assert payload["croston_series"] == 3
+    assert payload["moving_average_series"] == 2
+    assert payload["trailing_average_series"] == 1
+    assert payload["seasonal_repeat_series"] == 0
+    assert payload["tsb_series"] == 2
+    assert payload["adida_series"] == 1
+    assert payload["croston_series"] == 1
+    assert payload["ses_series"] == 2
+    assert payload["holt_damped_series"] == 1
     assert payload["model_route_counts"] == {
-        "moving_average_3": 3,
-        "seasonal_repeat_12": 4,
-        "croston": 3,
+        "moving_average_3": 2,
+        "trailing_average_6": 1,
+        "seasonal_repeat_12": 0,
+        "tsb": 2,
+        "adida": 1,
+        "croston": 1,
+        "ses": 2,
+        "holt_damped": 1,
     }
     assert "fallback_series" not in payload
     assert payload["dormant_series"] == 2
@@ -157,8 +172,7 @@ async def test_generate_creates_run_and_submits_durable_job() -> None:
     assert "started_at" in insert_call.args[0]
     assert 91 in insert_call.args[1]
     assert not any(
-        "SET job_id = %s WHERE run_id" in call.args[0]
-        for call in cursor.execute.call_args_list
+        "SET job_id = %s WHERE run_id" in call.args[0] for call in cursor.execute.call_args_list
     )
 
 
@@ -173,9 +187,7 @@ async def test_generate_creates_run_and_submits_durable_job() -> None:
 async def test_generate_blocks_when_source_anchor_is_not_latest_closed_month(
     source_latest_month: date,
 ) -> None:
-    pool, _conn, _cursor = make_pool(
-        fetchone_return=(source_latest_month, *_READY_PROFILE_ROW[1:])
-    )
+    pool, _conn, _cursor = make_pool(fetchone_return=(source_latest_month, *_READY_PROFILE_ROW[1:]))
 
     with (
         patch("api.core._get_pool", return_value=pool),
@@ -197,9 +209,7 @@ async def test_generate_blocks_when_source_anchor_is_not_latest_closed_month(
 
 @pytest.mark.asyncio
 async def test_generate_requires_completed_customer_demand_batch_lineage() -> None:
-    pool, _conn, _cursor = make_pool(
-        fetchone_return=(*_READY_PROFILE_ROW[:10], None, None, 0)
-    )
+    pool, _conn, _cursor = make_pool(fetchone_return=(*_READY_PROFILE_ROW[:15], None, None, 0))
 
     with (
         patch("api.core._get_pool", return_value=pool),
@@ -234,13 +244,22 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
         10,
         180,
         2,
-        "customer_rule_router",
+        "customer_rule_router_v2",
         created_at,
         created_at,
         created_at,
         None,
         {},
-        {"moving_average_3": 3, "seasonal_repeat_12": 4, "croston": 3},
+        {
+            "moving_average_3": 2,
+            "trailing_average_6": 1,
+            "tsb": 2,
+            "adida": 1,
+            "croston": 1,
+            "ses": 2,
+            "holt_damped": 1,
+            "seasonal_repeat_12": 0,
+        },
         12,
         12,
         2,
@@ -260,12 +279,17 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
 
     assert response.status_code == 200
     assert response.json()["row_count"] == 180
-    assert response.json()["model_id"] == "customer_rule_router"
+    assert response.json()["model_id"] == "customer_rule_router_v2"
     assert response.json()["skip_reason_counts"] == {}
     assert response.json()["model_route_counts"] == {
-        "moving_average_3": 3,
-        "seasonal_repeat_12": 4,
-        "croston": 3,
+        "moving_average_3": 2,
+        "trailing_average_6": 1,
+        "seasonal_repeat_12": 0,
+        "tsb": 2,
+        "adida": 1,
+        "croston": 1,
+        "ses": 2,
+        "holt_damped": 1,
     }
     select_sql = next(
         call.args[0]
@@ -280,7 +304,16 @@ async def test_get_customer_forecast_run_serializes_lineage() -> None:
 
 @pytest.mark.parametrize(
     "route_model_id",
-    ["moving_average_3", "seasonal_repeat_12", "croston"],
+    [
+        "moving_average_3",
+        "trailing_average_6",
+        "seasonal_repeat_12",
+        "tsb",
+        "adida",
+        "croston",
+        "ses",
+        "holt_damped",
+    ],
 )
 @pytest.mark.asyncio
 async def test_completed_customer_series_preserves_route_model_id(
@@ -312,7 +345,7 @@ async def test_completed_customer_series_preserves_route_model_id(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["run"]["model_id"] == "customer_rule_router"
+    assert payload["run"]["model_id"] == "customer_rule_router_v2"
     assert payload["history"] == [{"month": "2026-06-01", "actual_qty": 8.0}]
     assert payload["forecast"] == [
         {
@@ -422,7 +455,7 @@ async def test_export_rejects_an_incomplete_run() -> None:
         0,
         0,
         0,
-        "customer_rule_router",
+        "customer_rule_router_v2",
         created_at,
         created_at,
         created_at,

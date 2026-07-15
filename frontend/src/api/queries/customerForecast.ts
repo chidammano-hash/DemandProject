@@ -23,8 +23,13 @@ export interface CustomerForecastReadiness {
   total_series: number;
   eligible_series: number;
   moving_average_series: number;
+  trailing_average_series: number;
   seasonal_repeat_series: number;
+  tsb_series: number;
+  adida_series: number;
   croston_series: number;
+  ses_series: number;
+  holt_damped_series: number;
   model_route_counts: Record<CustomerForecastRouteModelId, number>;
   dormant_series: number;
   forecastable_series: number;

@@ -80,13 +80,23 @@ const readiness = {
   source_latest_month: "2026-06-01",
   total_series: 12,
   eligible_series: 10,
-  moving_average_series: 3,
-  seasonal_repeat_series: 4,
-  croston_series: 3,
+  moving_average_series: 1,
+  trailing_average_series: 2,
+  seasonal_repeat_series: 0,
+  tsb_series: 1,
+  adida_series: 1,
+  croston_series: 2,
+  ses_series: 2,
+  holt_damped_series: 1,
   model_route_counts: {
-    moving_average_3: 3,
-    seasonal_repeat_12: 4,
-    croston: 3,
+    moving_average_3: 1,
+    trailing_average_6: 2,
+    seasonal_repeat_12: 0,
+    tsb: 1,
+    adida: 1,
+    croston: 2,
+    ses: 2,
+    holt_damped: 1,
   },
   dormant_series: 2,
   forecastable_series: 10,
@@ -144,10 +154,15 @@ describe("CustomerForecastPanel", () => {
     expect(await screen.findByText(/Jan 2025.*Jun 2026/)).toBeInTheDocument();
     expect(screen.getByText(/Jul 2026.*Dec 2027/)).toBeInTheDocument();
     expect(screen.getByText("10 forecastable series")).toBeInTheDocument();
-    expect(screen.getByText(/3 3-Month Moving Average/)).toBeInTheDocument();
-    expect(screen.getByText(/4 12-Month Seasonal Repeat/)).toBeInTheDocument();
-    expect(screen.getByText(/3 Croston\/SBA/)).toBeInTheDocument();
-    expect(screen.getByText(/Demand starting in the latest six months/)).toBeInTheDocument();
+    expect(screen.getByText(/1 3-Month Moving Average/)).toBeInTheDocument();
+    expect(screen.getByText(/2 6-Month Trailing Average/)).toBeInTheDocument();
+    expect(screen.getByText(/0 12-Month Seasonal Repeat/)).toBeInTheDocument();
+    expect(screen.getByText(/1 TSB/)).toBeInTheDocument();
+    expect(screen.getByText(/1 ADIDA/)).toBeInTheDocument();
+    expect(screen.getByText(/2 Croston\/SBA/)).toBeInTheDocument();
+    expect(screen.getByText(/2 Simple Exponential Smoothing/)).toBeInTheDocument();
+    expect(screen.getByText(/1 Damped Holt/)).toBeInTheDocument();
+    expect(screen.getByText(/customer-only causal router/)).toBeInTheDocument();
     expect(screen.queryByText(/Chronos 2E/)).not.toBeInTheDocument();
     expect(screen.getByText(/2 customer-SKUs ignored/)).toBeInTheDocument();
     expect(screen.getByText("Bottom-Up Blend Validation")).toBeInTheDocument();
@@ -160,12 +175,22 @@ describe("CustomerForecastPanel", () => {
     const zeroRouteReadiness = {
       ...readiness,
       moving_average_series: 10,
+      trailing_average_series: 0,
       seasonal_repeat_series: 0,
+      tsb_series: 0,
+      adida_series: 0,
       croston_series: 0,
+      ses_series: 0,
+      holt_damped_series: 0,
       model_route_counts: {
         moving_average_3: 10,
+        trailing_average_6: 0,
         seasonal_repeat_12: 0,
+        tsb: 0,
+        adida: 0,
         croston: 0,
+        ses: 0,
+        holt_damped: 0,
       },
     };
     const completedRun = {
@@ -180,7 +205,7 @@ describe("CustomerForecastPanel", () => {
       eligible_series: 10,
       row_count: 180,
       skipped_series: 0,
-      model_id: "customer_rule_router",
+      model_id: "customer_rule_router_v2",
       created_at: "2026-07-13T12:00:00Z",
       started_at: "2026-07-13T12:01:00Z",
       completed_at: "2026-07-13T12:02:00Z",
@@ -207,12 +232,17 @@ describe("CustomerForecastPanel", () => {
 
     expect(
       await screen.findByText(
-        "10 3-Month Moving Average · 0 12-Month Seasonal Repeat · 0 Croston/SBA"
+        "10 3-Month Moving Average · 0 6-Month Trailing Average · 0 12-Month Seasonal Repeat · 0 TSB · 0 ADIDA · 0 Croston/SBA · 0 Simple Exponential Smoothing · 0 Damped Holt"
       )
     ).toBeInTheDocument();
     expect(screen.getByText("3-Month Moving Average (10)")).toBeInTheDocument();
+    expect(screen.getByText("6-Month Trailing Average (0)")).toBeInTheDocument();
     expect(screen.getByText("12-Month Seasonal Repeat (0)")).toBeInTheDocument();
+    expect(screen.getByText("TSB (0)")).toBeInTheDocument();
+    expect(screen.getByText("ADIDA (0)")).toBeInTheDocument();
     expect(screen.getByText("Croston/SBA (0)")).toBeInTheDocument();
+    expect(screen.getByText("Simple Exponential Smoothing (0)")).toBeInTheDocument();
+    expect(screen.getByText("Damped Holt (0)")).toBeInTheDocument();
   });
 
   it("shows failure guidance and retries with a new generation", async () => {
@@ -228,7 +258,7 @@ describe("CustomerForecastPanel", () => {
       eligible_series: 0,
       row_count: 0,
       skipped_series: 0,
-      model_id: "customer_rule_router",
+      model_id: "customer_rule_router_v2",
       created_at: "2026-07-13T12:00:00Z",
       started_at: "2026-07-13T12:01:00Z",
       completed_at: "2026-07-13T12:02:00Z",
@@ -268,7 +298,7 @@ describe("CustomerForecastPanel", () => {
       eligible_series: 12,
       row_count: 216,
       skipped_series: 0,
-      model_id: "customer_rule_router",
+      model_id: "customer_rule_router_v2",
       created_at: "2026-07-13T12:00:00Z",
       started_at: "2026-07-13T12:01:00Z",
       completed_at: "2026-07-13T12:02:00Z",
@@ -276,8 +306,13 @@ describe("CustomerForecastPanel", () => {
       skip_reason_counts: {},
       model_route_counts: {
         moving_average_3: 2,
-        seasonal_repeat_12: 7,
+        trailing_average_6: 1,
+        seasonal_repeat_12: 0,
+        tsb: 1,
+        adida: 1,
         croston: 3,
+        ses: 2,
+        holt_damped: 2,
       },
     };
     mockLatestRun.mockResolvedValue(completedRun);
@@ -308,9 +343,14 @@ describe("CustomerForecastPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("3-Month Moving Average")).toBeInTheDocument();
     expect(screen.getByText("3-Month Moving Average (2)")).toBeInTheDocument();
-    expect(screen.getByText("12-Month Seasonal Repeat (7)")).toBeInTheDocument();
+    expect(screen.getByText("6-Month Trailing Average (1)")).toBeInTheDocument();
+    expect(screen.getByText("12-Month Seasonal Repeat (0)")).toBeInTheDocument();
+    expect(screen.getByText("TSB (1)")).toBeInTheDocument();
+    expect(screen.getByText("ADIDA (1)")).toBeInTheDocument();
     expect(screen.getByText("Croston/SBA (3)")).toBeInTheDocument();
-    expect(screen.getByText(/Policy: Customer Rule Router/)).toBeInTheDocument();
+    expect(screen.getByText("Simple Exponential Smoothing (2)")).toBeInTheDocument();
+    expect(screen.getByText("Damped Holt (2)")).toBeInTheDocument();
+    expect(screen.getByText(/Policy: Customer Rule Router v2/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export CSV" })).toHaveAttribute(
       "href",
       "/customer-forecast/export?run_id=run-1"

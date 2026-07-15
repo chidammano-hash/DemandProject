@@ -588,14 +588,17 @@ inferred from a legacy status flag.
 
 Customer-level forecasting remains a separate immutable generation bounded
 context. `customer_forecast_run`, its durable batch/series ledger, and
-`fact_customer_forecast` use the `customer_rule_router` over the latest 18
+`fact_customer_forecast` use `customer_rule_router_v2` over the latest 18
 closed customer-demand months to produce an 18-month horizon. Eligibility first
-requires positive sales in the latest six closed months. The ordered router then
-uses recursive `moving_average_3` when the earliest positive demand is in that
-six-month window, `seasonal_repeat_12` when at least nine trailing-12 months have
-positive demand, and recursive Croston/SBA otherwise. The forward route is
-frozen in the durable manifest and each fact row; rule and Croston parameters
-are sealed into generation and backtest checksums.
+requires positive sales in the latest six closed months. Ordered causal gates
+then separate recent starts (`moving_average_3`), histories with fewer than
+three events (`trailing_average_6`), intermittent decay/variability (`tsb`,
+`adida`, Croston/SBA), and regular level/trend demand (`ses`, `holt_damped`).
+`seasonal_repeat_12` requires at least 24 months plus a validated 5% WAPE
+improvement over SES and therefore remains inactive under the current 18-month
+context. The forward route is frozen in the durable manifest and each fact row;
+all rule and statistical-model parameters are sealed into generation and
+backtest checksums.
 Every new manifest binds the exact latest completed `customer_demand` audit
 batch only when `customer_demand_profile_refresh_state` proves the profile MVs
 represent that batch and no load is active. The loader opens a running audit
@@ -610,9 +613,11 @@ Customer-SKUs without sales in the latest six closed months are ignored. Batch
 transactions and `SKIP LOCKED` workers preserve completed work across
 retry/restart while retaining per-run and per-row route lineage. The backtest
 does not reuse that production route: it re-evaluates eligibility and the
-ordered policy from the causal history at every origin. All three customer
-routes stay outside the governed five-model algorithm roster. Migration 218
-adds the router profile fields, allowed IDs, and run/backtest contract.
+ordered policy from the causal history at every origin. All eight customer
+routes stay outside the governed five-model algorithm roster. Migration 219
+side-builds and swaps the v2 profile under the customer-demand advisory lock,
+enforces the v2 router and route IDs for new rows, retires active v1 evidence,
+and preserves completed v1 rows for historical reading.
 
 Customer backtest and forward-blend evidence generation hold a shared session
 advisory lock before opening their repeatable-read snapshots. The
@@ -1758,9 +1763,9 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 |---|---|
 | **Status** | Accepted |
 | **Context** | Customer forecasts predict demand at customer grain, while the active production champion predicts sales at item-location grain. A raw sum would mix target semantics, customer coverage exceeds the governed production population, the customer horizon is shorter than production, and a fixed blend without historical comparison could silently degrade forecast quality. |
-| **Decision** | Use the ordered `customer_rule_router` for active customer series. Eligibility requires positive sales in the latest six closed months. A series whose earliest positive demand falls in that window uses recursive `moving_average_3`; otherwise a series with at least nine positive-demand months in the trailing 12 uses `seasonal_repeat_12`; the remainder uses recursive Croston/SBA. Migration 218 extends the profile MV, permits the run/backtest router ID and three per-series route IDs, and freezes the selected forward route in the durable manifest. Historical backtesting reclassifies eligibility and routing causally at every origin. Aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals an exact source-membership checksum plus series/batch counts, executes under one repeatable-read snapshot, and selects historical champion rows by their stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. Migration 217 adds a paired `customer_bottom_up` `shadow_candidate` to the canonical staging fact for cross-screen review. Its deterministic manifest is immutable, remains `promotion_eligible = FALSE`, and is database-barred from promoted status; its exact run id/checksum/cardinality lineage is stored on the corresponding blend. `customer_bottom_up_blend` remains the sole customer-derived `release_candidate`. A promoted blend cannot recursively become the source for another blend. |
+| **Decision** | Use the ordered `customer_rule_router_v2` for active customer series only; do not change item-location forecasting or backtesting. Eligibility requires positive sales in the latest six closed months. Route recent starts to recursive MA(3), histories with fewer than three positive events to a trailing-six-month average, and annual seasonality to repeat-12 only after at least 24 months and a validated 5% WAPE improvement over SES. For `ADI >= 1.32`, route occurrence decay to TSB, stable occurrence with `CV² >= 0.49` to ADIDA, and the intermittent remainder to Croston/SBA. For `ADI < 1.32`, route a latest-six versus prior-six mean change of at least 20% to damped Holt and the remainder to SES. Freeze the selected forward route in the durable manifest and reclassify every diagnostic causally at each historical backtest origin. Migration 219 side-builds the extended profile and permits the v2 run/backtest identity plus eight per-series route IDs. Aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals exact source membership, executes under one repeatable-read snapshot, and selects historical champion rows by stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. Migration 217 adds the immutable, non-promotable `customer_bottom_up` shadow candidate; `customer_bottom_up_blend` remains the sole customer-derived release candidate. A promoted blend cannot recursively become the source for another blend. |
 | **Rationale** | Explicit normalization prevents unit/target drift, a production spine preserves governed coverage, champion fallback avoids artificial gaps, and immutable component evidence makes every blended quantity reproducible. The historical no-degradation gate converts a plausible hierarchy idea into measured release evidence. A separate shadow purpose lets planners inspect the bottom-up signal in the same staging and chart infrastructure without weakening the single promotable-candidate invariant. |
-| **Consequences** | Customer generation and backtesting are additional durable compute workloads with 24-hour ceilings; full-spine blend generation has an 8-hour ceiling. Any change to route thresholds, Croston parameters, blend weights, normalization, or source release invalidates the matching evidence and requires a fresh customer run, backtest, shadow, and blend draft. Migration 218 fails active pre-router customer runs/backtests and invalidates generating blends tied to their evidence because those manifests cannot resume under the new checksum. Its side-built profile swap requires a maintenance window and temporary disk for a second profile copy. Operators must promote a fresh unblended champion before starting a later customer-blend cycle. Months beyond the 18-month customer horizon receive no customer contribution. Portfolio and Item Analysis can compare exact historical/backtest and staged series, but the bottom-up shadow remains read-only and non-promotable. The blend is promotable but never auto-promoted. |
+| **Consequences** | Customer generation and backtesting are additional durable compute workloads with 24-hour ceilings; full-spine blend generation has an 8-hour ceiling. Any change to route thresholds, statistical parameters, blend weights, normalization, or source release invalidates the matching evidence and requires a fresh customer run, backtest, shadow, and blend draft. Under the 18-month context the seasonal route is structurally zero, avoiding unsupported annual-repeat claims. Migration 219 retires queued/generating v1 customer runs and backtests and invalidates linked generating/ready blends because those manifests cannot resume under the v2 checksum; completed v1 evidence stays readable and promoted blends are untouched. Its side-built profile swap requires a maintenance window and temporary disk for a second profile copy. Operators must promote a fresh unblended champion before starting a later customer-blend cycle. Months beyond the 18-month customer horizon receive no customer contribution. Portfolio and Item Analysis can compare exact historical/backtest and staged series, but the bottom-up shadow remains read-only and non-promotable. The blend is promotable but never auto-promoted. |
 
 ---
 

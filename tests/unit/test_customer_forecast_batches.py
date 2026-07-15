@@ -7,9 +7,14 @@ import pandas as pd
 import pytest
 
 from common.ml.customer_forecast_rules import (
+    ADIDA_ROUTE_ID,
     CROSTON_ROUTE_ID,
+    HOLT_DAMPED_ROUTE_ID,
     MOVING_AVERAGE_ROUTE_ID,
     SEASONAL_REPEAT_ROUTE_ID,
+    SES_ROUTE_ID,
+    TRAILING_AVERAGE_ROUTE_ID,
+    TSB_ROUTE_ID,
 )
 from common.services.customer_forecast import build_customer_forecast_window
 from common.services.customer_forecast_batches import (
@@ -22,24 +27,46 @@ from common.services.customer_forecast_batches import (
 )
 
 _SETTINGS = {
-    "model_id": "customer_rule_router",
+    "model_id": "customer_rule_router_v2",
     "route_model_ids": [
         MOVING_AVERAGE_ROUTE_ID,
+        TRAILING_AVERAGE_ROUTE_ID,
         SEASONAL_REPEAT_ROUTE_ID,
+        TSB_ROUTE_ID,
+        ADIDA_ROUTE_ID,
         CROSTON_ROUTE_ID,
+        SES_ROUTE_ID,
+        HOLT_DAMPED_ROUTE_ID,
     ],
     "recent_sales_lookback_months": 6,
     "rule_params": {
         "recent_demand_lookback_months": 6,
         "moving_average_window_months": 3,
+        "trailing_average_window_months": 6,
+        "minimum_positive_demand_months": 3,
         "repeat_history_lookback_months": 12,
-        "repeat_history_min_demand_months": 9,
+        "seasonal_min_history_months": 24,
+        "seasonal_min_wape_improvement_pct": 5.0,
+        "intermittent_adi_threshold": 1.32,
+        "lumpy_cv2_threshold": 0.49,
+        "decay_gap_adi_multiplier": 1.5,
+        "declining_occurrence_ratio": 0.5,
+        "trend_relative_change_threshold": 0.2,
     },
     "croston_params": {
         "alpha": 0.1,
         "variant": "sba",
         "recursive": True,
         "recursive_damping": 0.5,
+    },
+    "statistical_params": {
+        "tsb_demand_alpha": 0.1,
+        "tsb_probability_alpha": 0.1,
+        "adida_alpha": 0.1,
+        "ses_alpha": 0.2,
+        "holt_level_alpha": 0.3,
+        "holt_trend_alpha": 0.1,
+        "holt_damping": 0.9,
     },
 }
 
@@ -117,7 +144,7 @@ def test_progress_reports_exact_customer_skus_and_throughput_eta() -> None:
             id="moving-average",
         ),
         pytest.param(
-            SEASONAL_REPEAT_ROUTE_ID,
+            TSB_ROUTE_ID,
             [
                 {
                     "startdate": month.date(),
@@ -128,10 +155,10 @@ def test_progress_reports_exact_customer_skus_and_throughput_eta() -> None:
                 }
                 for offset, month in enumerate(pd.date_range("2025-07-01", periods=9, freq="MS"))
             ],
-            id="seasonal-repeat",
+            id="tsb",
         ),
         pytest.param(
-            CROSTON_ROUTE_ID,
+            TRAILING_AVERAGE_ROUTE_ID,
             [
                 {
                     "startdate": date(2025, 1, 1),
@@ -148,7 +175,7 @@ def test_progress_reports_exact_customer_skus_and_throughput_eta() -> None:
                     "series_first_demand_month": date(2025, 1, 1),
                 },
             ],
-            id="croston",
+            id="trailing-average",
         ),
     ],
 )
@@ -180,7 +207,7 @@ def test_rule_batch_builds_all_horizon_rows_from_one_history_frame(
     assert len(rows) == 18
     assert len(source) == 18
     assert set(rows["model_id"]) == {route_model_id}
-    assert rows["forecast_qty"].nunique() > 1
+    assert rows["forecast_qty"].ge(0).all()
 
 
 def test_batch_rejects_a_route_that_no_longer_matches_its_source_history() -> None:

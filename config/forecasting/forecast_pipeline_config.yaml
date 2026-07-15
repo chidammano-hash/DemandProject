@@ -251,17 +251,33 @@ production_forecast:
     cron: 0 6 2 * *
 customer_forecast:
   enabled: true                    # Enable customer forecasts and governed bottom-up blending
-  model_id: customer_rule_router   # Ordered recent/dense/intermittent customer routing family
+  model_id: customer_rule_router_v2  # Customer-only statistical routing family; frozen per run
   rule_params:
-    recent_demand_lookback_months: 6  # Demand starting in this window uses the moving average
-    moving_average_window_months: 3   # Calendar months in the recursive moving-average state
-    repeat_history_lookback_months: 12  # Seasonal history cycle repeated into the horizon
-    repeat_history_min_demand_months: 9  # Positive-demand months required in the trailing cycle
+    recent_demand_lookback_months: 6    # Demand starting in this window uses recursive MA(3)
+    moving_average_window_months: 3     # Canonical recursive moving-average state
+    trailing_average_window_months: 6   # Sparse-series fallback calendar rate
+    minimum_positive_demand_months: 3   # Fewer observations are not Croston-eligible
+    repeat_history_lookback_months: 12  # Seasonal cycle used only after validation
+    seasonal_min_history_months: 24     # Two full cycles required; current 18-month run disables it
+    seasonal_min_wape_improvement_pct: 5.0  # Required causal gain over SES before repeat is eligible
+    intermittent_adi_threshold: 1.32    # Syntetos-Boylan intermittent-demand boundary
+    lumpy_cv2_threshold: 0.49           # ADIDA above this positive-size variability boundary
+    decay_gap_adi_multiplier: 1.5       # TSB when the trailing zero gap exceeds this × ADI
+    declining_occurrence_ratio: 0.5     # TSB when recent occurrence falls to this share of prior
+    trend_relative_change_threshold: 0.2  # Damped Holt for material six-vs-six-month change
   croston_params:
     alpha: 0.1                     # Smoothing factor for non-zero demand sizes and intervals
     variant: sba                   # Syntetos-Boylan bias-adjusted Croston forecast
     recursive: true                # Feed each projected customer month into the next horizon step
     recursive_damping: 0.5         # Prior projected-demand weight; must be in [0, 1)
+  statistical_params:
+    tsb_demand_alpha: 0.1          # Non-zero demand-size smoothing
+    tsb_probability_alpha: 0.1     # Occurrence probability smoothing and future decay
+    adida_alpha: 0.1               # SES smoothing after temporal aggregation
+    ses_alpha: 0.2                 # Regular level-demand smoothing
+    holt_level_alpha: 0.3          # Damped-Holt level smoothing
+    holt_trend_alpha: 0.1          # Damped-Holt trend smoothing
+    holt_damping: 0.9              # Future trend attenuation in (0, 1)
   history_months: 18               # Fully closed monthly periods supplied as context
   horizon_months: 18               # Future monthly periods generated from the planning month
   recent_sales_lookback_months: 6  # Ignore customer-SKUs with no sales in the latest closed months

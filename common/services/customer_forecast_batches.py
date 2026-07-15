@@ -6,25 +6,22 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
 import psycopg
+from psycopg import sql
 
 from common.core.sql_helpers import read_sql_chunked
-from common.ml.customer_forecast_rules import (
-    CROSTON_ROUTE_ID,
-    MOVING_AVERAGE_ROUTE_ID,
-    SEASONAL_REPEAT_ROUTE_ID,
-    parse_customer_forecast_rule_parameters,
-)
+from common.ml.customer_forecast_rules import parse_customer_forecast_rule_parameters
 from common.services.customer_forecast import (
+    CUSTOMER_ROUTE_CASE_SQL,
     CustomerForecastWindow,
     _frame_checksum,
     _resolve_run_window,
-    _shift_month,
     build_customer_forecast_rows,
+    customer_route_config_params,
     get_customer_forecast_settings,
     load_customer_forecast_readiness,
     prepare_customer_history,
@@ -83,13 +80,6 @@ def _lock_current_customer_demand_lineage(cur: Any, run_id: str) -> None:
         raise RuntimeError("Customer demand changed after run submission; submit a new run")
 
 
-def _recent_start(window: CustomerForecastWindow, settings: dict[str, Any]) -> date:
-    return _shift_month(
-        window.forecast_start,
-        -int(settings["recent_sales_lookback_months"]),
-    )
-
-
 def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, Any]:
     """Create an idempotent series-to-batch manifest and resume unfinished work."""
     settings = get_customer_forecast_settings()
@@ -127,42 +117,47 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
         )
         existing_batches = int((cur.fetchone() or (0,))[0])
         if existing_batches == 0:
+            rule_params = parse_customer_forecast_rule_parameters(dict(settings["rule_params"]))
+            manifest_query = sql.SQL(
+                """CREATE TEMP TABLE temp_customer_forecast_manifest
+                       ON COMMIT DROP AS
+                   WITH config AS (
+                       SELECT %s::date AS recent_sales_start,
+                              %s::date AS recent_demand_start,
+                              %s::date AS forecast_start,
+                              %s::integer AS history_months,
+                              %s::integer AS minimum_positive_demand_months,
+                              %s::integer AS seasonal_min_history_months,
+                              %s::numeric AS intermittent_adi_threshold,
+                              %s::numeric AS decay_gap_adi_multiplier,
+                              %s::numeric AS declining_occurrence_ratio,
+                              %s::numeric AS lumpy_cv2_threshold,
+                              %s::numeric AS trend_relative_change_threshold
+                   ), classified AS (
+                       SELECT profile.item_id,
+                              profile.location_id,
+                              profile.customer_no,
+                              {route_case} AS route_model_id
+                       FROM mv_customer_demand_series_profile profile
+                       CROSS JOIN config
+                       WHERE profile.first_month < config.forecast_start
+                   )
+                   SELECT item_id, location_id, customer_no, route_model_id,
+                          ((ROW_NUMBER() OVER (
+                              PARTITION BY route_model_id
+                              ORDER BY item_id, location_id, customer_no
+                          ) - 1) / %s)::integer AS route_batch_no
+                   FROM classified
+                   WHERE route_model_id IS NOT NULL"""
+            ).format(route_case=sql.SQL(CUSTOMER_ROUTE_CASE_SQL))
             cur.execute(
-                """
-                CREATE TEMP TABLE temp_customer_forecast_manifest ON COMMIT DROP AS
-                WITH classified AS (
-                    SELECT profile.item_id, profile.location_id, profile.customer_no,
-                           CASE
-                               WHEN profile.first_demand_month >= %s
-                                AND profile.first_demand_month < %s
-                               THEN %s::text
-                               WHEN profile.demand_months_last_12 >= %s
-                               THEN %s::text
-                               ELSE %s::text
-                           END AS route_model_id
-                    FROM mv_customer_demand_series_profile profile
-                    WHERE profile.first_month < %s
-                      AND profile.last_sales_month >= %s
-                )
-                SELECT item_id, location_id, customer_no, route_model_id,
-                       ((ROW_NUMBER() OVER (
-                           PARTITION BY route_model_id
-                           ORDER BY item_id, location_id, customer_no
-                       ) - 1) / %s)::integer AS route_batch_no
-                FROM classified
-                """,
+                manifest_query,
                 (
-                    _shift_month(
-                        window.forecast_start,
-                        -int(settings["rule_params"]["recent_demand_lookback_months"]),
+                    *customer_route_config_params(
+                        window,
+                        recent_sales_lookback_months=int(settings["recent_sales_lookback_months"]),
+                        rule_params=rule_params,
                     ),
-                    window.forecast_start,
-                    MOVING_AVERAGE_ROUTE_ID,
-                    int(settings["rule_params"]["repeat_history_min_demand_months"]),
-                    SEASONAL_REPEAT_ROUTE_ID,
-                    CROSTON_ROUTE_ID,
-                    window.forecast_start,
-                    _recent_start(window, settings),
                     int(settings["batch_size"]),
                 ),
             )
@@ -195,9 +190,7 @@ def initialize_customer_forecast_batches(conn: Any, run_id: str) -> dict[str, An
             (run_id,),
         )
         route_rows = cur.fetchall()
-        route_counts = {
-            str(route_model_id): 0 for route_model_id in settings["route_model_ids"]
-        }
+        route_counts = {str(route_model_id): 0 for route_model_id in settings["route_model_ids"]}
         route_counts.update({str(row[0]): int(row[1]) for row in route_rows})
         total_series = sum(route_counts.values())
         total_batches = sum(int(row[2]) for row in route_rows)
@@ -347,6 +340,7 @@ def _build_batch_rows(
         window,
         rule_params=rule_params,
         croston_params=dict(settings["croston_params"]),
+        statistical_params=dict(settings["statistical_params"]),
     )
     source_input = prepared.model_input
     expected_rows = batch.series_count * window.horizon_months

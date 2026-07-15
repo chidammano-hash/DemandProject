@@ -39,10 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useChartColors } from "@/hooks/useChartColors";
-import {
-  CUSTOMER_FORECAST_ROUTE_ORDER,
-  customerForecastModelLabel,
-} from "@/lib/customerForecast";
+import { CUSTOMER_FORECAST_ROUTE_ORDER, customerForecastModelLabel } from "@/lib/customerForecast";
 import { formatApiError } from "@/lib/formatApiError";
 import { CustomerBottomUpBlendPanel } from "./CustomerBottomUpBlendPanel";
 
@@ -158,18 +155,22 @@ export function CustomerForecastPanel() {
     () =>
       Array.from(
         new Set(
-          (seriesQuery.data?.forecast ?? []).map((row) =>
-            customerForecastModelLabel(row.model_id)
-          )
+          (seriesQuery.data?.forecast ?? []).map((row) => customerForecastModelLabel(row.model_id))
         )
       ),
     [seriesQuery.data?.forecast]
   );
 
   const readiness = readinessQuery.data;
+  const readinessRouteSummary = readiness
+    ? CUSTOMER_FORECAST_ROUTE_ORDER.map(
+        (modelId) =>
+          `${(readiness.model_route_counts?.[modelId] ?? 0).toLocaleString()} ${customerForecastModelLabel(modelId)}`
+      ).join(" · ")
+    : "";
   const latestRouteEntries = useMemo(() => {
     if (!latestRun) return [];
-    if (latestRun.model_id === "customer_rule_router") {
+    if (latestRun.model_id === "customer_rule_router_v2") {
       return CUSTOMER_FORECAST_ROUTE_ORDER.map(
         (modelId) => [modelId, latestRun.model_route_counts?.[modelId] ?? 0] as const
       );
@@ -193,10 +194,10 @@ export function CustomerForecastPanel() {
                 <Users className="h-5 w-5" /> Customer Forecast Generation
               </CardTitle>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Generate customer-level demand with an ordered rule policy. Demand starting in the
-                latest six months uses a recursive 3-month moving average; series with demand in at
-                least 9 of the latest 12 months repeat their 12-month history; all other active
-                series use recursive Croston/SBA. Inactive series are ignored.
+                Generate customer-level demand with a customer-only causal router. It separates
+                cold-start, sparse, intermittent, regular, trending, and validated seasonal demand
+                so each series uses a fast statistical method suited to its history. Inactive series
+                are ignored.
               </p>
             </div>
             <div className="flex gap-2">
@@ -265,7 +266,7 @@ export function CustomerForecastPanel() {
                 <WindowCard
                   label="Coverage"
                   value={`${readiness.forecastable_series.toLocaleString()} forecastable series`}
-                  detail={`${readiness.moving_average_series.toLocaleString()} 3-Month Moving Average · ${readiness.seasonal_repeat_series.toLocaleString()} 12-Month Seasonal Repeat · ${readiness.croston_series.toLocaleString()} Croston/SBA`}
+                  detail={readinessRouteSummary}
                 />
               </div>
               <p className="text-xs text-muted-foreground">

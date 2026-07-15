@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Implemented |
-| **Customer model** | Ordered deterministic rule router (`customer_rule_router`) |
+| **Customer model** | Customer-only causal statistical router (`customer_rule_router_v2`) |
 | **Customer history window** | Latest 18 fully closed months |
 | **Customer forecast horizon** | 18 monthly periods beginning with the planning month |
 | **Customer forecast grain** | Item + location + customer + forecast month |
@@ -59,8 +59,9 @@ stamped execution lag, not mutable current SKU metadata.
 ### In scope
 
 - route every active valid customer series to exactly one of
-  `moving_average_3`, `seasonal_repeat_12`, or `croston`, then generate an
-  18-month deterministic forecast with that route;
+  `moving_average_3`, `trailing_average_6`, `seasonal_repeat_12`, `tsb`,
+  `adida`, `croston`, `ses`, or `holt_damped`, then generate an 18-month
+  deterministic forecast with that route;
 - ignore customer-SKUs with no `sales_qty` in the latest six closed months;
 - persist immutable customer forecasts in resumable 10,000-series batches;
 - aggregate customer demand forecasts to item-location-month;
@@ -131,24 +132,52 @@ rows. Active series require valid item, location, and customer keys; duplicate
 source grains, negative quantities, missing latest-closed-month freshness, and
 unresolved keys remain data-quality blockers.
 
-Missing months in the bounded 18-month history are densified with zero demand.
-The run-level model is `customer_rule_router`. It applies this ordered policy,
-stopping at the first matching rule:
+Missing months in the bounded history are densified with zero demand. The
+run-level model is `customer_rule_router_v2`. It applies this ordered,
+customer-only policy and stops at the first matching rule:
 
-1. **Recent demand → `moving_average_3`.** If the series' earliest positive
-   `demand_qty` month is within the latest six fully closed months, forecast
-   with a recursive three-calendar-month moving average.
-2. **Dense trailing year → `seasonal_repeat_12`.** Otherwise, if at least nine
-   of the trailing 12 fully closed calendar months have positive `demand_qty`,
-   repeat the last 12 actual months cyclically into the horizon.
-3. **Intermittent remainder → `croston`.** Otherwise, use configured
-   Syntetos-Boylan bias-adjusted Croston with `alpha: 0.1`, `variant: sba`,
-   `recursive: true`, and `recursive_damping: 0.5`.
+1. **Recent demand → `moving_average_3`.** If the series' first positive
+   `demand_qty` is no more than six closed months old, use a recursive
+   three-calendar-month moving average.
+2. **Insufficient event evidence → `trailing_average_6`.** Otherwise, if the
+   causal history contains fewer than three positive-demand observations, use
+   the mean of the latest six actual calendar months. Croston-family interval
+   estimates are not allowed with fewer than three events.
+3. **Validated annual seasonality → `seasonal_repeat_12`.** Otherwise, require
+   at least 24 causal history months and a rolling seasonal-naive challenger
+   that improves on SES WAPE by at least the configured
+   `seasonal_min_wape_improvement_pct` (5%) before repeating the last 12 actual
+   months. The current generation context is 18 months, so this route is
+   deliberately ineligible and reports a zero count until the context is
+   increased to at least 24 months and the validation gate passes.
+4. **Intermittent and decaying → `tsb`.** When `ADI >= 1.32`, use
+   Teunter-Syntetos-Babai if either the trailing zero gap exceeds `1.5 * ADI`
+   or the positive-demand occurrence rate in the latest six months is no more
+   than 50% of the preceding six-month rate.
+5. **Intermittent and erratic → `adida`.** For the remaining intermittent
+   series, use Aggregate-Disaggregate Intermittent Demand Approach when
+   positive-demand size `CV² >= 0.49`.
+6. **Intermittent and stable → `croston`.** Route the remaining intermittent
+   series to configured Syntetos-Boylan bias-adjusted Croston.
+7. **Regular with material trend → `holt_damped`.** For `ADI < 1.32`, use
+   damped Holt when the latest-six-month mean differs from the preceding-six-
+   month mean by at least 20%.
+8. **Regular level demand → `ses`.** Route every remaining regular series to
+   simple exponential smoothing.
+
+For each origin, the diagnostics are causal:
+
+```text
+effective_months = months from first positive demand through the origin
+ADI              = effective_months / positive-demand months
+CV²              = variance(positive demand sizes) / mean(positive demand sizes)²
+```
 
 The positive-sales eligibility rule is evaluated before routing, so a recent
-demand start does not make an otherwise dormant series forecastable. The three
+demand start does not make an otherwise dormant series forecastable. All eight
 route IDs are customer-scoped and remain outside the governed five-model
-item-location algorithm roster. There is no customer Chronos route.
+item-location algorithm roster. There is no customer Chronos route, and this
+router does not alter item-location forecasting or backtesting.
 
 For the moving-average route, let `S` contain the 18 densified actual months.
 Each projection is appended to `S` before the next step:
@@ -158,8 +187,9 @@ F[h] = mean(last 3 calendar-month values in S)
 S    = S followed by F[h]
 ```
 
-For the seasonal-repeat route, let `A[0..11]` be the last 12 densified actual
-months in chronological order:
+The `trailing_average_6` route carries the mean of the latest six densified
+actual months across the horizon. For the seasonal-repeat route, let
+`A[0..11]` be the last 12 densified actual months in chronological order:
 
 ```text
 F[h] = A[h mod 12]
@@ -188,17 +218,20 @@ Thus each projected month is the state used by the next horizon step and the
 path converges toward `L`. It does not treat a projected monthly rate as a new
 positive customer order, which would corrupt Croston's intermittent-demand
 interval state. An all-zero history remains all zero. A path may repeat only
-when its incoming state already equals the long-run rate.
+when its incoming state already equals the long-run rate. TSB additionally
+updates occurrence probability through zero periods so obsolete demand decays.
+ADIDA forecasts an aggregated intermittent rate and disaggregates it to months.
+SES carries its smoothed level forward; damped Holt carries a decaying trend.
+All routes clamp numerical noise to a finite, non-negative forecast.
 
-The vectorized rolling backtest applies the same ordered policy independently
-at every causal origin. Eligibility uses positive sales in the six closed
-months before that origin; the recent-demand and trailing-12 tests use only the
-history then available. It does not reuse the frozen route from the forward
-run. The one-step forecast is therefore the mean of the preceding three actual
-calendar months, the actual from 12 months earlier, or the Croston/SBA
-first-step recurrence, according to the origin-specific route.
+The vectorized rolling backtest applies the same ordered v2 policy independently
+at every causal origin. Eligibility, age, event count, seasonal validation,
+ADI, CV², occurrence decay, and trend evidence use only the history available
+before that target month. It does not reuse the frozen route from the forward
+run. This prevents the future from changing either route assignment or model
+state during historical accuracy comparison.
 
-Rule thresholds and Croston recursive parameters are included in both
+Rule thresholds and every statistical-model parameter are included in both
 customer-generation and backtest configuration checksums. Changing any of them
 makes older customer runs and blend evidence stale, requiring a new customer
 run, backtest, and blend draft.
@@ -207,8 +240,8 @@ Generation rules:
 
 1. Resolve planning, history, and forecast windows once.
 2. Build the active-series manifest from
-   `mv_customer_demand_series_profile`, applying the ordered route policy and
-   freezing exactly one route per series.
+   `mv_customer_demand_series_profile`, applying the ordered v2 route policy
+   and freezing exactly one route per series.
 3. Claim route-specific 10,000-series batches with `FOR UPDATE SKIP LOCKED`.
 4. Load only each claimed batch's bounded fact history.
 5. Dispatch each batch to its persisted route and generate exactly 18
@@ -342,10 +375,10 @@ A backtest gate passes only when all of the following are true:
   than source champion WAPE.
 
 A promotable forward draft must reference a matching completed passing
-backtest. Matching means the same `customer_rule_router` run/config checksum,
-ordered rule thresholds, Croston/SBA parameters, blend weights, normalization
-policy, source promotion, and source production lineage. Changed inputs require
-a new backtest and a new draft.
+backtest. Matching means the same `customer_rule_router_v2` run/config checksum,
+ordered rule thresholds, statistical-model parameters, blend weights,
+normalization policy, source promotion, and source production lineage. Changed
+inputs require a new backtest and a new draft.
 Failure is closed: missing, stale, mismatched, incomplete, or failed evidence
 blocks staging/promotion rather than falling back to an untested release. The
 source promotion must be a fresh unblended champion; a previously promoted
@@ -371,11 +404,14 @@ customer blend cannot recursively become the champion input to another blend.
   before opening its new batch. Backtest, forward-blend generation, and
   customer-blend promotion hold the matching shared lock through evidence
   publication.
-  Migration 218 extends `mv_customer_demand_series_profile` with the first
-  positive-demand month, trailing-12 positive-demand-month count, and repeated
-  global source-latest anchor used by readiness and forward manifest routing.
-  The anchor makes a future-dated source row fail freshness even when its
-  series is outside the bounded run population.
+  Migration 218 adds the first rule-router fields and repeated global source-
+  latest anchor. Migration 219 side-builds and swaps the v2 profile under the
+  customer-demand advisory lock. It preserves those fields and adds last-demand
+  month, trailing-18 event/count/sum/sum-of-squares statistics, recent/prior
+  six-month event counts and sums, and `seasonal_repeat_validated`. The latter
+  is false under the current 18-month context because annual seasonality cannot
+  pass a 24-month holdout gate. The global anchor makes a future-dated source
+  row fail freshness even when its series is outside the bounded run population.
 - The queued manifest is committed before managed-job submission. Reads derive
   its job id from `job_history.params.run_id`; a later submission reconciles
   terminal jobs and retires a still-unlinked manifest after a five-minute
@@ -383,8 +419,8 @@ customer blend cannot recursively become the champion input to another blend.
   permanently occupied.
 - `customer_forecast_batch` and `customer_forecast_batch_series` provide
   route-specific resumable work ownership and committed recovery checkpoints.
-  `model_route_counts` records the exact `moving_average_3`,
-  `seasonal_repeat_12`, and `croston` composition, including zero-count routes.
+  `model_route_counts` records the exact composition of all eight v2 routes,
+  including zero-count routes.
 - `fact_customer_forecast` stores run-versioned customer forecast rows and
   actual generating model lineage. Rows can change only while their parent run
   is generating; failed, cancelled, and completed output is frozen. A resumed
@@ -404,7 +440,7 @@ customer blend cannot recursively become the champion input to another blend.
   validation and evidence publication. Backtest blend evidence is stored at
   four-decimal precision to satisfy the component formula; release staging is
   the boundary that rounds publishable quantities to two decimals. The
-  run-level customer model is `customer_rule_router`; route selection is
+  run-level customer model is `customer_rule_router_v2`; route selection is
   recalculated from each origin's causal prefix and is not copied from the
   forward batch manifest.
 - `customer_bottom_up_backtest_component` accepts inserts only while its run is
@@ -445,7 +481,7 @@ repeatable-read snapshot.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/customer-forecast/readiness` | Resolve customer source windows, latest completed load-batch lineage, coverage, and blockers |
-| POST | `/customer-forecast/generate` | Launch one durable `customer_rule_router` run |
+| POST | `/customer-forecast/generate` | Launch one durable `customer_rule_router_v2` run |
 | GET | `/customer-forecast/runs/latest` | Return latest progress or latest completed result |
 | GET | `/customer-forecast/runs/{run_id}` | Return one customer run |
 | POST | `/customer-forecast/runs/{run_id}/cancel` | Request cancellation |
@@ -482,8 +518,8 @@ view. It shows:
 
 - the planning month, 18-month input/output windows, source readiness, and
   dormant-series exclusions;
-- the `moving_average_3`, `seasonal_repeat_12`, and `croston` forecastable
-  coverage split plus durable batch progress;
+- all eight v2 route counts, including zero-count routes, plus durable batch
+  progress;
 - customer history versus forecast with run/model lineage and export;
 - a **Run Blend Backtest** action with six-month common-cohort WAPE, MAE, bias,
   accuracy, thresholds, and pass/fail reasons;
@@ -541,8 +577,9 @@ controls remain authoritative.
 - DDL: `sql/210_create_customer_forecast.sql` through
   `sql/215_enforce_customer_batch_lineage.sql`, plus
   `sql/216_create_customer_bottom_up_blend.sql` and
-  `sql/217_add_customer_bottom_up_shadow_staging.sql`; rule-router policy and
-  profile fields: `sql/218_enable_customer_rule_router.sql`
+  `sql/217_add_customer_bottom_up_shadow_staging.sql`; v1 rule-router policy:
+  `sql/218_enable_customer_rule_router.sql`; v2 profile, lineage, and route
+  constraints: `sql/219_enable_customer_rule_router_v2.sql`
 - Rule selection and deterministic forecasts:
   `common/ml/customer_forecast_rules.py`; Croston/SBA primitive:
   `common/ml/croston.py`
@@ -567,20 +604,22 @@ controls remain authoritative.
 - A July 2026 customer run reads January 2025–June 2026 and forecasts July
   2026–December 2027.
 - Every eligible series has positive sales in the latest six closed months and
-  is routed exactly once, in order: earliest positive demand within those six
-  months → `moving_average_3`; otherwise at least nine positive-demand months
-  in the trailing 12 → `seasonal_repeat_12`; otherwise → `croston`. Dormant
-  series have no rows.
-- Every routed series has exactly 18 consecutive non-negative rows. The moving
-  average recursively appends each forecast to its three-calendar-month state;
-  the seasonal route cycles the last 12 actual months; the Croston route
-  recursively converges toward its SBA rate.
+  is routed exactly once under the ordered age, event-count, validated-
+  seasonality, ADI, CV², occurrence-decay, and trend gates. Dormant series have
+  no rows.
+- A series with fewer than three demand events never uses a Croston-family
+  interval estimate. A seasonal repeat requires at least 24 months plus a 5%
+  validated WAPE advantage over SES, so the route count is zero under the
+  current 18-month context.
+- Every routed series has exactly 18 consecutive finite, non-negative rows.
+  The moving average, TSB, Croston/SBA, and damped-trend routes preserve their
+  defined recursive state; fixed-level routes remain deterministic.
 - The production route is frozen in the durable manifest and on fact rows.
   Backtesting re-evaluates eligibility and the ordered route causally at every
   origin instead of reusing the forward route.
-- Run and backtest lineage use `customer_rule_router`; per-series lineage uses
-  `moving_average_3`, `seasonal_repeat_12`, or `croston`. Customer generation
-  has no Chronos route.
+- Run and backtest lineage use `customer_rule_router_v2`; per-series lineage
+  uses one of the eight customer-only route IDs. Customer generation has no
+  Chronos route and does not change item-location forecasting/backtesting.
 - Raw customer forecasts target `demand_qty`; normalized blend components use
   the causal fulfillment ratio to align to sales semantics.
 - A six-origin backtest uses only data knowable at each origin and persists
