@@ -116,9 +116,11 @@ test.describe("URL State", () => {
     await expect(page).toHaveURL(/tab=aggregateAnalysis/);
   });
 
-  test("invalid tab falls back to aggregateAnalysis", async ({ page }) => {
+  test("invalid tab falls back to commandCenter", async ({ page }) => {
+    // Unknown tab keys resolve through the default "item" domain, which lands
+    // on the Command Center home tab (see useUrlState.getInitialTab).
     await page.goto("/?tab=nonexistent");
     await waitForAppReady(page);
-    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
+    await expect(page).toHaveURL(/tab=commandCenter/);
   });
 });

@@ -1,14 +1,19 @@
 /**
  * THE single source of truth for every color in the product.
  *
- * "Control-room indigo": three modes (light = daylight ops, soft = planner's
- * paper, dark = night shift) sharing one semantic contract — the same concept
- * always wears the same color on every screen:
+ * "Harbor steel": three modes (light = daylight ops, soft = planner's paper,
+ * dark = night shift) sharing one semantic contract — the same concept always
+ * wears the same color on every screen:
  *
- *   actual / history  -> neutral ink          forecast / champion -> indigo
+ *   actual / history  -> neutral ink          forecast / champion -> petrol
  *   external / ref    -> sky                  good / on-target    -> emerald
  *   risk / error      -> red                  warning / excess    -> amber
  *   ceiling / capacity-> teal                 AI-generated        -> violet
+ *
+ * The brand primary is a deep petrol/steel blue (steel, sea, freight) with
+ * copper (`--severity-high`) as the operational "action needed" accent.
+ * Deliberately NOT the generic indigo/violet of default AI-built UIs — violet
+ * exists only as the semantic marker for AI-generated series.
  *
  * Everything derives from here:
  *   - `constants/themes/general.ts` builds the runtime ProductTheme from it.
@@ -75,29 +80,29 @@ export interface ModePalette {
 /* ------------------------------------------------------------------ */
 
 const LIGHT_SERIES = [
-  "#4F46E5", // 0 indigo  — forecast / champion
+  "#1D5F85", // 0 petrol  — forecast / champion (brand)
   "#334155", // 1 ink     — actual / history
   "#0C8A5F", // 2 emerald — good / on-target
   "#C26A02", // 3 amber   — warning / excess
-  "#0284C7", // 4 sky     — external / reference
+  "#0284C7", // 4 sky     — external / reference (lighter than petrol)
   "#DC2626", // 5 red     — risk / error
   "#0F766E", // 6 teal    — ceiling / capacity
-  "#A21CAF", // 7 violet-magenta — AI-generated (hue-separated from indigo)
+  "#A21CAF", // 7 violet-magenta — AI-generated only
 ] as const;
 
 const SOFT_SERIES = [
-  "#5048B8",
+  "#1A5876",
   "#44403C",
   "#0B7E58",
   "#B3660A",
   "#0779B3",
   "#C42F2F",
-  "#085E6E",
+  "#0C6E62",
   "#8A3FC7",
 ] as const;
 
 const DARK_SERIES = [
-  "#818CF8",
+  "#4BA3DC",
   "#C7CFDA",
   "#10B981",
   "#FBBF24",
@@ -140,37 +145,37 @@ function chartTriplets(series: readonly string[]) {
 /* ------------------------------------------------------------------ */
 
 const lightCore: ThemePalette = {
-  background: "230 24% 97%",
-  foreground: "233 34% 14%",
+  background: "210 22% 97%",
+  foreground: "212 30% 14%",
   card: "0 0% 100%",
-  cardForeground: "233 34% 14%",
-  primary: "245 55% 48%",
+  cardForeground: "212 30% 14%",
+  primary: "202 64% 32%",
   primaryForeground: "0 0% 100%",
-  secondary: "232 20% 95%",
-  secondaryForeground: "233 24% 28%",
-  muted: "232 20% 94%",
-  mutedForeground: "233 12% 41%",
-  accent: "243 45% 94%",
-  accentForeground: "245 55% 44%",
-  border: "231 20% 88%",
-  input: "231 20% 88%",
-  ring: "245 55% 48%",
+  secondary: "210 16% 95%",
+  secondaryForeground: "212 20% 28%",
+  muted: "210 16% 94%",
+  mutedForeground: "212 12% 41%",
+  accent: "202 45% 93%",
+  accentForeground: "202 64% 30%",
+  border: "212 18% 88%",
+  input: "212 18% 88%",
+  ring: "202 64% 32%",
   destructive: "4 74% 46%",
   destructiveForeground: "0 0% 100%",
-  sidebarBg: "232 22% 95%",
-  sidebarForeground: "233 14% 37%",
-  sidebarActive: "245 55% 48%",
-  sidebarHover: "232 18% 91%",
-  sidebarBorder: "231 20% 87%",
+  sidebarBg: "210 20% 95%",
+  sidebarForeground: "212 15% 37%",
+  sidebarActive: "202 64% 32%",
+  sidebarHover: "210 18% 91%",
+  sidebarBorder: "212 18% 87%",
   ...chartTriplets(LIGHT_SERIES),
   kpiBest: "160 84% 27%",
   kpiWarning: "4 74% 46%",
   kpiCeiling: "192 85% 30%",
-  bgGradientPrimary: "hsla(245, 60%, 50%, 0.05)",
-  bgGradientSecondary: "hsla(190, 80%, 45%, 0.04)",
+  bgGradientPrimary: "hsla(203, 70%, 45%, 0.05)",
+  bgGradientSecondary: "hsla(24, 70%, 50%, 0.03)",
   bgGradientBaseStart: "#FBFCFE",
-  bgGradientBaseMid: "#F4F6FB",
-  bgGradientBaseEnd: "#EDF0F8",
+  bgGradientBaseMid: "#F4F7FA",
+  bgGradientBaseEnd: "#EDF1F6",
   success: "160 84% 27%",
   successForeground: "0 0% 100%",
   warning: "32 95% 42%",
@@ -186,22 +191,22 @@ const softCore: ThemePalette = {
   foreground: "30 12% 16%",
   card: "42 30% 99%",
   cardForeground: "30 12% 16%",
-  primary: "245 45% 49%",
+  primary: "202 60% 32%",
   primaryForeground: "0 0% 100%",
   secondary: "38 16% 92%",
   secondaryForeground: "30 10% 30%",
   muted: "38 16% 91%",
   mutedForeground: "30 8% 39%",
-  accent: "245 25% 92%",
-  accentForeground: "245 45% 45%",
+  accent: "202 22% 91%",
+  accentForeground: "202 60% 30%",
   border: "36 14% 85%",
   input: "36 14% 85%",
-  ring: "245 45% 49%",
+  ring: "202 60% 32%",
   destructive: "4 66% 46%",
   destructiveForeground: "0 0% 100%",
   sidebarBg: "38 20% 94%",
   sidebarForeground: "30 10% 36%",
-  sidebarActive: "245 45% 49%",
+  sidebarActive: "202 60% 32%",
   sidebarHover: "38 14% 89%",
   sidebarBorder: "36 14% 83%",
   ...chartTriplets(SOFT_SERIES),
@@ -209,7 +214,7 @@ const softCore: ThemePalette = {
   kpiWarning: "4 66% 44%",
   kpiCeiling: "192 75% 28%",
   bgGradientPrimary: "hsla(35, 60%, 50%, 0.05)",
-  bgGradientSecondary: "hsla(245, 40%, 55%, 0.035)",
+  bgGradientSecondary: "hsla(203, 45%, 50%, 0.035)",
   bgGradientBaseStart: "#FCFAF6",
   bgGradientBaseMid: "#F7F3EC",
   bgGradientBaseEnd: "#F0EAE0",
@@ -224,37 +229,37 @@ const softCore: ThemePalette = {
 };
 
 const darkCore: ThemePalette = {
-  background: "235 30% 8%",
-  foreground: "228 28% 94%",
-  card: "235 26% 12%",
-  cardForeground: "228 28% 94%",
-  primary: "240 88% 77%",
-  primaryForeground: "237 40% 12%",
-  secondary: "235 22% 16%",
-  secondaryForeground: "230 18% 78%",
-  muted: "235 22% 15%",
-  mutedForeground: "231 14% 64%",
-  accent: "240 25% 18%",
-  accentForeground: "240 88% 77%",
-  border: "235 20% 19%",
-  input: "235 20% 19%",
-  ring: "240 88% 77%",
+  background: "215 35% 8%",
+  foreground: "210 25% 94%",
+  card: "215 30% 12%",
+  cardForeground: "210 25% 94%",
+  primary: "203 65% 58%",
+  primaryForeground: "213 45% 10%",
+  secondary: "215 25% 16%",
+  secondaryForeground: "210 16% 78%",
+  muted: "215 25% 15%",
+  mutedForeground: "213 14% 64%",
+  accent: "203 30% 18%",
+  accentForeground: "203 65% 58%",
+  border: "215 25% 19%",
+  input: "215 25% 19%",
+  ring: "203 65% 58%",
   destructive: "2 68% 46%",
   destructiveForeground: "0 0% 100%",
-  sidebarBg: "237 32% 6%",
-  sidebarForeground: "230 14% 62%",
-  sidebarActive: "240 88% 77%",
-  sidebarHover: "235 22% 13%",
-  sidebarBorder: "235 20% 15%",
+  sidebarBg: "217 38% 6%",
+  sidebarForeground: "213 12% 62%",
+  sidebarActive: "203 65% 58%",
+  sidebarHover: "215 25% 13%",
+  sidebarBorder: "215 25% 15%",
   ...chartTriplets(DARK_SERIES),
   kpiBest: "158 62% 55%",
   kpiWarning: "2 90% 72%",
   kpiCeiling: "187 75% 55%",
-  bgGradientPrimary: "hsla(243, 85%, 65%, 0.10)",
-  bgGradientSecondary: "hsla(190, 85%, 55%, 0.05)",
-  bgGradientBaseStart: "#101226",
-  bgGradientBaseMid: "#0C0E1D",
-  bgGradientBaseEnd: "#080A14",
+  bgGradientPrimary: "hsla(203, 80%, 60%, 0.10)",
+  bgGradientSecondary: "hsla(24, 80%, 55%, 0.04)",
+  bgGradientBaseStart: "#0F1523",
+  bgGradientBaseMid: "#0B101B",
+  bgGradientBaseEnd: "#070B12",
   success: "158 62% 50%",
   successForeground: "160 65% 8%",
   warning: "38 95% 58%",
