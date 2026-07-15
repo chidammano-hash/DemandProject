@@ -7,6 +7,7 @@
  */
 import type { AiInsight } from "@/types/ai-planner";
 import type { StoryboardException } from "@/types/storyboard";
+import { SEVERITY_CONFIG, SEVERITY_ORDER as UNIFIED_SEVERITY_ORDER } from "@/constants/severity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,39 +30,34 @@ export interface UnifiedException {
 }
 
 // ---------------------------------------------------------------------------
-// Severity helpers
+// Severity helpers — thin views over the unified severity token system.
 // ---------------------------------------------------------------------------
-export const SEVERITY_ORDER: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
+export const SEVERITY_ORDER: Record<string, number> = UNIFIED_SEVERITY_ORDER;
 
 export const SEVERITY_BORDER: Record<string, string> = {
-  critical: "border-l-red-500",
-  high: "border-l-orange-500",
-  medium: "border-l-yellow-500",
-  low: "border-l-gray-400",
+  critical: SEVERITY_CONFIG.critical.border,
+  high: SEVERITY_CONFIG.high.border,
+  medium: SEVERITY_CONFIG.medium.border,
+  low: SEVERITY_CONFIG.low.border,
 };
 
 export const SEVERITY_DOT: Record<string, string> = {
-  critical: "bg-red-500",
-  high: "bg-orange-500",
-  medium: "bg-yellow-500",
-  low: "bg-gray-400",
+  critical: SEVERITY_CONFIG.critical.dot,
+  high: SEVERITY_CONFIG.high.dot,
+  medium: SEVERITY_CONFIG.medium.dot,
+  low: SEVERITY_CONFIG.low.dot,
 };
 
 export const SOURCE_BADGE: Record<string, { label: string; className: string }> = {
+  // AI-generated content always wears the violet AI token (chart-8), matching
+  // the chart semantic contract.
   ai: {
     label: "AI",
-    className:
-      "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+    className: "bg-chart-8/10 text-chart-8",
   },
   rule: {
     label: "Rule",
-    className:
-      "bg-gray-100 text-gray-700 dark:bg-gray-700/40 dark:text-gray-300",
+    className: "bg-muted text-muted-foreground",
   },
 };
 

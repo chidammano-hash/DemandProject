@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatDate } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/PageHeader";
 import { FilterDropdown, SearchableFilterDropdown, TimeGrainToggle } from "./FilterDropdowns";
 import {
   buildCascade,
@@ -38,28 +39,25 @@ export function PortfolioHeaderControls({
   const filtered = hasActiveFilters(filters);
   return (
     <>
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Portfolio Analysis</h2>
-          <p className="text-xs text-muted-foreground">
-            Forecast performance and accuracy analytics across your portfolio. Filter by brand,
-            category, item, location.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {planningDate && (
-            <span className="flex items-center gap-1 rounded bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground">
-              <CalendarClock className="h-3 w-3" />
-              Plan as of {formatDate(planningDate)}
-            </span>
-          )}
-          {filtered && skuCount != null && (
-            <span className="rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">
-              {skuCount.toLocaleString()} SKUs
-            </span>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Portfolio Analysis"
+        description="Forecast performance and accuracy analytics across your portfolio. Filter by brand, category, item, location."
+        actions={
+          <>
+            {planningDate && (
+              <span className="flex items-center gap-1 rounded bg-muted/50 px-2 py-1 text-2xs text-muted-foreground">
+                <CalendarClock className="h-3 w-3" />
+                Plan as of {formatDate(planningDate)}
+              </span>
+            )}
+            {filtered && skuCount != null && (
+              <span className="rounded bg-primary/10 px-2 py-1 text-2xs font-medium text-primary">
+                {skuCount.toLocaleString()} SKUs
+              </span>
+            )}
+          </>
+        }
+      />
 
       <div className="flex flex-wrap items-center gap-2" aria-label="Portfolio filters">
         {FILTERS.map((config) =>

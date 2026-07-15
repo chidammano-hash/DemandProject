@@ -2,8 +2,12 @@ import { type KeyboardEvent } from "react";
 import { TrendingUp, TrendingDown, Minus, HelpCircle, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Severities that drive an accent color; "neutral" (or omitted) renders no accent. */
-type KpiAccentSeverity = "best" | "warning" | "critical";
+/**
+ * Severities that drive an accent color; "neutral" (or omitted) renders no
+ * accent. "warning" is the legacy red bad-KPI tone (--kpi-warning); "caution"
+ * is the amber mid-band (--warning); "critical" is destructive red.
+ */
+type KpiAccentSeverity = "best" | "warning" | "caution" | "critical";
 
 type KpiCardProps = {
   label: string;
@@ -71,23 +75,26 @@ const SIZE_CONFIG = {
 const SEVERITY_ACCENT_BG: Record<KpiAccentSeverity, string> = {
   best: "bg-kpi-best",
   warning: "bg-kpi-warning",
+  caution: "bg-warning",
   critical: "bg-destructive",
 };
 
 const SEVERITY_TEXT: Record<KpiAccentSeverity, string> = {
   best: "text-kpi-best",
   warning: "text-kpi-warning",
+  caution: "text-warning",
   critical: "text-destructive",
 };
 
 const SEVERITY_ICON_CHIP: Record<KpiAccentSeverity, string> = {
   best: "bg-kpi-best/10 text-kpi-best",
   warning: "bg-kpi-warning/10 text-kpi-warning",
+  caution: "bg-warning/10 text-warning",
   critical: "bg-destructive/10 text-destructive",
 };
 
 function isAccentSeverity(severity: KpiCardProps["severity"]): severity is KpiAccentSeverity {
-  return severity === "best" || severity === "warning" || severity === "critical";
+  return severity === "best" || severity === "warning" || severity === "caution" || severity === "critical";
 }
 
 function Sparkline({ data }: { data: number[] }) {

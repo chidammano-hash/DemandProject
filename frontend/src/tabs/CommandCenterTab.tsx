@@ -63,7 +63,8 @@ import {
   normalizeAiInsight,
   normalizeStoryboardException,
 } from "./command-center/exceptions";
-import { KpiSummaryCard } from "./command-center/KpiSummaryCard";
+import { KpiCard } from "@/components/KpiCard";
+import { PageHeader } from "@/components/PageHeader";
 import { ExceptionFeedCard } from "./command-center/ExceptionFeedCard";
 
 interface CommandCenterTabProps {
@@ -196,25 +197,19 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-primary" />
-            <h2 className="text-xl font-semibold">Command Center</h2>
-          </div>
-          <p className="text-sm text-muted-foreground max-w-3xl mt-1">
-            Unified morning triage: portfolio health KPIs, AI-generated insights,
-            and rule-based exceptions in a single view. Prioritized by severity
-            and financial impact.
-          </p>
-        </div>
-        {(aiQ.isFetching || sbQ.isFetching || kpisQ.isFetching) && (
-          <Badge variant="outline" className="gap-1.5 text-muted-foreground animate-pulse">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Syncing
-          </Badge>
-        )}
-      </div>
+      <PageHeader
+        icon={Activity}
+        title="Command Center"
+        description="Unified morning triage: portfolio health KPIs, AI-generated insights, and rule-based exceptions in a single view. Prioritized by severity and financial impact."
+        actions={
+          (aiQ.isFetching || sbQ.isFetching || kpisQ.isFetching) && (
+            <Badge variant="outline" className="gap-1.5 text-muted-foreground animate-pulse">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Syncing
+            </Badge>
+          )
+        }
+      />
 
       {/* Planner release contract — quality, lineage, freshness, coverage, archive. */}
       <ForecastReleaseGateCard onNavigate={onNavigate} />
@@ -225,7 +220,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
         <div
           data-testid="mv-stale-warning"
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+          className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
@@ -256,27 +251,31 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="kpi-cards">
-          <KpiSummaryCard
+          <KpiCard
             icon={Shield}
+            iconChip
+            size="lg"
             label="Portfolio Health"
             value={
               h?.avg_health_score != null
                 ? `${h.avg_health_score.toFixed(0)}/100`
                 : "--"
             }
-            color={
+            severity={
               h?.avg_health_score == null
-                ? undefined
+                ? "neutral"
                 : h.avg_health_score >= 80
-                  ? "green"
+                  ? "best"
                   : h.avg_health_score >= 60
-                    ? "amber"
-                    : "red"
+                    ? "caution"
+                    : "critical"
             }
             progress={h?.avg_health_score != null ? h.avg_health_score / 100 : undefined}
           />
-          <KpiSummaryCard
+          <KpiCard
             icon={AlertTriangle}
+            iconChip
+            size="lg"
             label="Open Exceptions"
             value={ex?.open_exceptions_total != null ? formatInt(ex.open_exceptions_total) : "--"}
             badge={
@@ -284,25 +283,27 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
                 ? `${formatInt(ex.critical_exceptions)} critical`
                 : undefined
             }
-            color={ex?.critical_exceptions ? "red" : undefined}
+            severity={ex?.critical_exceptions ? "critical" : "neutral"}
             caption="Replenishment exceptions only"
           />
-          <KpiSummaryCard
+          <KpiCard
             icon={TrendingUp}
+            iconChip
+            size="lg"
             label="Fill Rate (3m)"
             value={
               fr?.portfolio_fill_rate_3m != null
                 ? `${(fr.portfolio_fill_rate_3m * 100).toFixed(1)}%`
                 : "--"
             }
-            color={
+            severity={
               fr?.portfolio_fill_rate_3m == null
-                ? undefined
+                ? "neutral"
                 : fr.portfolio_fill_rate_3m >= 0.95
-                  ? "green"
+                  ? "best"
                   : fr.portfolio_fill_rate_3m >= 0.9
-                    ? "amber"
-                    : "red"
+                    ? "caution"
+                    : "critical"
             }
             progress={fr?.portfolio_fill_rate_3m ?? undefined}
           />
@@ -310,15 +311,17 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
               instead of restating the "X critical" badge already on the Open
               Exceptions tile. DollarSign is correct here since this IS a currency
               value. */}
-          <KpiSummaryCard
+          <KpiCard
             icon={DollarSign}
+            iconChip
+            size="lg"
             label="Order Value at Risk"
             value={
               ex?.recommended_order_value != null
                 ? formatCurrency(ex.recommended_order_value)
                 : "--"
             }
-            color={ex?.recommended_order_value ? "amber" : undefined}
+            severity={ex?.recommended_order_value ? "caution" : "neutral"}
             caption="Proposed replenishment orders"
           />
         </div>
@@ -435,8 +438,8 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
               className="rounded-lg border bg-card p-12 text-center"
               data-testid="empty-state"
             >
-              <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-green-500/50" />
-              <p className="text-sm font-medium text-green-700 dark:text-green-400">
+              <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-success/50" />
+              <p className="text-sm font-medium text-success">
                 Portfolio looks healthy!
               </p>
               <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">

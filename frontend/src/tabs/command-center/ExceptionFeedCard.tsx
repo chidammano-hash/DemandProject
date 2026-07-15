@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate } from "@/lib/formatters";
+import { getSeverityConfig } from "@/constants/severity";
 import {
   type UnifiedException,
   SOURCE_BADGE,
@@ -36,10 +37,11 @@ export function ExceptionFeedCard({
   const sourceBadge = SOURCE_BADGE[item.source];
   const SourceIcon = item.source === "ai" ? Brain : BookOpen;
 
+  // Subtle severity wash behind the row — low severity stays plain card.
   const severityBgColor: Record<string, string> = {
-    critical: "bg-red-50 dark:bg-red-950/20",
-    high: "bg-orange-50 dark:bg-orange-950/20",
-    medium: "bg-yellow-50/50 dark:bg-yellow-950/10",
+    critical: "bg-destructive/5",
+    high: "bg-severity-high/5",
+    medium: "bg-warning/5",
     low: "",
   };
 
@@ -47,7 +49,7 @@ export function ExceptionFeedCard({
     <div
       className={cn(
         "rounded-lg border border-l-4 bg-card p-4 shadow-sm transition-all hover:shadow-md",
-        SEVERITY_BORDER[item.severity] ?? "border-l-gray-400",
+        SEVERITY_BORDER[item.severity] ?? SEVERITY_BORDER.low,
         severityBgColor[item.severity] ?? ""
       )}
       data-testid="exception-card"
@@ -76,11 +78,8 @@ export function ExceptionFeedCard({
               {item.typeLabel}
             </span>
             <span className={cn(
-              "text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded",
-              item.severity === "critical" ? "text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/40" :
-              item.severity === "high" ? "text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/40" :
-              item.severity === "medium" ? "text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900/40" :
-              "text-muted-foreground"
+              "text-2xs font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded",
+              getSeverityConfig(item.severity).badge,
             )}>
               {item.severity}
             </span>
@@ -111,7 +110,7 @@ export function ExceptionFeedCard({
           {/* Financial impact + timestamp */}
           <div className="flex items-center gap-3 flex-wrap pt-0.5">
             {item.financialImpact != null && item.financialImpact > 0 && (
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded">
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-warning bg-warning/10 px-2 py-0.5 rounded">
                 <DollarSign className="h-3 w-3" />
                 {formatCurrency(item.financialImpact)}
               </span>
@@ -128,7 +127,7 @@ export function ExceptionFeedCard({
             <button
               onClick={() => onAccept(item)}
               disabled={acceptPending}
-              className="inline-flex items-center justify-center gap-1 text-xs font-medium rounded-md border px-3 py-1.5 bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:border-green-300 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300 dark:hover:bg-green-900/40 transition-colors disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1 text-xs font-medium rounded-md border px-3 py-1.5 bg-success/10 border-success/25 text-success hover:bg-success/20 transition-colors disabled:opacity-50"
             >
               {acceptPending ? (
                 <Loader2 className="h-3 w-3 animate-spin" />

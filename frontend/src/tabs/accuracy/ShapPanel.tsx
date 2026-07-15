@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useChartColors } from "@/hooks/useChartColors";
 import type { ShapTimeframeEntry } from "@/types/shap";
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ export function ShapPanel({
   onTimeframeChange,
   onClusterChange,
 }: ShapPanelProps) {
+  const { roles, chartColors } = useChartColors();
   const hasMultipleClusters = shapClusters.length > 1 && shapClusters.some((c) => c !== "all");
   return (
     <Card className="mt-4 animate-fade-in">
@@ -205,7 +207,7 @@ export function ShapPanel({
                       />
                       <Bar dataKey="value" name="Mean |SHAP|" radius={[0, 3, 3, 0]}>
                         {shapFeatures.map((f, i) => (
-                          <Cell key={i} fill={f.selected ? "#6366f1" : "#d1d5db"} />
+                          <Cell key={i} fill={f.selected ? roles.forecast : chartColors.grid} />
                         ))}
                       </Bar>
                     </BarChart>
