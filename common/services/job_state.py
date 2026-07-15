@@ -1974,7 +1974,7 @@ def finalize_customer_forecast_job_cancellation(
                                    'HH24:MI:SS'
                                ),
                                'pct', CASE WHEN %s = 'completed' THEN 100 ELSE 0 END,
-                               'msg', %s
+                               'msg', %s::text
                            ))
                    WHERE job_id = %s
                      AND job_type = %s

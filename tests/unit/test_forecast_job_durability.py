@@ -510,6 +510,7 @@ def test_atomic_customer_cancel_updates_manifest_and_job_under_one_lock(
     assert f"UPDATE {manifest_table}" in manifest_sql
     job_sql, job_params = connection.execute.call_args_list[2].args
     assert "UPDATE job_history" in job_sql
+    assert "'msg', %s::text" in job_sql
     assert job_params[0] == "cancelled"
 
 

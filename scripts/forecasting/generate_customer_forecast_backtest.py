@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from uuid import UUID
 
@@ -14,6 +15,29 @@ from common.services.customer_forecast_backtest import (
 )
 
 logger = logging.getLogger(__name__)
+
+_JOB_PROGRESS_PREFIX = "JOB_PROGRESS_JSON:"
+
+
+def _format_batch_progress(*, completed_batches: int, total_batches: int) -> str:
+    """Return one structured progress line understood by the job runner."""
+    if total_batches <= 0 or not 0 <= completed_batches <= total_batches:
+        raise ValueError("Customer backtest batch progress is invalid")
+    pct = 10 + int(80 * completed_batches / total_batches)
+    payload = {
+        "pct": pct,
+        "msg": f"Backtested customer batch {completed_batches}/{total_batches}",
+    }
+    return f"{_JOB_PROGRESS_PREFIX}{json.dumps(payload, separators=(',', ':'))}"
+
+
+def _report_batch_progress(completed_batches: int, total_batches: int) -> None:
+    logger.info(
+        _format_batch_progress(
+            completed_batches=completed_batches,
+            total_batches=total_batches,
+        )
+    )
 
 
 def _mark_failed(run_id: UUID) -> None:
@@ -38,7 +62,11 @@ def main() -> None:
     args = parser.parse_args()
     try:
         with psycopg.connect(**get_db_params()) as conn:
-            result = generate_customer_forecast_backtest(conn, run_id=args.run_id)
+            result = generate_customer_forecast_backtest(
+                conn,
+                run_id=args.run_id,
+                progress_callback=_report_batch_progress,
+            )
     except (RuntimeError, TypeError, ValueError, psycopg.Error):
         _mark_failed(args.run_id)
         logger.exception("Generating customer forecast backtest failed")

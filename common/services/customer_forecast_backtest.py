@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -212,6 +213,7 @@ def generate_customer_forecast_backtest(
     conn: Any,
     *,
     run_id: UUID,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> CustomerBacktestResult:
     """Build immutable Croston, champion, and blended common-cohort evidence."""
     settings = get_customer_backtest_settings()
@@ -428,6 +430,8 @@ def generate_customer_forecast_backtest(
                                temp_customer_backtest_raw.customer_series_count
                                + EXCLUDED.customer_series_count"""
                 )
+            if progress_callback is not None:
+                progress_callback(route_batch_no + 1, int(total_batches))
 
         normalization_start_offset = blend_settings.normalization_lookback_months
         cur.execute(

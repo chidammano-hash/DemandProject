@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common.ml.croston import croston_forecast
 from common.services.customer_forecast import CustomerForecastWindow
 
 _IDENTITY_COLUMNS = ["item_id", "location_id", "customer_no"]
@@ -59,39 +58,86 @@ def build_croston_backtest_batch(
     if history[_IDENTITY_COLUMNS].isna().any(axis=1).any():
         raise ValueError("Customer backtest history contains an invalid identity")
 
+    alpha = float(params["alpha"])
+    variant = str(params["variant"])
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("Croston alpha must be in (0, 1]")
+    if variant not in {"classic", "sba"}:
+        raise ValueError("Croston variant must be classic or sba")
+
     calendar = pd.date_range(window.history_start, periods=window.history_months, freq="MS")
+    identity_rows = (
+        history[_IDENTITY_COLUMNS]
+        .drop_duplicates()
+        .sort_values(_IDENTITY_COLUMNS, ignore_index=True)
+    )
+    identity_index = pd.MultiIndex.from_frame(identity_rows)
+    series_codes = identity_index.get_indexer(pd.MultiIndex.from_frame(history[_IDENTITY_COLUMNS]))
+    month_codes = calendar.get_indexer(history["startdate"])
+    valid_rows = (series_codes >= 0) & (month_codes >= 0)
+    series_count = len(identity_rows)
+    demand = np.zeros((series_count, window.history_months), dtype=float)
+    sales = np.zeros_like(demand)
+    np.add.at(
+        demand,
+        (series_codes[valid_rows], month_codes[valid_rows]),
+        history.loc[valid_rows, "demand_qty"].to_numpy(dtype=float),
+    )
+    np.add.at(
+        sales,
+        (series_codes[valid_rows], month_codes[valid_rows]),
+        history.loc[valid_rows, "sales_qty"].to_numpy(dtype=float),
+    )
+
+    demand_size = np.zeros(series_count, dtype=float)
+    demand_interval = np.zeros(series_count, dtype=float)
+    previous_position = np.full(series_count, -1, dtype=int)
+    initialized = np.zeros(series_count, dtype=bool)
     evaluation_start_index = window.history_months - evaluation_months
-    records: list[dict[str, Any]] = []
-    for identity, group in history.groupby(_IDENTITY_COLUMNS, sort=True, dropna=False):
-        monthly = group.groupby("startdate", as_index=True)[["demand_qty", "sales_qty"]].sum()
-        dense = monthly.reindex(calendar, fill_value=0.0).astype(float)
-        for forecast_index in range(evaluation_start_index, window.history_months):
-            if forecast_index < min_train_months:
-                continue
-            recent_start = max(0, forecast_index - recent_sales_lookback_months)
-            if not dense["sales_qty"].iloc[recent_start:forecast_index].gt(0).any():
-                continue
-            prediction = float(
-                croston_forecast(
-                    dense["demand_qty"].iloc[:forecast_index].to_numpy(dtype=float),
-                    horizon=1,
-                    params=params,
-                )[0]
-            )
-            records.append(
-                {
-                    "item_id": str(identity[0]),
-                    "loc": str(identity[1]),
-                    "forecast_origin": calendar[forecast_index - 1].date(),
-                    "forecast_month": calendar[forecast_index].date(),
-                    "raw_customer_demand_qty": prediction,
-                    "customer_series_count": 1,
-                }
-            )
+    output_identities = identity_rows.astype(str)
+    records: list[pd.DataFrame] = []
+
+    for position in range(window.history_months - 1):
+        positive = demand[:, position] > 0
+        first = positive & ~initialized
+        repeated = positive & initialized
+        demand_size[first] = demand[first, position]
+        demand_interval[first] = float(position + 1)
+        if repeated.any():
+            intervals = position - previous_position[repeated]
+            demand_size[repeated] += alpha * (demand[repeated, position] - demand_size[repeated])
+            demand_interval[repeated] += alpha * (intervals - demand_interval[repeated])
+        previous_position[positive] = position
+        initialized[positive] = True
+
+        forecast_index = position + 1
+        if forecast_index < max(evaluation_start_index, min_train_months):
+            continue
+        recent_start = max(0, forecast_index - recent_sales_lookback_months)
+        active = (sales[:, recent_start:forecast_index] > 0).any(axis=1)
+        if not active.any():
+            continue
+        forecast = np.divide(
+            demand_size,
+            demand_interval,
+            out=np.zeros(series_count, dtype=float),
+            where=demand_interval > 0,
+        )
+        if variant == "sba":
+            forecast *= 1.0 - alpha / 2.0
+        active_rows = np.flatnonzero(active)
+        result = output_identities.iloc[active_rows][["item_id", "location_id"]].copy()
+        result = result.rename(columns={"location_id": "loc"})
+        result["forecast_origin"] = calendar[forecast_index - 1].date()
+        result["forecast_month"] = calendar[forecast_index].date()
+        result["raw_customer_demand_qty"] = np.maximum(forecast[active_rows], 0.0)
+        result["customer_series_count"] = 1
+        records.append(result)
+
     if not records:
         return pd.DataFrame(columns=_OUTPUT_COLUMNS)
     return (
-        pd.DataFrame.from_records(records)
+        pd.concat(records, ignore_index=True)
         .groupby(
             ["item_id", "loc", "forecast_origin", "forecast_month"],
             as_index=False,

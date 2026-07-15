@@ -6,8 +6,11 @@ from inspect import getsource
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
+import numpy as np
 import pandas as pd
 import pytest
+
+from common.ml.croston import croston_forecast
 
 
 def _backtest_service():
@@ -62,9 +65,48 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
         forecast_months=(),
     )
 
+    result = service.build_croston_backtest_batch(
+        history,
+        window,
+        evaluation_months=6,
+        min_train_months=6,
+        recent_sales_lookback_months=6,
+        params={"alpha": 0.1, "variant": "sba"},
+    )
+
+    assert result["forecast_month"].tolist() == [date(2026, 1, 1)]
+    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([9.5 / 7.0])
+
+
+def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None:
+    """The full-population backtest must use the vectorized Croston recurrence."""
+    service = _backtest_service()
+    months = pd.date_range("2025-01-01", periods=18, freq="MS")
+    history = pd.DataFrame(
+        {
+            "item_id": ["ITEM-1"] * 36,
+            "location_id": ["LOC-1"] * 36,
+            "customer_no": ["CUSTOMER-1"] * 18 + ["CUSTOMER-2"] * 18,
+            "startdate": list(months) * 2,
+            "demand_qty": ([0.0] * 6 + [10.0] + [0.0] * 11) * 2,
+            "sales_qty": ([0.0] * 6 + [8.0] + [0.0] * 11) * 2,
+        }
+    )
+    window = service.CustomerForecastWindow(
+        planning_month=date(2026, 7, 1),
+        history_start=date(2025, 1, 1),
+        history_end=date(2026, 6, 1),
+        forecast_start=date(2026, 7, 1),
+        forecast_end=date(2027, 12, 1),
+        history_months=18,
+        horizon_months=18,
+        forecast_months=(),
+    )
+
     with patch(
         "common.services.customer_forecast_backtest_croston.croston_forecast",
-        return_value=[5.0],
+        side_effect=AssertionError("scalar Croston path used"),
+        create=True,
     ):
         result = service.build_croston_backtest_batch(
             history,
@@ -72,11 +114,102 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
             evaluation_months=6,
             min_train_months=6,
             recent_sales_lookback_months=6,
-            params={"variant": "sba"},
+            params={"alpha": 0.1, "variant": "sba"},
         )
 
-    assert result["forecast_month"].tolist() == [date(2026, 1, 1)]
-    assert result["raw_customer_demand_qty"].tolist() == [5.0]
+    assert not result.empty
+
+
+@pytest.mark.parametrize("variant", ["classic", "sba"])
+def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
+    service = _backtest_service()
+    rng = np.random.default_rng(42)
+    months = pd.date_range("2025-01-01", periods=18, freq="MS")
+    demand = np.where(
+        rng.random((8, 18)) < 0.25,
+        rng.integers(1, 30, size=(8, 18)),
+        0,
+    ).astype(float)
+    demand[:, 10] = np.arange(1, 9, dtype=float)
+    sales = demand.copy()
+    rows: list[dict[str, object]] = []
+    for series_no in range(8):
+        for month_no, month in enumerate(months):
+            rows.append(
+                {
+                    "item_id": f"ITEM-{series_no // 2}",
+                    "location_id": "LOC-1",
+                    "customer_no": f"CUSTOMER-{series_no}",
+                    "startdate": month,
+                    "demand_qty": demand[series_no, month_no],
+                    "sales_qty": sales[series_no, month_no],
+                }
+            )
+    history = pd.DataFrame.from_records(rows)
+    window = service.CustomerForecastWindow(
+        planning_month=date(2026, 7, 1),
+        history_start=date(2025, 1, 1),
+        history_end=date(2026, 6, 1),
+        forecast_start=date(2026, 7, 1),
+        forecast_end=date(2027, 12, 1),
+        history_months=18,
+        horizon_months=18,
+        forecast_months=(),
+    )
+    params = {"alpha": 0.1, "variant": variant}
+
+    result = service.build_croston_backtest_batch(
+        history,
+        window,
+        evaluation_months=6,
+        min_train_months=6,
+        recent_sales_lookback_months=6,
+        params=params,
+    )
+
+    expected_rows: list[dict[str, object]] = []
+    for series_no in range(8):
+        for forecast_index in range(12, 18):
+            if not (sales[series_no, forecast_index - 6 : forecast_index] > 0).any():
+                continue
+            expected_rows.append(
+                {
+                    "item_id": f"ITEM-{series_no // 2}",
+                    "loc": "LOC-1",
+                    "forecast_origin": months[forecast_index - 1].date(),
+                    "forecast_month": months[forecast_index].date(),
+                    "raw_customer_demand_qty": croston_forecast(
+                        demand[series_no, :forecast_index],
+                        horizon=1,
+                        params=params,
+                    )[0],
+                    "customer_series_count": 1,
+                }
+            )
+    expected = (
+        pd.DataFrame.from_records(expected_rows)
+        .groupby(
+            ["item_id", "loc", "forecast_origin", "forecast_month"],
+            as_index=False,
+        )
+        .agg(
+            raw_customer_demand_qty=("raw_customer_demand_qty", "sum"),
+            customer_series_count=("customer_series_count", "sum"),
+        )
+        .sort_values(["item_id", "loc", "forecast_month"], ignore_index=True)
+    )
+    pd.testing.assert_frame_equal(result, expected, check_dtype=False, rtol=1e-12, atol=1e-12)
+
+
+def test_customer_backtest_progress_line_is_parseable() -> None:
+    from common.services.job_state import _parse_job_progress
+    from scripts.forecasting.generate_customer_forecast_backtest import (
+        _format_batch_progress,
+    )
+
+    line = _format_batch_progress(completed_batches=1, total_batches=4)
+
+    assert _parse_job_progress(line) == (30, "Backtested customer batch 1/4")
 
 
 def test_historical_champion_uses_stamped_execution_lag_and_all_series_population() -> None:
