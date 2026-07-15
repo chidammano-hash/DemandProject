@@ -2,7 +2,7 @@
 
 ## Supply Chain Command Center
 
-**TOGAF ADM Framework | Version 1.2 | 2026-07-14**
+**TOGAF ADM Framework | Version 1.3 | 2026-07-14**
 
 | Attribute | Value |
 |---|---|
@@ -567,11 +567,16 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 
 `forecast_generation_run` is the immutable forward-release manifest. It
 separates promotable `release_candidate` runs from non-promotable
-`snapshot_contender` evidence and retained `legacy_invalid` staging. Migration
-203 also stamps champion history with its experiment id, persists exact winners
-and historical-results checksums, and extends production/model promotion with
-exact source/release/audit lineage and canonical SHA-256 payload checksums;
-unique indexes enforce one active release and one promotion per source run.
+`snapshot_contender` and `shadow_candidate` evidence and retained
+`legacy_invalid` staging. A shadow manifest is immutable and read-only,
+retains `promotion_eligible = FALSE`, and cannot reach `promoted`; only a
+`release_candidate` can enter the release transaction. Migration 203 also
+stamps champion history with its experiment id, persists exact winners and
+historical-results checksums, and extends production/model promotion with exact
+source/release/audit lineage and canonical SHA-256 payload checksums; unique
+indexes enforce one active release and one promotion per source run. Migration
+217 adds the shadow purpose and re-states the promoted-purpose invariant as a
+database constraint.
 Migration 205 constrains new/updated champion experiments to the canonical five
 model ids without duplicates. Migration 206 retains but invalidates ready
 release candidates that predate the immutable
@@ -616,9 +621,25 @@ over six causal one-month origins. The common-cohort gate requires six months,
 produce a `customer_bottom_up_blend` staging draft over the exact active
 production spine; unavailable customer evidence and months beyond the
 18-month customer horizon pass through champion, while customer-only DFUs are
-excluded. Forward component evidence binds the generation, customer run,
-backtest, promotion, and production run. Promotion remains explicit and uses
-the normal transactional release gates; no blend auto-promotes.
+excluded. The same repeatable-read transaction creates a paired
+`customer_bottom_up` `shadow_candidate` containing only normalized customer
+rows. A deterministic shadow run id and its status, cardinalities, and checksum
+are frozen into the blend manifest; the shadow points back to the blend and
+shares its customer run, passing backtest, active source promotion, and source
+production lineage. It is available in staging read APIs but can never receive
+release-stage approval or be promoted. `customer_bottom_up_blend` remains the
+sole customer-derived `release_candidate`. Promotion remains explicit and uses the normal
+transactional release gates; no blend auto-promotes.
+
+Portfolio Analysis and Item Analysis consume that exact lineage rather than
+assembling independently selected latest rows. `/customer-forecast/blend/trend`
+binds historical values to the blend's `backtest_run_id` and future normalized
+bottom-up values to its `bottom_up_staging_run_id`. Portfolio presents a
+planning-boundary comparison with actual sales, WAPE, coverage, source champion,
+bottom-up shadow, and blend. Item Analysis adds the same causal backtest context
+and staged future series to its unified sales-history chart while deduplicating
+the component overlay when the corresponding staged model identities are
+present.
 The refreshable `mv_customer_demand_series_profile` stores series first/last
 months plus the last positive-sales month. Readiness and manifest creation use
 that compact profile; only workers read the requested 18-month fact history for
@@ -838,7 +859,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
 | `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
-| `api/routers/forecasting/` | 27 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*`, `/customer-forecast/*` | Accuracy KPIs, SHAP, tuning, champion, immutable release generation, exact-run transactional promotion, customer Croston generation, causal bottom-up blend evidence, and planner-facing quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
+| `api/routers/forecasting/` | 29 mounted routers (including the unified tuning router) | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*`, `/model-tuning/*`, `/forecast-release/*`, `/customer-forecast/*` | Accuracy KPIs, SHAP, tuning, champion, immutable release generation, exact-run transactional promotion, customer Croston generation, causal bottom-up blend evidence, non-promotable shadow staging, exact-lineage `/customer-forecast/blend/trend` comparisons, and planner-facing quality/lineage/freshness/coverage/archive readiness. The unified tuning router composes the domain's tuning sub-routers while preserving the `/model-tuning/*` prefix. |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
 | `api/routers/intelligence/` | 3 (incl. `customer_analytics/` package — 5 sub-routers) | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*`, `/customer-analytics/*` | AI agent, forecast explain, market intel. The `customer_analytics.py` god-module was split into `intelligence/customer_analytics/` (5 sub-routers + helpers, 16 GET endpoints preserved). |
@@ -898,6 +919,16 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | `hooks/useGlobalFilters.ts` | Global filter bar (brand, category, item, location, market, channel) |
 | `context/ThemeContext.tsx` | Light/dark mode with supply chain theme |
 | `api/queries/` | 39 domain API modules with TanStack Query key factory pattern |
+
+Customer forecast evidence is rendered consistently across planning screens.
+Portfolio Analysis switches its Forecast vs Actual panel between the standard
+model view and an exact-run Customer Blend comparison. Item Analysis carries the
+same historical backtest and staged future lines into its unified demand/supply
+chart. Both use theme-derived semantic colors and distinguish dotted backtest
+evidence from solid staged output at the planning boundary. The normalized
+bottom-up line is presented as staged evidence, while the manifest purpose and
+release controls keep it read-only; only the blended line is a release
+candidate.
 
 **State Management Architecture**:
 - **Server State**: TanStack React Query v5 (stale time: 30s, GC: 5min, retry: 2)
@@ -1718,9 +1749,9 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 |---|---|
 | **Status** | Accepted |
 | **Context** | Customer forecasts predict demand at customer grain, while the active production champion predicts sales at item-location grain. A raw sum would mix target semantics, customer coverage exceeds the governed production population, the customer horizon is shorter than production, and a fixed blend without historical comparison could silently degrade forecast quality. |
-| **Decision** | Use Croston/SBA for all active customer series, aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals an exact source-membership checksum plus series/batch counts, executes under one repeatable-read snapshot, evaluates activity independently at each origin, and selects historical champion rows by their stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. A promoted blend cannot recursively become the source for another blend. |
-| **Rationale** | Explicit normalization prevents unit/target drift, a production spine preserves governed coverage, champion fallback avoids artificial gaps, and immutable component evidence makes every blended quantity reproducible. The historical no-degradation gate converts a plausible hierarchy idea into measured release evidence. |
-| **Consequences** | Customer generation and backtesting are additional durable compute workloads with 24-hour ceilings; full-spine blend generation has an 8-hour ceiling. Any change to customer parameters, weights, normalization, or source release invalidates the matching evidence and requires a fresh backtest and draft. Operators must promote a fresh unblended champion before starting a later customer-blend cycle. Months beyond the 18-month customer horizon receive no customer contribution. The blend is promotable but never auto-promoted. |
+| **Decision** | Use Croston/SBA for all active customer series, aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals an exact source-membership checksum plus series/batch counts, executes under one repeatable-read snapshot, evaluates activity independently at each origin, and selects historical champion rows by their stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. Migration 217 adds a paired `customer_bottom_up` `shadow_candidate` to the canonical staging fact for cross-screen review. Its deterministic manifest is immutable, remains `promotion_eligible = FALSE`, and is database-barred from promoted status; its exact run id/checksum/cardinality lineage is stored on the corresponding blend. `customer_bottom_up_blend` remains the sole customer-derived `release_candidate`. A promoted blend cannot recursively become the source for another blend. |
+| **Rationale** | Explicit normalization prevents unit/target drift, a production spine preserves governed coverage, champion fallback avoids artificial gaps, and immutable component evidence makes every blended quantity reproducible. The historical no-degradation gate converts a plausible hierarchy idea into measured release evidence. A separate shadow purpose lets planners inspect the bottom-up signal in the same staging and chart infrastructure without weakening the single promotable-candidate invariant. |
+| **Consequences** | Customer generation and backtesting are additional durable compute workloads with 24-hour ceilings; full-spine blend generation has an 8-hour ceiling. Any change to customer parameters, weights, normalization, or source release invalidates the matching evidence and requires a fresh backtest, shadow, and blend draft. Operators must promote a fresh unblended champion before starting a later customer-blend cycle. Months beyond the 18-month customer horizon receive no customer contribution. Portfolio and Item Analysis can compare exact historical/backtest and staged series, but the bottom-up shadow remains read-only and non-promotable. The blend is promotable but never auto-promoted. |
 
 ---
 
@@ -1878,7 +1909,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | G-17 | Scale Test Coverage | No quantitative baseline for endpoint cost at >1× data volume | Reproducible scale test harness | **Closed** — scale-test scripts added; baselines captured at 1× and 40× for the customer-analytics endpoints (drove ADR-016) | Closed |
 | G-18 | Weekly Partitioning | `fact_customer_demand_monthly` and similar tables partitioned monthly; growth at 40× scale projects out beyond comfortable per-partition row count | Weekly range partitioning for high-volume facts | **Open (DDL drafted)** — cutover SQL drafted and flagged for DBA review; not yet applied. Migration is destructive enough to require a maintenance window | Open |
 | G-19 | Forecast Release Atomicity | Mutable model-scoped staging, ambient promotion source, orchestration-only outgoing archive, and no exact release checksum | Immutable purpose-scoped generations and one atomic archive→publish transaction | **Closed** — migrations 203/205/206, explicit `source_run_id`, canonical roster and generator contract, serializable advisory-locked promotion, exact candidate/production/archive lineage, and database-enforced active singleton; see ADR-019 | Closed |
-| G-20 | Customer Bottom-Up Governance | Customer forecasts existed only as isolated demand-grain outputs with no target normalization, historical comparison, or governed release bridge | Reproducible normalized customer blend with common-cohort quality gate and immutable release lineage | **Closed** — Croston-only customer generation, migration 216 component/accuracy evidence, production-spine fallback policy, and matching backtest requirement; see ADR-020 | Closed |
+| G-20 | Customer Bottom-Up Governance | Customer forecasts existed only as isolated demand-grain outputs with no target normalization, historical comparison, or governed release bridge | Reproducible normalized customer blend with common-cohort quality gate, review-only bottom-up shadow, and immutable release lineage | **Closed** — Croston-only customer generation, migrations 216/217 component/accuracy and shadow evidence, production-spine fallback policy, exact cross-screen run lineage, and matching backtest requirement; see ADR-020 | Closed |
 
 ### 11.2 Migration Roadmap
 

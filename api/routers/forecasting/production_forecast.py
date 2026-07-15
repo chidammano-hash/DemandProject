@@ -7,8 +7,7 @@ Endpoints (F1.1):
     GET /forecast/production           — DFU-level forecast series
     GET /forecast/production/summary   — Portfolio-level aggregate
     GET /forecast/production/versions  — Available plan versions
-    GET /forecast/production/staging   — All staged (future) forecasts for a DFU, grouped by model
-    GET /forecast/candidate            — All backtest (past, out-of-sample) predictions for a DFU, grouped by model
+    Item overlay routes live in production_forecast_overlays.py.
 
 Endpoints (F2.2):
     GET /forecast/demand-plan          — Quantile forecast (P10/P50/P90) per DFU
@@ -18,19 +17,11 @@ Endpoints (F2.2):
 """
 from __future__ import annotations
 
-import logging
-
 import psycopg
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from api.core import get_conn
 from common.core.planning_date import get_planning_date
-from common.services.forecast_generation import (
-    GENERATOR_CONTRACT_METADATA_KEY,
-    GENERATOR_CONTRACT_VERSION,
-)
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["production-forecast"])
 
@@ -54,7 +45,7 @@ async def get_production_forecast(
         loc: Location code (exact match). Optional — when omitted, forecasts
             are summed across every location for the item, and per-month CI
             bounds become the sum of lower/upper bounds (a coarse proxy).
-        horizon: Max months ahead to return (1–24).
+        horizon: Max months ahead to return (1-24).
         plan_version: Specific plan version (e.g. '2026-02'). Defaults to latest.
 
     Returns:
@@ -160,7 +151,7 @@ async def get_production_forecast(
                             "wape": float(prow[3]) if prow[3] is not None else None,
                             "promoted_at": prow[4].isoformat() if prow[4] else None,
                         }
-                except Exception:  # noqa: BLE001 — table may not exist yet
+                except psycopg.Error:  # tuning metadata is optional during clean setup
                     pass
 
     if not rows:
@@ -214,7 +205,7 @@ async def get_production_forecast_summary(
 
     Args:
         plan_version: Defaults to latest available.
-        horizon_months: Horizon to aggregate over (1–18).
+        horizon_months: Horizon to aggregate over (1-18).
         brand: Filter by brand (optional).
         category: Filter by category (optional, joins dim_item).
 
@@ -359,166 +350,6 @@ async def get_production_forecast_versions():
             }
             for r in rows
         ]
-    }
-
-
-# ---------------------------------------------------------------------------
-# GET /forecast/production/staging
-# ---------------------------------------------------------------------------
-
-@router.get("/forecast/production/staging")
-async def get_staging_forecasts(
-    item_id: str = Query(...),
-    loc: str = Query(...),
-):
-    """Return ALL staged forecasts for a DFU, grouped by model_id.
-
-    Returns the latest immutable release-candidate run for each requested model.
-    """
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            try:
-                cur.execute("""
-                    WITH ranked_runs AS (
-                        SELECT generation.*,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY requested_model_id
-                                   ORDER BY completed_at DESC NULLS LAST,
-                                            created_at DESC, run_id
-                               ) AS run_rank
-                        FROM forecast_generation_run generation
-                        WHERE generation_purpose = 'release_candidate'
-                          AND run_status IN ('ready', 'promoted')
-                          AND metadata ->> %s = %s
-                    )
-                    SELECT generation.requested_model_id,
-                           staging.model_id AS source_model_id,
-                           staging.forecast_month, staging.forecast_qty,
-                           forecast_qty_lower, forecast_qty_upper,
-                           staging.horizon_months, staging.cluster_id,
-                           staging.lag_source, staging.generated_at,
-                           generation.run_id
-                    FROM ranked_runs generation
-                    JOIN fact_production_forecast_staging staging
-                      ON staging.run_id = generation.run_id
-                     AND staging.generation_purpose = generation.generation_purpose
-                     AND staging.candidate_model_id = generation.requested_model_id
-                    WHERE generation.run_rank = 1
-                      AND staging.item_id = %s AND staging.loc = %s
-                    ORDER BY generation.requested_model_id, staging.forecast_month
-                """,
-                    (
-                        GENERATOR_CONTRACT_METADATA_KEY,
-                        GENERATOR_CONTRACT_VERSION,
-                        item_id,
-                        loc,
-                    ),
-                )
-                rows = cur.fetchall()
-            except psycopg.Error:  # staging schema may not exist yet
-                logger.exception("Failed to read immutable staging forecasts")
-                return {"item_id": item_id, "loc": loc, "models": {}}
-
-    # Group by model_id
-    models: dict[str, list] = {}
-    for r in rows:
-        mid = r[0]
-        if mid not in models:
-            models[mid] = []
-        models[mid].append({
-            "source_model_id": r[1],
-            "forecast_month": r[2].isoformat() if r[2] else None,
-            "forecast_qty": float(r[3]) if r[3] is not None else None,
-            "forecast_qty_lower": float(r[4]) if r[4] is not None else None,
-            "forecast_qty_upper": float(r[5]) if r[5] is not None else None,
-            "horizon_months": r[6],
-            "cluster_id": r[7],
-            "lag_source": r[8],
-            "generated_at": r[9].isoformat() if r[9] else None,
-            "source_run_id": str(r[10]),
-        })
-
-    return {
-        "item_id": item_id,
-        "loc": loc,
-        "models": models,
-    }
-
-
-# ---------------------------------------------------------------------------
-# GET /forecast/candidate
-# ---------------------------------------------------------------------------
-
-@router.get("/forecast/candidate")
-async def get_candidate_forecasts(
-    item_id: str = Query(...),
-    loc: str = Query(...),
-    model_id: str | None = Query(default=None),
-):
-    """Return per-model backtest (past, out-of-sample) predictions for a DFU.
-
-    Reads ``fact_candidate_forecast`` — the historical predictions each model
-    produced during backtest evaluation, alongside the realized ``actual_qty``
-    and per-row accuracy. This is the past-period counterpart to the
-    future-period staging forecasts served by ``/forecast/production/staging``.
-
-    Together they let the Item Analysis chart overlay, for a chosen model, its
-    backtest fit over history (``backtest_<model>``) and its forward forecast
-    (``staging_<model>``) on one timeline.
-
-    Args:
-        item_id: Item number (exact match).
-        loc: Location code (exact match).
-        model_id: Optional — restrict to a single model's predictions.
-
-    Returns:
-        ``{item_id, loc, models}`` where ``models`` maps model_id → time-ordered
-        backtest rows (forecast vs actual + accuracy metrics). Empty ``models``
-        when the table is absent (clean install) or no backtests have loaded.
-    """
-    params: list = [item_id, loc]
-    model_filter = ""
-    if model_id:
-        model_filter = " AND model_id = %s"
-        params.append(model_id)
-
-    with get_conn() as conn, conn.cursor() as cur:
-        try:
-            cur.execute(f"""
-                SELECT model_id, forecast_month, forecast_qty,
-                       forecast_qty_lower, forecast_qty_upper,
-                       actual_qty, accuracy_pct, wape, bias,
-                       horizon_months, cluster_id
-                FROM fact_candidate_forecast
-                WHERE item_id = %s AND loc = %s{model_filter}
-                ORDER BY model_id, forecast_month
-            """, params)
-            rows = cur.fetchall()
-        except psycopg.Error:
-            # Clean install: the table may not exist yet — degrade to empty.
-            logger.debug("fact_candidate_forecast table may not exist yet")
-            return {"item_id": item_id, "loc": loc, "models": {}}
-
-    models: dict[str, list] = {}
-    for r in rows:
-        mid = r[0]
-        models.setdefault(mid, []).append({
-            "forecast_month": r[1].isoformat() if r[1] else None,
-            "forecast_qty": float(r[2]) if r[2] is not None else None,
-            "forecast_qty_lower": float(r[3]) if r[3] is not None else None,
-            "forecast_qty_upper": float(r[4]) if r[4] is not None else None,
-            "actual_qty": float(r[5]) if r[5] is not None else None,
-            "accuracy_pct": float(r[6]) if r[6] is not None else None,
-            "wape": float(r[7]) if r[7] is not None else None,
-            "bias": float(r[8]) if r[8] is not None else None,
-            "horizon_months": r[9],
-            "cluster_id": r[10],
-        })
-
-    return {
-        "item_id": item_id,
-        "loc": loc,
-        "models": models,
     }
 
 
@@ -779,7 +610,7 @@ async def get_demand_plan(
     # Pivot by plan_month
     from collections import defaultdict
     by_month: dict = defaultdict(dict)
-    for plan_month, q, forecast_qty, lower, upper, sf, sd, sc, h_months in rows:
+    for plan_month, q, forecast_qty, _lower, _upper, sf, sd, sc, h_months in rows:
         mkey = plan_month.isoformat()
         q = float(q)
         if mkey not in by_month:

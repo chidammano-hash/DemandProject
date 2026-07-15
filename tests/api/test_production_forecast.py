@@ -1,12 +1,14 @@
 """API tests for /forecast/production/* endpoints — F1.1."""
 
 import datetime
-import pytest
-from unittest.mock import patch, MagicMock
-import httpx
-from httpx import ASGITransport
-from tests.api.conftest import make_pool as _make_pool
+from unittest.mock import patch
 
+import httpx
+import psycopg
+import pytest
+from httpx import ASGITransport
+
+from tests.api.conftest import make_pool as _make_pool
 
 # ---------------------------------------------------------------------------
 # /forecast/production/versions
@@ -15,7 +17,7 @@ from tests.api.conftest import make_pool as _make_pool
 @pytest.mark.asyncio
 async def test_versions_200():
     """GET /forecast/production/versions returns list of versions."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         ("2026-03", 1000, 12000, datetime.datetime(2026, 3, 1, 6, 0, 0)),
         ("2026-02", 980,  11760, datetime.datetime(2026, 2, 1, 6, 0, 0)),
@@ -41,7 +43,7 @@ async def test_versions_200():
 @pytest.mark.asyncio
 async def test_versions_empty():
     """Empty table returns empty versions list."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = []
 
     with patch("api.core._get_pool", return_value=pool):
@@ -61,7 +63,7 @@ async def test_versions_empty():
 @pytest.mark.asyncio
 async def test_summary_no_data():
     """When table is empty, summary returns zeros without 500."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     # fetchone returns None → no plan_version → early return
     cursor.fetchone.return_value = None
 
@@ -81,7 +83,7 @@ async def test_summary_no_data():
 @pytest.mark.asyncio
 async def test_summary_with_version_param():
     """When plan_version is provided, skips resolution and returns summary."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     # plan_version provided → no version-resolution fetchone.
     # Call order: fetchone (summary), fetchall (abc_rows), fetchone (ci_row).
     cursor.fetchone.side_effect = [
@@ -116,7 +118,7 @@ async def test_summary_with_version_param():
 @pytest.mark.asyncio
 async def test_dfu_404_no_forecast():
     """DFU with no forecast rows returns 404."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchone.return_value = None  # no plan_version found
 
     with patch("api.core._get_pool", return_value=pool):
@@ -131,7 +133,7 @@ async def test_dfu_404_no_forecast():
 @pytest.mark.asyncio
 async def test_dfu_200_with_version():
     """DFU forecast with plan_version returns forecast series."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     # plan_version provided → skip fetchone for version resolution,
     # fetchone called once for promoted run lookup (return None = no promoted run)
     cursor.fetchone.return_value = None
@@ -181,7 +183,7 @@ async def test_dfu_200_with_version():
 @pytest.mark.asyncio
 async def test_dfu_404_version_exists_but_no_rows():
     """Plan version exists but no rows for this DFU → 404."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     # fetchall returns empty (no rows for this item/loc in the version)
     cursor.fetchall.return_value = []
 
@@ -199,7 +201,7 @@ async def test_dfu_404_version_exists_but_no_rows():
 @pytest.mark.asyncio
 async def test_dfu_horizon_capped():
     """horizon param is capped at 18 without error."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [
         (
@@ -223,7 +225,7 @@ async def test_dfu_horizon_capped():
 @pytest.mark.asyncio
 async def test_dfu_18_month_horizon():
     """18-month planning horizon returns all 18 forecast rows."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [
         (
@@ -253,7 +255,7 @@ async def test_dfu_18_month_horizon():
 @pytest.mark.asyncio
 async def test_dfu_includes_promoted_run():
     """DFU forecast includes promoted tuning run metadata when present."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         (
             datetime.date(2026, 4, 1), 150.0, 120.0, 180.0,
@@ -290,7 +292,7 @@ async def test_dfu_includes_promoted_run():
 @pytest.mark.asyncio
 async def test_dfu_promoted_run_null_when_no_promoted():
     """promoted_run is null when no tuning run is promoted."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         (
             datetime.date(2026, 4, 1), 150.0, None, None,
@@ -357,6 +359,99 @@ async def test_staging_overlay_uses_latest_candidate_run_and_preserves_source_mo
     assert "metadata ->> %s = %s" in sql
 
 
+@pytest.mark.asyncio
+async def test_staging_overlay_exposes_customer_shadow_and_blend_by_display_identity():
+    pool, _, cursor = _make_pool()
+    blend_run_id = "00000000-0000-0000-0000-000000000211"
+    bottom_up_run_id = "00000000-0000-0000-0000-000000000212"
+    generated_at = datetime.datetime(2026, 7, 10, 12, 0, 0)
+    cursor.fetchall.return_value = [
+        (
+            "customer_bottom_up",
+            "customer_bottom_up",
+            datetime.date(2026, 7, 1),
+            90.0,
+            None,
+            None,
+            1,
+            None,
+            "customer_demand",
+            generated_at,
+            bottom_up_run_id,
+        ),
+        (
+            "customer_bottom_up_blend",
+            "customer_bottom_up_blend",
+            datetime.date(2026, 7, 1),
+            95.0,
+            75.0,
+            125.0,
+            1,
+            "stable",
+            "actual",
+            generated_at,
+            blend_run_id,
+        ),
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/forecast/production/staging?item_id=ITEM001&loc=1401-BULK"
+            )
+
+    assert response.status_code == 200
+    models = response.json()["models"]
+    assert set(models) >= {"customer_bottom_up", "customer_bottom_up_blend"}
+    assert models["customer_bottom_up"][0]["source_run_id"] == bottom_up_run_id
+    assert models["customer_bottom_up_blend"][0]["source_run_id"] == blend_run_id
+    compact_sql = " ".join(cursor.execute.call_args.args[0].split())
+    assert "shadow_candidate" in compact_sql
+    assert "display_model_id" in compact_sql
+
+
+@pytest.mark.asyncio
+async def test_staging_overlay_missing_schema_returns_empty_models():
+    pool, _, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.UndefinedTable("relation does not exist")
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/forecast/production/staging?item_id=ITEM001&loc=1401-BULK"
+            )
+
+    assert response.status_code == 200
+    assert response.json()["models"] == {}
+
+
+@pytest.mark.asyncio
+async def test_staging_overlay_database_failure_returns_opaque_500():
+    pool, _, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.OperationalError("database unavailable")
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/forecast/production/staging?item_id=ITEM001&loc=1401-BULK"
+            )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "staging forecast lookup failed"}
+
+
 # ---------------------------------------------------------------------------
 # /forecast/candidate — per-model backtest (past, out-of-sample) predictions
 # ---------------------------------------------------------------------------
@@ -364,7 +459,7 @@ async def test_staging_overlay_uses_latest_candidate_run_and_preserves_source_mo
 @pytest.mark.asyncio
 async def test_candidate_groups_by_model():
     """GET /forecast/candidate groups rows by model_id with forecast + actual."""
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         # model_id, forecast_month, forecast_qty, lower, upper,
         # actual_qty, accuracy_pct, wape, bias, horizon_months, cluster_id
@@ -396,8 +491,7 @@ async def test_candidate_groups_by_model():
 @pytest.mark.asyncio
 async def test_candidate_table_missing_returns_empty():
     """A missing fact_candidate_forecast table degrades to empty models (clean install)."""
-    import psycopg
-    pool, conn, cursor = _make_pool()
+    pool, _conn, cursor = _make_pool()
     cursor.execute.side_effect = psycopg.errors.UndefinedTable("relation does not exist")
 
     with patch("api.core._get_pool", return_value=pool):
@@ -408,3 +502,20 @@ async def test_candidate_table_missing_returns_empty():
 
     assert resp.status_code == 200
     assert resp.json()["models"] == {}
+
+
+@pytest.mark.asyncio
+async def test_candidate_database_failure_returns_opaque_500():
+    pool, _conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.OperationalError("database unavailable")
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/forecast/candidate?item_id=X&loc=Y")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "candidate forecast lookup failed"}

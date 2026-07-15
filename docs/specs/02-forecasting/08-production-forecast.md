@@ -23,6 +23,8 @@ The base-model roster is deliberately fixed to exactly five algorithms:
 LightGBM (`lgbm_cluster`), N-HiTS (`nhits`), N-BEATS (`nbeats`), MSTL (`mstl`),
 and Chronos 2E (`chronos2_enriched`). `external`, `champion`, `ensemble`, and
 `ceiling` are comparison or routing identities, not additional base models.
+`customer_bottom_up` and `customer_bottom_up_blend` are also derived review and
+release identities, not a sixth or seventh member of the base-model roster.
 
 ## Production Forecast vs. Backtest
 
@@ -79,6 +81,16 @@ For each DFU:
 3. Generate T+1 through T+24 without using future actuals
 4. Write candidate rows to `fact_production_forecast_staging` with generation lineage
 5. Promote the validated staging generation into `fact_production_forecast`
+
+The governed customer workflow writes two paired staging manifests in the same
+transaction. Normalized customer bottom-up rows use
+`generation_purpose='shadow_candidate'` and `model_id='customer_bottom_up'`;
+they are review-only, have no intervals or champion-fallback rows, and can never
+be stage-approved or promoted. The full-spine `customer_bottom_up_blend` is the
+only customer-derived `release_candidate`. It retains the `champion` candidate
+slot for release control while its manifest and rows preserve the true blend
+identity and exact customer, backtest, source-release, component, and paired
+shadow-run lineage.
 
 
 **Fail loud on prediction failure (no silent zero-fill or mislabeled fallback):** if LightGBM prediction fails, the run logs the full traceback and re-raises; it does not substitute zeros. `common/ml/production_non_tree.py` likewise requires the real MSTL, N-HiTS, N-BEATS, or Chronos 2E adapter to return the complete requested DFU-month grid with the correct model id and finite nonnegative values. Missing optional dependencies, empty results, or partial results abort generation instead of substituting a heuristic under the canonical model label.
@@ -219,6 +231,13 @@ partially updated cluster set.
 
 **Grain:** `(plan_version, item_id, loc, forecast_month)`
 
+Forward review rows remain in `fact_production_forecast_staging`. The paired
+`customer_bottom_up` shadow run is deterministically derived from its blend run
+and remains `promotion_eligible=FALSE`; only the
+`customer_bottom_up_blend` release-candidate run can enter production. When that
+blend is promoted, it occupies the governed `champion` release slot without
+being relabeled as a base algorithm.
+
 ## Cold-Start Routing
 
 Production routing derives history through the latest closed month at full
@@ -243,7 +262,7 @@ Configured in `config/forecasting/forecast_pipeline_config.yaml` under `producti
 | GET | `/forecast/production` | Promoted forecast rows for a specific DFU + plan version (future) |
 | GET | `/forecast/production/summary` | Aggregate forecast by ABC class for a plan version |
 | GET | `/forecast/production/versions` | List available plan versions with metadata |
-| GET | `/forecast/production/staging` | All **staged** (pre-promotion, future) forecasts for a DFU, grouped by `model_id` |
+| GET | `/forecast/production/staging` | Latest reviewable future forecasts for a DFU, grouped by true display identity. The review-only `customer_bottom_up` shadow and `customer_bottom_up_blend` release candidate remain separate even though the blend occupies the `champion` release slot. Rows retain exact source-run and producing-model lineage. |
 | GET | `/forecast/candidate` | All **backtest** (past, out-of-sample) predictions for a DFU, grouped by `model_id` — see [24-candidate-forecast-promotion.md](24-candidate-forecast-promotion.md) §5.4 |
 | POST | `/backtest-management/{model_id}/generate` | Submit a generate job for one model → staging. Accepts `horizon` + `confidence_intervals` query params (both optional → pipeline-config defaults) |
 
@@ -330,6 +349,20 @@ The **Model Experimentation Studio** provides a Train then Generate workflow:
 3. Review training metadata (row counts, validation RMSE, feature counts)
 4. Trigger forecast generation
 5. View point forecasts with CI bands in the Demand Forecast panel
+
+Portfolio Analysis provides a dedicated **Customer Blend** trend rather than
+mixing item-location evidence into the standard customer-group accuracy views.
+For one exact blend `run_id`, it joins the manifest-stamped backtest and paired
+bottom-up shadow run: historical months compare actual sales, normalized
+customer bottom-up, source champion, and blend; future months compare the exact
+staged bottom-up, source champion, and blend with blend intervals and coverage.
+Supported portfolio filters are applied inside that exact lineage; channel is
+reported as non-applicable at warehouse-item grain.
+
+Item Analysis uses the same exact historical backtest lineage and the standard
+`/forecast/production/staging` future series. It suppresses duplicate component
+overlays when the corresponding staged `customer_bottom_up` or
+`customer_bottom_up_blend` display identity is already present.
 
 The monthly publish workflow also prepares exactly three WAPE-ranked
 `snapshot_contender` runs. When the next release replaces the current one,

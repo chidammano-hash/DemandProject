@@ -56,6 +56,7 @@ interface CustomerBlendLegendProps {
   emptyMessage?: string;
   runId?: string | null;
   planningMonth?: string | null;
+  stagedSeries?: boolean;
 }
 
 function formatMonth(value: string): string {
@@ -78,8 +79,9 @@ export function CustomerBlendLegend({
   emptyMessage = "No customer blend is available for this item and location.",
   runId,
   planningMonth,
+  stagedSeries = false,
 }: CustomerBlendLegendProps) {
-  const { chartColors, okabeIto } = useChartColors();
+  const { chartColors, okabeIto, roles } = useChartColors();
   if (status === "idle") return null;
 
   if (status !== "ready") {
@@ -105,12 +107,16 @@ export function CustomerBlendLegend({
   const series = [
     {
       label: "Customer Bottom-Up",
-      color: okabeIto[1],
+      color: stagedSeries ? roles.good : okabeIto[1],
       title: "Normalized customer bottom-up forecast",
       lineClassName: "border-dashed",
     },
     { label: "Source Champion", color: chartColors.axis, lineClassName: "border-dotted" },
-    { label: "Customer Blend", color: okabeIto[6], lineClassName: "border-solid" },
+    {
+      label: "Customer Blend",
+      color: stagedSeries ? roles.ai : okabeIto[6],
+      lineClassName: stagedSeries ? "border-dashed" : "border-solid",
+    },
   ];
   const monthLabel = months.length === 1 ? "month" : "months";
   const vintageLabel = planningMonth ? formatMonth(planningMonth) : null;
@@ -130,6 +136,11 @@ export function CustomerBlendLegend({
         aria-live="polite"
       >
         <span className="font-semibold text-foreground">Customer forecast blend</span>
+        {stagedSeries && (
+          <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
+            Staged draft
+          </span>
+        )}
         <span className="text-muted-foreground">Customer signal normalized to sales</span>
         {vintageLabel && runId && (
           <span

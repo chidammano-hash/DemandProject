@@ -341,12 +341,24 @@ customer blend cannot recursively become the champion input to another blend.
 `customer_bottom_up_blend_component` accepts inserts only while its generation
 run is generating, is immutable afterward, and is keyed to the exact
 `forecast_generation_run`, completed customer run, passing backtest run, source
-promotion, and source production run. `fact_production_forecast_staging`
-contains the corresponding reviewable draft under model ID
-`customer_bottom_up_blend`. A generated draft has no effect on
-`fact_production_forecast` until the normal explicit promotion transaction
-succeeds. Aggregation, normalization, checksum verification, and staging writes
-share one repeatable-read snapshot.
+promotion, and source production run. One successful generation publishes two
+immutable staging views from that same component evidence:
+
+- `customer_bottom_up_blend` is the `release_candidate` manifest and remains
+  the only customer-derived payload eligible for stage approval or promotion;
+- `customer_bottom_up` is a companion `shadow_candidate` manifest containing
+  only the normalized item-location months with usable customer evidence. Its
+  run ID is derived deterministically from the blend run ID, its metadata binds
+  the blend and source lineage, and database/service gates make it permanently
+  non-promotable.
+
+Both views live in `fact_production_forecast_staging`, so standard forecast
+review surfaces can show them with their true candidate identity. Raw
+customer-grain demand never enters production staging. A generated draft has
+no effect on `fact_production_forecast` until the normal explicit blend
+promotion transaction succeeds. Aggregation, normalization, checksum
+verification, component persistence, and both staging writes share one
+repeatable-read snapshot.
 
 ## 10. API and durable jobs
 
@@ -366,6 +378,7 @@ share one repeatable-read snapshot.
 | POST | `/customer-forecast/blend/generate` | Create a reviewable full-spine blend draft after evidence passes |
 | GET | `/customer-forecast/blend/latest` | Return latest blend draft lineage and coverage summary |
 | GET | `/customer-forecast/blend/series` | Compare bottom-up, champion, and blend for one item-location |
+| GET | `/customer-forecast/blend/trend` | Return exact-run historical backtest and future staged bottom-up/champion/blend totals for Portfolio or filtered item-location review |
 
 Write endpoints use the API-key guard. Customer generation and backtest jobs
 use the durable job framework for progress, cancellation, restart recovery,
@@ -398,12 +411,30 @@ view. It shows:
 - three explicit item-location series: **Customer Bottom-Up**, **Source
   Champion**, and **Customer Blend**, with fallback months visibly identified.
 
-The same three read-only series are surfaced in Item Analysis and Demand
-History, while the Forecast release view receives the resulting draft through
-the existing staging workflow. The Forecast readiness and stage/promotion
-cards identify that draft as **Customer Bottom-Up Blend**, even though it uses
-the governed `champion` release slot, and show its common-cohort backtest gate,
-blend WAPE, and WAPE delta versus the source champion before an operator acts.
+The same three read-only series are surfaced in Portfolio, Item Analysis, and
+Demand History, while the Forecast release view receives the resulting draft
+through the existing staging workflow:
+
+- **Portfolio** has a dedicated Customer Blend comparison mode, separate from
+  the canonical model KPI selector. It shows the exact common-cohort historical
+  actual/backtest series, the exact future shadow/source/blend staging series,
+  three WAPEs, coverage, vintage, and lineage. Global item, location, brand,
+  category, market, and cluster filters are applied by the trend API; unsupported
+  customer-channel filtering is stated explicitly rather than silently implied.
+  Blend/fallback counts are filter-scoped; the separately named
+  `global_customer_only_excluded_count` remains a whole-run spine diagnostic.
+- **Item Analysis** composes the exact historical backtest series into the
+  existing candidate controls and reads future bottom-up and blend rows through
+  the standard staging endpoint. When the same run is also available through
+  the customer detail overlay, the future lines are deduplicated.
+- **Demand History** retains its exact item-location customer comparison.
+
+The Forecast readiness and stage/promotion cards identify the release draft as
+**Customer Bottom-Up Blend**, even though it uses the governed `champion`
+release slot, and show its common-cohort backtest gate, blend WAPE, and WAPE
+delta versus the source champion before an operator acts. Standard staging
+reads label the two customer views by candidate identity rather than collapsing
+the release candidate to `champion`.
 
 Default overlays revalidate current customer-demand, customer-config,
 backtest-config, and source-promotion lineage every 30 seconds and on window
@@ -423,7 +454,8 @@ controls remain authoritative.
 
 - DDL: `sql/210_create_customer_forecast.sql` through
   `sql/215_enforce_customer_batch_lineage.sql`, plus
-  `sql/216_create_customer_bottom_up_blend.sql`
+  `sql/216_create_customer_bottom_up_blend.sql` and
+  `sql/217_add_customer_bottom_up_shadow_staging.sql`
 - Croston/SBA: `common/ml/croston.py`
 - Customer generation: `common/services/customer_forecast.py` and
   `common/services/customer_forecast_batches.py`
@@ -435,8 +467,8 @@ controls remain authoritative.
   and `scripts/forecasting/generate_customer_forecast_backtest.py`
 - API: `api/routers/forecasting/customer_forecast.py` and
   `api/routers/forecasting/customer_forecast_blend.py`
-- UI: **Forecasting → Customer Forecast** and shared forecast comparison
-  overlays
+- UI: **Forecasting → Customer Forecast**, Portfolio customer comparison, and
+  shared Item Analysis/Demand History forecast overlays
 - Config: `config/forecasting/forecast_pipeline_config.yaml` under
   `customer_forecast`
 
@@ -463,6 +495,13 @@ controls remain authoritative.
   explicit paired-null `none` state.
 - Every draft component retains generation run, customer run, passing backtest,
   source promotion, and source production lineage.
+- Every successful draft produces an exact normalized
+  `customer_bottom_up` shadow staging manifest and an exact
+  `customer_bottom_up_blend` release-candidate manifest. The shadow is sparse
+  to usable customer evidence and can never be stage-approved or promoted.
+- Portfolio and Item Analysis show historical and future customer bottom-up,
+  source champion, and blend values from the exact backtest and staging run
+  lineage; standard and customer KPI modes remain semantically separate.
 - A missing, stale, mismatched, incomplete, or failing backtest blocks the
   draft from staging and promotion.
 - A promoted customer blend cannot be used recursively as the source champion

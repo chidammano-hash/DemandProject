@@ -32,7 +32,11 @@ def reserve_generation_run(
     resume_invalid: bool = False,
 ) -> str:
     """Create a durable generating manifest or validate an existing reservation."""
-    if generation_purpose not in {"release_candidate", "snapshot_contender"}:
+    if generation_purpose not in {
+        "release_candidate",
+        "snapshot_contender",
+        "shadow_candidate",
+    }:
         raise ValueError("unsupported forecast generation purpose")
     if horizon_months <= 0:
         raise ValueError("forecast generation horizon must be positive")
@@ -118,7 +122,7 @@ def invalidate_generation_run(cur: Any, run_id: UUID | str, reason: str) -> bool
            WHERE staging.run_id = %s::uuid
              AND generation.run_id = staging.run_id
              AND generation.generation_purpose IN (
-                 'release_candidate', 'snapshot_contender'
+                 'release_candidate', 'snapshot_contender', 'shadow_candidate'
              )
              AND generation.run_status IN ('generating', 'invalid')""",
         (str(run_id),),
@@ -128,7 +132,7 @@ def invalidate_generation_run(cur: Any, run_id: UUID | str, reason: str) -> bool
            SET run_status = 'invalid', promotion_eligible = FALSE,
                invalid_reason = %s, completed_at = NOW()
            WHERE run_id = %s::uuid
-             AND generation_purpose IN ('release_candidate', 'snapshot_contender')
+             AND generation_purpose IN ('release_candidate', 'snapshot_contender', 'shadow_candidate')
              AND run_status IN ('generating', 'invalid')""",
         (safe_reason, str(run_id)),
     )

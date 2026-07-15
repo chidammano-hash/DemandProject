@@ -1,16 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
 // localStorage mock
 const _store: Record<string, string> = {};
-if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localStorage.getItem !== "function") {
+if (
+  typeof globalThis.localStorage === "undefined" ||
+  typeof globalThis.localStorage.getItem !== "function"
+) {
   Object.defineProperty(globalThis, "localStorage", {
     value: {
       getItem: (key: string) => _store[key] ?? null,
-      setItem: (key: string, value: string) => { _store[key] = value; },
-      removeItem: (key: string) => { delete _store[key]; },
-      clear: () => { for (const k of Object.keys(_store)) delete _store[k]; },
+      setItem: (key: string, value: string) => {
+        _store[key] = value;
+      },
+      removeItem: (key: string) => {
+        delete _store[key];
+      },
+      clear: () => {
+        for (const k of Object.keys(_store)) delete _store[k];
+      },
     },
     writable: true,
   });
@@ -20,6 +29,10 @@ if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localSto
 vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
+  customerForecastKeys: {
+    latestBlend: ["customer-forecast", "blend", "latest"],
+    blendTrend: (p: Record<string, unknown>) => ["customer-forecast", "blend", "trend", p],
+  },
   queryKeys: {
     dashboardKpis: (p: Record<string, unknown>) => ["dashboard-kpis", p],
     dashboardTrend: (p: Record<string, unknown>) => ["dashboard-trend", p],
@@ -31,7 +44,13 @@ vi.mock("@/api/queries", () => ({
     shapModels: () => ["shap-models"],
     shapSummary: (m: string, n: number) => ["shap-summary", m, n],
     shapTimeframes: (m: string) => ["shap-timeframes", m],
-    shapTimeframeDetail: (m: string, idx: number, n: number, c: string) => ["shap-detail", m, idx, n, c],
+    shapTimeframeDetail: (m: string, idx: number, n: number, c: string) => [
+      "shap-detail",
+      m,
+      idx,
+      n,
+      c,
+    ],
     shapClusters: (m: string) => ["shap-clusters", m],
     distinctValues: (d: string, c: string) => ["distinct-values", d, c],
     planningDate: () => ["planning-date"],
@@ -41,11 +60,25 @@ vi.mock("@/api/queries", () => ({
     skuCount: (f: unknown) => ["sku-count", f],
   },
   SLICE_DEFAULT_LIMIT: 1000,
-  STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
+  STALE: {
+    FOREVER: Infinity,
+    TEN_MIN: 600000,
+    FIVE_MIN: 300000,
+    TWO_MIN: 120000,
+    ONE_MIN: 60000,
+    THIRTY_SEC: 30000,
+    NONE: 0,
+  },
   fetchDashboardKpis: vi.fn().mockResolvedValue({
-    accuracy_pct: 88.5, wape_pct: 11.2, bias_pct: -3.4,
-    accuracy_delta: 1.2, wape_delta: -0.5, bias_delta: 0.8,
-    total_forecast: 500000, total_actual: 480000, window_months: 3,
+    accuracy_pct: 88.5,
+    wape_pct: 11.2,
+    bias_pct: -3.4,
+    accuracy_delta: 1.2,
+    wape_delta: -0.5,
+    bias_delta: 0.8,
+    total_forecast: 500000,
+    total_actual: 480000,
+    window_months: 3,
   }),
   fetchDashboardTrend: vi.fn().mockResolvedValue({
     months: [
@@ -58,9 +91,13 @@ vi.mock("@/api/queries", () => ({
     period_labels: ["2025-09", "2025-10", "2025-11"],
     metric: "accuracy_pct",
   }),
-  fetchAccuracySlice: vi.fn().mockResolvedValue({ rows: [], common_sku_count: null, sku_counts: null }),
+  fetchAccuracySlice: vi
+    .fn()
+    .mockResolvedValue({ rows: [], common_sku_count: null, sku_counts: null }),
   fetchLagCurve: vi.fn().mockResolvedValue({ by_lag: [] }),
-  fetchLagLeaderboard: vi.fn().mockResolvedValue({ lags: [], limit: 5, source: "agg_accuracy_lag_archive" }),
+  fetchLagLeaderboard: vi
+    .fn()
+    .mockResolvedValue({ lags: [], limit: 5, source: "agg_accuracy_lag_archive" }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue({ config: null, available_models: [] }),
   fetchCompetitionSummary: vi.fn().mockResolvedValue({ summary: null }),
   fetchShapModels: vi.fn().mockResolvedValue({ models: [] }),
@@ -72,9 +109,55 @@ vi.mock("@/api/queries", () => ({
   saveCompetitionConfig: vi.fn().mockResolvedValue({}),
   runCompetition: vi.fn().mockResolvedValue({}),
   fetchDistinctValues: vi.fn().mockResolvedValue({ values: [] }),
-  fetchPlanningDate: vi.fn().mockResolvedValue({ planning_date: "2026-03-16", is_frozen: false, system_date: "2026-03-16", days_behind: 0 }),
+  fetchPlanningDate: vi.fn().mockResolvedValue({
+    planning_date: "2026-03-16",
+    is_frozen: false,
+    system_date: "2026-03-16",
+    days_behind: 0,
+  }),
   fetchDfuCount: vi.fn().mockResolvedValue({ count: 0 }),
   fetchForecastModels: vi.fn().mockResolvedValue(["external", "lgbm_cluster", "champion"]),
+  fetchLatestCustomerBlend: vi.fn().mockResolvedValue({
+    run_id: "blend-run-1",
+    status: "ready",
+    planning_month: "2026-07-01",
+  }),
+  fetchCustomerBlendTrend: vi.fn().mockResolvedValue({
+    run_id: "blend-run-1",
+    status: "ready",
+    planning_month: "2026-07-01",
+    completed_at: "2026-07-14T12:00:00Z",
+    backtest_run_id: "backtest-run-1",
+    bottom_up_staging_run_id: "bottom-up-run-1",
+    backtest_gate: { passed: true },
+    filters_applied: {},
+    filter_notes: [],
+    accuracy: {
+      common_actual_qty: 100,
+      customer_bottom_up_wape_pct: 10,
+      source_champion_wape_pct: 5,
+      customer_blend_wape_pct: 2.5,
+    },
+    coverage: {
+      blended_rows: 18,
+      champion_fallback_rows: 2,
+      global_customer_only_excluded_count: 1,
+    },
+    months: [
+      {
+        month: "2026-07-01",
+        phase: "staged",
+        actual_qty: null,
+        customer_bottom_up_qty: 92,
+        source_champion_qty: 104,
+        customer_blend_qty: 98,
+        lower_bound: 80,
+        upper_bound: 120,
+        blended_dfu_count: 18,
+        fallback_dfu_count: 2,
+      },
+    ],
+  }),
 }));
 
 vi.mock("@/api/queries/core", () => ({
@@ -95,13 +178,17 @@ function renderTab() {
   return render(
     <TestQueryWrapper>
       <AggregateAnalysisTab />
-    </TestQueryWrapper>,
+    </TestQueryWrapper>
   );
 }
 
 describe("AggregateAnalysisTab", () => {
   beforeEach(() => {
-    try { localStorage.removeItem("ds:aggregateAnalysis:panels"); } catch { /* no-op */ }
+    try {
+      localStorage.removeItem("ds:aggregateAnalysis:panels");
+    } catch {
+      /* no-op */
+    }
   });
 
   it("renders without crashing", async () => {
@@ -121,8 +208,12 @@ describe("AggregateAnalysisTab", () => {
   it("renders local filter bar with Brand, Category, Item, Location buttons", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "Filter by Brand" }).length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByRole("button", { name: "Filter by Category" }).length).toBeGreaterThanOrEqual(1);
+      expect(
+        screen.getAllByRole("button", { name: "Filter by Brand" }).length
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        screen.getAllByRole("button", { name: "Filter by Category" }).length
+      ).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -156,6 +247,17 @@ describe("AggregateAnalysisTab", () => {
     expect(screen.getAllByText("6mo").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("12mo").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("24mo").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("switches the Portfolio sales-history chart to staged customer forecasts", async () => {
+    renderTab();
+    const customerBlendButton = await screen.findByRole("button", { name: "Customer Blend" });
+
+    fireEvent.click(customerBlendButton);
+
+    expect(await screen.findByText("Customer Bottom-Up WAPE 10.0%")).toBeInTheDocument();
+    expect(screen.getByText("Customer Blend WAPE 2.5%")).toBeInTheDocument();
+    expect(screen.getByText("18 blended · 2 fallback")).toBeInTheDocument();
   });
 
   it("renders Accuracy Heatmap panel with grain selector", async () => {

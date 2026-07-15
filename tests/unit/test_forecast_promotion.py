@@ -633,6 +633,7 @@ def test_champion_promotion_rejects_refresh_from_different_sales_batch():
     ("overrides", "code"),
     [
         ({"generation_purpose": "snapshot_contender"}, "candidate_run_not_promotable"),
+        ({"generation_purpose": "shadow_candidate"}, "candidate_run_not_promotable"),
         ({"run_status": "generating"}, "candidate_run_not_promotable"),
         ({"promotion_eligible": False}, "candidate_not_staged"),
         ({"requested_model_id": "lgbm_cluster"}, "candidate_lineage_mismatch"),

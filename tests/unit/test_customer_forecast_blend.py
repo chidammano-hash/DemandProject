@@ -178,6 +178,66 @@ def test_customer_only_rows_are_counted_but_never_enter_the_production_spine() -
     assert "LEFT JOIN customer_aggregate customer" in generation_source
 
 
+def test_customer_bottom_up_shadow_run_is_deterministic_and_distinct() -> None:
+    service = _blend_service()
+
+    first = service.customer_bottom_up_shadow_run_id(BLEND_RUN_ID)
+    second = service.customer_bottom_up_shadow_run_id(BLEND_RUN_ID)
+
+    assert first == second
+    assert first != BLEND_RUN_ID
+
+
+def test_customer_bottom_up_shadow_stages_only_normalized_customer_rows(
+    monkeypatch,
+) -> None:
+    service = _blend_service()
+    cursor = MagicMock()
+    cursor.rowcount = 1
+    shadow_stats = service.ForecastPayloadStats("c" * 64, 18, 1, 1)
+    reserve = MagicMock(return_value="generating")
+    monkeypatch.setattr(service, "reserve_generation_run", reserve)
+    monkeypatch.setattr(
+        service,
+        "compute_staging_payload_stats",
+        lambda _cur, _run_id: shadow_stats,
+    )
+
+    result = service.stage_customer_bottom_up_shadow(
+        cursor,
+        blend_run_id=BLEND_RUN_ID,
+        planning_month=date(2026, 7, 1),
+        horizon_months=18,
+        source_metadata={},
+        lineage={"customer_run_id": str(CUSTOMER_RUN_ID)},
+        champion_experiment_id=33,
+        cluster_experiment_id=7,
+        source_sales_batch_id=101,
+        routing_artifact_checksum="r" * 64,
+        champion_results_checksum="h" * 64,
+    )
+
+    assert result.run_id == service.customer_bottom_up_shadow_run_id(BLEND_RUN_ID)
+    assert result.status == "ready"
+    assert result.stats == shadow_stats
+    reservation = reserve.call_args.kwargs
+    assert reservation["generation_purpose"] == "shadow_candidate"
+    assert reservation["requested_model_id"] == "customer_bottom_up"
+    insert_call = next(
+        call
+        for call in cursor.execute.call_args_list
+        if "INSERT INTO fact_production_forecast_staging" in call.args[0]
+    )
+    insert_sql, insert_params = insert_call.args
+    assert "component.normalized_customer_qty IS NOT NULL" in insert_sql
+    assert "'shadow_candidate'" in insert_sql
+    assert "customer_bottom_up" in insert_params
+    ready_call = next(
+        call for call in cursor.execute.call_args_list if "SET run_status = 'ready'" in call.args[0]
+    )
+    assert "promotion_eligible = FALSE" in ready_call.args[0]
+
+
 def test_blend_component_lineage_requires_one_normalized_identity() -> None:
     service = _blend_service()
     cursor = MagicMock()

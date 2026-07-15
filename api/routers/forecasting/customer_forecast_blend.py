@@ -613,6 +613,10 @@ def get_latest_customer_blend() -> dict[str, Any]:
         "blended_row_count": int(lineage.get("blended_row_count") or 0),
         "champion_fallback_row_count": int(lineage.get("fallback_row_count") or 0),
         "customer_only_excluded_count": int(lineage.get("excluded_customer_dfu_count") or 0),
+        "bottom_up_staging_run_id": lineage.get("bottom_up_staging_run_id"),
+        "bottom_up_staging_status": lineage.get("bottom_up_staging_status"),
+        "bottom_up_staging_row_count": int(lineage.get("bottom_up_staging_row_count") or 0),
+        "bottom_up_staging_dfu_count": int(lineage.get("bottom_up_staging_dfu_count") or 0),
         "promotion_enabled": bool(
             isinstance(lineage.get("promotion"), dict) and lineage["promotion"].get("enabled")
         ),

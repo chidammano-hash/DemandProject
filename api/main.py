@@ -284,6 +284,8 @@ from api.routers.forecasting import sku_features     # noqa: E402  # SKU feature
 from api.routers.forecasting import ai_champion      # noqa: E402  # AI Champion forward adjuster
 from api.routers.forecasting import customer_forecast  # noqa: E402  # Customer-level forecasting
 from api.routers.forecasting import customer_forecast_blend  # noqa: E402  # Bottom-up blend
+from api.routers.forecasting import customer_forecast_trend  # noqa: E402  # Blend trend
+from api.routers.forecasting import production_forecast_overlays  # noqa: E402  # Item overlays
 from api.routers.intelligence import customer_analytics  # noqa: E402  # Customer Analytics
 from api.routers.inventory import demand_history  # noqa: E402  # Demand History Workbench
 from api.routers.inventory import inv_planning_algorithm_comparison  # noqa: E402  # Algorithm Inventory Comparison
@@ -374,6 +376,8 @@ app.include_router(sku_features.router)
 app.include_router(ai_champion.router)
 app.include_router(customer_forecast.router)
 app.include_router(customer_forecast_blend.router)
+app.include_router(customer_forecast_trend.router)
+app.include_router(production_forecast_overlays.router)
 app.include_router(customer_analytics.router)
 app.include_router(demand_history.router)
 app.include_router(inv_planning_algorithm_comparison.router)

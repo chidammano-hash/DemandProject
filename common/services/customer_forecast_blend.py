@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from psycopg.types.json import Jsonb
 
 from common.core.constants import (
     CHAMPION_MODEL_ID,
     CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID,
+    CUSTOMER_BOTTOM_UP_MODEL_ID,
 )
 from common.services.customer_demand_lineage import customer_demand_snapshot_locked
 from common.services.customer_forecast import _shift_month
@@ -35,6 +36,7 @@ from common.services.forecast_lineage import (
 @dataclass(frozen=True)
 class CustomerBlendGenerationResult:
     run_id: UUID
+    bottom_up_staging_run_id: UUID
     customer_run_id: UUID
     source_promotion_id: int
     source_production_run_id: UUID
@@ -47,11 +49,168 @@ class CustomerBlendGenerationResult:
 
 
 @dataclass(frozen=True)
+class CustomerBottomUpShadowResult:
+    run_id: UUID
+    status: str
+    stats: ForecastPayloadStats
+
+
+@dataclass(frozen=True)
 class CustomerBlendComponentLineage:
     customer_run_id: UUID
     backtest_run_id: UUID
     source_promotion_id: int
     source_production_run_id: UUID
+
+
+CUSTOMER_BOTTOM_UP_STAGING_METADATA_KEY = "customer_bottom_up_staging"
+
+
+def customer_bottom_up_shadow_run_id(blend_run_id: UUID | str) -> UUID:
+    """Derive the immutable review-run identity paired with one blend draft."""
+    return uuid5(
+        NAMESPACE_URL,
+        f"demand-project/customer-bottom-up-staging/{UUID(str(blend_run_id))}",
+    )
+
+
+def stage_customer_bottom_up_shadow(
+    cur: Any,
+    *,
+    blend_run_id: UUID,
+    planning_month: date,
+    horizon_months: int,
+    source_metadata: dict[str, Any],
+    lineage: dict[str, Any],
+    champion_experiment_id: int,
+    cluster_experiment_id: int,
+    source_sales_batch_id: int,
+    routing_artifact_checksum: str,
+    champion_results_checksum: str,
+) -> CustomerBottomUpShadowResult:
+    """Stage the normalized customer signal as immutable, non-promotable evidence."""
+    shadow_run_id = customer_bottom_up_shadow_run_id(blend_run_id)
+    shadow_lineage = {
+        **lineage,
+        "model_id": CUSTOMER_BOTTOM_UP_MODEL_ID,
+        "source_blend_run_id": str(blend_run_id),
+        "status": "generating",
+    }
+    metadata = {
+        key: value
+        for key, value in source_metadata.items()
+        if key != CUSTOMER_BLEND_LINEAGE_METADATA_KEY
+    }
+    metadata[CUSTOMER_BOTTOM_UP_STAGING_METADATA_KEY] = shadow_lineage
+    status = reserve_generation_run(
+        cur,
+        run_id=shadow_run_id,
+        generation_purpose="shadow_candidate",
+        requested_model_id=CUSTOMER_BOTTOM_UP_MODEL_ID,
+        record_month=planning_month,
+        horizon_months=horizon_months,
+        created_by="customer-bottom-up-shadow",
+        metadata=metadata,
+    )
+    if status != "generating":
+        raise ValueError(f"Customer bottom-up shadow run is already {status}")
+
+    cur.execute(
+        """UPDATE forecast_generation_run
+           SET champion_experiment_id = %s,
+               cluster_experiment_id = %s,
+               source_sales_batch_id = %s,
+               routing_artifact_checksum = %s,
+               champion_results_checksum = %s
+           WHERE run_id = %s::uuid
+             AND generation_purpose = 'shadow_candidate'
+             AND run_status = 'generating'""",
+        (
+            champion_experiment_id,
+            cluster_experiment_id,
+            source_sales_batch_id,
+            routing_artifact_checksum,
+            champion_results_checksum,
+            str(shadow_run_id),
+        ),
+    )
+    if cur.rowcount != 1:
+        raise ValueError("Customer bottom-up shadow manifest could not accept source lineage")
+
+    cur.execute(
+        """INSERT INTO fact_production_forecast_staging
+               (model_id, candidate_model_id, generation_purpose,
+                item_id, loc, forecast_month, forecast_month_generated,
+                forecast_qty, forecast_qty_lower, forecast_qty_upper,
+                cluster_id, horizon_months, is_recursive, lag_source,
+                generated_at, run_id)
+           SELECT %s, %s, 'shadow_candidate',
+                  component.item_id, component.loc, component.forecast_month,
+                  %s, ROUND(component.normalized_customer_qty, 2),
+                  NULL, NULL, NULL, production.horizon_months,
+                  FALSE, 'customer_demand', component.generated_at, %s::uuid
+           FROM customer_bottom_up_blend_component component
+           JOIN fact_production_forecast production
+             ON production.run_id = component.source_production_run_id
+            AND production.item_id = component.item_id
+            AND production.loc = component.loc
+            AND production.forecast_month = component.forecast_month
+           WHERE component.run_id = %s::uuid
+             AND component.normalized_customer_qty IS NOT NULL""",
+        (
+            CUSTOMER_BOTTOM_UP_MODEL_ID,
+            CUSTOMER_BOTTOM_UP_MODEL_ID,
+            planning_month,
+            str(shadow_run_id),
+            str(blend_run_id),
+        ),
+    )
+    stats = compute_staging_payload_stats(cur, shadow_run_id)
+    if stats.row_count <= 0 or stats.dfu_count <= 0:
+        shadow_lineage.update({"status": "invalid", "row_count": 0, "dfu_count": 0})
+        metadata[CUSTOMER_BOTTOM_UP_STAGING_METADATA_KEY] = shadow_lineage
+        cur.execute(
+            """UPDATE forecast_generation_run
+               SET run_status = 'invalid', promotion_eligible = FALSE,
+                   invalid_reason = 'no normalized customer rows were available',
+                   artifact_checksum = %s, metadata = %s, completed_at = NOW()
+               WHERE run_id = %s::uuid AND run_status = 'generating'""",
+            (stats.checksum, Jsonb(metadata), str(shadow_run_id)),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("Customer bottom-up shadow manifest did not become invalid")
+        return CustomerBottomUpShadowResult(shadow_run_id, "invalid", stats)
+
+    shadow_lineage.update(
+        {
+            "status": "ready",
+            "row_count": stats.row_count,
+            "dfu_count": stats.dfu_count,
+            "artifact_checksum": stats.checksum,
+        }
+    )
+    metadata[CUSTOMER_BOTTOM_UP_STAGING_METADATA_KEY] = shadow_lineage
+    cur.execute(
+        """UPDATE forecast_generation_run
+           SET run_status = 'ready', promotion_eligible = FALSE,
+               row_count = %s, dfu_count = %s,
+               candidate_model_count = %s, artifact_checksum = %s,
+               metadata = %s, completed_at = NOW()
+           WHERE run_id = %s::uuid
+             AND generation_purpose = 'shadow_candidate'
+             AND run_status = 'generating'""",
+        (
+            stats.row_count,
+            stats.dfu_count,
+            stats.source_model_count,
+            stats.checksum,
+            Jsonb(metadata),
+            str(shadow_run_id),
+        ),
+    )
+    if cur.rowcount != 1:
+        raise ValueError("Customer bottom-up shadow manifest did not transition to ready")
+    return CustomerBottomUpShadowResult(shadow_run_id, "ready", stats)
 
 
 def compute_customer_blend_component_stats(
@@ -479,6 +638,25 @@ def generate_customer_bottom_up_blend(
             if staging_stats.row_count != row_count or staging_stats.dfu_count != dfu_count:
                 raise ValueError("Customer blend staging payload does not match its components")
 
+            shadow = stage_customer_bottom_up_shadow(
+                cur,
+                blend_run_id=run_id,
+                planning_month=planning_month,
+                horizon_months=int(readiness["customer_horizon_months"]),
+                source_metadata=source_metadata,
+                lineage={
+                    **initial_lineage,
+                    "component_checksum": component_checksum,
+                    "component_row_count": row_count,
+                    "component_dfu_count": dfu_count,
+                },
+                champion_experiment_id=int(readiness["champion_experiment_id"]),
+                cluster_experiment_id=int(readiness["cluster_experiment_id"]),
+                source_sales_batch_id=int(readiness["source_sales_batch_id"]),
+                routing_artifact_checksum=str(readiness["routing_artifact_checksum"]),
+                champion_results_checksum=str(readiness["champion_results_checksum"]),
+            )
+
             completed_lineage = {
                 **initial_lineage,
                 "component_checksum": component_checksum,
@@ -487,6 +665,11 @@ def generate_customer_bottom_up_blend(
                 "blended_row_count": blended_count,
                 "fallback_row_count": fallback_count,
                 "excluded_customer_dfu_count": excluded_customer_dfus,
+                "bottom_up_staging_run_id": str(shadow.run_id),
+                "bottom_up_staging_status": shadow.status,
+                "bottom_up_staging_row_count": shadow.stats.row_count,
+                "bottom_up_staging_dfu_count": shadow.stats.dfu_count,
+                "bottom_up_staging_checksum": shadow.stats.checksum,
             }
             source_metadata[CUSTOMER_BLEND_LINEAGE_METADATA_KEY] = completed_lineage
             cur.execute(
@@ -511,6 +694,7 @@ def generate_customer_bottom_up_blend(
 
     return CustomerBlendGenerationResult(
         run_id=run_id,
+        bottom_up_staging_run_id=shadow.run_id,
         customer_run_id=resolved_customer_run_id,
         source_promotion_id=source_promotion_id,
         source_production_run_id=source_production_run_id,

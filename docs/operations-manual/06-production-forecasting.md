@@ -49,8 +49,8 @@ a release source.
 
 | Table | Grain | Lifecycle | DDL |
 |---|---|---|---|
-| `forecast_generation_run` | one row per generation UUID | Manifest status, purpose, generator-contract metadata, input lineage, counts, checksums | `sql/203_create_forecast_generation_run.sql`; canonical cutover in `sql/206` |
-| `fact_production_forecast_staging` | run + purpose + candidate + item + loc + month | Immutable rows; `release_candidate`, `snapshot_contender`, and retained `legacy_invalid` never mix | `sql/122`, extended by `sql/203` |
+| `forecast_generation_run` | one row per generation UUID | Manifest status, purpose, generator-contract metadata, input lineage, counts, checksums | `sql/203_create_forecast_generation_run.sql`; canonical cutover in `sql/206`; customer shadow purpose in `sql/217` |
+| `fact_production_forecast_staging` | run + purpose + candidate + item + loc + month | Immutable run-scoped rows; `release_candidate`, `snapshot_contender`, and review-only `shadow_candidate` evidence never mix with retained `legacy_invalid` rows | `sql/122`, extended by `sql/203` and `sql/217` |
 | `fact_production_forecast` | plan_version + item + loc + forecast_month | Replaced only inside verified promotion; every new row carries source run, production run, and audit id | `sql/039`, extended by `sql/203` |
 | `model_promotion_log` | one row per promote/demote event | Exact source/release/archive lineage; one active row enforced by unique index | `sql/121`, extended by `sql/203` |
 | `customer_forecast_backtest_run` + bottom-up evidence | run manifest plus DFU-origin-month components and one common-cohort scorecard | Six causal one-step origins; immutable customer/champion/blend components, checksum, metrics, and promotion gate | `sql/216` |
@@ -59,6 +59,15 @@ a release source.
 `model_promotion_log.promotion_type` is constrained to `('single', 'champion')`;
 the database enforces at most one `is_active=TRUE` row and at most one promotion
 per non-null `source_run_id`.
+
+Customer bottom-up blend generation publishes two separately manifested views
+of the same exact component evidence. The normalized, unblended
+`customer_bottom_up` signal uses a deterministic companion UUID and
+`generation_purpose='shadow_candidate'`; it is review-only and cannot be
+staged for release or promoted. The full-spine `customer_bottom_up_blend`
+retains the submitted blend UUID and normal `release_candidate` lifecycle.
+Keeping separate manifest UUIDs preserves the existing one-purpose-per-run
+primary key and staging foreign key.
 
 ---
 
@@ -108,6 +117,11 @@ contender that predates
 `generator_contract_version=canonical-five-artifact-lineage-v2`. The v2
 contract binds the exact source-model roster, immutable tree/neural artifacts,
 current source lineage, and deeply reconciled snapshot payload.
+Migration 217 adds the review-only `shadow_candidate` manifest purpose. Ready
+shadow manifests must carry a checksummed, non-empty payload, and database
+guards make both the ready manifest and its staging rows immutable. It does not
+relax the promotion invariant: only `release_candidate` manifests may
+transition to `promoted`.
 
 The API image includes `procps` in addition to the five model runtimes. Durable
 JobManager attempts capture `ps` start/command markers before releasing a child
@@ -501,21 +515,69 @@ After customer generation completes:
    source champion, and the 50/50 blend. It passes only with at least six
    months, 1,000 DFUs, and blend WAPE no worse than champion WAPE.
 4. Confirm `GET /customer-forecast/blend/readiness` is ready, then call
-   `POST /customer-forecast/blend/generate`. The generator sums customer forecasts to item-location,
-   converts demand to sales with a causal 18-month fulfillment ratio, and
-   writes `customer_bottom_up_blend` to the normal immutable staging lifecycle.
-5. Review `GET /customer-forecast/blend/latest` and `/blend/series`. The full
-   active production spine is preserved: qualified customer months blend
-   50/50; missing customer evidence and months 19–24 pass through champion;
-   customer-only DFUs are excluded.
-6. Stage and promote the exact returned generation run through the normal
-   backtest-management actions. Promotion revalidates the matching completed
-   backtest plus every standard release gate, recomputes customer/backtest/
-   source/component payload checksums, and remains an explicit operator action.
+   `POST /customer-forecast/blend/generate`. The generator sums customer
+   forecasts to item-location and converts ordered demand to the sales target
+   with a causal 18-month fulfillment ratio. One transaction writes two exact
+   staged views:
+
+   - `customer_bottom_up` contains only qualified normalized customer rows. It
+     has its own deterministic companion run UUID, uses
+     `generation_purpose='shadow_candidate'`, has no confidence interval, and
+     is permanently non-promotable.
+   - `customer_bottom_up_blend` preserves the full active champion spine under
+     the submitted blend run UUID. Qualified rows use the configured 50/50
+     blend; missing customer evidence and months beyond the customer horizon
+     pass through the source champion. It remains a normal
+     `release_candidate` in the governed champion release slot.
+
+   `GET /customer-forecast/blend/latest` returns both the blend `run_id` and its
+   exact `bottom_up_staging_run_id`, status, and counts; the manifests retain
+   the corresponding payload checksum lineage.
+5. Review the exact-run outputs before any release action:
+
+   - For one warehouse-item, call
+     `GET /forecast/production/staging?item_id=<item>&loc=<location>`. The
+     `models` map exposes `customer_bottom_up` from the companion shadow run and
+     `customer_bottom_up_blend` from the release-candidate run. Inspect each
+     row's `source_run_id`; do not compare against a different vintage.
+   - For historical and forward context together, call
+     `GET /customer-forecast/blend/trend?run_id=<blend-run-id>&window=12`.
+     The required blend run binds the response to its recorded backtest and
+     deterministic shadow run. It returns actual sales and customer bottom-up,
+     source-champion, and blend backtests before the planning month, followed
+     by the three exact staged totals, blend interval, coverage, and
+     common-cohort WAPE. Optional item, location, brand, category, market, and
+     cluster filters use the same lineage; channel is reported as not
+     applicable at warehouse-item grain.
+   - `GET /customer-forecast/blend/series` remains the row-level component
+     inspection for one exact item/location, including raw demand, normalized
+     customer quantity, source champion, blend, fulfillment, weights, and
+     coverage.
+
+   In **Portfolio**, switch **Forecast vs Actual** from **Standard** to
+   **Customer Blend**. The chart uses the current blend run and the active
+   Portfolio filters, shows the backtest-to-staged boundary, the three series,
+   WAPE badges, fallback coverage, planning month, and shortened run identity.
+   In **Item Analysis**, select an exact item and location; the unified chart
+   overlays the same run's historical bottom-up/source-champion/blend backtests
+   and future staged series. The customer legend shows the run and vintage so
+   operators can verify both screens are reviewing the same evidence.
+6. Only stage and promote the exact `customer_bottom_up_blend` release run
+   through the normal backtest-management actions. Promotion revalidates the
+   matching completed backtest plus every standard release gate and recomputes
+   customer, backtest, source, component, and staging checksums. The companion
+   `customer_bottom_up` shadow is already present for review, never appears as
+   a release action, and must not be submitted to `/stage` or `/promote`.
    In **Forecast**, confirm the readiness row and action card say **Customer
    Bottom-Up Blend** and show the passing common-cohort gate before staging;
    the API route remains `/backtest-management/champion/...` because the blend
    occupies the governed champion release slot.
+
+The deterministic companion UUID makes the pairing reproducible; it does not
+make completed shadow evidence mutable. A new blend submission receives a new
+blend UUID and therefore a new companion UUID. Neither generation nor review
+rewrites a completed shadow, promoted blend, production forecast, or immutable
+component evidence.
 
 `customer_forecast` and `customer_forecast_backtest` each have a 24-hour job
 ceiling. Full-spine `customer_forecast_blend` generation has an 8-hour ceiling,
@@ -645,7 +707,8 @@ The frontend reads through `api/routers/forecasting/production_forecast.py` (pre
 | `GET /forecast/production` | Forecast rows for one or more DFUs (paginated) |
 | `GET /forecast/production/summary` | Aggregated rollup over the active `plan_version` |
 | `GET /forecast/production/versions` | All distinct `plan_version` values (for version diffing) |
-| `GET /forecast/production/staging` | Read-through to staging (compare across models pre-promote) |
+| `GET /forecast/production/staging` | Exact item/location staging read-through, including the latest `customer_bottom_up` shadow and `customer_bottom_up_blend` release views with their distinct source run ids |
+| `GET /customer-forecast/blend/trend` | Run-bound Portfolio/Item Analysis comparison of historical backtest actuals and three-model forecasts with their exact staged future totals, accuracy, and coverage |
 | `GET /forecast/demand-plan` / `…/weekly` / `…/comparison` | Consensus / quantile blended views |
 
 Quick smoke test:
@@ -788,6 +851,9 @@ ORDER BY src, forecast_month;
 | Customer blend gate | `curl -s "$BASE/customer-forecast/backtest/latest"` |
 | Generate customer blend draft | `curl -X POST -H "X-API-Key: $KEY" "$BASE/customer-forecast/blend/generate"` |
 | Inspect customer blend | `curl -s "$BASE/customer-forecast/blend/latest"` |
+| Inspect both staged customer views for one DFU | `curl -s "$BASE/forecast/production/staging?item_id=$ITEM&loc=$LOC"` |
+| Select exact customer blend run | `BLEND_RUN_ID=$(curl -s "$BASE/customer-forecast/blend/latest" | jq -r '.run_id')` |
+| Inspect exact-run customer trend | `curl -s "$BASE/customer-forecast/blend/trend?run_id=$BLEND_RUN_ID&window=12"` |
 
 Source-of-truth files referenced in this section:
 
@@ -812,3 +878,4 @@ Source-of-truth files referenced in this section:
 - `sql/205_enforce_champion_model_roster.sql`
 - `sql/206_invalidate_pre_canonical_generator_runs.sql`
 - `sql/216_create_customer_bottom_up_blend.sql`
+- `sql/217_add_customer_bottom_up_shadow_staging.sql`

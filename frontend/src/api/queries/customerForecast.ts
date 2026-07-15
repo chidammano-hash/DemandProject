@@ -149,6 +149,10 @@ export interface CustomerBlendRun {
   blended_row_count: number;
   champion_fallback_row_count: number;
   customer_only_excluded_count: number;
+  bottom_up_staging_run_id: string | null;
+  bottom_up_staging_status: "ready" | "invalid" | null;
+  bottom_up_staging_row_count: number;
+  bottom_up_staging_dfu_count: number;
   promotion_enabled: boolean;
   backtest_gate: Record<string, unknown> | null;
 }
@@ -196,6 +200,55 @@ export interface CustomerBlendSeries {
   months: CustomerBlendSeriesMonth[];
 }
 
+export interface CustomerBlendTrendFilters {
+  run_id: string;
+  window?: number;
+  item_id?: string | string[];
+  location_id?: string | string[];
+  brand?: string[];
+  category?: string[];
+  market?: string[];
+  channel?: string[];
+  cluster?: string[];
+}
+
+export interface CustomerBlendTrendMonth {
+  month: string;
+  phase: "backtest" | "staged";
+  actual_qty: number | null;
+  customer_bottom_up_qty: number | null;
+  source_champion_qty: number | null;
+  customer_blend_qty: number | null;
+  lower_bound: number | null;
+  upper_bound: number | null;
+  blended_dfu_count: number;
+  fallback_dfu_count: number;
+}
+
+export interface CustomerBlendTrend {
+  run_id: string;
+  status: "ready" | "promoted";
+  planning_month: string;
+  completed_at: string | null;
+  backtest_run_id: string;
+  bottom_up_staging_run_id: string;
+  backtest_gate: Record<string, unknown> | null;
+  filters_applied: Record<string, string[]>;
+  filter_notes: string[];
+  accuracy: {
+    common_actual_qty: number;
+    customer_bottom_up_wape_pct: number | null;
+    source_champion_wape_pct: number | null;
+    customer_blend_wape_pct: number | null;
+  };
+  coverage: {
+    blended_rows: number;
+    champion_fallback_rows: number;
+    global_customer_only_excluded_count: number;
+  };
+  months: CustomerBlendTrendMonth[];
+}
+
 export const customerForecastKeys = {
   all: ["customer-forecast"] as const,
   readiness: ["customer-forecast", "readiness"] as const,
@@ -209,6 +262,8 @@ export const customerForecastKeys = {
   blendSeriesAll: ["customer-forecast", "blend", "series"] as const,
   blendSeries: (filters: CustomerBlendSeriesFilters) =>
     ["customer-forecast", "blend", "series", filters] as const,
+  blendTrend: (filters: CustomerBlendTrendFilters) =>
+    ["customer-forecast", "blend", "trend", filters] as const,
 };
 
 export function fetchCustomerForecastReadiness(): Promise<CustomerForecastReadiness> {
@@ -324,4 +379,26 @@ export function fetchCustomerBlendSeries(
     run_id: filters.run_id,
   });
   return fetchJson(`/customer-forecast/blend/series?${params}`);
+}
+
+function commaSeparated(value?: string | string[]): string | undefined {
+  if (Array.isArray(value)) return value.length > 0 ? value.join(",") : undefined;
+  return value || undefined;
+}
+
+export function fetchCustomerBlendTrend(
+  filters: CustomerBlendTrendFilters
+): Promise<CustomerBlendTrend> {
+  const params = buildSearchParams({
+    run_id: filters.run_id,
+    window: filters.window,
+    item_id: commaSeparated(filters.item_id),
+    location_id: commaSeparated(filters.location_id),
+    brand: commaSeparated(filters.brand),
+    category: commaSeparated(filters.category),
+    market: commaSeparated(filters.market),
+    channel: commaSeparated(filters.channel),
+    cluster_assignment: commaSeparated(filters.cluster),
+  });
+  return fetchJson(`/customer-forecast/blend/trend?${params}`);
 }

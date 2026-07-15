@@ -2,6 +2,7 @@
 // Chart color maps + layout constants for the Item Analysis unified chart.
 // Hex values relocated verbatim from UnifiedChartPanel.tsx (no theme change).
 // ---------------------------------------------------------------------------
+import type { ChartRoles } from "@/constants/palette";
 export const PROD_FORECAST_COLOR = "#7c3aed";
 /** Amber line for the saved AI Champion forward forecast (matches the panel's Sparkles accent). */
 export const AI_CHAMPION_COLOR = "#f59e0b";
@@ -17,6 +18,17 @@ export const STAGING_COLORS: Record<string, string> = {
   mstl: "#ca8a04",
 };
 export const STAGING_FALLBACK_COLOR = "#6b7280";
+
+export function stagingModelColor(
+  modelId: string,
+  roles: ChartRoles,
+  fallback = STAGING_FALLBACK_COLOR
+): string {
+  if (modelId === "customer_bottom_up") return roles.good;
+  if (modelId === "customer_source_champion") return roles.champion;
+  if (modelId === "customer_bottom_up_blend") return roles.ai;
+  return STAGING_COLORS[modelId] ?? fallback;
+}
 
 export const SUPPLY_COLORS: Record<string, string> = {
   total_on_hand: "#2563EB",

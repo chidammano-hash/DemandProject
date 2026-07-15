@@ -1,5 +1,22 @@
 import { fetchJson } from "./request";
 
+export const productionForecastKeys = {
+  customerStagingPair: (
+    itemId: string,
+    locationId: string,
+    blendRunId: string | null,
+    bottomUpRunId: string | null
+  ) =>
+    [
+      "production-forecast",
+      "customer-staging-pair",
+      itemId,
+      locationId,
+      blendRunId,
+      bottomUpRunId,
+    ] as const,
+};
+
 // ---------------------------------------------------------------------------
 // F1.1 — Production Forecast (future-period ML predictions)
 // ---------------------------------------------------------------------------
@@ -108,6 +125,8 @@ export async function fetchProductionForecastVersions(): Promise<ProductionForec
 // ---------------------------------------------------------------------------
 
 export interface StagingForecastPoint {
+  source_model_id: string;
+  source_run_id: string;
   forecast_month: string;
   forecast_qty: number | null;
   forecast_qty_lower: number | null;

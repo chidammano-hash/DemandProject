@@ -21,8 +21,7 @@ import {
   AI_CHAMPION_COLOR,
   CHART_MARGIN,
   DESELECT_OPACITY,
-  STAGING_COLORS,
-  STAGING_FALLBACK_COLOR,
+  stagingModelColor,
   DQ_ORIG_COLOR,
   SUPPLY_COLORS,
   TOOLTIP_LABELS,
@@ -87,7 +86,7 @@ export function UnifiedChart({
   ss,
   ropUnits,
 }: UnifiedChartProps) {
-  const { chartColors } = useChartColors();
+  const { chartColors, roles } = useChartColors();
   const hasCustomerBlend = hasCustomerBlendData(mergedData);
   return (
     <div className="h-[400px] overflow-x-auto overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
@@ -273,7 +272,7 @@ export function UnifiedChart({
               .filter((mid) => !hiddenStaging.has(mid) && !hiddenStagingPills.has(mid))
               .map((mid) => {
                 const key = `staging_${mid}`;
-                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                const color = stagingModelColor(mid, roles);
                 return (
                   <Line
                     key={key}
@@ -298,7 +297,7 @@ export function UnifiedChart({
               .filter((mid) => !hiddenBacktest.has(mid))
               .map((mid) => {
                 const key = `backtest_${mid}`;
-                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                const color = stagingModelColor(mid, roles);
                 return (
                   <Line
                     key={key}

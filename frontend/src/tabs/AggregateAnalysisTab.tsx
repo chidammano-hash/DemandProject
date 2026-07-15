@@ -6,19 +6,11 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RotateCcw, CalendarClock } from "lucide-react";
-
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/Skeleton";
-import { ForecastTrendChart } from "@/components/ForecastTrendChart";
 import { makeHeatmapScale } from "@/components/HeatmapGrid";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePanelToggles } from "@/hooks/usePanelToggles";
-import { cn } from "@/lib/utils";
-import { formatDate } from "@/lib/formatters";
 
 import {
   queryKeys,
@@ -51,6 +43,8 @@ import type { AccuracySliceRow, LagPoint } from "@/types";
 import { SliceTablePanel } from "./accuracy/SliceTablePanel";
 import { TrendChartPanel } from "./accuracy/TrendChartPanel";
 import { LagLeaderboardPanel } from "./aggregate-analysis/LagLeaderboardPanel";
+import { PortfolioForecastComparison } from "./aggregate-analysis/PortfolioForecastComparison";
+import { PortfolioHeaderControls } from "./aggregate-analysis/PortfolioHeaderControls";
 import { detailShapFeatureRows } from "./accuracy/shapFeatureRows";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
@@ -59,17 +53,12 @@ import { ErrorDecompositionPanel } from "./accuracy/ErrorDecompositionPanel";
 
 // Extracted sub-components
 import {
-  FilterDropdown,
-  SearchableFilterDropdown,
-  TimeGrainToggle,
   KpiCardsSection,
   AccuracyHeatmapSection,
   PANEL_DEFAULTS,
-  PANELS,
   FILTERS,
   EMPTY_FILTERS,
   HEATMAP_SCALE,
-  buildCascade,
   hasActiveFilters,
   type HmGrain,
   type LocalFilters,
@@ -91,19 +80,25 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     setFilters((prev) => ({ ...prev, [key]: vals }));
   }, []);
 
-  const dashFilters = useMemo<DashboardFilterParams>(() => ({
-    brand: debouncedFilters.brand,
-    category: debouncedFilters.category,
-    item: debouncedFilters.item,
-    location: debouncedFilters.location,
-    market: debouncedFilters.market,
-    channel: debouncedFilters.channel,
-    cluster: debouncedFilters.cluster,
-    time_grain: debouncedFilters.timeGrain,
-  }), [debouncedFilters]);
+  const dashFilters = useMemo<DashboardFilterParams>(
+    () => ({
+      brand: debouncedFilters.brand,
+      category: debouncedFilters.category,
+      item: debouncedFilters.item,
+      location: debouncedFilters.location,
+      market: debouncedFilters.market,
+      channel: debouncedFilters.channel,
+      cluster: debouncedFilters.cluster,
+      time_grain: debouncedFilters.timeGrain,
+    }),
+    [debouncedFilters]
+  );
 
   // --------------- panel toggles ---------------
-  const { panels: visible, toggle } = usePanelToggles("ds:aggregateAnalysis:panels", PANEL_DEFAULTS);
+  const { panels: visible, toggle } = usePanelToggles(
+    "ds:aggregateAnalysis:panels",
+    PANEL_DEFAULTS
+  );
 
   // --------------- KPI window + model ---------------
   const [kpiWindow, setKpiWindow] = useState(3);
@@ -112,7 +107,6 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
 
   // --------------- Forecast chart state ---------------
   const [trendWindow, setTrendWindow] = useState(12);
-  const TREND_OPTIONS = [6, 12, 18, 24];
 
   // --------------- Heatmap state ---------------
   const [heatmapRowGrain, setHeatmapRowGrain] = useState<HmGrain>("category");
@@ -142,9 +136,15 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   useEffect(() => {
     let cancelled = false;
     fetchSeasonalityProfileNames()
-      .then((profiles) => { if (!cancelled) setSeasonalityProfiles(profiles); })
-      .catch(() => { /* non-blocking */ });
-    return () => { cancelled = true; };
+      .then((profiles) => {
+        if (!cancelled) setSeasonalityProfiles(profiles);
+      })
+      .catch(() => {
+        /* non-blocking */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // --------------- Dashboard queries ---------------
@@ -154,7 +154,10 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     staleTime: STALE.TEN_MIN,
   });
 
-  const dashFilterRecord = useMemo(() => dashFilters as unknown as Record<string, unknown>, [dashFilters]);
+  const dashFilterRecord = useMemo(
+    () => dashFilters as unknown as Record<string, unknown>,
+    [dashFilters]
+  );
 
   const kpiQ = useQuery({
     queryKey: queryKeys.dashboardKpis({ window: kpiWindow, model: kpiModel, ...dashFilterRecord }),
@@ -163,10 +166,14 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   });
 
   const trendQ = useQuery({
-    queryKey: queryKeys.dashboardTrend({ window: trendWindow, model: kpiModel, ...dashFilterRecord }),
+    queryKey: queryKeys.dashboardTrend({
+      window: trendWindow,
+      model: kpiModel,
+      ...dashFilterRecord,
+    }),
     queryFn: () => fetchDashboardTrend(trendWindow, dashFilters, kpiModel),
     staleTime: STALE.THIRTY_SEC,
-    enabled: visible.forecastChart,
+    enabled: visible.forecastChart || visible.kpis,
   });
 
   const { data: heatmapModels } = useQuery({
@@ -177,8 +184,14 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   });
 
   const heatmapQ = useQuery({
-    queryKey: queryKeys.dashboardHeatmap({ grain: heatmapRowGrain, col_grain: heatmapColGrain, model: heatmapModel, ...dashFilterRecord }),
-    queryFn: () => fetchDashboardHeatmap(heatmapRowGrain, 6, dashFilters, heatmapColGrain, heatmapModel),
+    queryKey: queryKeys.dashboardHeatmap({
+      grain: heatmapRowGrain,
+      col_grain: heatmapColGrain,
+      model: heatmapModel,
+      ...dashFilterRecord,
+    }),
+    queryFn: () =>
+      fetchDashboardHeatmap(heatmapRowGrain, 6, dashFilters, heatmapColGrain, heatmapModel),
     staleTime: STALE.THIRTY_SEC,
     enabled: visible.heatmap,
   });
@@ -192,35 +205,92 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
 
   // --------------- Derived filter params for accuracy queries ---------------
   const globalItem = debouncedFilters.item.length > 0 ? debouncedFilters.item.join(",") : undefined;
-  const globalLocation = debouncedFilters.location.length > 0 ? debouncedFilters.location.join(",") : undefined;
-  const brandParam = debouncedFilters.brand.length > 0 ? debouncedFilters.brand.join(",") : undefined;
-  const categoryParam = debouncedFilters.category.length > 0 ? debouncedFilters.category.join(",") : undefined;
-  const marketParam = debouncedFilters.market.length > 0 ? debouncedFilters.market.join(",") : undefined;
-  const clusterParam = debouncedFilters.cluster.length > 0 ? debouncedFilters.cluster.join(",") : undefined;
+  const globalLocation =
+    debouncedFilters.location.length > 0 ? debouncedFilters.location.join(",") : undefined;
+  const brandParam =
+    debouncedFilters.brand.length > 0 ? debouncedFilters.brand.join(",") : undefined;
+  const categoryParam =
+    debouncedFilters.category.length > 0 ? debouncedFilters.category.join(",") : undefined;
+  const marketParam =
+    debouncedFilters.market.length > 0 ? debouncedFilters.market.join(",") : undefined;
+  const clusterParam =
+    debouncedFilters.cluster.length > 0 ? debouncedFilters.cluster.join(",") : undefined;
   const needDfuCount = sliceKpis.includes("sku_count");
 
   const monthFrom = useMemo(() => {
     if (sliceGroupBy === "month_start") return "";
-    const anchor = planDate?.planning_date ? new Date(planDate.planning_date + "T00:00:00") : new Date();
+    const anchor = planDate?.planning_date
+      ? new Date(planDate.planning_date + "T00:00:00")
+      : new Date();
     const from = new Date(anchor.getFullYear(), anchor.getMonth() - sliceMonths, 1);
     return from.toISOString().slice(0, 10);
   }, [sliceGroupBy, sliceMonths, planDate]);
 
-  const sliceParams: SliceParams = useMemo(() => ({
-    group_by: sliceGroupBy, lag: sliceLag, models: sliceModels, month_from: monthFrom,
-    common_skus: commonDfus, include_sku_count: needDfuCount,
-    item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
-    time_grain: debouncedFilters.timeGrain,
-    brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
-  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
+  const sliceParams: SliceParams = useMemo(
+    () => ({
+      group_by: sliceGroupBy,
+      lag: sliceLag,
+      models: sliceModels,
+      month_from: monthFrom,
+      common_skus: commonDfus,
+      include_sku_count: needDfuCount,
+      item: globalItem,
+      location: globalLocation,
+      seasonality_profile: seasonalityProfile || undefined,
+      time_grain: debouncedFilters.timeGrain,
+      brand: brandParam,
+      category: categoryParam,
+      market: marketParam,
+      cluster_assignment: clusterParam,
+    }),
+    [
+      sliceGroupBy,
+      sliceLag,
+      sliceModels,
+      monthFrom,
+      commonDfus,
+      needDfuCount,
+      globalItem,
+      globalLocation,
+      seasonalityProfile,
+      debouncedFilters.timeGrain,
+      brandParam,
+      categoryParam,
+      marketParam,
+      clusterParam,
+    ]
+  );
 
-  const lagCurveParams: LagCurveParams = useMemo(() => ({
-    models: sliceModels, month_from: monthFrom, common_skus: commonDfus,
-    include_sku_count: needDfuCount, item: globalItem, location: globalLocation,
-    seasonality_profile: seasonalityProfile || undefined,
-    time_grain: debouncedFilters.timeGrain,
-    brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
-  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
+  const lagCurveParams: LagCurveParams = useMemo(
+    () => ({
+      models: sliceModels,
+      month_from: monthFrom,
+      common_skus: commonDfus,
+      include_sku_count: needDfuCount,
+      item: globalItem,
+      location: globalLocation,
+      seasonality_profile: seasonalityProfile || undefined,
+      time_grain: debouncedFilters.timeGrain,
+      brand: brandParam,
+      category: categoryParam,
+      market: marketParam,
+      cluster_assignment: clusterParam,
+    }),
+    [
+      sliceModels,
+      monthFrom,
+      commonDfus,
+      needDfuCount,
+      globalItem,
+      globalLocation,
+      seasonalityProfile,
+      debouncedFilters.timeGrain,
+      brandParam,
+      categoryParam,
+      marketParam,
+      clusterParam,
+    ]
+  );
 
   // --------------- Accuracy queries ---------------
   const { data: slicePayload, isLoading: loadingSlice } = useQuery({
@@ -266,7 +336,12 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     isLoading: loadingShapDetail,
     isFetching: fetchingShapDetail,
   } = useQuery({
-    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15, shapCluster),
+    queryKey: queryKeys.shapTimeframeDetail(
+      activeShapModel,
+      shapTimeframeIdx ?? 0,
+      15,
+      shapCluster
+    ),
     queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15, shapCluster),
     staleTime: STALE.TEN_MIN,
     enabled: shapOpen && !!activeShapModel && shapTimeframeIdx !== null && visible.shap,
@@ -281,12 +356,25 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   // --------------- Derived accuracy data ---------------
   const sliceData = useMemo<AccuracySliceRow[]>(() => slicePayload?.rows ?? [], [slicePayload]);
   const lagCurveData = useMemo<LagPoint[]>(() => lagPayload?.by_lag ?? [], [lagPayload]);
-  const allModels = useMemo(() => Array.from(new Set(sliceData.flatMap((r) => Object.keys(r.by_model)))).sort(), [sliceData]);
-  const lagModels = useMemo(() => Array.from(new Set(lagCurveData.flatMap((p) => Object.keys(p.by_model)))).sort(), [lagCurveData]);
-  const activeLagMetric = useMemo(() => (sliceKpis.includes(lagCurveMetric) ? lagCurveMetric : sliceKpis[0]), [sliceKpis, lagCurveMetric]);
+  const allModels = useMemo(
+    () => Array.from(new Set(sliceData.flatMap((r) => Object.keys(r.by_model)))).sort(),
+    [sliceData]
+  );
+  const lagModels = useMemo(
+    () => Array.from(new Set(lagCurveData.flatMap((p) => Object.keys(p.by_model)))).sort(),
+    [lagCurveData]
+  );
+  const activeLagMetric = useMemo(
+    () => (sliceKpis.includes(lagCurveMetric) ? lagCurveMetric : sliceKpis[0]),
+    [sliceKpis, lagCurveMetric]
+  );
   const shapFeatures = useMemo(() => {
     if (shapTimeframeIdx === null)
-      return (shapSummaryData?.features ?? []).map((f) => ({ feature: f.feature, value: f.mean_abs_shap_across_timeframes, selected: f.selected_count === f.n_timeframes }));
+      return (shapSummaryData?.features ?? []).map((f) => ({
+        feature: f.feature,
+        value: f.mean_abs_shap_across_timeframes,
+        selected: f.selected_count === f.n_timeframes,
+      }));
     return detailShapFeatureRows(shapDetailData, shapCluster);
   }, [shapTimeframeIdx, shapSummaryData, shapDetailData, shapCluster]);
 
@@ -297,75 +385,62 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const heatmapLabels = heatmapQ.data?.period_labels ?? [];
 
   // --------------- Accuracy callbacks ---------------
-  const handleSliceGroupByChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSliceGroupBy(e.target.value), []);
-  const handleSliceLagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSliceLag(Number(e.target.value)), []);
-  const handleSliceModelsChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => setSliceModels(e.target.value), []);
-  const handleSliceMonthsChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSliceMonths(Number(e.target.value)), []);
+  const handleSliceGroupByChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => setSliceGroupBy(e.target.value),
+    []
+  );
+  const handleSliceLagChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => setSliceLag(Number(e.target.value)),
+    []
+  );
+  const handleSliceModelsChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => setSliceModels(e.target.value),
+    []
+  );
+  const handleSliceMonthsChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => setSliceMonths(Number(e.target.value)),
+    []
+  );
   const handleCommonDfusToggle = useCallback(() => setCommonDfus((v) => !v), []);
-  const handleLagCurveMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setLagCurveMetric(e.target.value), []);
-  const handleKpiToggle = useCallback((key: string) => setSliceKpis((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]), []);
-  const handleSeasonalityProfileChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSeasonalityProfile(e.target.value), []);
-  const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => { setShapModelId(e.target.value); setShapTimeframeIdx(null); setShapCluster("all"); }, []);
-  const handleShapTimeframeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value)), []);
-  const handleShapClusterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapCluster(e.target.value), []);
+  const handleLagCurveMetricChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => setLagCurveMetric(e.target.value),
+    []
+  );
+  const handleKpiToggle = useCallback(
+    (key: string) =>
+      setSliceKpis((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key])),
+    []
+  );
+  const handleSeasonalityProfileChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => setSeasonalityProfile(e.target.value),
+    []
+  );
+  const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    setShapModelId(e.target.value);
+    setShapTimeframeIdx(null);
+    setShapCluster("all");
+  }, []);
+  const handleShapTimeframeChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) =>
+      setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value)),
+    []
+  );
+  const handleShapClusterChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => setShapCluster(e.target.value),
+    []
+  );
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      {/* -------- Header -------- */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Portfolio Analysis</h2>
-          <p className="text-xs text-muted-foreground">
-            Forecast performance and accuracy analytics across your portfolio.
-            Filter by brand, category, item, location.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {planDate?.planning_date && (
-            <span className="flex items-center gap-1 rounded bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground">
-              <CalendarClock className="h-3 w-3" />
-              Plan as of {formatDate(planDate.planning_date)}
-            </span>
-          )}
-          {hasActiveFilters(filters) && skuCountQ.data && (
-            <span className="rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">
-              {skuCountQ.data.count?.toLocaleString() ?? "?"} SKUs
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* -------- Filter bar -------- */}
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((fc) =>
-          fc.searchable ? (
-            <SearchableFilterDropdown key={fc.key} config={fc} selected={filters[fc.key]} onSelect={(v) => updateFilter(fc.key, v)} cascade={buildCascade(filters, fc.key)} />
-          ) : (
-            <FilterDropdown key={fc.key} config={fc} selected={filters[fc.key]} onSelect={(v) => updateFilter(fc.key, v)} cascade={buildCascade(filters, fc.key)} />
-          ),
-        )}
-        <TimeGrainToggle value={filters.timeGrain} onChange={(v) => setFilters((prev) => ({ ...prev, timeGrain: v }))} />
-        {hasActiveFilters(filters) && (
-          <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setFilters(EMPTY_FILTERS)}>
-            <RotateCcw className="h-3 w-3" /> Reset
-          </Button>
-        )}
-      </div>
-
-      {/* -------- Panel toggle toolbar -------- */}
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
-        {PANELS.map((p) => (
-          <label key={p.key} className="flex items-center gap-1.5 text-xs">
-            <Checkbox
-              checked={visible[p.key]}
-              onCheckedChange={() => toggle(p.key)}
-              aria-label={`Toggle ${p.label}`}
-              className="h-3.5 w-3.5"
-            />
-            <span className={cn(visible[p.key] ? "text-foreground" : "text-muted-foreground")}>{p.label}</span>
-          </label>
-        ))}
-      </div>
+      <PortfolioHeaderControls
+        filters={filters}
+        setFilters={setFilters}
+        onFilterChange={updateFilter}
+        planningDate={planDate?.planning_date}
+        skuCount={skuCountQ.data?.count}
+        visiblePanels={visible}
+        onTogglePanel={toggle}
+      />
 
       {/* ================================================================ */}
       {/* KPI Cards                                                        */}
@@ -388,27 +463,14 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* Forecast vs Actual Chart                                         */}
       {/* ================================================================ */}
       {visible.forecastChart && (
-        <CollapsibleSection
-          title="Forecast vs Actual"
-          headerRight={
-            <div className="flex items-center gap-3">
-              <span className="rounded bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">{kpiModel}</span>
-              <div className="flex items-center gap-1">
-                {TREND_OPTIONS.map((w) => (
-                  <button key={w} onClick={() => setTrendWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", trendWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
-                    {w}mo
-                  </button>
-                ))}
-              </div>
-            </div>
-          }
-        >
-          {trendQ.isLoading ? (
-            <Skeleton className="h-[260px]" />
-          ) : (
-            <ForecastTrendChart data={trendQ.data?.months ?? []} />
-          )}
-        </CollapsibleSection>
+        <PortfolioForecastComparison
+          kpiModel={kpiModel}
+          trendWindow={trendWindow}
+          onTrendWindowChange={setTrendWindow}
+          dashboardFilters={dashFilters}
+          standardMonths={trendQ.data?.months ?? []}
+          standardLoading={trendQ.isLoading}
+        />
       )}
 
       {/* ================================================================ */}
@@ -438,10 +500,17 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
           <div className="space-y-5">
             {visible.accuracy && (
               <SliceTablePanel
-                sliceGroupBy={sliceGroupBy} sliceLag={sliceLag} sliceModels={sliceModels}
-                sliceKpis={sliceKpis} sliceMonths={sliceMonths} commonDfus={commonDfus}
-                seasonalityProfile={seasonalityProfile} seasonalityProfiles={seasonalityProfiles}
-                loadingSlice={loadingSlice} sliceData={sliceData} allModels={allModels}
+                sliceGroupBy={sliceGroupBy}
+                sliceLag={sliceLag}
+                sliceModels={sliceModels}
+                sliceKpis={sliceKpis}
+                sliceMonths={sliceMonths}
+                commonDfus={commonDfus}
+                seasonalityProfile={seasonalityProfile}
+                seasonalityProfiles={seasonalityProfiles}
+                loadingSlice={loadingSlice}
+                sliceData={sliceData}
+                allModels={allModels}
                 commonDfuCount={slicePayload?.common_sku_count ?? null}
                 skuCounts={slicePayload?.sku_counts ?? null}
                 truncated={slicePayload?.truncated ?? false}
@@ -458,8 +527,10 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
             {visible.lagCurve && (
               <>
                 <TrendChartPanel
-                  lagCurveData={lagCurveData} lagModels={lagModels}
-                  sliceKpis={sliceKpis} activeLagMetric={activeLagMetric}
+                  lagCurveData={lagCurveData}
+                  lagModels={lagModels}
+                  sliceKpis={sliceKpis}
+                  activeLagMetric={activeLagMetric}
                   onLagCurveMetricChange={handleLagCurveMetricChange}
                 />
                 <LagLeaderboardPanel />
@@ -488,24 +559,21 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* ================================================================ */}
       {/* Champion Panel                                                   */}
       {/* ================================================================ */}
-      {visible.champion && (
-        <ChampionPanel
-          championSummary={summaryPayload?.summary ?? null}
-        />
-      )}
+      {visible.champion && <ChampionPanel championSummary={summaryPayload?.summary ?? null} />}
 
       {/* ================================================================ */}
       {/* SHAP Panel                                                       */}
       {/* ================================================================ */}
       {visible.shap && (
         <ShapPanel
-          shapOpen={shapOpen} shapModels={shapModels} activeShapModel={activeShapModel}
+          shapOpen={shapOpen}
+          shapModels={shapModels}
+          activeShapModel={activeShapModel}
           shapTimeframes={shapTimeframesData?.timeframes ?? []}
-          shapTimeframeIdx={shapTimeframeIdx} shapFeatures={shapFeatures}
+          shapTimeframeIdx={shapTimeframeIdx}
+          shapFeatures={shapFeatures}
           loadingShap={
-            shapTimeframeIdx === null
-              ? loadingShapSummary
-              : loadingShapDetail || fetchingShapDetail
+            shapTimeframeIdx === null ? loadingShapSummary : loadingShapDetail || fetchingShapDetail
           }
           shapClusters={shapClustersData?.clusters ?? []}
           shapCluster={shapCluster}

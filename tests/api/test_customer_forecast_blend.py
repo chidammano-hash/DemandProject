@@ -296,6 +296,103 @@ async def test_customer_blend_series_returns_monthly_components_and_exact_filter
 
 
 @pytest.mark.asyncio
+async def test_customer_blend_trend_binds_history_and_staging_to_exact_lineage() -> None:
+    backtest_run_id = UUID("00000000-0000-0000-0000-000000000505")
+    shadow_run_id = UUID("00000000-0000-0000-0000-000000000606")
+    metadata = {
+        "customer_bottom_up_blend": {
+            "backtest_run_id": str(backtest_run_id),
+            "bottom_up_staging_run_id": str(shadow_run_id),
+            "backtest_gate": {"passed": True, "blend_wape_pct": 19.0},
+        }
+    }
+    pool, _conn, cursor = make_pool()
+    cursor.fetchone.return_value = (
+        "ready",
+        date(2026, 7, 1),
+        datetime(2026, 7, 14, 16, 30, tzinfo=UTC),
+        metadata,
+    )
+    cursor.fetchall.return_value = [
+        (
+            date(2026, 6, 1),
+            "backtest",
+            Decimal("100"),
+            Decimal("90"),
+            Decimal("105"),
+            Decimal("97.5"),
+            None,
+            None,
+            1,
+            0,
+            Decimal("100"),
+            Decimal("10"),
+            Decimal("5"),
+            Decimal("2.5"),
+        ),
+        (
+            date(2026, 7, 1),
+            "staged",
+            None,
+            Decimal("92"),
+            Decimal("104"),
+            Decimal("98"),
+            Decimal("80"),
+            Decimal("120"),
+            1,
+            0,
+            None,
+            None,
+            None,
+            None,
+        ),
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/customer-forecast/blend/trend",
+                params={
+                    "run_id": str(BLEND_RUN_ID),
+                    "item_id": "ITEM-1",
+                    "location_id": "LOC-1",
+                    "cluster_assignment": "seasonal",
+                    "window": 12,
+                },
+            )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == str(BLEND_RUN_ID)
+    assert payload["backtest_run_id"] == str(backtest_run_id)
+    assert payload["bottom_up_staging_run_id"] == str(shadow_run_id)
+    assert payload["months"][0]["phase"] == "backtest"
+    assert payload["months"][1]["phase"] == "staged"
+    assert payload["months"][1]["customer_bottom_up_qty"] == 92.0
+    assert payload["accuracy"]["customer_bottom_up_wape_pct"] == 10.0
+    assert payload["accuracy"]["source_champion_wape_pct"] == 5.0
+    assert payload["accuracy"]["customer_blend_wape_pct"] == 2.5
+    assert payload["coverage"]["global_customer_only_excluded_count"] == 0
+    trend_sql, params = cursor.execute.call_args_list[-1].args
+    rendered_sql = str(trend_sql)
+    assert "customer_bottom_up_backtest_component" in rendered_sql
+    assert "fact_production_forecast_staging" in rendered_sql
+    assert "customer_bottom_up_blend_component" in rendered_sql
+    assert "dim_sku sku" in rendered_sql
+    assert "sku.cluster_assignment = ANY(%s)" in rendered_sql
+    assert "SUM(f.actual_qty) FILTER" in rendered_sql
+    assert "SUM(f.champion_qty) FILTER" in rendered_sql
+    assert "SUM(f.blended_qty) FILTER" in rendered_sql
+    assert rendered_sql.count("f.normalized_customer_qty IS NOT NULL") >= 8
+    assert str(backtest_run_id) in params
+    assert str(shadow_run_id) in params
+    assert str(BLEND_RUN_ID) in params
+    assert params.count(["seasonal"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_default_customer_blend_series_requires_current_exact_lineage() -> None:
     series_row = (
         str(BLEND_RUN_ID),

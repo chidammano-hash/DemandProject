@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, useCallback } from "react";
 
 import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
+import { useChartColors } from "@/hooks/useChartColors";
 import type {
   SkuAnalysisPayload,
   InventoryTrendPoint,
@@ -13,14 +14,12 @@ import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
 import {
   PROD_FORECAST_COLOR,
   AI_CHAMPION_COLOR,
-  STAGING_COLORS,
-  STAGING_FALLBACK_COLOR,
+  stagingModelColor,
   DQ_ORIG_COLOR,
   TOOLTIP_LABELS,
 } from "./colors";
 import {
   SUPPLY_SERIES_DEFS,
-  loadDefaultMeasures,
   loadDefaultHiddenSupply,
   toggleInSet,
 } from "./measures";
@@ -97,6 +96,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   aiChampionRecCode = null,
   aiChampionRationale = null,
 }: UnifiedChartPanelProps) {
+  const { roles } = useChartColors();
   const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(() => loadDefaultHiddenSupply());
   // Tracks demand series whose pill is shown but chart line is hidden (dimmed pill)
   const [hiddenDemand, setHiddenDemand] = useState<Set<string>>(new Set());
@@ -225,7 +225,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   // Toggle all staging models
   const allStagingOn = hasStagingModels && stagingModelIds.every((m) => !hiddenStaging.has(m));
   const toggleAllStaging = useCallback(() => {
-    setHiddenStaging((prev) => {
+    setHiddenStaging(() => {
       if (allStagingOn) {
         return new Set(stagingModelIds);
       }
@@ -239,7 +239,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   }, []);
   const allBacktestOn = hasBacktestModels && backtestModelIds.every((m) => !hiddenBacktest.has(m));
   const toggleAllBacktest = useCallback(() => {
-    setHiddenBacktest((prev) => {
+    setHiddenBacktest(() => {
       if (allBacktestOn) {
         return new Set(backtestModelIds);
       }
@@ -410,7 +410,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             {stagingModelIds
               .filter((mid) => !hiddenStagingPills.has(mid))
               .map((mid) => {
-                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                const color = stagingModelColor(mid, roles);
                 return (
                   <TogglePill
                     key={`staging_${mid}`}
@@ -436,7 +436,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
               {allBacktestOn ? "Backtest −" : "Backtest +"}
             </button>
             {backtestModelIds.map((mid) => {
-              const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+              const color = stagingModelColor(mid, roles);
               return (
                 <TogglePill
                   key={`backtest_${mid}`}

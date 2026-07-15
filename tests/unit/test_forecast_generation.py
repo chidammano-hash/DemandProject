@@ -48,6 +48,36 @@ def test_reserve_inserts_generating_manifest_before_work_starts():
     assert insert_params[-1].obj[GENERATOR_CONTRACT_METADATA_KEY] == (GENERATOR_CONTRACT_VERSION)
 
 
+def test_reserve_accepts_non_promotable_shadow_candidate():
+    cur = MagicMock()
+    cur.fetchone.side_effect = [
+        (
+            "shadow_candidate",
+            "customer_bottom_up",
+            date(2026, 7, 1),
+            18,
+            "generating",
+            0,
+        ),
+        (False,),
+    ]
+
+    status = reserve_generation_run(
+        cur,
+        run_id=RUN_ID,
+        generation_purpose="shadow_candidate",
+        requested_model_id="customer_bottom_up",
+        record_month=date(2026, 7, 14),
+        horizon_months=18,
+        created_by="customer-bottom-up-shadow",
+    )
+
+    assert status == "generating"
+    insert_sql, insert_params = cur.execute.call_args_list[0].args
+    assert "promotion_eligible" in insert_sql
+    assert insert_params[1] == "shadow_candidate"
+
+
 def test_generating_reservation_with_staged_rows_cannot_be_resumed():
     cur = MagicMock()
     cur.fetchone.side_effect = [
@@ -137,12 +167,15 @@ def test_invalidate_is_terminal_and_non_destructive_for_ready_run():
 
     delete_sql, delete_params = cur.execute.call_args_list[0].args
     assert "DELETE FROM fact_production_forecast_staging" in delete_sql
-    assert "'release_candidate', 'snapshot_contender'" in " ".join(delete_sql.split())
+    compact_delete = " ".join(delete_sql.split())
+    assert "'release_candidate', 'snapshot_contender', 'shadow_candidate'" in compact_delete
     assert delete_params == (str(RUN_ID),)
     sql, params = cur.execute.call_args_list[1].args
     assert "run_status IN ('generating', 'invalid')" in sql
-    assert "generation_purpose IN ('release_candidate', 'snapshot_contender')" in " ".join(
-        sql.split()
+    compact_update = " ".join(sql.split())
+    assert (
+        "generation_purpose IN ('release_candidate', 'snapshot_contender', "
+        "'shadow_candidate')" in compact_update
     )
     assert params[0] == "subprocess failed"
     assert changed is True

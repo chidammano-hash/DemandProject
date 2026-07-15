@@ -24,6 +24,12 @@ changing its payload. Only one explicitly selected staged `release_candidate`
 `fact_external_forecast_monthly`/`backtest_lag_archive` flow; the legacy
 `fact_candidate_forecast` table remains inert and is not a release source.
 
+Customer blend generation additionally creates a paired, immutable
+`customer_bottom_up` `shadow_candidate` containing only normalized customer
+rows. It is visible for comparison but is never stage-approved or promotable.
+The full-spine `customer_bottom_up_blend` remains the sole customer-derived
+`release_candidate` and uses the governed `champion` release slot.
+
 ## 2. Motivation
 
 Previously, the production forecast was generated directly via a job that wrote
@@ -104,7 +110,10 @@ payload. Its `generation_purpose` is one of:
   /backtest-management/{model_id}/stage` verifies the immutable manifest and
   payload before setting `promotion_eligible=TRUE`;
 - `snapshot_contender` — one of the three bounded live-FVA alternatives, never
-  promotable; or
+  promotable;
+- `shadow_candidate` — immutable review-only evidence, currently the normalized
+  `customer_bottom_up` paired to one exact customer blend run; it always remains
+  non-eligible and cannot transition to `promoted`;
 - `legacy_invalid` — pre-migration staging retained for inspection/cleanup but
   never promotable.
 
@@ -114,6 +123,16 @@ forecast_month)`. For champion generation, `candidate_model_id='champion'`
 while `model_id` remains the exact routed producing model. This allows one
 coherent champion run to carry multiple source models without colliding with
 single-model or snapshot-contender runs.
+
+The customer pair deliberately has different identities. The bottom-up shadow
+uses its own deterministic run id, `candidate_model_id='customer_bottom_up'`,
+and `generation_purpose='shadow_candidate'`; its metadata points back to the
+exact blend run. The blend uses `candidate_model_id='champion'`,
+`model_id='customer_bottom_up_blend'`, and
+`generation_purpose='release_candidate'`. `/forecast/production/staging`
+classifies manifests before grouping so both are returned under their true
+display identities instead of collapsing the blend under `champion` or a
+routed source model.
 
 A ready champion manifest freezes the sales batch, champion and cluster
 experiment ids, winners-artifact checksum, exact experiment-stamped historical
@@ -161,16 +180,18 @@ All under `/backtest-management/` prefix.
 | GET | `/promotion-status` | Returns currently active promoted model |
 | GET | `/candidate-summary` | Per-model candidate forecast **counts/accuracy** (no time-series) |
 
-**Per-DFU backtest time-series** (NOT under the `/backtest-management/` prefix —
-it lives in the production-forecast router so it sits next to the staging
-endpoint):
+**Forecast comparison reads** (NOT under the `/backtest-management/` prefix):
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/forecast/candidate?item_id=&loc=&model_id=` | Per-model backtest (past, out-of-sample) predictions for one DFU, grouped by `model_id` — forecast vs `actual_qty` + per-row accuracy. `model_id` optional. Degrades to empty `models` when the table is absent (clean install). |
+| GET | `/forecast/production/staging?item_id=&loc=` | Latest future staging rows grouped by true display identity, including separate `customer_bottom_up` shadow and `customer_bottom_up_blend` release-candidate runs with their exact source run ids. |
+| GET | `/customer-forecast/blend/trend?run_id=...` | Exact-lineage historical backtest plus future staged bottom-up, source-champion, and blend comparison used by Portfolio and Item Analysis. |
 
-This is the past-period counterpart to `/forecast/production/staging` (future
-forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
+`/forecast/candidate` is the past-period counterpart to
+`/forecast/production/staging`; both are implemented in
+`api/routers/forecasting/production_forecast.py`. The customer trend endpoint
+is implemented in `api/routers/forecasting/customer_forecast_blend.py`.
 
 > ⚠️ **Currently inert.** `fact_candidate_forecast` is **not populated by any code** (the
 > backtest load writes `fact_external_forecast_monthly`, not this table), so
@@ -185,6 +206,7 @@ forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/{model_id}/generate` | Submit a new `release_candidate`; returns its allocated `source_run_id` immediately |
+| POST | `/{model_id}/stage?source_run_id=<uuid>` | Approve exactly one `release_candidate`; a `shadow_candidate` is rejected and never becomes eligible |
 | POST | `/{model_id}/promote?source_run_id=<uuid>` | Promote exactly one ready, eligible release-candidate run |
 
 ### 4.3 Staging approval and transactional production promotion
@@ -193,7 +215,9 @@ forecasts). Implemented in `api/routers/forecasting/production_forecast.py`.
 its model, generator contract, horizon, counts, and checksum, then changes only
 `promotion_eligible` from false to true. It is safe to retry and returns
 `already_staged` when the run was previously approved. Multiple models may have
-staged runs at the same time.
+staged runs at the same time. This boundary accepts only
+`generation_purpose='release_candidate'`; the database also prevents a
+`shadow_candidate` from acquiring promoted status.
 
 `promote_model()` does not read `fact_candidate_forecast` and has no bypass
 token. It passes the explicit `source_run_id` to
@@ -301,6 +325,12 @@ merely any older staged rows. **Promote _selection_ to Production** is enabled
 only when that run is ready and promotion-eligible and the snapshot roster is
 current, and sends that exact id to the promotion endpoint.
 
+A generated customer blend appears in this workflow as
+**Customer Bottom-Up Blend** while retaining `candidate_model_id='champion'`
+for release ownership. Its paired **Customer Bottom-Up** shadow is displayed for
+review only: it has a distinct exact run id, never enables Stage or Promote,
+and cannot replace production by itself.
+
 Generation preserves the model-training DFU grain
 `(item_id, customer_group, loc)` through sales loading, current-cluster lookup,
 per-month champion routing, and recursive inference. Training and serving both
@@ -345,19 +375,31 @@ New table column showing loaded candidate DFU count per model.
 
 ### 5.4 Item Analysis backtest overlay
 
-The **Item Analysis** chart (`UnifiedChartPanel` / `UnifiedChart`) consumes
-`/forecast/candidate` and renders a `backtest_<model>` line per model over the
-**historical** window, alongside the existing `staging_<model>` (future) lines.
-A **"Backtest"** pill row (mirroring the "Staging" row) toggles the lines per
-model and all-at-once. Backtest lines are dotted (`strokeDasharray="1 3"`) and
-share each model's color, so a model's past fit and forward forecast read as one
-series across the timeline. The merge happens in `ItemAnalysisTab.tsx`
-(`mergedFilteredSeries`): candidate months are out-of-sample/historical, so they
-land only on existing past points (never the synthesized future points).
+The **Item Analysis** chart (`UnifiedChartPanel` / `UnifiedChart`) uses the exact
+blend manifest to render historical `backtest_customer_bottom_up`, source
+champion, and `backtest_customer_bottom_up_blend` series over existing actual
+sales months. Those customer lines come from
+`/customer-forecast/blend/trend`, not the inert
+`fact_candidate_forecast` table.
 
-This closes the gap where Item Analysis could show a model's **future** staging
-forecast but not its **past** backtest predictions — `/candidate-summary` only
-exposed counts, with no per-DFU time-series to chart.
+Future customer lines use the standard `/forecast/production/staging` response:
+`staging_customer_bottom_up` comes from the paired shadow run and
+`staging_customer_bottom_up_blend` from the release-candidate run. Historical
+rows are merged only onto existing history, future staging months are appended
+once, and the component overlay is suppressed for an identity already present
+in standard staging. The result is one toggle/line per model and month rather
+than duplicate bottom-up or blend series.
+
+### 5.5 Portfolio customer comparison
+
+Portfolio Analysis has a dedicated **Customer Blend** mode backed by one
+explicit blend `run_id`. It shows the manifest-matched historical common-cohort
+actual/bottom-up/source-champion/blend series and WAPE, followed by the paired
+future staged series, blend interval, and blended-versus-fallback coverage.
+Brand, category, market, item, location, and cluster filters are applied to the
+exact component lineage; channel is explicitly reported as not applicable at
+warehouse-item grain. This evidence is not inserted into the standard accuracy
+materialized views.
 
 ## 6. Data Flow
 

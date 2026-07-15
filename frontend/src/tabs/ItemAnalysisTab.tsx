@@ -2,13 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
 import { LoadingElement } from "@/components/LoadingElement";
 
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { usePublishActiveSku } from "@/context/ActiveSkuContext";
 import { useDebounce } from "@/hooks/useDebounce";
+import { useItemForecastOverlays } from "@/hooks/useItemForecastOverlays";
 import { usePanelToggles } from "@/hooks/usePanelToggles";
 import {
   queryKeys,
@@ -23,17 +22,6 @@ import {
   fetchDomainSuggest,
   fetchSkuAnalysis,
 } from "@/api/queries";
-import {
-  fetchProductionForecast,
-  fetchStagingForecasts,
-  fetchCandidateForecasts,
-} from "@/api/queries/production-forecast";
-import type {
-  ProductionForecastPayload,
-  StagingForecastsPayload,
-  CandidateForecastsPayload,
-} from "@/api/queries/production-forecast";
-import { aiChampionKeys, fetchAiChampionSaved } from "@/api/queries/ai-champion";
 import type {
   SkuAnalysisKpis,
   SkuAnalysisPayload,
@@ -50,7 +38,7 @@ import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 import { CustomerBlendUnifiedChartPanel } from "./item-analysis/CustomerBlendUnifiedChartPanel";
 import { loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/measures";
 import { itemBreadcrumbLabel } from "./item-analysis/breadcrumb";
-import { clampFutureMonths } from "./item-analysis/monthRange";
+import { ItemAnalysisToolbar } from "./item-analysis/ItemAnalysisToolbar";
 
 // UX-1: deep-state breadcrumbs.
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -65,14 +53,6 @@ const PANEL_DEFAULTS: Record<string, boolean> = {
   dqCorrections: false,
   aiChampion: true,
 };
-
-const DEMAND_PANELS = [
-  { key: "overlay", label: "Chart" },
-  { key: "shap", label: "SHAP" },
-  { key: "forecastKpis", label: "Forecast KPIs" },
-  { key: "dqCorrections", label: "DQ Corrections" },
-  { key: "aiChampion", label: "AI Champion" },
-] as const;
 
 // ---------------------------------------------------------------------------
 // Component
@@ -105,7 +85,6 @@ export function ItemAnalysisTab() {
   const [skuAutoSampled, setSkuAutoSampled] = useState(false);
   const [skuItemSuggestions, setSkuItemSuggestions] = useState<string[]>([]);
   const [skuLocationSuggestions, setSkuLocationSuggestions] = useState<string[]>([]);
-  const [prodForecastData, setProdForecastData] = useState<ProductionForecastPayload | null>(null);
   // SHAP model selection via dropdown (null = none)
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
 
@@ -232,81 +211,6 @@ export function ItemAnalysisTab() {
     };
   }, [debouncedSkuItem, debouncedSkuLocation, skuPoints, anyDemandPanelOn]);
 
-  // Fetch production forecast (future months)
-  useEffect(() => {
-    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) {
-      setProdForecastData(null);
-      return;
-    }
-    let cancelled = false;
-    fetchProductionForecast({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
-      .then((payload) => {
-        if (!cancelled) setProdForecastData(payload);
-      })
-      .catch(() => {
-        if (!cancelled) setProdForecastData(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedSkuItem, debouncedSkuLocation]);
-
-  // Fetch staging forecasts (all algorithm lines, pre-promotion)
-  const [stagingForecastData, setStagingForecastData] = useState<StagingForecastsPayload | null>(
-    null
-  );
-  useEffect(() => {
-    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) {
-      setStagingForecastData(null);
-      return;
-    }
-    let cancelled = false;
-    fetchStagingForecasts({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
-      .then((payload) => {
-        if (!cancelled) setStagingForecastData(payload);
-      })
-      .catch(() => {
-        if (!cancelled) setStagingForecastData(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedSkuItem, debouncedSkuLocation]);
-
-  // Fetch candidate forecasts (per-model backtest / out-of-sample predictions over history).
-  // These render as backtest_<model> lines over the past window — the counterpart to
-  // the future staging_<model> lines — so a chosen model shows past fit + forward forecast.
-  const [candidateForecastData, setCandidateForecastData] =
-    useState<CandidateForecastsPayload | null>(null);
-  useEffect(() => {
-    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) {
-      setCandidateForecastData(null);
-      return;
-    }
-    let cancelled = false;
-    fetchCandidateForecasts({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
-      .then((payload) => {
-        if (!cancelled) setCandidateForecastData(payload);
-      })
-      .catch(() => {
-        if (!cancelled) setCandidateForecastData(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedSkuItem, debouncedSkuLocation]);
-
-  // Saved AI Champion forecast overlay — the latest adjustment for this DFU,
-  // now produced by the SKU Chat agentic adjustment (approval-gated).
-  const aiItem = debouncedSkuItem.trim();
-  const aiLoc = debouncedSkuLocation.trim();
-  const { data: aiChampionSaved, isFetched: aiChampionFetched } = useQuery({
-    queryKey: aiChampionKeys.saved(aiItem, aiLoc),
-    queryFn: () => fetchAiChampionSaved(aiItem, aiLoc),
-    enabled: panels.aiChampion && aiItem.length > 0 && aiLoc.length > 0,
-    staleTime: 60_000,
-  });
-
   // Item typeahead
   useEffect(() => {
     if (!skuItem.trim()) {
@@ -403,116 +307,23 @@ export function ItemAnalysisTab() {
     });
   }, [skuData, skuMonths, skuTimeStart, skuTimeEnd]);
 
-  // Future forecast months (production + AI champion + staging) beyond the
-  // last historical month — the full, unclamped horizon.
-  const skuFutureMonths = useMemo(() => {
-    const lastHistMonth = skuMonths[skuMonths.length - 1] ?? "";
-    const months = new Set<string>();
-    for (const pt of prodForecastData?.forecasts ?? []) {
-      if (pt.forecast_month > lastHistMonth) months.add(pt.forecast_month);
-    }
-    for (const r of aiChampionSaved?.rows ?? []) {
-      if (r.forecast_month && r.forecast_month > lastHistMonth) months.add(r.forecast_month);
-    }
-    for (const points of Object.values(stagingForecastData?.models ?? {})) {
-      for (const pt of points) {
-        if (pt.forecast_month > lastHistMonth) months.add(pt.forecast_month);
-      }
-    }
-    return Array.from(months).sort();
-  }, [skuMonths, prodForecastData, aiChampionSaved, stagingForecastData]);
-
-  const mergedFilteredSeries = useMemo(() => {
-    // Start with the filtered demand series
-    let result = skuFilteredSeries as Record<string, unknown>[];
-
-    // Build production forecast month map
-    const prodMap = new Map<string, number | null>();
-    if (prodForecastData?.forecasts.length) {
-      for (const pt of prodForecastData.forecasts) {
-        prodMap.set(pt.forecast_month, pt.forecast_qty);
-      }
-    }
-
-    // Build saved AI Champion month map (ai_qty per forecast_month)
-    const aiMap = new Map<string, number | null>();
-    if (aiChampionSaved?.rows.length) {
-      for (const r of aiChampionSaved.rows) {
-        if (r.forecast_month) aiMap.set(r.forecast_month, r.ai_qty);
-      }
-    }
-
-    // Build staging forecast month maps: staging_{model_id} → month → qty
-    const stagingMaps = new Map<string, Map<string, number | null>>();
-    if (stagingForecastData?.models) {
-      for (const [modelId, points] of Object.entries(stagingForecastData.models)) {
-        const key = `staging_${modelId}`;
-        const monthMap = new Map<string, number | null>();
-        for (const pt of points) {
-          monthMap.set(pt.forecast_month, pt.forecast_qty);
-        }
-        stagingMaps.set(key, monthMap);
-      }
-    }
-
-    // Build candidate (backtest) month maps: backtest_{model_id} → month → qty.
-    // These predictions are out-of-sample and historical, so they only land on
-    // existing past points (never the future months below).
-    const backtestMaps = new Map<string, Map<string, number | null>>();
-    if (candidateForecastData?.models) {
-      for (const [modelId, points] of Object.entries(candidateForecastData.models)) {
-        const key = `backtest_${modelId}`;
-        const monthMap = new Map<string, number | null>();
-        for (const pt of points) {
-          monthMap.set(pt.forecast_month, pt.forecast_qty);
-        }
-        backtestMaps.set(key, monthMap);
-      }
-    }
-
-    // Merge production + staging + backtest into existing chart points
-    result = result.map((pt) => {
-      const m = String(pt.month);
-      const extras: Record<string, unknown> = {};
-      if (prodMap.has(m)) extras.production_forecast = prodMap.get(m);
-      if (aiMap.has(m)) extras.ai_champion = aiMap.get(m);
-      for (const [key, monthMap] of stagingMaps) {
-        if (monthMap.has(m)) extras[key] = monthMap.get(m);
-      }
-      for (const [key, monthMap] of backtestMaps) {
-        if (monthMap.has(m)) extras[key] = monthMap.get(m);
-      }
-      return Object.keys(extras).length > 0 ? { ...pt, ...extras } : pt;
-    });
-
-    // Future months beyond the last historical month, clamped to an explicit
-    // TO bound so the range control governs forecasts as well as history.
-    const futureMonths = clampFutureMonths(skuFutureMonths, skuTimeEnd);
-    const futurePts = futureMonths.map((month) => {
-      const pt: Record<string, unknown> = { month };
-      if (prodMap.has(month)) pt.production_forecast = prodMap.get(month);
-      if (aiMap.has(month)) pt.ai_champion = aiMap.get(month);
-      for (const [key, monthMap] of stagingMaps) {
-        if (monthMap.has(month)) pt[key] = monthMap.get(month);
-      }
-      return pt;
-    });
-
-    return [...result, ...futurePts] as Record<string, unknown>[];
-  }, [
-    skuFilteredSeries,
-    skuFutureMonths,
-    skuTimeEnd,
+  const {
     prodForecastData,
     stagingForecastData,
     candidateForecastData,
-    aiChampionSaved,
-  ]);
-
-  // AI Champion overlay: present only once a saved adjustment exists for this DFU.
-  const aiChampionRows = aiChampionSaved?.rows ?? [];
-  const hasAiChampion = aiChampionRows.some((r) => r.ai_qty != null);
-  const aiChampionLead = aiChampionRows[0] ?? null;
+    skuFutureMonths,
+    mergedFilteredSeries,
+    aiChampionFetched,
+    hasAiChampion,
+    aiChampionLead,
+  } = useItemForecastOverlays({
+    itemId: debouncedSkuItem,
+    locationId: debouncedSkuLocation,
+    historyMonths: skuMonths,
+    filteredSeries: skuFilteredSeries as Record<string, unknown>[],
+    timeEnd: skuTimeEnd,
+    aiEnabled: panels.aiChampion,
+  });
 
   // Available models for the SHAP dropdown
   const shapModelOptions = useMemo(() => {
@@ -663,56 +474,15 @@ export function ItemAnalysisTab() {
           ltProfile={ltProfileRow}
         />
 
-        {/* ---- Toggle toolbar ---- */}
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-6 py-2 text-xs">
-          {/* Select All / Deselect All toggle */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-[10px] uppercase tracking-wider font-semibold"
-            onClick={() => setAll(!allOn)}
-          >
-            {allOn ? "Deselect All" : "Select All"}
-          </Button>
-          <span className="hidden h-4 w-px bg-border sm:block" />
-
-          {DEMAND_PANELS.map((p) => (
-            <label key={p.key} className="flex cursor-pointer items-center gap-1.5 select-none">
-              <Checkbox
-                checked={panels[p.key]}
-                onCheckedChange={() => toggle(p.key)}
-                aria-label={`Toggle ${p.label}`}
-              />
-              <span className={panels[p.key] ? "text-foreground" : "text-muted-foreground"}>
-                {p.label}
-              </span>
-            </label>
-          ))}
-
-          {/* SHAP model dropdown */}
-          {panels.shap && shapModelOptions.length > 0 && (
-            <>
-              <span className="mx-1 hidden h-4 w-px bg-border sm:block" />
-              <label className="flex items-center gap-1.5 select-none">
-                <span className="font-semibold uppercase tracking-wider text-muted-foreground">
-                  SHAP
-                </span>
-                <select
-                  className="h-7 rounded border border-input bg-background px-2 text-xs"
-                  value={selectedModel ?? ""}
-                  onChange={(e) => setSelectedModel(e.target.value || null)}
-                >
-                  <option value="">None</option>
-                  {shapModelOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </>
-          )}
-        </div>
+        <ItemAnalysisToolbar
+          panels={panels}
+          allOn={allOn}
+          onSetAll={setAll}
+          onToggle={toggle}
+          shapModels={shapModelOptions}
+          selectedModel={selectedModel}
+          onSelectedModelChange={setSelectedModel}
+        />
       </Card>
 
       {/* ---- Demand panels ---- */}

@@ -52,6 +52,12 @@ describe("useCustomerBlendOverlay", () => {
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: "blend-1", months: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -145,6 +151,12 @@ describe("useCustomerBlendOverlay", () => {
         )
       )
       .mockResolvedValueOnce(
+        new Response(JSON.stringify({ run_id: "blend-1", months: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+      .mockResolvedValueOnce(
         new Response(JSON.stringify({ detail: "No current customer blend run found" }), {
           status: 404,
           headers: { "Content-Type": "application/json" },
@@ -177,5 +189,49 @@ describe("useCustomerBlendOverlay", () => {
 
     expect(result.current.status).toBe("idle");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a trend failure instead of silently dropping sales-history overlays", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              run_id: "blend-1",
+              status: "ready",
+              planning_month: "2026-07-01",
+              bottom_up_staging_run_id: "shadow-1",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              run_id: "blend-1",
+              item_id: "ITEM-1",
+              location_id: "LOC-1",
+              months: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ detail: "trend lookup failed" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          })
+        )
+    );
+
+    const { result } = renderHook(() => useCustomerBlendOverlay("ITEM-1", "LOC-1", true), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.trend).toBeNull();
+    expect(result.current.bottomUpStagingRunId).toBe("shadow-1");
   });
 });

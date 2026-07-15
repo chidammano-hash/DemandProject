@@ -22,6 +22,9 @@ export const MODEL_LABELS: Record<string, string> = {
   mstl: "MSTL",
   nbeats: "N-BEATS",
   nhits: "N-HiTS",
+  customer_bottom_up: "Customer Bottom-Up",
+  customer_source_champion: "Source Champion",
+  customer_bottom_up_blend: "Customer Blend",
 };
 
 export const MODEL_TYPE_COLORS: Record<string, string> = {

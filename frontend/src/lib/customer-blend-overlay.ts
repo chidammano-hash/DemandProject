@@ -10,7 +10,7 @@ export interface CustomerBlendChartPoint extends Record<string, unknown> {
   month: string;
   customer_bottom_up_qty: number | null;
   customer_source_champion_qty: number;
-  customer_blend_qty: number;
+  customer_blend_qty: number | null;
 }
 
 export type CustomerBlendOverlayStatus = "idle" | "loading" | "error" | "empty" | "ready";
@@ -60,5 +60,10 @@ export function mergeCustomerBlendOverlay(
 }
 
 export function hasCustomerBlendData(points: Record<string, unknown>[]): boolean {
-  return points.some((point) => point[CUSTOMER_BLEND_KEYS.blend] != null);
+  return points.some(
+    (point) =>
+      point[CUSTOMER_BLEND_KEYS.bottomUp] != null ||
+      point[CUSTOMER_BLEND_KEYS.sourceChampion] != null ||
+      point[CUSTOMER_BLEND_KEYS.blend] != null
+  );
 }

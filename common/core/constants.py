@@ -11,6 +11,7 @@ FORECAST_QTY_COL = "basefcst_pref"
 # Model identifier constants
 # (EXTERNAL_MODEL_ID lives in common/core/sql_helpers.py for legacy reasons.)
 CHAMPION_MODEL_ID = "champion"  # Promoted single-best model
+CUSTOMER_BOTTOM_UP_MODEL_ID = "customer_bottom_up"
 CUSTOMER_BOTTOM_UP_BLEND_MODEL_ID = "customer_bottom_up_blend"
 BLENDED_MODEL_ID = "blended"    # Multi-model meta-blend
 ABC_CLASSES = ("A", "B", "C")   # ABC velocity classes

@@ -624,8 +624,11 @@ to one exact completed audit batch.
   `fact_external_forecast_monthly` and `backtest_lag_archive`.
 - **`forecast_generation_run` / `fact_production_forecast_staging`** — immutable
   forward-generation manifests and payloads. Runs are explicitly
-  `release_candidate`, `snapshot_contender`, or `legacy_invalid`; champion rows
-  preserve their requested candidate separately from the routed source model.
+  `release_candidate`, `snapshot_contender`, `shadow_candidate`, or
+  `legacy_invalid`; champion rows preserve their requested candidate separately
+  from the routed source model. A `shadow_candidate` is immutable review evidence:
+  it remains read-only and `promotion_eligible = FALSE`, and database constraints
+  permit only a `release_candidate` to reach `promoted` status.
   A champion manifest also freezes the exact winners-artifact and
   experiment-stamped historical-results checksums.
 - **`model_promotion_log`** — audit trail for every promotion/demotion event,
@@ -676,15 +679,24 @@ to one exact completed audit batch.
   accuracy row freezes WAPE, MAE, bias, accuracy, thresholds, and a
   no-degradation gate.
 - **`customer_bottom_up_blend_component`** — generation-only forward component
-  evidence keyed to one generation, customer run, passing backtest, source
-  promotion, and production run. The draft follows the full active production
-  spine: qualified customer months blend at 50/50, missing customer evidence
-  and months outside the 18-month customer horizon pass through champion, and
-  customer-only DFUs are excluded. Drafts use normal staging and explicit
-  transactional promotion; no blend auto-promotes or recursively becomes the
-  next blend source. Customer, backtest, source-production, and forward
-  component payloads are checksum-reconciled at stage/promotion. DDL:
-  `sql/216`.
+  evidence keyed to one blend generation, customer run, passing backtest, source
+  promotion, and production run. Each successful blend generation publishes two
+  immutable staging manifests with exact cross-links: a review-only
+  `customer_bottom_up` `shadow_candidate` containing only normalized customer
+  rows, and the full-spine `customer_bottom_up_blend` `release_candidate`.
+  The blend manifest records the shadow run id, status, row/DFU counts, and
+  checksum; the shadow manifest records its source blend run and the same
+  customer/backtest/source-release lineage. The shadow is visible to read APIs
+  but can never receive release-stage approval or promotion. The blend remains
+  the sole customer-derived promotion candidate: qualified customer months blend at
+  50/50, missing customer evidence and months outside the 18-month customer
+  horizon pass through champion, and customer-only DFUs are excluded. Drafts
+  require explicit transactional promotion; no blend auto-promotes or
+  recursively becomes the next blend source. Customer, backtest,
+  source-production, and forward-component payloads remain promotion-gated by
+  their checksums; the shadow run and checksum are frozen as review lineage but
+  are not part of the production payload. DDL: `sql/216` and
+  `sql/217_add_customer_bottom_up_shadow_staging.sql`.
 
 ### AI & Exception Tables
 
@@ -819,7 +831,17 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
   retired promote, retired promote-results, promote-results/status, cancel, delete
 67.  `fact_candidate_forecast` — legacy candidate table; grain: `(item_id, loc, model_id, forecast_month)` UNIQUE. It currently has no writer and is not used by forward promotion; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 68.  `model_promotion_log` — exact promotion/demotion audit; grain: `(id)` SERIAL PK; includes model/type/version/cardinalities plus `source_run_id`, `production_run_id`, gate report, candidate/production/archive checksums, archive time, and replacement id. Database indexes enforce one active release and one promotion per source run; DDL: `sql/121`, extended by `sql/203_create_forecast_generation_run.sql`
-- `forecast_generation_run` manifests one immutable staging payload, its release/snapshot/legacy purpose, generator-contract metadata, status, promotion eligibility, sales/champion/cluster/routing lineage, cardinalities, and canonical checksum. `fact_production_forecast_staging` is unique by run + purpose + requested candidate + DFU-month; DDL: `sql/203_create_forecast_generation_run.sql`. Migration `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready release candidates invalid and non-promotable without deleting their evidence.
+- `forecast_generation_run` manifests one immutable staging payload, its
+  release/snapshot/shadow/legacy purpose, generator-contract metadata, status,
+  promotion eligibility, sales/champion/cluster/routing lineage, cardinalities,
+  and canonical checksum. `fact_production_forecast_staging` is unique by run +
+  purpose + requested candidate + DFU-month; DDL:
+  `sql/203_create_forecast_generation_run.sql`. Migration
+  `sql/206_invalidate_pre_canonical_generator_runs.sql` makes pre-contract ready
+  release candidates invalid and non-promotable without deleting their
+  evidence. Migration `sql/217_add_customer_bottom_up_shadow_staging.sql` adds
+  the immutable `shadow_candidate` purpose and database-enforces that it can
+  never become a promoted release.
 - Newly promoted `fact_production_forecast` rows carry `source_run_id`, `promotion_log_id`, a distinct production `run_id`, and `lineage_status='verified'`. The promotion transaction hashes candidate and production in the same stable order and requires equality before commit.
 - Promotion of a `customer_bottom_up_blend` conditionally holds the shared
   customer-demand session lock from before its serializable snapshot through
@@ -850,8 +872,13 @@ runtime with `INTEGRATION_SCAN_AI_RUNTIME=openai`. See spec 06-09.
   tables persist six causal one-step origins and the matching common-cohort
   promotion gate. `customer_bottom_up_blend_component` preserves the exact
   normalized customer, source champion, blend, interval, coverage, backtest,
-  and release lineage behind each staged `customer_bottom_up_blend` row. DDL:
-  `sql/216_create_customer_bottom_up_blend.sql`.
+  and release lineage behind each staged `customer_bottom_up_blend` row. Every
+  blend draft also owns one deterministic `customer_bottom_up` shadow manifest;
+  its run id, status, cardinalities, and checksum are frozen into the blend
+  lineage. The shadow contains normalized customer rows only, is exposed for
+  comparison, and cannot receive release-stage approval or promotion. DDL:
+  `sql/216_create_customer_bottom_up_blend.sql` and
+  `sql/217_add_customer_bottom_up_shadow_staging.sql`.
 - `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
 - Backtest management API router at `/backtest-management` includes promotion-status, candidate-summary, staging-summary, `{model_id}/generate`, `{model_id}/stage`, `{model_id}/promote`, and `{model_id}/train`. Staging summary distinguishes the requested release slot from the actual candidate model and exposes a sanitized customer-blend lineage/backtest gate, allowing Forecast readiness and promotion controls to name a `customer_bottom_up_blend` before action. Generate creates an immutable non-eligible draft; stage approves one exact run; promote atomically replaces the single active production release. Persisted production training accepts LightGBM, N-HiTS, and N-BEATS; MSTL and Chronos 2E are direct.
 - `/backtest-management/summary` reports `loaded_run` (latest run with `is_loaded_to_db`) alongside `latest_run`, and `current_accuracy`/`current_wape` fall back to it, so a newest failed/cancelled run never masks loaded results in the UI. `/backtest-management/{model_id}/runs` and `/model-tuning/{model}/experiments` join `job_history.error` so failed/cancelled runs carry their failure reason (`error` field). A 404 from `/backtest-management/{model_id}/current` is treated client-side as "no artifacts yet", not an error toast.
@@ -1080,8 +1107,8 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 |-------------|---------------|------------------------|
 | **Dashboard** | `/dashboard/kpis`, `/trend`, `/heatmap`, `/alerts`, `/top-movers`, `/pipeline-readiness` | `fact_external_forecast_monthly`, `agg_sales_monthly`, `fact_sales_monthly` (inline query), `dim_sku` |
 | **Data Explorer** | `/domains/{domain}/rows`, `/search`, `/filter`, `/meta` | All dimension + fact tables |
-| **Portfolio Analysis** | `/forecast/accuracy/slice`, `/lag-curve`, `/champions/*`, `/shap/*` | `agg_accuracy_by_dim`, `backtest_lag_archive`, `fact_external_forecast_monthly` |
-| **Item Analysis** | `/sku/*`, `/forecast/shap/{model}/sku`, `/inventory/*`, `/customer-forecast/blend/series` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, `customer_bottom_up_blend_component`, SHAP CSVs |
+| **Portfolio Analysis** | `/forecast/accuracy/slice`, `/lag-curve`, `/champions/*`, `/shap/*`, `/customer-forecast/blend/latest`, `/customer-forecast/blend/trend` | `agg_accuracy_by_dim`, `backtest_lag_archive`, `fact_external_forecast_monthly`, `customer_bottom_up_backtest_component`, `customer_bottom_up_blend_component`, `forecast_generation_run`, `fact_production_forecast_staging` |
+| **Item Analysis** | `/sku/*`, `/forecast/shap/{model}/sku`, `/inventory/*`, `/forecast/production/staging`, `/customer-forecast/blend/series`, `/customer-forecast/blend/trend` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, `customer_bottom_up_backtest_component`, `customer_bottom_up_blend_component`, `forecast_generation_run`, `fact_production_forecast_staging`, SHAP CSVs |
 | **Clusters** | `/clustering/list`, `/scenario`, `/scenario/{id}/status` | `dim_sku`, `data/clustering/` |
 | **Inv Planning** (34 panels, 5 view presets) | `/inv-planning/*` (14 router modules) | All `fact_*` inv planning tables + MVs |
 | **Control Tower** | `/control-tower/kpis`, `/alerts`, `/top-critical`, `/trend` | `mv_control_tower_kpis` |
@@ -1103,7 +1130,7 @@ accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, back
 | **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill`, `/customer-forecast/blend/series` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions`, `customer_bottom_up_blend_component` |
 | **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/stage`, `/{model_id}/promote`, `/{model_id}/train` | `forecast_generation_run`, `fact_production_forecast_staging`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
 | **Forecast Release Readiness** | `/forecast-release/readiness` | `fact_external_forecast_monthly`, `dim_sku`, `champion_experiment`, `cluster_experiment`, `fact_production_forecast`, `fact_forecast_snapshot` |
-| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/runs/{run_id}/retry`, `/series`, `/export`, `/backtest/generate`, `/backtest/latest`, `/blend/readiness`, `/blend/generate`, `/blend/latest`, `/blend/series` | `fact_customer_demand_monthly`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast`, `customer_forecast_backtest_run`, `customer_bottom_up_backtest_component`, `customer_bottom_up_backtest_accuracy`, `customer_bottom_up_blend_component`, `forecast_generation_run`, `fact_production_forecast_staging`, `job` |
+| **Customer Forecast** | `/customer-forecast/readiness`, `/generate`, `/runs/latest`, `/runs/{run_id}`, `/runs/{run_id}/cancel`, `/runs/{run_id}/retry`, `/series`, `/export`, `/backtest/generate`, `/backtest/latest`, `/blend/readiness`, `/blend/generate`, `/blend/latest`, `/blend/series`, `/blend/trend` | `fact_customer_demand_monthly`, `customer_forecast_run`, `customer_forecast_batch`, `customer_forecast_batch_series`, `fact_customer_forecast`, `customer_forecast_backtest_run`, `customer_bottom_up_backtest_component`, `customer_bottom_up_backtest_accuracy`, `customer_bottom_up_blend_component`, `forecast_generation_run`, `fact_production_forecast_staging`, `job` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
@@ -1596,6 +1623,30 @@ The maintained base-model roster is exactly LightGBM (`lgbm_cluster`), N-HiTS
 `recharts` is the default and only general-purpose chart engine. The old `EChartContainer.tsx` wrapper has been **removed** — do not reintroduce it. Components that previously used it (e.g. `ForecastTrendChart`) are now implemented directly in `recharts` (the confidence-interval band uses the Area-tuple `[low, high]` rendering pattern). `HeatmapGrid` was extended with a compact mode and clickable headers during the migration.
 
 The single sanctioned exception is `frontend/src/components/echarts-modular.tsx` (`ModularReactECharts`), retained ONLY for the 8 heavy customer-analytics panels recharts can't render well — treemap, sunburst, sankey, heatmap, bubble, affinity, lifecycle, order-patterns. It tree-shakes echarts to just the chart types those panels use, so `echarts ^6` ships for that subset only. Every other chart in the app uses recharts.
+
+### Customer Bottom-Up Comparison Surfaces
+
+Customer bottom-up evidence is a shared read-only visualization, not a second
+promotion workflow. Portfolio Analysis adds a **Customer Blend** mode to its
+Forecast vs Actual chart. It resolves the current blend manifest first and then
+calls `/customer-forecast/blend/trend` with that exact run id and the active
+portfolio filters. `CustomerForecastTrendChart` separates causal backtest months
+from staged future months at the planning boundary and compares actual sales,
+normalized Customer Bottom-Up, Source Champion, and Customer Blend. It also
+shows common-cohort WAPE, blend/fallback coverage, the blend interval, and run
+vintage. The trend endpoint follows the blend manifest's exact
+`backtest_run_id` and `bottom_up_staging_run_id`; it never combines independently
+selected "latest" evidence.
+
+Item Analysis uses the same exact-run trend evidence at one item-location. Its
+unified demand chart renders dotted historical customer backtest lines alongside
+the existing sales history, then continues with the staged
+`customer_bottom_up` shadow and promotable `customer_bottom_up_blend` future
+lines. `/forecast/production/staging` returns both display identities with their
+source model/run ids. The item overlay suppresses duplicate component lines when
+the same staged customer series is already present, and champion-fallback months
+never draw a false customer contribution. Both screens use theme-derived colors;
+the Portfolio comparison also exposes an accessible monthly data table.
 
 ### Below-the-fold Lazy Loading (`LazyPanel`)
 
@@ -2091,10 +2142,18 @@ Passing evidence can generate a `customer_bottom_up_blend` draft on the exact
 active production spine: qualified customer months blend, missing or
 out-of-horizon customer rows pass through champion, and customer-only DFUs are
 excluded. Component evidence is writable only while its parent run is
-generating and is frozen afterward. The draft uses normal staging and explicit
-transactional promotion, never auto-promotes, and cannot recursively source a
-later customer blend. API
-`/customer-forecast`; DDL `sql/210`–`sql/216`; spec
+generating and is frozen afterward. The same transaction also writes normalized
+Customer Bottom-Up rows to a paired, immutable `shadow_candidate` manifest for
+review. That shadow is always read-only, remains non-promotable at both service
+and database layers, and is linked to the blend by exact run, backtest, source
+promotion/production, cardinality, and checksum lineage. The
+`customer_bottom_up_blend` manifest remains the sole customer-derived release
+candidate: it uses normal staging and explicit transactional promotion, never
+auto-promotes, and cannot recursively source a later customer blend.
+Portfolio Analysis and Item Analysis visualize the exact historical backtest,
+shadow future, source champion, and blended future through
+`/customer-forecast/blend/trend`; Item Analysis also consumes the run-aware
+staging overlay. API `/customer-forecast`; DDL `sql/210`–`sql/217`; spec
 `docs/specs/02-forecasting/35-customer-level-forecasting.md`.
 
 ### 2. SKU Clustering & Segmentation

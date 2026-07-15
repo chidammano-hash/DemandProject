@@ -1,12 +1,12 @@
 # Data Explorer
 
-> A paginated, filterable data grid for browsing all eight domain tables (items, locations, customers, time, DFUs, sales, forecasts, inventory) plus a unified Item Analysis tab that overlays multi-model forecasts against actuals for any DFU with interactive SHAP explanations.
+> A paginated, filterable data grid for browsing all eight domain tables (items, locations, customers, time, DFUs, sales, forecasts, inventory) plus a unified Item Analysis tab that overlays multi-model and governed customer forecasts against actuals for any DFU with interactive SHAP explanations.
 
 | | |
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | ExplorerTab, ItemAnalysisTab |
-| **Key Files** | `ExplorerTab.tsx` (orchestrator, ~245 lines composing 11 sub-files in `tabs/explorer/`: `ExplorerHeader.tsx`, `ExplorerTable.tsx`, `ExplorerPagination.tsx`, `ExplorerErrorBanner.tsx`, `DomainFiltersPanel.tsx`, `FieldVisibilityPanel.tsx`, `useExplorerState.ts`, `useExplorerQueries.ts`, `useColumnSuggestions.ts`, `_helpers.ts`, `types.ts`), `ItemAnalysisTab.tsx`, `api/routers/domains.py`, `api/routers/forecasting/analysis.py`, `api/routers/inventory/inventory_main.py` |
+| **Key Files** | `ExplorerTab.tsx` (orchestrator, ~245 lines composing 11 sub-files in `tabs/explorer/`), `ItemAnalysisTab.tsx`, `tabs/item-analysis/CustomerBlendUnifiedChartPanel.tsx`, `hooks/useItemForecastOverlays.ts`, `api/routers/domains.py`, `api/routers/forecasting/analysis.py`, `api/routers/forecasting/production_forecast.py` |
 
 ---
 
@@ -41,7 +41,7 @@ Planners need to browse raw data to validate pipeline outputs, spot anomalies, a
 
 | Group | Panel | What It Shows |
 |---|---|---|
-| Demand | Forecast Chart | ECharts overlay of actuals vs. all forecast models. Click a model line to select it (thicker line, others fade to 30% opacity). |
+| Demand | Forecast Chart | Recharts overlay of actuals, standard models, production, staged candidates, and exact-lineage customer bottom-up/source-champion/blend series. Click a model line to select it (thicker line, others fade to 30% opacity). |
 | Demand | SHAP | Per-DFU signed SHAP (SHapley Additive exPlanations) feature contributions as stacked bar chart. Historical months at 90% opacity, future months at 45%. Falls back to cluster-level summary on 404. |
 | Demand | Model KPIs | Per-model accuracy cards: WAPE, bias, accuracy % for the selected DFU. |
 | Supply | Inv KPIs | Inventory KPI cards: DOS, WOC, turns, LT coverage with severity color coding. |
@@ -49,29 +49,35 @@ Planners need to browse raw data to validate pipeline outputs, spot anomalies, a
 | Supply | Variability | Demand variability profile: CV, MAD, skewness for the selected DFU. |
 | Supply | Lead Time | Lead time profile: average LT, LT CV, reliability band. |
 
-### Three Scope Modes
+### Exact DFU scope
 
-The Item Analysis tab supports three scope modes via a selector:
+Item Analysis operates at `item_location` scope: one item and one canonical
+location. Customer blend reads are disabled until both keys are present, which
+prevents a warehouse-item forecast from being presented as a customer, item, or
+location-only aggregate.
 
-| Mode | Scope | Use Case |
-|---|---|---|
-| `item_location` | Single DFU (item + location) | Deep dive into one DFU with all panels |
-| `item` | All locations for one item | Compare performance across locations |
-| `location` | All items at one location | Assess location-level patterns |
-
-SHAP panel and inventory panels are only available in `item_location` mode.
+For customer forecasts, historical lines come from the exact backtest run
+stamped on the selected blend manifest. Future `customer_bottom_up` and
+`customer_bottom_up_blend` lines use the standard staging endpoint and retain
+their distinct shadow/blend run ids. The component overlay fills a future line
+only when that display identity is absent from standard staging, so each
+model/month is rendered once.
 
 ---
 
 ## Data Model
 
-No new tables. The explorer reads from all eight domain tables via the generic `/domains/{domain}/rows` endpoint. Item Analysis reads from:
+The explorer itself adds no tables and reads the eight domain tables through
+`/domains/{domain}/rows`. Item Analysis also reads governed forecast evidence:
 
 | Source | Used By |
 |---|---|
 | `fact_external_forecast_monthly` | Forecast overlay chart |
 | `fact_sales_monthly` | Actuals on chart |
 | `fact_production_forecast` | Future forecast + CI bands |
+| `forecast_generation_run` + `fact_production_forecast_staging` | True display identity and exact-run future staging, including the review-only `customer_bottom_up` shadow and promotable blend |
+| `customer_bottom_up_backtest_component` | Exact historical customer bottom-up, source champion, blend, and actual comparison |
+| `customer_bottom_up_blend_component` | Exact blend-run component and fallback evidence |
 | `agg_inventory_monthly` | Inventory KPIs and position table |
 | Backtest SHAP CSVs | SHAP panel (cluster-level fallback) |
 | Backtest pkl models | Per-DFU SHAP (on-demand computation) |
@@ -86,6 +92,10 @@ No new tables. The explorer reads from all eight domain tables via the generic `
 | GET | `/domains/{domain}/search` | Full-text trigram search across configured columns |
 | GET | `/domains/{domain}/columns` | Column metadata (name, type, filterable) |
 | GET | `/sku/analysis` | Multi-model forecast + actuals for a DFU |
+| GET | `/forecast/production/staging` | Future staged models grouped by true display identity and source run |
+| GET | `/customer-forecast/blend/latest` | Resolve the current viewable blend manifest |
+| GET | `/customer-forecast/blend/series` | Exact item-location forward blend components and fallback status |
+| GET | `/customer-forecast/blend/trend` | Exact historical backtest and paired future staging lineage |
 | GET | `/forecast/shap/{model_id}/sku` | Per-DFU signed SHAP values (on-demand computation) |
 | GET | `/inventory/position` | Monthly inventory position for an item-location |
 | GET | `/inventory/kpis` | Point-in-time inventory KPIs |
@@ -101,7 +111,7 @@ The `domains.py` router is mounted last in `main.py` because its `{domain}` path
 | `pg_trgm` PostgreSQL extension | GIN trigram indexes for substring search |
 | TanStack Table + TanStack Virtual | Virtualized data grid rendering |
 | papaparse | Client-side CSV export |
-| ECharts (`echarts-for-react`) | Forecast overlay chart |
+| Recharts | Item Analysis unified forecast and customer comparison chart |
 | `common/core/domain_specs.py` | Central schema config for all 8 domains |
 
 ---

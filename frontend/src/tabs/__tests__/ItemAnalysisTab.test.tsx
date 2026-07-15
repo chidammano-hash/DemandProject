@@ -16,6 +16,9 @@ vi.mock("@/api/queries/core", () => ({
 }));
 
 vi.mock("@/api/queries/production-forecast", () => ({
+  productionForecastKeys: {
+    customerStagingPair: (...parts: unknown[]) => ["production-forecast", ...parts],
+  },
   fetchProductionForecast: vi.fn().mockResolvedValue(null),
   fetchStagingForecasts: vi
     .fn()
