@@ -35,6 +35,7 @@ The Demand History Workbench provides 5 API endpoint groups for customer-level d
 |---|---|
 | fact_sales_monthly | Canonical item and item-location actual history through the last closed planning month |
 | fact_customer_demand_monthly | Customer-number history for customer-grain decomposition and matrices |
+| fact_customer_forecast | Completed Croston/SBA forecast rows for an exact item-location-customer Workbench overlay |
 | dim_customer | Customer names and attributes for labeling |
 | dim_item | Item descriptions for labeling |
 | dim_location | Location city/state for labeling |
@@ -80,6 +81,12 @@ pipeline loads through the last available closed month. Customer labels join `di
 planning calendar, the UI reports its latest genuinely available customer month rather than
 synthesizing allocations. The Workbench also enforces one selectable row per API series key so
 cached or malformed duplicate rows cannot share selection state in the UI.
+
+For one selected series, the **Forecast** control follows the displayed grain.
+Item and item-location selections overlay the production forecast. An exact
+item-location-customer selection overlays the latest completed customer forecast
+from `/customer-forecast/series`, keyed by all three identifiers. The control is
+disabled only when the current selection is ambiguous or incomplete.
 
 ### Feature 5: Cross-Reference Matrix
 

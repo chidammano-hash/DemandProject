@@ -156,6 +156,11 @@ export function ComparisonPanel() {
           <CustomerBlendLegend
             months={customerBlend.months}
             status={customerBlend.status}
+            emptyMessage={
+              customerBlend.runId
+                ? "No customer blend is available for this item and location."
+                : "No staged customer blend draft exists yet. Generate a blend draft first."
+            }
             runId={customerBlend.runId}
             planningMonth={customerBlend.planningMonth}
           />

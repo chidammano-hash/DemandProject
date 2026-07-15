@@ -78,4 +78,30 @@ describe("ComparisonPanel customer blend overlay", () => {
     expect(screen.getByLabelText("Blend vintage Jul 2026, run blend-1")).toBeInTheDocument();
     expect(useCustomerBlendOverlay).toHaveBeenLastCalledWith("ITEM-1", "LOC-1", true);
   });
+
+  it("explains when no staged blend draft exists instead of blaming the item", () => {
+    useCustomerBlendOverlay.mockReturnValue({
+      status: "empty",
+      months: [],
+      points: [],
+      runId: null,
+      planningMonth: null,
+      invalidReason: null,
+    });
+
+    render(<ComparisonPanel />);
+    fireEvent.change(screen.getByPlaceholderText("Item ID"), {
+      target: { value: "ITEM-1" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Location"), {
+      target: { value: "LOC-1" },
+    });
+
+    expect(
+      screen.getByText("No staged customer blend draft exists yet. Generate a blend draft first.")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No customer blend is available for this item and location.")
+    ).not.toBeInTheDocument();
+  });
 });

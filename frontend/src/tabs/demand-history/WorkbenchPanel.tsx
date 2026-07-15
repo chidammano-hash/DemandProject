@@ -25,6 +25,7 @@ import { useChartColors } from "@/hooks/useChartColors";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkbench } from "@/api/queries/demand-history";
 import type { WorkbenchGrain, WorkbenchSeries } from "@/api/queries/demand-history";
+import { customerForecastKeys, fetchCustomerForecastSeries } from "@/api/queries/customerForecast";
 import { fetchProductionForecast } from "@/api/queries/production-forecast";
 import { useDemandHistorySelection } from "../DemandHistoryTab";
 import { Skeleton } from "@/components/Skeleton";
@@ -342,23 +343,49 @@ export function DemandWorkbenchPanel() {
     return selectedKeys.map((k) => byKey.get(k)).filter((s): s is WorkbenchSeries => !!s);
   }, [uniqueSeries, selectedKeys]);
 
-  // Forecast overlay availability:
-  //  - Item grain      : aggregated across all locations (loc omitted)
-  //  - Item+Loc grain  : single DFU
-  //  - Item+Loc+Cust   : not available (no customer-grain forecast exists)
-  const forecastEnabled =
-    showForecast &&
+  // Resolve the selected row itself instead of relying on context updates from
+  // the preceding click. Customer keys carry the exact item/location/customer
+  // grain needed by the customer forecast API.
+  const selectedForecastParts =
+    selectedSeriesList.length === 1 ? selectedSeriesList[0].key.split("||") : [];
+  const forecastItem = selectedForecastParts[0] || itemId;
+  const forecastLoc = grain === "item" ? undefined : selectedForecastParts[1] || loc || undefined;
+  const forecastCustomer = selectedForecastParts[2] || undefined;
+  const forecastAvailable = Boolean(
     selectedSeriesList.length === 1 &&
-    grain !== "item_loc_customer" &&
-    !!itemId;
-
-  const forecastLoc = grain === "item" ? undefined : loc || undefined;
+    forecastItem &&
+    (grain !== "item_loc_customer" || (forecastLoc && forecastCustomer)),
+  );
+  const productionForecastEnabled =
+    showForecast && forecastAvailable && grain !== "item_loc_customer";
+  const customerForecastEnabled =
+    showForecast && forecastAvailable && grain === "item_loc_customer";
 
   const forecastQuery = useQuery({
-    queryKey: ["wb-production-forecast", itemId, forecastLoc ?? "ALL"],
-    queryFn: () => fetchProductionForecast({ item_id: itemId, loc: forecastLoc }),
-    enabled: forecastEnabled,
+    queryKey: ["wb-production-forecast", forecastItem, forecastLoc ?? "ALL"],
+    queryFn: () => fetchProductionForecast({ item_id: forecastItem, loc: forecastLoc }),
+    enabled: productionForecastEnabled,
   });
+  const customerForecastFilters = {
+    item_id: forecastItem,
+    location_id: forecastLoc ?? "",
+    customer_no: forecastCustomer ?? "",
+  };
+  const customerForecastQuery = useQuery({
+    queryKey: customerForecastKeys.series(customerForecastFilters),
+    queryFn: () => fetchCustomerForecastSeries(customerForecastFilters),
+    enabled: customerForecastEnabled,
+  });
+  const forecastPoints =
+    grain === "item_loc_customer"
+      ? (customerForecastQuery.data?.forecast ?? []).map((point) => ({
+          forecast_month: point.month,
+          forecast_qty: point.forecast_qty,
+        }))
+      : (forecastQuery.data?.forecasts ?? []);
+  const forecastLoading =
+    (productionForecastEnabled && forecastQuery.isLoading) ||
+    (customerForecastEnabled && customerForecastQuery.isLoading);
 
   const handleToggle = useCallback((key: string, additive: boolean) => {
     setSelectedKeys((prev) => {
@@ -548,16 +575,20 @@ export function DemandWorkbenchPanel() {
             <div className="flex items-center gap-1">
               <label
                 className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded ${
-                  selectedSeriesList.length === 1 && grain !== "item_loc_customer"
+                  forecastAvailable
                     ? "text-gray-700 dark:text-gray-200 cursor-pointer hover:bg-muted dark:hover:bg-gray-800"
                     : "text-muted-foreground cursor-not-allowed"
                 }`}
                 title={
-                  selectedSeriesList.length === 1 && grain !== "item_loc_customer"
-                    ? grain === "item"
-                      ? "Overlay production forecast (sum across all locations)"
-                      : "Overlay production forecast for this DFU"
-                    : "Forecast needs a single item or item+loc selection"
+                  forecastAvailable
+                    ? grain === "item_loc_customer"
+                      ? "Overlay the Croston/SBA forecast for this customer series"
+                      : grain === "item"
+                        ? "Overlay production forecast (sum across all locations)"
+                        : "Overlay production forecast for this DFU"
+                    : grain === "item_loc_customer"
+                      ? "Forecast needs a single item+location+customer selection"
+                      : "Forecast needs a single item or item+loc selection"
                 }
               >
                 <input
@@ -565,7 +596,7 @@ export function DemandWorkbenchPanel() {
                   className="h-3 w-3"
                   checked={showForecast}
                   onChange={(e) => setShowForecast(e.target.checked)}
-                  disabled={selectedSeriesList.length !== 1 || grain === "item_loc_customer"}
+                  disabled={!forecastAvailable}
                 />
                 Forecast
               </label>
@@ -592,8 +623,8 @@ export function DemandWorkbenchPanel() {
         ) : (
           <ChartView
             seriesList={selectedSeriesList}
-            forecastPoints={forecastEnabled ? forecastQuery.data?.forecasts ?? [] : []}
-            forecastLoading={forecastEnabled && forecastQuery.isLoading}
+            forecastPoints={showForecast ? forecastPoints : []}
+            forecastLoading={forecastLoading}
             chartColors={chartColors}
             trendColors={trendColors}
           />

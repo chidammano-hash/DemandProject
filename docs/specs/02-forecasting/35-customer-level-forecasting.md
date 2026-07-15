@@ -427,7 +427,12 @@ through the existing staging workflow:
   existing candidate controls and reads future bottom-up and blend rows through
   the standard staging endpoint. When the same run is also available through
   the customer detail overlay, the future lines are deduplicated.
-- **Demand History** retains its exact item-location customer comparison.
+- **Demand History** retains its exact item-location blend comparison. Its
+  Workbench also enables **Forecast** at item-location-customer grain and
+  overlays the latest completed Croston/SBA customer forecast for that exact
+  three-part series key. When no governed blend draft exists, the comparison
+  states that run-level condition instead of claiming the selected item is
+  missing from a draft.
 
 The Forecast readiness and stage/promotion cards identify the release draft as
 **Customer Bottom-Up Blend**, even though it uses the governed `champion`
