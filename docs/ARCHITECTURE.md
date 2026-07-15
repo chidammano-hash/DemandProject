@@ -645,9 +645,12 @@ to one exact completed audit batch.
 - **`customer_forecast_run` / `customer_forecast_batch*` /
   `fact_customer_forecast`** — an immutable customer forecast manifest,
   durable batch ledger, and payload. Every active customer series uses
-  Croston/SBA over the latest 18 closed demand months to generate 18 future
-  months. Series with no customer sales in the latest six closed months are
-  omitted rather than persisted as zero rows. Completed 10,000-series batches
+  recursive Croston/SBA over the latest 18 closed demand months to generate 18
+  future months. Each horizon step recursively damps the prior projected demand
+  toward the bias-corrected Croston long-run rate; the configured recurrence is
+  part of generation and backtest checksums. Series with no customer sales in
+  the latest six closed months are omitted rather than persisted as zero rows.
+  Completed 10,000-series batches
   are recovery checkpoints and retries process only unfinished batches.
   Each new run records the exact latest completed `customer_demand`
   `audit_load_batch` only when the singleton profile-refresh marker matches and
@@ -2125,9 +2128,12 @@ review surfaces. API
 **Demand History Workbench:** 5 endpoints for customer-level demand analysis (reference panel, proportional decomposition, demand comparison, hierarchical drill-down, cross-reference matrix). API `/demand-history`. See `docs/specs/03-demand-intelligence/06-demand-history-workbench.md`.
 
 **Customer-Level Forecasting:** the separate **Forecasting → Customer
-Forecast** stage generates immutable Croston/SBA forecasts at
+Forecast** stage generates immutable recursive Croston/SBA forecasts at
 item-location-customer-month grain. A run uses the latest 18 fully closed
 months from `fact_customer_demand_monthly` and emits exactly 18 future months.
+The latest closed monthly demand initializes a damped recursive path that
+converges toward the SBA long-run rate; each projected month becomes the state
+for the next horizon step.
 Customer series with no sales in the latest six closed months are ignored.
 Durable 10,000-series checkpoints permit retry without losing completed work
 and expose exact completed-series progress and ETA. Croston remains outside

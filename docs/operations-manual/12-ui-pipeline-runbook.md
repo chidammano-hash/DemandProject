@@ -209,8 +209,9 @@ prepare a governed draft:
 2. Review the coverage split. Customer-SKUs with no sales in the latest six
    closed months are shown as ignored and produce no rows.
 3. Click **Generate Customer Forecasts**. The durable job builds 10,000-series
-   recovery batches, runs Croston/SBA on parallel CPU workers, and writes July
-   2026 through December 2027 in that example.
+   recovery batches, runs recursive Croston/SBA on parallel CPU workers, and
+   writes July 2026 through December 2027 in that example. Each customer path
+   recursively converges from the latest closed demand toward its SBA rate.
 4. Monitor exact completed/total customer-SKU and batch counts plus ETA. Active
    runs can be cancelled; **Resume Saved Batches** preserves completed work.
 5. Choose item, location, and customer to compare actual history with the

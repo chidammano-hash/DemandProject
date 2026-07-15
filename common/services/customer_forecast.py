@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from common.core.utils import load_forecast_pipeline_config
-from common.ml.croston import croston_forecast
+from common.ml.croston import croston_forecast, parse_croston_parameters
 
 _IDENTITY_COLUMNS = ["item_id", "location_id", "customer_no"]
 
@@ -78,8 +78,7 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         horizon_months = int(settings["horizon_months"])
         model_id = str(settings["model_id"])
         model_params = dict(settings["model_params"])
-        model_alpha = float(model_params["alpha"])
-        model_variant = str(model_params["variant"])
+        croston_params = parse_croston_parameters(model_params)
         recent_sales_lookback_months = int(settings["recent_sales_lookback_months"])
         batch_size = int(settings["batch_size"])
         cpu_workers = int(settings["cpu_workers"])
@@ -91,8 +90,6 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         raise ValueError("Customer forecast history and horizon must be positive")
     if model_id != "croston":
         raise ValueError("Customer forecasting requires croston")
-    if not 0.0 < model_alpha <= 1.0 or model_variant not in {"classic", "sba"}:
-        raise ValueError("Customer forecast Croston settings are invalid")
     if recent_sales_lookback_months <= 0 or recent_sales_lookback_months > history_months:
         raise ValueError("Customer forecast recent-sales lookback is invalid")
     if batch_size <= 0 or cpu_workers <= 0:
@@ -112,8 +109,10 @@ def get_customer_forecast_settings() -> dict[str, Any]:
         "max_batch_attempts": max_batch_attempts,
         "progress_interval_seconds": progress_interval_seconds,
         "model_params": {
-            "alpha": model_alpha,
-            "variant": model_variant,
+            "alpha": croston_params.alpha,
+            "variant": croston_params.variant,
+            "recursive": croston_params.recursive,
+            "recursive_damping": croston_params.recursive_damping,
         },
     }
 
@@ -218,18 +217,14 @@ def load_customer_forecast_readiness(
     )
     blockers: list[str] = []
     if source_customer_demand_batch_id is None:
-        blockers.append(
-            "A completed customer-demand load is required before generating forecasts"
-        )
+        blockers.append("A completed customer-demand load is required before generating forecasts")
     if int(active_customer_demand_loads or 0) > 0:
         blockers.append("An active customer-demand load is in progress; wait for it to complete")
     elif source_customer_demand_batch_id is not None and (
         profile_customer_demand_batch_id is None
         or int(profile_customer_demand_batch_id) != int(source_customer_demand_batch_id)
     ):
-        blockers.append(
-            "The customer-demand profile does not represent the latest completed load"
-        )
+        blockers.append("The customer-demand profile does not represent the latest completed load")
     if latest_month != history_end_month:
         blockers.append(f"Load customer demand through {window.history_end.strftime('%B %Y')}")
     total_series_count = int(total_series or 0)

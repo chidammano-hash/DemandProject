@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.ml.croston import parse_croston_parameters
 from common.services.customer_forecast import CustomerForecastWindow
 
 _IDENTITY_COLUMNS = ["item_id", "location_id", "customer_no"]
@@ -58,12 +59,7 @@ def build_croston_backtest_batch(
     if history[_IDENTITY_COLUMNS].isna().any(axis=1).any():
         raise ValueError("Customer backtest history contains an invalid identity")
 
-    alpha = float(params["alpha"])
-    variant = str(params["variant"])
-    if not 0.0 < alpha <= 1.0:
-        raise ValueError("Croston alpha must be in (0, 1]")
-    if variant not in {"classic", "sba"}:
-        raise ValueError("Croston variant must be classic or sba")
+    croston = parse_croston_parameters(params)
 
     calendar = pd.date_range(window.history_start, periods=window.history_months, freq="MS")
     identity_rows = (
@@ -105,8 +101,10 @@ def build_croston_backtest_batch(
         demand_interval[first] = float(position + 1)
         if repeated.any():
             intervals = position - previous_position[repeated]
-            demand_size[repeated] += alpha * (demand[repeated, position] - demand_size[repeated])
-            demand_interval[repeated] += alpha * (intervals - demand_interval[repeated])
+            demand_size[repeated] += croston.alpha * (
+                demand[repeated, position] - demand_size[repeated]
+            )
+            demand_interval[repeated] += croston.alpha * (intervals - demand_interval[repeated])
         previous_position[positive] = position
         initialized[positive] = True
 
@@ -123,8 +121,13 @@ def build_croston_backtest_batch(
             out=np.zeros(series_count, dtype=float),
             where=demand_interval > 0,
         )
-        if variant == "sba":
-            forecast *= 1.0 - alpha / 2.0
+        if croston.variant == "sba":
+            forecast *= 1.0 - croston.alpha / 2.0
+        if croston.recursive:
+            forecast = (
+                croston.recursive_damping * demand[:, position]
+                + (1.0 - croston.recursive_damping) * forecast
+            )
         active_rows = np.flatnonzero(active)
         result = output_identities.iloc[active_rows][["item_id", "location_id"]].copy()
         result = result.rename(columns={"location_id": "loc"})

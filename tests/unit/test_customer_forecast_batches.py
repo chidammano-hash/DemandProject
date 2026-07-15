@@ -88,7 +88,12 @@ def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
     settings = {
         "model_id": "croston",
         "recent_sales_lookback_months": 6,
-        "model_params": {"alpha": 0.1, "variant": "sba"},
+        "model_params": {
+            "alpha": 0.1,
+            "variant": "sba",
+            "recursive": True,
+            "recursive_damping": 0.5,
+        },
     }
 
     rows, source = _build_batch_rows(
@@ -101,6 +106,7 @@ def test_croston_batch_builds_all_horizon_rows_from_one_history_frame() -> None:
     assert len(rows) == 18
     assert len(source) == 18
     assert set(rows["model_id"]) == {"croston"}
+    assert rows["forecast_qty"].nunique() > 1
 
 
 def test_worker_commits_read_transactions_before_claiming_and_persisting() -> None:

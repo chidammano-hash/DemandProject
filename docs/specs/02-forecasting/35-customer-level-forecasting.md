@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Implemented |
-| **Customer model** | Croston/SBA (`croston`) |
+| **Customer model** | Recursive Croston/SBA (`croston`) |
 | **Customer history window** | Latest 18 fully closed months |
 | **Customer forecast horizon** | 18 monthly periods beginning with the planning month |
 | **Customer forecast grain** | Item + location + customer + forecast month |
@@ -58,8 +58,8 @@ stamped execution lag, not mutable current SKU metadata.
 
 ### In scope
 
-- generate an 18-month Croston/SBA forecast for every active valid customer
-  series;
+- generate an 18-month recursive Croston/SBA forecast for every active valid
+  customer series;
 - ignore customer-SKUs with no `sales_qty` in the latest six closed months;
 - persist immutable customer forecasts in resumable 10,000-series batches;
 - aggregate customer demand forecasts to item-location-month;
@@ -132,9 +132,35 @@ unresolved keys remain data-quality blockers.
 
 Missing months in the bounded 18-month history are densified with zero demand.
 Every active valid series uses configured Syntetos-Boylan bias-adjusted Croston
-with `alpha: 0.1` and `variant: sba`. There is no Chronos customer route or
-fallback route. Croston remains customer-scoped and outside the governed
-five-model algorithm roster.
+with `alpha: 0.1`, `variant: sba`, `recursive: true`, and
+`recursive_damping: 0.5`. There is no Chronos customer route or fallback route.
+Croston remains customer-scoped and outside the governed five-model algorithm
+roster.
+
+Classic Croston/SBA has a flat multi-step point forecast because its demand-size
+and interval states cannot observe future demand events. Customer generation
+retains that bias-corrected rate as the long-run target but adds a deterministic
+recursive transition from the latest closed monthly demand:
+
+```text
+L       = bias-corrected Croston/SBA long-run rate
+F[0]    = recursive_damping * actual[T]
+          + (1 - recursive_damping) * L
+F[h]    = recursive_damping * F[h-1]
+          + (1 - recursive_damping) * L, h > 0
+```
+
+Thus each projected month is the state used by the next horizon step and the
+path converges toward `L`. It does not treat a projected monthly rate as a new
+positive customer order, which would corrupt Croston's intermittent-demand
+interval state. An all-zero history remains all zero. A path may repeat only
+when its incoming state already equals the long-run rate.
+
+The vectorized rolling backtest applies the same first-step recurrence at every
+causal origin. Recursive parameters are included in both customer-generation
+and backtest configuration checksums. Enabling or changing the recurrence makes
+older flat runs and their blend evidence stale, requiring a new customer run,
+backtest, and blend draft.
 
 Generation rules:
 
@@ -143,7 +169,8 @@ Generation rules:
    `mv_customer_demand_series_profile`.
 3. Claim 10,000-series Croston batches with `FOR UPDATE SKIP LOCKED`.
 4. Load only each claimed batch's bounded fact history.
-5. Generate exactly 18 non-negative monthly predictions.
+5. Generate exactly 18 non-negative monthly predictions with recursive
+   state propagation.
 6. Commit each batch's series rows, checksum, counts, and status in one
    transaction.
 7. Resume only unfinished batches after cancellation, failure, retry, or
@@ -482,7 +509,9 @@ controls remain authoritative.
 - A July 2026 customer run reads January 2025–June 2026 and forecasts July
   2026–December 2027.
 - Every active valid customer series uses `croston` and has exactly 18
-  consecutive non-negative rows; dormant series have none.
+  consecutive non-negative recursive rows; dormant series have none. A path
+  converges from the latest closed demand toward its SBA rate rather than
+  copying one rate across the horizon unless both states are already equal.
 - Customer generation has no Chronos route or fallback model.
 - Raw customer forecasts target `demand_qty`; normalized blend components use
   the causal fulfillment ratio to align to sales semantics.

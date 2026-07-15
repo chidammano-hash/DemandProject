@@ -128,12 +128,18 @@ def test_build_croston_forecast_rows_covers_every_active_series() -> None:
     rows = build_croston_forecast_rows(
         prepared,
         window,
-        {"alpha": 0.1, "variant": "sba"},
+        {
+            "alpha": 0.1,
+            "variant": "sba",
+            "recursive": True,
+            "recursive_damping": 0.5,
+        },
     )
 
     assert len(rows) == 18
     assert set(rows["model_id"]) == {"croston"}
     assert rows.groupby(["item_id", "location_id", "customer_no"]).size().tolist() == [18]
+    assert rows["forecast_qty"].nunique() > 1
 
 
 def test_series_without_recent_six_month_sales_is_ignored() -> None:
@@ -296,7 +302,12 @@ def test_customer_forecast_settings_are_croston_only() -> None:
         "customer_forecast": {
             "enabled": True,
             "model_id": "croston",
-            "model_params": {"alpha": 0.1, "variant": "sba"},
+            "model_params": {
+                "alpha": 0.1,
+                "variant": "sba",
+                "recursive": True,
+                "recursive_damping": 0.5,
+            },
             "history_months": 18,
             "horizon_months": 18,
             "recent_sales_lookback_months": 6,
@@ -314,7 +325,12 @@ def test_customer_forecast_settings_are_croston_only() -> None:
         settings = get_customer_forecast_settings()
 
     assert settings["model_id"] == "croston"
-    assert settings["model_params"] == {"alpha": 0.1, "variant": "sba"}
+    assert settings["model_params"] == {
+        "alpha": 0.1,
+        "variant": "sba",
+        "recursive": True,
+        "recursive_damping": 0.5,
+    }
     assert "fallback_model_id" not in settings
     assert "fallback_params" not in settings
     assert "chronos_workers" not in settings
@@ -368,7 +384,12 @@ def test_run_window_is_restored_from_the_manifest() -> None:
     settings = {
         "enabled": True,
         "model_id": "croston",
-        "model_params": {"alpha": 0.1, "variant": "sba"},
+        "model_params": {
+            "alpha": 0.1,
+            "variant": "sba",
+            "recursive": True,
+            "recursive_damping": 0.5,
+        },
         "history_months": 18,
         "horizon_months": 18,
     }
@@ -407,7 +428,12 @@ def test_run_window_rejects_newer_customer_demand_batch() -> None:
     settings = {
         "enabled": True,
         "model_id": "croston",
-        "model_params": {"alpha": 0.1, "variant": "sba"},
+        "model_params": {
+            "alpha": 0.1,
+            "variant": "sba",
+            "recursive": True,
+            "recursive_damping": 0.5,
+        },
         "history_months": 18,
         "horizon_months": 18,
     }

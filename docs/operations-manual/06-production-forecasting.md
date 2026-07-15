@@ -480,9 +480,11 @@ in July 2026, that means January 2025–June 2026 history and July 2026–Decemb
 
 Readiness separates active and ignored series. A customer-SKU with no
 `sales_qty` in January–June 2026 is ignored and writes no forecast rows. Every
-active valid series uses Croston/SBA with the configured `alpha` and `sba`
-variant. Six CPU workers process the durable batches in parallel. Croston is
-customer-scoped and is not added to the canonical five-model competition.
+active valid series uses recursive Croston/SBA with the configured `alpha`,
+`sba` variant, and `recursive_damping`. The latest closed demand starts the
+path; each projected month feeds the next step while converging toward the SBA
+long-run rate. Six CPU workers process the durable batches in parallel. Croston
+is customer-scoped and is not added to the canonical five-model competition.
 
 Each 10,000-series batch commits independently. Jobs displays exact completed
 customer-SKU and batch counts plus ETA. Cancellation, worker failure, managed
@@ -491,6 +493,11 @@ for a failed/cancelled manifested run; use a new generation if configuration
 or the completed customer-demand source batch changed. Fact rows can be
 replaced only while their parent run is `generating`. A run becomes readable
 only after every batch, source-lineage, and final row-count check passes.
+
+The recursive settings are part of the customer and backtest checksums. After
+enabling recursion or changing its damping, do not resume or reuse an older
+flat run: generate a new customer forecast, rerun the blend backtest, and
+generate a new blend draft only if the no-WAPE-degradation gate passes.
 
 If readiness reports an active load, wait for the loader to finish. If it
 reports a missing or stale profile marker, rerun the standard customer-demand

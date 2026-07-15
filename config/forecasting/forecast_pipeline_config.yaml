@@ -255,6 +255,8 @@ customer_forecast:
   model_params:
     alpha: 0.1                     # Smoothing factor for non-zero demand sizes and intervals
     variant: sba                   # Syntetos-Boylan bias-adjusted Croston forecast
+    recursive: true                # Feed each projected customer month into the next horizon step
+    recursive_damping: 0.5         # Prior projected-demand weight; must be in [0, 1)
   history_months: 18               # Fully closed monthly periods supplied as context
   horizon_months: 18               # Future monthly periods generated from the planning month
   recent_sales_lookback_months: 6  # Ignore customer-SKUs with no sales in the latest closed months

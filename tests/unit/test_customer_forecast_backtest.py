@@ -71,11 +71,16 @@ def test_backtest_activity_is_evaluated_at_each_origin_without_survivorship_bias
         evaluation_months=6,
         min_train_months=6,
         recent_sales_lookback_months=6,
-        params={"alpha": 0.1, "variant": "sba"},
+        params={
+            "alpha": 0.1,
+            "variant": "sba",
+            "recursive": True,
+            "recursive_damping": 0.5,
+        },
     )
 
     assert result["forecast_month"].tolist() == [date(2026, 1, 1)]
-    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([9.5 / 7.0])
+    assert result["raw_customer_demand_qty"].tolist() == pytest.approx([0.5 * (9.5 / 7.0)])
 
 
 def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None:
@@ -114,7 +119,12 @@ def test_backtest_batch_does_not_call_scalar_croston_per_series_origin() -> None
             evaluation_months=6,
             min_train_months=6,
             recent_sales_lookback_months=6,
-            params={"alpha": 0.1, "variant": "sba"},
+            params={
+                "alpha": 0.1,
+                "variant": "sba",
+                "recursive": True,
+                "recursive_damping": 0.5,
+            },
         )
 
     assert not result.empty
@@ -156,7 +166,12 @@ def test_vectorized_backtest_matches_scalar_croston(variant: str) -> None:
         horizon_months=18,
         forecast_months=(),
     )
-    params = {"alpha": 0.1, "variant": variant}
+    params = {
+        "alpha": 0.1,
+        "variant": variant,
+        "recursive": True,
+        "recursive_damping": 0.5,
+    }
 
     result = service.build_croston_backtest_batch(
         history,

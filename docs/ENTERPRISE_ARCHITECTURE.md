@@ -10,7 +10,7 @@
 | Classification | Internal |
 | TOGAF Version | 10 |
 | Status | Baselined |
-| Last Updated | 2026-07-14 |
+| Last Updated | 2026-07-15 |
 
 ---
 
@@ -588,8 +588,12 @@ inferred from a legacy status flag.
 
 Customer-level forecasting remains a separate immutable generation bounded
 context. `customer_forecast_run`, its durable batch/series ledger, and
-`fact_customer_forecast` use Croston/SBA for every active series, with the
-latest 18 closed customer-demand months producing an 18-month horizon.
+`fact_customer_forecast` use recursive Croston/SBA for every active series,
+with the latest 18 closed customer-demand months producing an 18-month horizon.
+The latest closed demand initializes a deterministic damped recurrence toward
+the bias-corrected Croston rate, and each projected month supplies the next
+horizon state. Recursive parameters are sealed into generation and backtest
+checksums, so a change invalidates older flat evidence.
 Every new manifest binds the exact latest completed `customer_demand` audit
 batch only when `customer_demand_profile_refresh_state` proves the profile MVs
 represent that batch and no load is active. The loader opens a running audit
@@ -1749,7 +1753,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 |---|---|
 | **Status** | Accepted |
 | **Context** | Customer forecasts predict demand at customer grain, while the active production champion predicts sales at item-location grain. A raw sum would mix target semantics, customer coverage exceeds the governed production population, the customer horizon is shorter than production, and a fixed blend without historical comparison could silently degrade forecast quality. |
-| **Decision** | Use Croston/SBA for all active customer series, aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals an exact source-membership checksum plus series/batch counts, executes under one repeatable-read snapshot, evaluates activity independently at each origin, and selects historical champion rows by their stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. Migration 217 adds a paired `customer_bottom_up` `shadow_candidate` to the canonical staging fact for cross-screen review. Its deterministic manifest is immutable, remains `promotion_eligible = FALSE`, and is database-barred from promoted status; its exact run id/checksum/cardinality lineage is stored on the corresponding blend. `customer_bottom_up_blend` remains the sole customer-derived `release_candidate`. A promoted blend cannot recursively become the source for another blend. |
+| **Decision** | Use recursive Croston/SBA for all active customer series: recursively damp the latest closed demand and each prior projection toward the bias-corrected Croston long-run rate, with the recurrence sealed into generation/backtest checksums. Aggregate customer forecasts to canonical item-location, normalize demand to sales with a causal trailing-18-month fulfillment ratio, and blend qualified rows 50/50 with the source champion. The exact active production release is the output spine; missing or out-of-horizon customer evidence passes through champion and customer-only DFUs are excluded. Migration 216 freezes customer output after completion and permits evidence inserts only while the parent backtest/generation is active. The backtest seals an exact source-membership checksum plus series/batch counts, executes under one repeatable-read snapshot, evaluates activity independently at each origin, and selects historical champion rows by their stamped execution lag. Promotion requires a matching completed six-origin common-cohort backtest with at least six months, 1,000 DFUs, and blend WAPE no worse than champion, followed by recomputed payload checksums, every normal release gate, and explicit transactional promotion. Migration 217 adds a paired `customer_bottom_up` `shadow_candidate` to the canonical staging fact for cross-screen review. Its deterministic manifest is immutable, remains `promotion_eligible = FALSE`, and is database-barred from promoted status; its exact run id/checksum/cardinality lineage is stored on the corresponding blend. `customer_bottom_up_blend` remains the sole customer-derived `release_candidate`. A promoted blend cannot recursively become the source for another blend. |
 | **Rationale** | Explicit normalization prevents unit/target drift, a production spine preserves governed coverage, champion fallback avoids artificial gaps, and immutable component evidence makes every blended quantity reproducible. The historical no-degradation gate converts a plausible hierarchy idea into measured release evidence. A separate shadow purpose lets planners inspect the bottom-up signal in the same staging and chart infrastructure without weakening the single promotable-candidate invariant. |
 | **Consequences** | Customer generation and backtesting are additional durable compute workloads with 24-hour ceilings; full-spine blend generation has an 8-hour ceiling. Any change to customer parameters, weights, normalization, or source release invalidates the matching evidence and requires a fresh backtest, shadow, and blend draft. Operators must promote a fresh unblended champion before starting a later customer-blend cycle. Months beyond the 18-month customer horizon receive no customer contribution. Portfolio and Item Analysis can compare exact historical/backtest and staged series, but the bottom-up shadow remains read-only and non-promotable. The blend is promotable but never auto-promoted. |
 
