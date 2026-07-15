@@ -1,36 +1,44 @@
 import { describe, it, expect } from "vitest";
 import { severityBadgeClass } from "@/lib/severityBadge";
+import { SEVERITY_CONFIG, STATUS_TONE_BADGE } from "@/constants/severity";
 
-// U5.1 — there was no shared themed severity badge, so 30+ tabs hand-rolled
-// `bg-{color}-100 text-{color}-700` chips with NO `dark:` companion, rendering
-// a pale pastel-on-near-black pill that barely separates from the page in Dark.
-// The shared helper must emit a Light + dark: tint pair for each severity.
+// severityBadgeClass is a thin @deprecated wrapper over SEVERITY_CONFIG /
+// STATUS_TONE_BADGE (constants/severity.ts) — assert against those exports,
+// not re-typed literals, so the two never drift.
 describe("severityBadgeClass", () => {
   const severities = ["critical", "high", "medium", "low", "info", "warning", "success"] as const;
 
-  it("returns a dark: variant for every known severity", () => {
+  it("returns a token utility (no dark: sibling needed) for every known severity", () => {
     for (const sev of severities) {
       const cls = severityBadgeClass(sev);
-      expect(cls, `${sev} must carry a dark: tint`).toMatch(/dark:/);
+      expect(cls.length).toBeGreaterThan(0);
+      expect(cls, `${sev} must not carry a dark: sibling`).not.toMatch(/dark:/);
     }
   });
 
-  it("maps critical to a red tint with a dark companion", () => {
-    const cls = severityBadgeClass("critical");
-    expect(cls).toContain("bg-red-100");
-    expect(cls).toContain("text-red-700");
-    expect(cls).toMatch(/dark:bg-red-/);
-    expect(cls).toMatch(/dark:text-red-/);
+  it("delegates critical/high/medium/low to SEVERITY_CONFIG", () => {
+    expect(severityBadgeClass("critical")).toBe(SEVERITY_CONFIG.critical.badge);
+    expect(severityBadgeClass("high")).toBe(SEVERITY_CONFIG.high.badge);
+    expect(severityBadgeClass("medium")).toBe(SEVERITY_CONFIG.medium.badge);
+    expect(severityBadgeClass("low")).toBe(SEVERITY_CONFIG.low.badge);
   });
 
-  it("maps success to a green tint with a dark companion", () => {
-    const cls = severityBadgeClass("success");
-    expect(cls).toMatch(/dark:bg-(green|emerald)-/);
+  it("maps 'warning' to the same tone as 'medium'", () => {
+    expect(severityBadgeClass("warning")).toBe(SEVERITY_CONFIG.medium.badge);
   });
 
-  it("falls back to a neutral themed tint for an unknown severity", () => {
-    const cls = severityBadgeClass("totally-unknown");
-    // Must not silently emit a bare bg-*-100 with no dark sibling.
-    expect(cls).toMatch(/(muted|dark:)/);
+  it("delegates info/success to STATUS_TONE_BADGE", () => {
+    expect(severityBadgeClass("info")).toBe(STATUS_TONE_BADGE.info);
+    expect(severityBadgeClass("success")).toBe(STATUS_TONE_BADGE.success);
+  });
+
+  it("is case-insensitive", () => {
+    expect(severityBadgeClass("CRITICAL")).toBe(SEVERITY_CONFIG.critical.badge);
+  });
+
+  it("falls back to the neutral/muted tone for null, undefined, or unknown values", () => {
+    expect(severityBadgeClass(null)).toBe(SEVERITY_CONFIG.low.badge);
+    expect(severityBadgeClass(undefined)).toBe(SEVERITY_CONFIG.low.badge);
+    expect(severityBadgeClass("totally-unknown")).toBe(SEVERITY_CONFIG.low.badge);
   });
 });

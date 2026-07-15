@@ -1,14 +1,25 @@
+/**
+ * Loading contract: `Skeleton` / `TableSkeleton` are for content placeholders
+ * — render them in place of the real content while a query is in flight, sized
+ * to roughly match what will replace them. `LoadingElement` is reserved for
+ * tab-level Suspense fallbacks (a whole panel/route boundary), not individual
+ * fields or rows.
+ *
+ * `.animate-shimmer` (index.css) is the single animation mechanism — a
+ * `background-position` sweep over `bg-muted` that's already listed in the
+ * `prefers-reduced-motion` guard. It previously ran ALONGSIDE a second
+ * `::before` pseudo-element sweep (a `translateX` highlight bar driven by
+ * tailwind.config's `shimmer` keyframe); that second mechanism was dropped
+ * both for the double-animation and because its arbitrary-value class name
+ * didn't match the reduced-motion selector list, so it never actually
+ * stopped animating for users who asked for reduced motion.
+ */
 import { cn } from "@/lib/utils";
 
 export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn(
-        "relative overflow-hidden rounded-md bg-muted",
-        "before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent",
-        "animate-shimmer",
-        className,
-      )}
+      className={cn("rounded-md bg-muted animate-shimmer", className)}
       {...props}
     />
   );

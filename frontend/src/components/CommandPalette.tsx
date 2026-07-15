@@ -237,12 +237,12 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex justify-center bg-black/40 backdrop-blur-sm"
       onClick={onClose}
       data-testid="command-palette-backdrop"
     >
       <div
-        className="mt-[20vh] h-fit w-full max-w-lg animate-in fade-in zoom-in-95 rounded-xl border border-border bg-card shadow-2xl duration-150"
+        className="mt-[20vh] h-fit w-full max-w-lg animate-in fade-in zoom-in-95 rounded-xl border border-border bg-card shadow-xl duration-150"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
         role="dialog"

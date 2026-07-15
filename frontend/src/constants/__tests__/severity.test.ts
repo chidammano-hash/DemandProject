@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   SEVERITY_CONFIG,
   SEVERITY_ORDER,
+  STATUS_TONE_BADGE,
   getSeverityConfig,
   compareSeverity,
   type Severity,
@@ -35,6 +36,58 @@ describe("SEVERITY_CONFIG", () => {
     expect(SEVERITY_CONFIG.high.label).toBe("High");
     expect(SEVERITY_CONFIG.medium.label).toBe("Medium");
     expect(SEVERITY_CONFIG.low.label).toBe("Low");
+  });
+
+  // Token-only contract — every class string must resolve through a CSS var
+  // (`bg-destructive/10`, not `bg-red-100`), so one class works across light,
+  // soft, and dark mode with no `dark:` sibling required.
+  it.each(ALL_SEVERITIES)("carries no raw Tailwind palette color for '%s'", (sev) => {
+    const config = SEVERITY_CONFIG[sev];
+    for (const key of REQUIRED_KEYS) {
+      if (key === "label") continue;
+      expect(config[key], `${sev}.${key} must not carry a dark: sibling`).not.toMatch(/dark:/);
+      expect(
+        config[key],
+        `${sev}.${key} must not use a raw palette color (red/orange/yellow/amber/gray/etc.)`,
+      ).not.toMatch(/\b(red|orange|yellow|amber|gray|slate|zinc|green|blue)-\d/);
+    }
+  });
+
+  it("maps critical to destructive tokens", () => {
+    expect(SEVERITY_CONFIG.critical.badge).toBe("border-destructive/25 bg-destructive/10 text-destructive");
+    expect(SEVERITY_CONFIG.critical.text).toBe("text-destructive");
+    expect(SEVERITY_CONFIG.critical.dot).toBe("bg-destructive");
+  });
+
+  it("maps high to severity-high tokens", () => {
+    expect(SEVERITY_CONFIG.high.badge).toBe("border-severity-high/25 bg-severity-high/10 text-severity-high");
+    expect(SEVERITY_CONFIG.high.text).toBe("text-severity-high");
+    expect(SEVERITY_CONFIG.high.dot).toBe("bg-severity-high");
+  });
+
+  it("maps medium to warning tokens", () => {
+    expect(SEVERITY_CONFIG.medium.badge).toBe("border-warning/25 bg-warning/10 text-warning");
+    expect(SEVERITY_CONFIG.medium.text).toBe("text-warning");
+    expect(SEVERITY_CONFIG.medium.dot).toBe("bg-warning");
+  });
+
+  it("maps low to muted tokens", () => {
+    expect(SEVERITY_CONFIG.low.badge).toBe("border-border bg-muted text-muted-foreground");
+    expect(SEVERITY_CONFIG.low.text).toBe("text-muted-foreground");
+  });
+});
+
+describe("STATUS_TONE_BADGE", () => {
+  it("maps info and success to alpha-tinted tokens", () => {
+    expect(STATUS_TONE_BADGE.info).toBe("border-info/25 bg-info/10 text-info");
+    expect(STATUS_TONE_BADGE.success).toBe("border-success/25 bg-success/10 text-success");
+  });
+
+  it("carries no raw Tailwind palette color or dark: sibling", () => {
+    for (const cls of Object.values(STATUS_TONE_BADGE)) {
+      expect(cls).not.toMatch(/dark:/);
+      expect(cls).not.toMatch(/\b(red|orange|yellow|amber|gray|slate|zinc|green|blue)-\d/);
+    }
   });
 });
 

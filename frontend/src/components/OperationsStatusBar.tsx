@@ -131,7 +131,7 @@ export function OperationsStatusBar({
           <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.7} />
           <span>{formatPlanningDate(planningDateQuery.data?.planning_date)}</span>
           {planningDateQuery.data?.is_frozen && (
-            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+            <span className="rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
               Frozen
             </span>
           )}
@@ -142,7 +142,7 @@ export function OperationsStatusBar({
           title="Open workflow monitoring"
           className={
             activeJobCount > 0
-              ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+              ? "border-info/30 bg-info/10 text-info"
               : undefined
           }
         >
@@ -159,8 +159,8 @@ export function OperationsStatusBar({
           title={staleChecks.length > 0 ? "Open remediation workflow" : undefined}
           className={
             staleChecks.length > 0
-              ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300"
-              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              ? "border-warning/30 bg-warning/10 text-warning"
+              : "border-success/30 bg-success/10 text-success"
           }
         >
           {staleChecks.length > 0 ? (

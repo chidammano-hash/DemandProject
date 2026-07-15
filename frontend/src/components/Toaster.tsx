@@ -88,10 +88,10 @@ export const toast = {
 };
 
 const KIND_STYLES: Record<ToastKind, string> = {
-  info: "bg-slate-800 text-slate-100 border-slate-600",
-  success: "bg-emerald-800 text-emerald-50 border-emerald-600",
-  warning: "bg-amber-700 text-amber-50 border-amber-500",
-  error: "bg-rose-800 text-rose-50 border-rose-600",
+  info: "border-info/50 bg-info/90 text-info-foreground",
+  success: "border-success/50 bg-success/90 text-success-foreground",
+  warning: "border-warning/50 bg-warning/90 text-warning-foreground",
+  error: "border-destructive/50 bg-destructive/90 text-destructive-foreground",
 };
 
 export function Toaster() {
@@ -118,7 +118,7 @@ export function Toaster() {
           key={t.id}
           type="button"
           onClick={() => dismiss(t.id)}
-          className={`pointer-events-auto min-w-[240px] max-w-[420px] rounded border px-4 py-3 text-left text-sm shadow-lg transition-opacity ${KIND_STYLES[t.kind]}`}
+          className={`pointer-events-auto min-w-[240px] max-w-[420px] rounded-lg border px-4 py-3 text-left text-sm shadow-elevated transition-opacity ${KIND_STYLES[t.kind]}`}
         >
           {t.message}
         </button>

@@ -35,7 +35,7 @@ function formatKpi(n: number | null | undefined): string {
 
 export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const { trendColors, chartColors } = useChartColors();
+  const { series, roles, chartColors } = useChartColors();
   const { data, isLoading, isError } = useReference(itemId, loc);
 
   // Close on Escape
@@ -61,22 +61,22 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
       {/* Panel */}
       <div
         ref={panelRef}
-        className="fixed top-0 right-0 h-full w-96 bg-white dark:bg-gray-900 shadow-xl z-50 overflow-y-auto transition-transform duration-200"
+        className="fixed top-0 right-0 h-full w-96 bg-card shadow-xl z-50 overflow-y-auto transition-transform duration-200"
         style={{ transform: open ? "translateX(0)" : "translateX(100%)" }}
       >
         {/* Header */}
-        <div className="sticky top-0 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-4 py-3 flex items-center justify-between">
+        <div className="sticky top-0 bg-card border-b border-border px-4 py-3 flex items-center justify-between">
           <div className="min-w-0 flex-1">
-            <h3 className="font-semibold text-sm truncate">
+            <h3 className="font-semibold text-sm truncate text-card-foreground">
               {data?.item_description ?? itemId}
             </h3>
-            <p className="text-xs text-gray-500 truncate">
+            <p className="text-xs text-muted-foreground truncate">
               {data?.location_name ?? loc}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="flex-shrink-0 ml-2 p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-800 transition-colors"
+            className="flex-shrink-0 ml-2 p-1 rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             aria-label="Close panel"
           >
             <X className="h-4 w-4" />
@@ -95,7 +95,7 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
           </div>
         )}
         {isError && (
-          <div className="p-6 text-center text-sm text-red-500">Failed to load data</div>
+          <div className="p-6 text-center text-sm text-destructive">Failed to load data</div>
         )}
 
         {data && (
@@ -105,7 +105,7 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
               <KpiCard
                 label="MoM Trend"
                 value={`${data.trend_mom_pct >= 0 ? "+" : ""}${formatFixed(data.trend_mom_pct)}%`}
-                color={data.trend_mom_pct >= 0 ? "text-green-600" : "text-red-600"}
+                color={data.trend_mom_pct >= 0 ? "text-kpi-best" : "text-kpi-warning"}
               />
               <KpiCard
                 label="Accuracy"
@@ -123,13 +123,13 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
 
             {/* Demand History Sparkline */}
             <div>
-              <h4 className="text-xs font-medium text-gray-500 mb-2">24-Month Demand</h4>
+              <h4 className="text-xs font-medium text-muted-foreground mb-2">24-Month Demand</h4>
               <ResponsiveContainer width="100%" height={120}>
                 <AreaChart data={data.history}>
                   <defs>
                     <linearGradient id="refGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={trendColors[0]} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={trendColors[0]} stopOpacity={0} />
+                      <stop offset="5%" stopColor={roles.actual} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={roles.actual} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis
@@ -149,7 +149,7 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
                   <Area
                     type="monotone"
                     dataKey="demand_qty"
-                    stroke={trendColors[0]}
+                    stroke={roles.actual}
                     fill="url(#refGrad)"
                     strokeWidth={1.5}
                     name="Demand"
@@ -160,7 +160,7 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
 
             {/* Top Customers */}
             <div>
-              <h4 className="text-xs font-medium text-gray-500 mb-2">Top Customers</h4>
+              <h4 className="text-xs font-medium text-muted-foreground mb-2">Top Customers</h4>
               <ResponsiveContainer width="100%" height={Math.max(80, data.top_customers.length * 28)}>
                 <BarChart
                   data={data.top_customers}
@@ -186,7 +186,7 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
                   />
                   <Bar dataKey="demand_qty" radius={[0, 4, 4, 0]}>
                     {data.top_customers.map((_, i) => (
-                      <Cell key={i} fill={trendColors[i % trendColors.length]} />
+                      <Cell key={i} fill={series[i % series.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -194,8 +194,8 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
             </div>
 
             {/* Open full analysis link */}
-            <div className="pt-2 border-t dark:border-gray-700">
-              <p className="text-xs text-gray-400 text-center">
+            <div className="pt-2 border-t border-border">
+              <p className="text-xs text-muted-foreground/70 text-center">
                 {itemId} @ {loc}
               </p>
             </div>
@@ -208,9 +208,9 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
 
 function KpiCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 px-3 py-2.5">
-      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">{label}</p>
-      <p className={`text-lg font-bold tabular-nums ${color ?? "text-gray-900 dark:text-gray-100"}`}>
+    <div className="rounded-xl border border-border/60 bg-card shadow-card px-3 py-2.5">
+      <p className="text-2xs text-muted-foreground uppercase tracking-wider font-medium">{label}</p>
+      <p className={`text-lg font-bold tabular-nums tracking-kpi ${color ?? "text-foreground"}`}>
         {value}
       </p>
     </div>

@@ -36,3 +36,20 @@ class MockIntersectionObserver {
   takeRecords(): IntersectionObserverEntry[] { return []; }
 }
 global.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
+
+// jsdom implements neither the Pointer Events capture API nor scrollIntoView.
+// @radix-ui/react-select (and other Radix primitives) call these during
+// open/close and keyboard-navigation handling; without the no-op shims they
+// throw "not a function" in every test that opens a Radix popover.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}

@@ -44,7 +44,7 @@ export function ThemeSelector({ colorMode, onModeChange, collapsed }: ThemeSelec
           className={cn(
             "flex flex-1 items-center justify-center gap-1 rounded-md border py-1.5 text-[10px] transition-colors",
             colorMode === "light"
-              ? "border-sidebar-active bg-sidebar-active/10 text-sidebar-active"
+              ? "border-sidebar-active bg-sidebar-active/10 font-semibold text-sidebar-active"
               : "border-border/40 text-sidebar-foreground/40",
           )}
         >
@@ -56,7 +56,7 @@ export function ThemeSelector({ colorMode, onModeChange, collapsed }: ThemeSelec
           className={cn(
             "flex flex-1 items-center justify-center gap-1 rounded-md border py-1.5 text-[10px] transition-colors",
             colorMode === "soft"
-              ? "border-sidebar-active bg-sidebar-active/10 text-sidebar-active"
+              ? "border-sidebar-active bg-sidebar-active/10 font-semibold text-sidebar-active"
               : "border-border/40 text-sidebar-foreground/40",
           )}
         >
@@ -68,7 +68,7 @@ export function ThemeSelector({ colorMode, onModeChange, collapsed }: ThemeSelec
           className={cn(
             "flex flex-1 items-center justify-center gap-1 rounded-md border py-1.5 text-[10px] transition-colors",
             colorMode === "dark"
-              ? "border-sidebar-active bg-sidebar-active/10 text-sidebar-active"
+              ? "border-sidebar-active bg-sidebar-active/10 font-semibold text-sidebar-active"
               : "border-border/40 text-sidebar-foreground/40",
           )}
         >

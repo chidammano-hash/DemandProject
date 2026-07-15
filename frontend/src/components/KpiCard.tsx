@@ -1,5 +1,9 @@
+import { type KeyboardEvent } from "react";
 import { TrendingUp, TrendingDown, Minus, HelpCircle, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/** Severities that drive an accent color; "neutral" (or omitted) renders no accent. */
+type KpiAccentSeverity = "best" | "warning" | "critical";
 
 type KpiCardProps = {
   label: string;
@@ -19,14 +23,28 @@ type KpiCardProps = {
    */
   trend?: { delta: number; direction: "up" | "down" | "flat"; goodDirection?: "up" | "down"; unit?: string; period?: string };
   sparkline?: number[];
-  severity?: "best" | "warning" | "neutral";
+  severity?: KpiAccentSeverity | "neutral";
   icon?: LucideIcon;
+  /** Renders `icon` inside a tinted rounded chip (colored by `severity`) instead of a bare glyph. */
+  iconChip?: boolean;
   /** Shows a HelpCircle icon next to the label; hover reveals tooltip content via title attribute */
   tooltip?: { title: string; description: string; threshold?: string };
   /** Shows a target sub-line below the main value */
   target?: { value: string; label?: string };
   /** Visual weight hierarchy: lg = hero KPI, md = default, sm = compact */
   size?: "lg" | "md" | "sm";
+  /**
+   * Small alarm callout under the value (e.g. "3 critical") with a pulsing dot.
+   * Always destructive-toned — it flags a count needing attention regardless
+   * of `severity`.
+   */
+  badge?: string;
+  /** 0..1 fraction — renders a thin progress bar under the value, colored by `severity`. */
+  progress?: number;
+  /** Small muted caption line rendered after everything else. */
+  caption?: string;
+  /** Makes the card keyboard- and click-interactive (role="button" + Enter/Space activation). */
+  onClick?: () => void;
 };
 
 const SIZE_CONFIG = {
@@ -34,23 +52,43 @@ const SIZE_CONFIG = {
     wrapper: "px-5 py-4",
     value: "text-2xl font-bold",
     icon: "h-4 w-4",
+    chip: "p-2",
   },
   md: {
     wrapper: "px-4 py-3",
     value: "text-xl font-bold",
     icon: "h-3.5 w-3.5",
+    chip: "p-1.5",
   },
   sm: {
     wrapper: "px-3 py-2",
     value: "text-base font-semibold",
     icon: "h-3 w-3",
+    chip: "p-1",
   },
 } as const;
 
-const SEVERITY_ACCENT_BG: Record<"best" | "warning", string> = {
+const SEVERITY_ACCENT_BG: Record<KpiAccentSeverity, string> = {
   best: "bg-kpi-best",
   warning: "bg-kpi-warning",
+  critical: "bg-destructive",
 };
+
+const SEVERITY_TEXT: Record<KpiAccentSeverity, string> = {
+  best: "text-kpi-best",
+  warning: "text-kpi-warning",
+  critical: "text-destructive",
+};
+
+const SEVERITY_ICON_CHIP: Record<KpiAccentSeverity, string> = {
+  best: "bg-kpi-best/10 text-kpi-best",
+  warning: "bg-kpi-warning/10 text-kpi-warning",
+  critical: "bg-destructive/10 text-destructive",
+};
+
+function isAccentSeverity(severity: KpiCardProps["severity"]): severity is KpiAccentSeverity {
+  return severity === "best" || severity === "warning" || severity === "critical";
+}
 
 function Sparkline({ data }: { data: number[] }) {
   if (data.length < 2) return null;
@@ -81,7 +119,26 @@ function Sparkline({ data }: { data: number[] }) {
   );
 }
 
-export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon, tooltip, target, size = "md" }: KpiCardProps) {
+export function KpiCard({
+  label,
+  value,
+  sublabel,
+  colorClass,
+  borderClass,
+  className,
+  trend,
+  sparkline,
+  severity,
+  icon: Icon,
+  iconChip,
+  tooltip,
+  target,
+  size = "md",
+  badge,
+  progress,
+  caption,
+  onClick,
+}: KpiCardProps) {
   const cfg = SIZE_CONFIG[size];
 
   // Color by *outcome* (good vs bad) when goodDirection is supplied; otherwise
@@ -110,21 +167,58 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
     ? trend.direction === "up" ? TrendingUp : trend.direction === "down" ? TrendingDown : Minus
     : null;
 
-  const showAccent = size === "lg" && (severity === "best" || severity === "warning");
+  const hasAccent = isAccentSeverity(severity);
+  const showAccent = size === "lg" && hasAccent;
+  const progressWidth = progress == null ? null : Math.min(Math.max(progress, 0), 1) * 100;
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!onClick) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onClick();
+    }
+  };
 
   return (
-    <div className={cn("relative overflow-hidden rounded-xl border border-border/60 bg-card shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200", cfg.wrapper, showAccent && "pl-4", borderClass, className)}>
+    <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={onClick ? handleKeyDown : undefined}
+      className={cn(
+        "relative overflow-hidden rounded-xl border border-border/60 bg-card shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200",
+        onClick && "cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        cfg.wrapper,
+        showAccent && "pl-4",
+        borderClass,
+        className,
+      )}
+    >
       {showAccent && (
         <span
           aria-hidden="true"
           className={cn(
             "absolute left-0 top-1/2 h-[55%] w-1 -translate-y-1/2 rounded-r-full",
-            SEVERITY_ACCENT_BG[severity as "best" | "warning"],
+            SEVERITY_ACCENT_BG[severity as KpiAccentSeverity],
           )}
         />
       )}
       <div className="flex items-center gap-1.5">
-        {Icon && <Icon className={cn(cfg.icon, "text-muted-foreground")} strokeWidth={1.5} />}
+        {Icon && (
+          iconChip ? (
+            <span
+              className={cn(
+                "rounded-lg",
+                cfg.chip,
+                hasAccent ? SEVERITY_ICON_CHIP[severity as KpiAccentSeverity] : "bg-muted text-muted-foreground",
+              )}
+            >
+              <Icon className={cfg.icon} strokeWidth={1.5} />
+            </span>
+          ) : (
+            <Icon className={cn(cfg.icon, "text-muted-foreground")} strokeWidth={1.5} />
+          )
+        )}
         <p className="text-xs text-muted-foreground">
           {label}
           {sublabel && <span className="ml-1">{sublabel}</span>}
@@ -141,7 +235,7 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
       <p className={cn(
         "tabular-nums tracking-kpi transition-all duration-300",
         cfg.value,
-        severity === "best" ? "text-kpi-best" : severity === "warning" ? "text-kpi-warning" : "",
+        hasAccent ? SEVERITY_TEXT[severity as KpiAccentSeverity] : "",
         colorClass,
       )}>
         {value}
@@ -157,6 +251,24 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
           </span>
         </div>
       )}
+      {badge && (
+        <div className="mt-1 flex items-center gap-1 text-2xs font-semibold text-destructive">
+          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse" />
+          {badge}
+        </div>
+      )}
+      {progressWidth != null && (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all duration-500",
+              hasAccent ? SEVERITY_ACCENT_BG[severity as KpiAccentSeverity] : "bg-primary",
+            )}
+            style={{ width: `${progressWidth}%` }}
+          />
+        </div>
+      )}
+      {caption && <p className="mt-1 text-2xs leading-tight text-muted-foreground">{caption}</p>}
       {size !== "sm" && sparkline && sparkline.length > 1 && <Sparkline data={sparkline} />}
     </div>
   );

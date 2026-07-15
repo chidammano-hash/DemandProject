@@ -57,17 +57,20 @@ const queryClient = new QueryClient({
   },
 });
 
+// Renders before ThemeProvider/QueryClientProvider even mount (this is the
+// top-level crash boundary), so it can't read theme context — it relies on
+// Tailwind utility classes resolving against the `:root`/`.dark` CSS var
+// fallbacks in index.css instead, same as everywhere else.
 function CrashFallback({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) {
   const message = error instanceof Error ? error.message : String(error);
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", padding: "2rem", textAlign: "center" }}>
-      <div style={{ border: "2px solid #e11d48", borderRadius: "12px", padding: "2rem", maxWidth: "480px", background: "#fff1f2" }}>
-        <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>Ac</div>
-        <h1 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#1e293b", marginBottom: "0.5rem" }}>Something went wrong</h1>
-        <p style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "1rem" }}>{message}</p>
+    <div className="flex min-h-screen flex-col items-center justify-center p-8 text-center">
+      <div className="max-w-[480px] rounded-xl border border-destructive/30 bg-destructive/10 p-8">
+        <h1 className="mb-2 text-xl font-bold text-foreground">Something went wrong</h1>
+        <p className="mb-4 text-sm text-muted-foreground">{message}</p>
         <button
           onClick={resetErrorBoundary}
-          style={{ background: "#4f46e5", color: "#fff", border: "none", borderRadius: "8px", padding: "0.5rem 1.5rem", cursor: "pointer", fontSize: "0.875rem", fontWeight: 600 }}
+          className="rounded-lg bg-primary px-6 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
         >
           Reload App
         </button>
@@ -85,7 +88,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         </AuthProvider>
         {ReactQueryDevtools && (
           <Suspense fallback={null}>
-            <ReactQueryDevtools initialIsOpen={false} />
+            {/* bottom-right is the Assistant FAB's spot (GlobalChatDrawer) — keep
+                the devtools toggle out of its way. */}
+            <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
           </Suspense>
         )}
       </QueryClientProvider>

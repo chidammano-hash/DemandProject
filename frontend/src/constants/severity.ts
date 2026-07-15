@@ -1,6 +1,13 @@
 /**
  * Unified severity color system — single source of truth.
  * Import this everywhere instead of defining severity styles inline.
+ *
+ * Every class below is a semantic token utility (`bg-destructive/10`, not
+ * `bg-red-100`), so a single string is correct in light, soft, AND dark mode
+ * — the HSL value swaps under the hood via the CSS var, no `dark:` sibling
+ * needed. `badge.tsx` and `lib/severityBadge.ts` both derive their tone
+ * classes from `SEVERITY_CONFIG` / `STATUS_TONE_BADGE` below instead of
+ * keeping their own copies.
  */
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -25,48 +32,58 @@ export const SEVERITY_CONFIG: Record<Severity, {
 }> = {
   critical: {
     label: "Critical",
-    badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-    border: "border-l-red-500",
-    dot: "bg-red-500",
-    bg: "bg-red-50 dark:bg-red-950/20",
-    text: "text-red-700 dark:text-red-300",
-    ring: "ring-red-500/20",
-    icon: "text-red-500",
-    rowBg: "bg-red-50 dark:bg-red-950/20",
+    badge: "border-destructive/25 bg-destructive/10 text-destructive",
+    border: "border-l-destructive",
+    dot: "bg-destructive",
+    bg: "bg-destructive/10",
+    text: "text-destructive",
+    ring: "ring-destructive/20",
+    icon: "text-destructive",
+    rowBg: "bg-destructive/10",
   },
   high: {
     label: "High",
-    badge: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
-    border: "border-l-orange-500",
-    dot: "bg-orange-500",
-    bg: "bg-orange-50 dark:bg-orange-950/20",
-    text: "text-orange-700 dark:text-orange-300",
-    ring: "ring-orange-500/20",
-    icon: "text-orange-500",
-    rowBg: "bg-orange-50 dark:bg-orange-950/20",
+    badge: "border-severity-high/25 bg-severity-high/10 text-severity-high",
+    border: "border-l-severity-high",
+    dot: "bg-severity-high",
+    bg: "bg-severity-high/10",
+    text: "text-severity-high",
+    ring: "ring-severity-high/20",
+    icon: "text-severity-high",
+    rowBg: "bg-severity-high/10",
   },
   medium: {
     label: "Medium",
-    badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
-    border: "border-l-yellow-500",
-    dot: "bg-yellow-500",
-    bg: "bg-yellow-50 dark:bg-yellow-950/20",
-    text: "text-yellow-700 dark:text-yellow-300",
-    ring: "ring-yellow-500/20",
-    icon: "text-yellow-500",
-    rowBg: "bg-yellow-50 dark:bg-yellow-950/20",
+    badge: "border-warning/25 bg-warning/10 text-warning",
+    border: "border-l-warning",
+    dot: "bg-warning",
+    bg: "bg-warning/10",
+    text: "text-warning",
+    ring: "ring-warning/20",
+    icon: "text-warning",
+    rowBg: "bg-warning/10",
   },
   low: {
     label: "Low",
-    badge: "bg-gray-100 text-gray-700 dark:bg-gray-700/40 dark:text-gray-300",
-    border: "border-l-gray-400",
-    dot: "bg-gray-400",
-    bg: "bg-gray-50 dark:bg-gray-800/20",
-    text: "text-gray-600 dark:text-gray-400",
-    ring: "ring-gray-400/20",
-    icon: "text-gray-400",
-    rowBg: "bg-gray-50 dark:bg-gray-800/20",
+    badge: "border-border bg-muted text-muted-foreground",
+    border: "border-l-muted-foreground/40",
+    dot: "bg-muted-foreground/60",
+    bg: "bg-muted",
+    text: "text-muted-foreground",
+    ring: "ring-border",
+    icon: "text-muted-foreground",
+    rowBg: "bg-muted",
   },
+};
+
+/**
+ * Badge/pill tone classes for statuses that aren't severities. `info` and
+ * `success` sit alongside `SEVERITY_CONFIG` so every consumer (badge.tsx,
+ * severityBadge.ts) derives every tone from this one module.
+ */
+export const STATUS_TONE_BADGE: Record<"info" | "success", string> = {
+  info: "border-info/25 bg-info/10 text-info",
+  success: "border-success/25 bg-success/10 text-success",
 };
 
 /** Get severity config with fallback to "low" for unknown values */

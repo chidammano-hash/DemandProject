@@ -109,4 +109,11 @@ describe("AppSidebar", () => {
     renderSidebar();
     expect(screen.getByLabelText("Toggle navigation")).toBeInTheDocument();
   });
+
+  it("every nav button has an aria-label matching its item label", () => {
+    renderSidebar();
+    for (const item of NAV_ITEMS) {
+      expect(screen.getByLabelText(item.label)).toBeInTheDocument();
+    }
+  });
 });

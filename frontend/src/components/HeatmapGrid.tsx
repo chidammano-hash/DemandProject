@@ -100,7 +100,7 @@ export function HeatmapGrid({
               const skuCount = row.counts?.[colIdx];
               const hasCounts = row.counts != null && row.counts.length > 0;
               const isEmpty = hasCounts && (skuCount ?? 0) === 0;
-              const bg = isEmpty ? "var(--color-muted, #e5e7eb)" : colorScale(value);
+              const bg = isEmpty ? "hsl(var(--muted))" : colorScale(value);
               const formatted = isEmpty ? "" : valueFormat(value);
               const cellLabel = isEmpty
                 ? `${row.label}, ${columnLabels[colIdx]}: no data`
@@ -122,7 +122,10 @@ export function HeatmapGrid({
                   )}
                   style={{
                     backgroundColor: bg,
-                    color: isEmpty ? "transparent" : value > 80 ? "#fff" : value < 60 ? "#fff" : "#1a1a1a",
+                    // Contrast text against the caller-supplied heatmap fill (not
+                    // page chrome), so this reads white/near-black regardless of
+                    // color mode rather than pulling from the foreground token.
+                    color: isEmpty ? "transparent" : value > 80 ? "white" : value < 60 ? "white" : "rgba(0, 0, 0, 0.85)",
                   }}
                   onMouseEnter={() => !isEmpty && setHoveredCell({ row: rowIdx, col: colIdx })}
                   onMouseLeave={() => setHoveredCell(null)}

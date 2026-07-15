@@ -167,18 +167,25 @@ describe("SopTab", () => {
   });
 
   // U5.1 — S&OP severity / cycle-stage chips hand-rolled `bg-red-100 text-red-700`
-  // with no `dark:` companion, rendering as pale-pastel-on-near-black in Dark.
-  // They must now route through the shared themed helper that carries a dark: tint.
-  it("cycle-stage chips carry a dark: theme variant (U5.1)", async () => {
-    const { container } = render(
+  // rendered pale-pastel-on-near-black in Dark. They must route through the
+  // shared severity helper, whose token tints (`bg-success/10 text-success`)
+  // are mode-correct in light, soft, AND dark without `dark:` literals.
+  it("cycle-stage chips use themed severity tokens (U5.1)", async () => {
+    render(
       <TestQueryWrapper>
         <SopTab />
       </TestQueryWrapper>
     );
-    // approved cycle (2026-05) renders a green stage chip via severityBadgeClass.
-    // The hand-rolled chip was Light-only (`bg-green-100 text-green-700`); the
-    // migrated chip carries a dark: companion tint.
+    // approved cycle (2026-05) renders its stage chip via severityBadgeClass.
     await screen.findByText("2026-05");
-    expect(container.innerHTML).toMatch(/dark:bg-green-/);
+    // Both the stage chip and the stage-strip label say "Approved"; the chip
+    // is the padded pill (px-1.5).
+    const chip = screen
+      .getAllByText("Approved", { selector: "span" })
+      .find((el) => el.className.includes("px-1.5"));
+    expect(chip).toBeDefined();
+    expect(chip!.className).toContain("bg-success/10");
+    expect(chip!.className).toContain("text-success");
+    expect(chip!.className).not.toMatch(/bg-green-\d/);
   });
 });

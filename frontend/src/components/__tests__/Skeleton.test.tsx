@@ -16,6 +16,16 @@ describe("Skeleton", () => {
     expect(div.className).toContain("animate-shimmer");
   });
 
+  it("uses exactly one animation mechanism (no duplicate before: pseudo-element shimmer)", () => {
+    const { container } = render(<Skeleton />);
+    const div = container.firstChild as HTMLElement;
+    // Regression guard: Skeleton used to double-animate (animate-shimmer AND a
+    // before:animate-[shimmer_2s_infinite] pseudo-element sweep). The before:
+    // sweep's arbitrary-value class also didn't match the prefers-reduced-motion
+    // selector list, so it never actually stopped for reduced-motion users.
+    expect(div.className).not.toMatch(/before:animate/);
+  });
+
   it("accepts additional className", () => {
     const { container } = render(<Skeleton className="h-10 w-40" />);
     const div = container.firstChild as HTMLElement;

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Package } from "lucide-react";
 import { KpiCard } from "@/components/KpiCard";
 
@@ -346,5 +347,127 @@ describe("KpiCard", () => {
     const valueEl = container.querySelector("p.tabular-nums");
     expect(valueEl?.className).toContain("transition-all");
     expect(valueEl?.className).toContain("duration-300");
+  });
+
+  // KpiCard absorbs KpiSummaryCard (icon chip, alarm badge, progress bar,
+  // caption, interactive/onClick, and a "critical" severity tier).
+  describe("icon chip", () => {
+    it("wraps the icon in a tinted chip when iconChip is true", () => {
+      const { container } = render(
+        <KpiCard label="Health" value="82/100" icon={Package} iconChip severity="best" />
+      );
+      const chip = container.querySelector("span.rounded-lg");
+      expect(chip).not.toBeNull();
+      expect(chip!.className).toContain("bg-kpi-best/10");
+      expect(chip!.querySelector("svg")).not.toBeNull();
+    });
+
+    it("uses a neutral muted chip when no severity is set", () => {
+      const { container } = render(
+        <KpiCard label="Health" value="82/100" icon={Package} iconChip />
+      );
+      const chip = container.querySelector("span.rounded-lg");
+      expect(chip!.className).toContain("bg-muted");
+      expect(chip!.className).toContain("text-muted-foreground");
+    });
+
+    it("does not wrap the icon in a chip by default (backward compat)", () => {
+      const { container } = render(<KpiCard label="Health" value="82/100" icon={Package} />);
+      expect(container.querySelector("span.rounded-lg")).toBeNull();
+    });
+  });
+
+  describe("critical severity", () => {
+    it("colors the value text-destructive for severity='critical'", () => {
+      const { container } = render(<KpiCard label="Exceptions" value="12" severity="critical" />);
+      const valueEl = container.querySelector("p.tabular-nums");
+      expect(valueEl?.className).toContain("text-destructive");
+    });
+
+    it("renders a destructive inset accent span for size='lg' severity='critical'", () => {
+      const { container } = render(<KpiCard label="Exceptions" value="12" size="lg" severity="critical" />);
+      const accentSpan = container.querySelector("span[aria-hidden='true']");
+      expect(accentSpan!.className).toContain("bg-destructive");
+    });
+  });
+
+  describe("badge (alarm callout)", () => {
+    it("renders the badge text with a pulsing destructive dot", () => {
+      render(<KpiCard label="Open Exceptions" value="42" badge="3 critical" />);
+      expect(screen.getByText("3 critical")).toBeInTheDocument();
+    });
+
+    it("does not render a badge row when badge is omitted", () => {
+      const { container } = render(<KpiCard label="Open Exceptions" value="42" />);
+      expect(screen.queryByText(/critical/)).toBeNull();
+      expect(container.querySelector(".animate-pulse")).toBeNull();
+    });
+  });
+
+  describe("progress bar", () => {
+    it("renders a progress bar sized to the fraction provided", () => {
+      const { container } = render(<KpiCard label="Fill Rate" value="82%" progress={0.82} />);
+      const bar = container.querySelector(".h-1\\.5.w-full.overflow-hidden.rounded-full.bg-muted > div");
+      expect(bar).not.toBeNull();
+      expect((bar as HTMLElement).style.width).toBe("82%");
+    });
+
+    it("clamps progress to [0, 1]", () => {
+      const { container } = render(<KpiCard label="Fill Rate" value="120%" progress={1.5} />);
+      const bar = container.querySelector(".h-1\\.5.w-full.overflow-hidden.rounded-full.bg-muted > div");
+      expect((bar as HTMLElement).style.width).toBe("100%");
+    });
+
+    it("colors the progress bar by severity", () => {
+      const { container } = render(<KpiCard label="Fill Rate" value="60%" progress={0.6} severity="warning" />);
+      const bar = container.querySelector(".h-1\\.5.w-full.overflow-hidden.rounded-full.bg-muted > div");
+      expect((bar as HTMLElement).className).toContain("bg-kpi-warning");
+    });
+
+    it("does not render a progress bar when progress is omitted", () => {
+      const { container } = render(<KpiCard label="Fill Rate" value="82%" />);
+      expect(container.querySelector(".overflow-hidden.rounded-full.bg-muted")).toBeNull();
+    });
+  });
+
+  describe("caption", () => {
+    it("renders a caption line", () => {
+      render(<KpiCard label="Order Value at Risk" value="$12,400" caption="Proposed replenishment orders" />);
+      expect(screen.getByText("Proposed replenishment orders")).toBeInTheDocument();
+    });
+
+    it("does not render a caption when omitted", () => {
+      render(<KpiCard label="Order Value at Risk" value="$12,400" />);
+      expect(screen.queryByText("Proposed replenishment orders")).toBeNull();
+    });
+  });
+
+  describe("interactive (onClick)", () => {
+    it("renders as role=button and fires onClick when clicked", async () => {
+      const user = userEvent.setup();
+      const onClick = vi.fn();
+      render(<KpiCard label="Exceptions" value="12" onClick={onClick} />);
+      const card = screen.getByRole("button", { name: /Exceptions/ });
+      await user.click(card);
+      expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires onClick on Enter and Space (keyboard activation)", async () => {
+      const user = userEvent.setup();
+      const onClick = vi.fn();
+      render(<KpiCard label="Exceptions" value="12" onClick={onClick} />);
+      const card = screen.getByRole("button", { name: /Exceptions/ });
+      card.focus();
+      await user.keyboard("{Enter}");
+      await user.keyboard(" ");
+      expect(onClick).toHaveBeenCalledTimes(2);
+    });
+
+    it("is not a button and has no tabIndex when onClick is omitted (backward compat)", () => {
+      const { container } = render(<KpiCard label="Exceptions" value="12" />);
+      const root = container.firstChild as HTMLElement;
+      expect(root.getAttribute("role")).toBeNull();
+      expect(root.getAttribute("tabindex")).toBeNull();
+    });
   });
 });

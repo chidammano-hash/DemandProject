@@ -144,7 +144,7 @@ export function AppSidebar({
         role="navigation"
         aria-label="Main navigation"
         className={cn(
-          "flex h-screen flex-col border-r border-border bg-sidebar transition-[width] duration-200 ease-in-out",
+          "flex h-screen flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-in-out",
           "fixed left-0 top-0 z-40 md:relative md:z-auto",
           collapsed ? "w-16" : "w-60",
           // Mobile: hidden by default, shown via hamburger
@@ -185,7 +185,7 @@ export function AppSidebar({
                   <div className="my-2 px-2">
                     <div className="border-t border-border/40" />
                     {!collapsed && (
-                      <span className="mt-2 block text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/60">
+                      <span className="mt-2 block text-2xs font-medium uppercase tracking-wider text-sidebar-foreground/60">
                         {SECTION_LABELS[item.section]}
                       </span>
                     )}
@@ -194,12 +194,13 @@ export function AppSidebar({
                 <button
                   onClick={() => handleNav(item.key)}
                   aria-current={isActive ? "page" : undefined}
+                  aria-label={item.label}
                   title={collapsed ? item.label : undefined}
                   className={cn(
                     "group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-all duration-150 ease-smooth",
                     collapsed && "justify-center px-0",
                     isActive
-                      ? "bg-sidebar-active/15 font-medium text-sidebar-active"
+                      ? "bg-sidebar-active/10 font-medium text-sidebar-active"
                       : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground"
                   )}
                 >
@@ -219,7 +220,7 @@ export function AppSidebar({
                   {item.key === "integration" && activeJobCount > 0 && (
                     <span
                       className={cn(
-                        "flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white",
+                        "flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground",
                         !collapsed && "ml-auto mr-1",
                         collapsed && "absolute -right-0.5 -top-0.5"
                       )}
