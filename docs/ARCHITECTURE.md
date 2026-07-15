@@ -1409,7 +1409,7 @@ The maintained base-model roster is exactly LightGBM (`lgbm_cluster`), N-HiTS
    - Collapsible sidebar navigation (12 nav items across 5 sections (tower, operations, supply, demand, system), 64px collapsed / 240px expanded, mobile drawer)
    - Global filter bar: brand, category, market, channel multi-select dropdowns with debounced URL sync via React context
    - Dashboard overview landing page: 6 KPI cards with sparklines/trends, HeatmapGrid (category x time accuracy), TopMovers (period-over-period), ForecastTrendChart (recharts) — note: the original `AlertPanel` component has since been removed as dead code
-   - Single professional theme: General (Supply Chain Command Center) with light/dark color modes
+   - Single professional theme: General (Supply Chain Command Center) with light, soft, and dark color modes. All runtime, chart, CSS, and Tailwind colors derive from `frontend/src/constants/palette.ts`; semantic chart roles keep actual, forecast, champion, risk, warning, capacity, reference, and AI colors consistent across screens.
    - 5 new API endpoints: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
    - `fact_sales_monthly` (inline query) materialized view for period-over-period volume changes
    - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, HeatmapGrid, TopMovers, ForecastTrendChart (`AlertPanel` was later removed as dead code)
@@ -2151,7 +2151,7 @@ credits are used in production. See
 
 ### 9. UI Platform
 
-17-destination sidebar across 5 sections (Tower, Demand, Supply, Operations, System). Integration and Jobs are consolidated into one **Workflows** command center with Plan & Run, Workflow Library, and Manual Load views. Light/dark themes. Local filters are URL-aware. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
+17-destination sidebar across 5 sections (Tower, Demand, Supply, Operations, System). Integration and Jobs are consolidated into one **Workflows** command center with Plan & Run, Workflow Library, and Manual Load views. Light, soft, and dark modes share a centralized semantic palette with automated CSS-token synchronization and WCAG contrast gates. Local filters are URL-aware. Keyboard shortcuts. Virtualized data grid with CSV export. TanStack Query caching, lazy-loaded tabs, per-tab error boundaries. Charts: recharts default, `ModularReactECharts` for the heavy customer-analytics panels (§19). See `docs/specs/07-user-experience/`.
 
 ---
 

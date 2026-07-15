@@ -19,9 +19,10 @@ Object.defineProperty(window, "localStorage", { value: localStorageMock });
 describe("useTheme", () => {
   beforeEach(() => {
     localStorageMock.clear();
-    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.classList.remove("light", "soft", "dark");
     document.documentElement.removeAttribute("data-transitioning");
     document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-mode");
   });
 
   it("defaults to light / general when no localStorage", () => {
@@ -67,13 +68,26 @@ describe("useTheme", () => {
     act(() => result.current.setColorMode("dark"));
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(document.documentElement.classList.contains("light")).toBe(false);
+    expect(document.documentElement.classList.contains("soft")).toBe(false);
+    expect(document.documentElement.getAttribute("data-mode")).toBe("dark");
   });
 
-  it("soft mode applies light CSS class (not dark)", () => {
+  it("soft mode applies light + soft CSS classes (not dark)", () => {
     const { result } = renderHook(() => useTheme());
     act(() => result.current.setColorMode("soft"));
     expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("soft")).toBe(true);
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(document.documentElement.getAttribute("data-mode")).toBe("soft");
+  });
+
+  it("light mode does not carry the soft class", () => {
+    const { result } = renderHook(() => useTheme());
+    act(() => result.current.setColorMode("soft"));
+    act(() => result.current.setColorMode("light"));
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("soft")).toBe(false);
+    expect(document.documentElement.getAttribute("data-mode")).toBe("light");
   });
 
   it("toggleColorMode cycles light → soft → dark → light", () => {

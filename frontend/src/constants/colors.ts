@@ -1,64 +1,74 @@
 import type { Theme } from "@/types";
+import { PALETTE } from "@/constants/palette";
+
+/**
+ * Legacy chart-color exports, now DERIVED from the single palette source
+ * (`constants/palette.ts`). Export names and shapes are unchanged so existing
+ * importers keep working during the redesign migration.
+ *
+ * @deprecated for new code — read `useChartColors().series` / `.roles`
+ * instead of these positional arrays. These compat exports are removed once
+ * the per-tab sweep completes.
+ */
 
 export const TREND_COLORS_BY_THEME: Record<Theme, string[]> = {
-  light: ["#2563EB", "#0D9488", "#D97706", "#0891B2", "#DC2626", "#0284C7"],
-  dark: ["#60A5FA", "#2DD4BF", "#FBBF24", "#22D3EE", "#FCA5A5", "#7DD3FC"],
-  soft: ["#2667C7", "#0E9E72", "#D4890A", "#0891B2", "#D44040", "#0598B0"],
+  light: [...PALETTE.light.charts.series],
+  dark: [...PALETTE.dark.charts.series],
+  soft: [...PALETTE.soft.charts.series],
 };
 
 /**
- * Okabe-Ito color-blind-safe categorical palette (UX-3).
+ * Colorblind-aware categorical palette.
  *
- * Published by Okabe & Ito (2008) — 8 colors chosen so every pair is
- * distinguishable for deuteranopia, protanopia, and tritanopia. Prefer this
- * over `TREND_COLORS_BY_THEME` for new charts that encode category/series
- * (not magnitude).
- *
- * Legacy theme-keyed palettes stay in place for existing charts with
- * signed-off visuals; new code can opt in via `useChartColors().okabeIto`.
+ * Historically the fixed Okabe-Ito 8; now an alias of the light-mode series,
+ * which keeps the colorblind-safe intent but matches the product palette.
+ * Prefer `useChartColors().okabeIto` (mode-aware) or `.series`.
  */
-export const OKABE_ITO: string[] = [
-  "#E69F00", // orange
-  "#56B4E9", // sky blue
-  "#009E73", // bluish green
-  "#F0E442", // yellow
-  "#0072B2", // blue
-  "#D55E00", // vermillion
-  "#CC79A7", // reddish purple
-  "#000000", // black
-];
+export const OKABE_ITO: string[] = [...PALETTE.light.charts.series];
 
 export const CHART_COLORS: Record<
   Theme,
   { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }
 > = {
-  light: { grid: "#eaeef4", axis: "#7c8798", tooltip_bg: "#ffffff", tooltip_border: "#eaeef4" },
-  dark: { grid: "#283449", axis: "#9aa6b8", tooltip_bg: "#1e2433", tooltip_border: "#283449" },
-  soft: { grid: "#E5E0D8", axis: "#9A9088", tooltip_bg: "#FDFCFA", tooltip_border: "#E5E0D8" },
+  light: {
+    grid: PALETTE.light.charts.grid,
+    axis: PALETTE.light.charts.axis,
+    tooltip_bg: PALETTE.light.charts.tooltipBg,
+    tooltip_border: PALETTE.light.charts.tooltipBorder,
+  },
+  dark: {
+    grid: PALETTE.dark.charts.grid,
+    axis: PALETTE.dark.charts.axis,
+    tooltip_bg: PALETTE.dark.charts.tooltipBg,
+    tooltip_border: PALETTE.dark.charts.tooltipBorder,
+  },
+  soft: {
+    grid: PALETTE.soft.charts.grid,
+    axis: PALETTE.soft.charts.axis,
+    tooltip_bg: PALETTE.soft.charts.tooltipBg,
+    tooltip_border: PALETTE.soft.charts.tooltipBorder,
+  },
 };
 
+/**
+ * Demand-history series colors (light values; per-mode migration happens with
+ * the tab sweep via `useChartColors().roles`).
+ */
 export const SKU_SALES_COLORS: Record<string, string> = {
-  tothist_dmd: "#e11d48",
-  sales_qty: "#9333ea",
-  qty_shipped: "#2563eb",
-  qty_ordered: "#059669",
+  tothist_dmd: PALETTE.light.charts.roles.error,
+  sales_qty: PALETTE.light.charts.roles.ai,
+  qty_shipped: PALETTE.light.charts.roles.forecast,
+  qty_ordered: PALETTE.light.charts.roles.good,
 };
 
 const DFU_MODEL_COLORS: Record<string, string> = {
-  champion: "#D97706",
-  ceiling: "#0891B2",
-  external: "#06B6D4",
-  lgbm_cluster: "#0D9488",
+  champion: PALETTE.light.charts.roles.champion,
+  ceiling: PALETTE.light.charts.roles.ceiling,
+  external: PALETTE.light.charts.roles.reference,
+  lgbm_cluster: PALETTE.light.charts.roles.good,
 };
 
-const DFU_MODEL_FALLBACK_COLORS = [
-  "#64748B",
-  "#78716C",
-  "#0F766E",
-  "#B45309",
-  "#0891B2",
-  "#EA580C",
-];
+const DFU_MODEL_FALLBACK_COLORS = [...PALETTE.light.charts.fallback];
 
 export function skuModelColor(model: string, idx: number): string {
   return (

@@ -26,12 +26,15 @@ export interface ThemePalette {
   sidebarForeground: string;
   sidebarActive: string;
   sidebarHover: string;
+  sidebarBorder: string;
   chart1: string;
   chart2: string;
   chart3: string;
   chart4: string;
   chart5: string;
   chart6: string;
+  chart7: string;
+  chart8: string;
   kpiBest: string;
   kpiWarning: string;
   kpiCeiling: string;
@@ -46,6 +49,8 @@ export interface ThemePalette {
   warningForeground: string;
   info: string;
   infoForeground: string;
+  severityHigh: string;
+  severityHighForeground: string;
 }
 
 export interface SidebarThemeConfig {
@@ -63,6 +68,7 @@ export interface CardThemeConfig {
 }
 
 export interface ChartThemeConfig {
+  /** 8-color colorblind-aware categorical series (see constants/palette.ts). */
   seriesColors: string[];
   gridColor: string;
   axisColor: string;

@@ -125,7 +125,7 @@ describe("KpiCard", () => {
       <KpiCard label="Accuracy" value="99%" severity="best" />
     );
     const valueEl = container.querySelector("p.text-xl");
-    expect(valueEl?.className).toContain("text-[var(--kpi-best)]");
+    expect(valueEl?.className).toContain("text-kpi-best");
   });
 
   it("applies kpi-warning CSS class on value when severity is 'warning'", () => {
@@ -133,7 +133,7 @@ describe("KpiCard", () => {
       <KpiCard label="Stock Outs" value="12" severity="warning" />
     );
     const valueEl = container.querySelector("p.text-xl");
-    expect(valueEl?.className).toContain("text-[var(--kpi-warning)]");
+    expect(valueEl?.className).toContain("text-kpi-warning");
   });
 
   it("does not apply severity class when severity is 'neutral'", () => {
@@ -141,8 +141,8 @@ describe("KpiCard", () => {
       <KpiCard label="Neutral" value="50" severity="neutral" />
     );
     const valueEl = container.querySelector("p.text-xl");
-    expect(valueEl?.className).not.toContain("text-[var(--kpi-best)]");
-    expect(valueEl?.className).not.toContain("text-[var(--kpi-warning)]");
+    expect(valueEl?.className).not.toContain("text-kpi-best");
+    expect(valueEl?.className).not.toContain("text-kpi-warning");
   });
 
   it("renders icon when icon prop is provided", () => {
@@ -268,7 +268,7 @@ describe("KpiCard", () => {
     // The inset accent span must be present with the correct token bg class
     const accentSpan = container.querySelector("span[aria-hidden='true']");
     expect(accentSpan).not.toBeNull();
-    expect(accentSpan!.className).toContain("bg-[var(--kpi-best)]");
+    expect(accentSpan!.className).toContain("bg-kpi-best");
     expect(accentSpan!.className).toContain("rounded-r-full");
   });
 
@@ -308,8 +308,8 @@ describe("KpiCard", () => {
         <KpiCard label="WAPE %" value="26.1%" trend={{ delta: -1.9, direction: "down", goodDirection: "down", unit: "pp" }} />
       );
       const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
-      expect(trendRow?.className).toContain("text-[var(--kpi-best)]");
-      expect(trendRow?.className).not.toContain("text-[var(--kpi-warning)]");
+      expect(trendRow?.className).toContain("text-kpi-best");
+      expect(trendRow?.className).not.toContain("text-kpi-warning");
     });
 
     it("colors a regression RED when a lower-is-better metric rises (positive delta)", () => {
@@ -318,7 +318,7 @@ describe("KpiCard", () => {
       );
       expect(screen.getByText("+2.0pp vs prior")).toBeInTheDocument();
       const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
-      expect(trendRow?.className).toContain("text-[var(--kpi-warning)]");
+      expect(trendRow?.className).toContain("text-kpi-warning");
     });
 
     it("colors a higher-is-better metric GREEN on a positive delta", () => {
@@ -327,7 +327,7 @@ describe("KpiCard", () => {
       );
       expect(screen.getByText("+1.9pp vs prior")).toBeInTheDocument();
       const trendRow = container.querySelector(".flex.items-center.gap-1.text-xs");
-      expect(trendRow?.className).toContain("text-[var(--kpi-best)]");
+      expect(trendRow?.className).toContain("text-kpi-best");
     });
 
     it("renders a neutral color for a zero delta regardless of goodDirection", () => {

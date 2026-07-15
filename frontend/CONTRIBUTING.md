@@ -92,17 +92,27 @@ swap is a two-line change.
 
 ---
 
-## 5. Colors: prefer Okabe-Ito for categorical data
+## 5. Colors: use the centralized semantic palette
 
-For new charts that encode categorical/series colors, opt in to the
-color-blind-safe Okabe-Ito palette via:
+`src/constants/palette.ts` is the single source of truth for light, soft, and
+dark color modes. Do not add raw color literals to components or tabs.
+
+Charts read mode-aware colors from the theme hook:
 
 ```ts
-import { OKABE_ITO } from "@/constants/colors";
+const { roles, series, heatmap, chartColors } = useChartColors();
 ```
 
-The legacy `TREND_COLORS_BY_THEME` stays in place for existing charts that
-already have signed-off visuals.
+Use `roles` when a series has a business meaning such as actual, forecast,
+champion, warning, error, or capacity. Use `series` only for unnamed
+categorical series and `heatmap` for good-to-bad scales. UI elements use the
+corresponding Tailwind tokens such as `text-kpi-best`; soft-only differences
+may use the `soft:` variant.
+
+`TREND_COLORS_BY_THEME`, `OKABE_ITO`, and the other exports in
+`src/constants/colors.ts` are compatibility aliases for existing charts. New
+code should not import them. Palette-to-CSS synchronization and WCAG contrast
+requirements are enforced by `paletteSync.test.ts`.
 
 ---
 

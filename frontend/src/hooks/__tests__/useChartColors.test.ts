@@ -98,37 +98,55 @@ describe("useChartColors", () => {
     expect(softResult.current.chartColors.grid).not.toBe(lightResult.current.chartColors.grid);
   });
 
-  it("trendColors has 6 entries for all themes", () => {
+  it("trendColors has 8 entries for all themes (the categorical series)", () => {
     for (const theme of ["light", "dark", "soft"] as Theme[]) {
       const { result } = renderHook(() => useChartColors(), {
         wrapper: makeWrapper(theme),
       });
-      expect(result.current.trendColors).toHaveLength(6);
+      expect(result.current.trendColors).toHaveLength(8);
     }
   });
 
-  it("exposes the Okabe-Ito color-blind-safe palette (UX-3)", () => {
+  it("exposes the mode-tuned categorical palette as okabeIto (compat alias)", () => {
     const { result } = renderHook(() => useChartColors(), {
       wrapper: makeWrapper("light"),
     });
-    const { okabeIto } = result.current;
+    const { okabeIto, series } = result.current;
     expect(Array.isArray(okabeIto)).toBe(true);
-    // Okabe-Ito is a fixed 8-color palette.
     expect(okabeIto).toHaveLength(8);
-    // Sanity: signature first (#E69F00 — orange) and last (#000000 — black).
-    expect(okabeIto[0]).toBe("#E69F00");
-    expect(okabeIto[7]).toBe("#000000");
+    expect(okabeIto).toEqual(series);
   });
 
-  it("okabeIto is identical across themes (palette is theme-agnostic)", () => {
-    const themes: Theme[] = ["light", "dark", "soft"];
-    const palettes = themes.map((t) => {
+  it("okabeIto/series are mode-tuned (dark differs from light)", () => {
+    const themes: Theme[] = ["light", "dark"];
+    const [light, dark] = themes.map((t) => {
       const { result } = renderHook(() => useChartColors(), {
         wrapper: makeWrapper(t),
       });
       return result.current.okabeIto;
     });
-    expect(palettes[0]).toEqual(palettes[1]);
-    expect(palettes[1]).toEqual(palettes[2]);
+    expect(light).not.toEqual(dark);
+  });
+
+  it("roles carry the fixed semantic contract and are members of the series", () => {
+    for (const theme of ["light", "dark", "soft"] as Theme[]) {
+      const { result } = renderHook(() => useChartColors(), {
+        wrapper: makeWrapper(theme),
+      });
+      const { roles, series } = result.current;
+      expect(roles.forecast).toBe(roles.champion);
+      for (const color of Object.values(roles)) {
+        expect(series).toContain(color);
+      }
+    }
+  });
+
+  it("heatmap has 5 stops in every theme", () => {
+    for (const theme of ["light", "dark", "soft"] as Theme[]) {
+      const { result } = renderHook(() => useChartColors(), {
+        wrapper: makeWrapper(theme),
+      });
+      expect(result.current.heatmap).toHaveLength(5);
+    }
   });
 });

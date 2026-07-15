@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ProductTheme, ThemePalette, ChartThemeConfig } from "@/types/theme";
+import type { ProductTheme, ThemePalette, ChartThemeConfig, TypographyConfig } from "@/types/theme";
 import { PRODUCT_THEMES } from "@/constants/themes";
+import { CSS_VAR_MAP } from "@/constants/palette";
 
-export type ColorMode = "light" | "soft" | "dark";
+export type { ColorMode } from "@/constants/palette";
+import type { ColorMode } from "@/constants/palette";
 
 const MODE_KEY = "ds-color-mode";
 const EXPLICIT_KEY = "ds-color-mode-explicit";
@@ -24,55 +26,14 @@ function getInitialMode(): ColorMode {
   return prefersDark() ? "dark" : "light";
 }
 
-/** Map a ThemePalette to CSS custom properties on the root element */
-function applyPalette(palette: ThemePalette) {
+/** Map a ThemePalette (+ typography) to CSS custom properties on the root element */
+function applyPalette(palette: ThemePalette, typography: TypographyConfig) {
   const root = document.documentElement;
-  const map: [string, string][] = [
-    ["--background", palette.background],
-    ["--foreground", palette.foreground],
-    ["--card", palette.card],
-    ["--card-foreground", palette.cardForeground],
-    ["--primary", palette.primary],
-    ["--primary-foreground", palette.primaryForeground],
-    ["--secondary", palette.secondary],
-    ["--secondary-foreground", palette.secondaryForeground],
-    ["--muted", palette.muted],
-    ["--muted-foreground", palette.mutedForeground],
-    ["--accent", palette.accent],
-    ["--accent-foreground", palette.accentForeground],
-    ["--border", palette.border],
-    ["--input", palette.input],
-    ["--ring", palette.ring],
-    ["--destructive", palette.destructive],
-    ["--destructive-foreground", palette.destructiveForeground],
-    ["--sidebar-bg", palette.sidebarBg],
-    ["--sidebar-foreground", palette.sidebarForeground],
-    ["--sidebar-active", palette.sidebarActive],
-    ["--sidebar-hover", palette.sidebarHover],
-    ["--chart-1", palette.chart1],
-    ["--chart-2", palette.chart2],
-    ["--chart-3", palette.chart3],
-    ["--chart-4", palette.chart4],
-    ["--chart-5", palette.chart5],
-    ["--chart-6", palette.chart6],
-    ["--kpi-best", palette.kpiBest],
-    ["--kpi-warning", palette.kpiWarning],
-    ["--kpi-ceiling", palette.kpiCeiling],
-    ["--bg-gradient-primary", palette.bgGradientPrimary],
-    ["--bg-gradient-secondary", palette.bgGradientSecondary],
-    ["--bg-gradient-base-start", palette.bgGradientBaseStart],
-    ["--bg-gradient-base-mid", palette.bgGradientBaseMid],
-    ["--bg-gradient-base-end", palette.bgGradientBaseEnd],
-    ["--success", palette.success],
-    ["--success-foreground", palette.successForeground],
-    ["--warning", palette.warning],
-    ["--warning-foreground", palette.warningForeground],
-    ["--info", palette.info],
-    ["--info-foreground", palette.infoForeground],
-  ];
-  for (const [prop, value] of map) {
-    root.style.setProperty(prop, value);
+  for (const [prop, key] of CSS_VAR_MAP) {
+    root.style.setProperty(prop, palette[key]);
   }
+  root.style.setProperty("--heading-tracking", typography.headingTracking);
+  root.style.setProperty("--kpi-tracking", typography.kpiTracking);
 }
 
 function getEffectivePalette(theme: ProductTheme, mode: ColorMode): ThemePalette {
@@ -96,12 +57,17 @@ export function useTheme() {
     const root = document.documentElement;
     root.setAttribute("data-transitioning", "true");
     root.setAttribute("data-theme", "general");
-    const cssClass = colorMode === "dark" ? "dark" : "light";
-    root.classList.remove("light", "dark");
-    root.classList.add(cssClass);
+    root.setAttribute("data-mode", colorMode);
+    // Soft is a first-class mode: it keeps the `light` base class (so `dark:`
+    // variants stay off) and adds `soft` for the `soft:` Tailwind variant and
+    // the `.soft` CSS fallback block.
+    root.classList.remove("light", "soft", "dark");
+    if (colorMode === "dark") root.classList.add("dark");
+    else if (colorMode === "soft") root.classList.add("light", "soft");
+    else root.classList.add("light");
 
     const palette = getEffectivePalette(productTheme, colorMode);
-    applyPalette(palette);
+    applyPalette(palette, productTheme.typography);
 
     localStorage.setItem(MODE_KEY, colorMode);
 

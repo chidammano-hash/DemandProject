@@ -48,8 +48,8 @@ const SIZE_CONFIG = {
 } as const;
 
 const SEVERITY_ACCENT_BG: Record<"best" | "warning", string> = {
-  best: "bg-[var(--kpi-best)]",
-  warning: "bg-[var(--kpi-warning)]",
+  best: "bg-kpi-best",
+  warning: "bg-kpi-warning",
 };
 
 function Sparkline({ data }: { data: number[] }) {
@@ -97,12 +97,12 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
       ? trendIsGood === null
         ? "text-muted-foreground"
         : trendIsGood
-          ? "text-[var(--kpi-best)]"
-          : "text-[var(--kpi-warning)]"
+          ? "text-kpi-best"
+          : "text-kpi-warning"
       : trend.direction === "up"
-        ? "text-[var(--kpi-best)]"
+        ? "text-kpi-best"
         : trend.direction === "down"
-          ? "text-[var(--kpi-warning)]"
+          ? "text-kpi-warning"
           : "text-muted-foreground"
     : "";
 
@@ -139,9 +139,9 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
         )}
       </div>
       <p className={cn(
-        "tabular-nums font-mono tracking-tight transition-all duration-300",
+        "tabular-nums tracking-kpi transition-all duration-300",
         cfg.value,
-        severity === "best" ? "text-[var(--kpi-best)]" : severity === "warning" ? "text-[var(--kpi-warning)]" : "",
+        severity === "best" ? "text-kpi-best" : severity === "warning" ? "text-kpi-warning" : "",
         colorClass,
       )}>
         {value}

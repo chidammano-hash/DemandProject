@@ -10,110 +10,162 @@
 @tailwind utilities;
 
 /* ------------------------------------------------------------------ */
-/* Base / fallback variables (overridden at runtime by useTheme)       */
+/* Base / fallback variables (overridden at runtime by useTheme).      */
+/* These blocks mirror constants/palette.ts verbatim — enforced by     */
+/* constants/__tests__/paletteSync.test.ts. Edit palette.ts, not here. */
 /* ------------------------------------------------------------------ */
 :root {
-  --background: 220 20% 97%;
-  --foreground: 222 47% 11%;
+  --background: 230 24% 97%;
+  --foreground: 233 34% 14%;
   --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
+  --card-foreground: 233 34% 14%;
   --popover: var(--card);
   --popover-foreground: var(--card-foreground);
-  --primary: 224 76% 48%;
+  --primary: 245 55% 48%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 96%;
-  --secondary-foreground: 215 25% 27%;
-  --muted: 220 14% 96%;
-  --muted-foreground: 215 16% 47%;
-  --accent: 220 14% 96%;
-  --accent-foreground: 224 76% 48%;
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 224 76% 48%;
+  --secondary: 232 20% 95%;
+  --secondary-foreground: 233 24% 28%;
+  --muted: 232 20% 94%;
+  --muted-foreground: 233 12% 41%;
+  --accent: 243 45% 94%;
+  --accent-foreground: 245 55% 44%;
+  --border: 231 20% 88%;
+  --input: 231 20% 88%;
+  --ring: 245 55% 48%;
   --radius: 0.625rem;
-  --destructive: 0 72% 51%;
+  --destructive: 4 74% 46%;
   --destructive-foreground: 0 0% 100%;
-  --chart-1: 224 76% 48%;
-  --chart-2: 160 84% 39%;
-  --chart-3: 37 91% 55%;
-  --chart-4: 192 91% 36%;
-  --chart-5: 0 72% 51%;
-  --chart-6: #06B6D4;
-  --kpi-best: #10B981;
-  --kpi-warning: #EF4444;
-  --kpi-ceiling: 192 91% 36%;
-  --bg-gradient-primary: hsla(224, 76%, 50%, 0.06);
-  --bg-gradient-secondary: hsla(190, 85%, 45%, 0.045);
+  --chart-1: 243 75% 59%;
+  --chart-2: 215 25% 27%;
+  --chart-3: 160 84% 29%;
+  --chart-4: 33 98% 38%;
+  --chart-5: 200 98% 39%;
+  --chart-6: 0 72% 51%;
+  --chart-7: 175 77% 26%;
+  --chart-8: 295 72% 40%;
+  --kpi-best: 160 84% 27%;
+  --kpi-warning: 4 74% 46%;
+  --kpi-ceiling: 192 85% 30%;
+  --bg-gradient-primary: hsla(245, 60%, 50%, 0.05);
+  --bg-gradient-secondary: hsla(190, 80%, 45%, 0.04);
   --bg-gradient-base-start: #FBFCFE;
-  --bg-gradient-base-mid: #F5F8FC;
-  --bg-gradient-base-end: #EEF2F8;
-  --success: 160 84% 30%;
+  --bg-gradient-base-mid: #F4F6FB;
+  --bg-gradient-base-end: #EDF0F8;
+  --success: 160 84% 27%;
   --success-foreground: 0 0% 100%;
-  --warning: 30 90% 42%;
-  --warning-foreground: 30 60% 10%;
-  --info: 214 90% 52%;
+  --warning: 32 95% 42%;
+  --warning-foreground: 28 70% 10%;
+  --info: 212 88% 43%;
   --info-foreground: 0 0% 100%;
-  /* Sidebar tokens */
-  --sidebar-background: 222 47% 11%;
-  --sidebar-foreground: 215 20% 65%;
-  --sidebar-primary: 213 94% 68%;
-  --sidebar-accent: 217 33% 17%;
-  --sidebar-border: 217 33% 17%;
-  --sidebar-ring: 213 94% 68%;
-  /* Legacy sidebar tokens */
-  --sidebar-bg: 0 0% 100%;
-  --sidebar-active: 224 76% 48%;
-  --sidebar-hover: 220 14% 96%;
+  --severity-high: 22 88% 38%;
+  --severity-high-foreground: 0 0% 100%;
+  --sidebar-bg: 232 22% 95%;
+  --sidebar-foreground: 233 14% 37%;
+  --sidebar-active: 245 55% 48%;
+  --sidebar-hover: 232 18% 91%;
+  --sidebar-border: 231 20% 87%;
+  --heading-tracking: -0.01em;
+  --kpi-tracking: -0.02em;
 }
 
-/* Dark palette defaults (overridden by useTheme at runtime) */
-.dark {
-  --background: 222 47% 6%;
-  --foreground: 210 40% 96%;
-  --card: 217 33% 10%;
-  --card-foreground: 210 40% 96%;
-  --primary: 213 94% 68%;
-  --primary-foreground: 222 47% 6%;
-  --secondary: 217 33% 14%;
-  --secondary-foreground: 215 20% 75%;
-  --muted: 217 33% 14%;
-  --muted-foreground: 215 20% 55%;
-  --accent: 217 33% 14%;
-  --accent-foreground: 213 94% 68%;
-  --border: 217 24% 18%;
-  --input: 217 24% 18%;
-  --ring: 213 94% 68%;
-  --destructive: 0 62% 54%;
+/* Soft ("planner's paper") fallbacks — the root carries `light soft` */
+.soft {
+  --background: 40 24% 96%;
+  --foreground: 30 12% 16%;
+  --card: 42 30% 99%;
+  --card-foreground: 30 12% 16%;
+  --primary: 245 45% 49%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 38 16% 92%;
+  --secondary-foreground: 30 10% 30%;
+  --muted: 38 16% 91%;
+  --muted-foreground: 30 8% 39%;
+  --accent: 245 25% 92%;
+  --accent-foreground: 245 45% 45%;
+  --border: 36 14% 85%;
+  --input: 36 14% 85%;
+  --ring: 245 45% 49%;
+  --destructive: 4 66% 46%;
   --destructive-foreground: 0 0% 100%;
-  --chart-1: #60A5FA;
-  --chart-2: #34D399;
-  --chart-3: #FBBF24;
-  --chart-4: 187 94% 51%;
-  --chart-5: #F87171;
-  --chart-6: #22D3EE;
-  --kpi-best: #34D399;
-  --kpi-warning: #F87171;
-  --kpi-ceiling: #22D3EE;
-  --bg-gradient-primary: hsla(217, 91%, 60%, 0.10);
-  --bg-gradient-secondary: hsla(190, 90%, 52%, 0.06);
-  --bg-gradient-base-start: #0C1322;
-  --bg-gradient-base-mid: #0A0F1C;
-  --bg-gradient-base-end: #070B14;
-  --success: 158 64% 52%;
-  --success-foreground: 222 47% 8%;
-  --warning: 38 92% 56%;
-  --warning-foreground: 30 60% 10%;
-  --info: 213 94% 68%;
-  --info-foreground: 222 47% 8%;
-  --sidebar-background: 222 47% 5%;
-  --sidebar-foreground: 215 20% 55%;
-  --sidebar-primary: 213 94% 68%;
-  --sidebar-accent: 217 33% 12%;
-  --sidebar-border: 217 33% 12%;
-  /* Legacy sidebar tokens */
-  --sidebar-bg: 224 10% 10%;
-  --sidebar-active: 213 94% 68%;
-  --sidebar-hover: 215 10% 16%;
+  --chart-1: 244 44% 50%;
+  --chart-2: 30 6% 25%;
+  --chart-3: 160 84% 27%;
+  --chart-4: 33 89% 37%;
+  --chart-5: 200 92% 36%;
+  --chart-6: 0 61% 48%;
+  --chart-7: 189 86% 23%;
+  --chart-8: 273 55% 51%;
+  --kpi-best: 160 70% 26%;
+  --kpi-warning: 4 66% 44%;
+  --kpi-ceiling: 192 75% 28%;
+  --bg-gradient-primary: hsla(35, 60%, 50%, 0.05);
+  --bg-gradient-secondary: hsla(245, 40%, 55%, 0.035);
+  --bg-gradient-base-start: #FCFAF6;
+  --bg-gradient-base-mid: #F7F3EC;
+  --bg-gradient-base-end: #F0EAE0;
+  --success: 160 70% 26%;
+  --success-foreground: 0 0% 100%;
+  --warning: 32 92% 42%;
+  --warning-foreground: 28 70% 10%;
+  --info: 212 72% 41%;
+  --info-foreground: 0 0% 100%;
+  --severity-high: 22 80% 36%;
+  --severity-high-foreground: 0 0% 100%;
+  --sidebar-bg: 38 20% 94%;
+  --sidebar-foreground: 30 10% 36%;
+  --sidebar-active: 245 45% 49%;
+  --sidebar-hover: 38 14% 89%;
+  --sidebar-border: 36 14% 83%;
+}
+
+/* Dark ("night shift") fallbacks (overridden by useTheme at runtime) */
+.dark {
+  --background: 235 30% 8%;
+  --foreground: 228 28% 94%;
+  --card: 235 26% 12%;
+  --card-foreground: 228 28% 94%;
+  --primary: 240 88% 77%;
+  --primary-foreground: 237 40% 12%;
+  --secondary: 235 22% 16%;
+  --secondary-foreground: 230 18% 78%;
+  --muted: 235 22% 15%;
+  --muted-foreground: 231 14% 64%;
+  --accent: 240 25% 18%;
+  --accent-foreground: 240 88% 77%;
+  --border: 235 20% 19%;
+  --input: 235 20% 19%;
+  --ring: 240 88% 77%;
+  --destructive: 2 68% 46%;
+  --destructive-foreground: 0 0% 100%;
+  --chart-1: 234 89% 74%;
+  --chart-2: 215 20% 82%;
+  --chart-3: 160 84% 39%;
+  --chart-4: 43 96% 56%;
+  --chart-5: 198 93% 60%;
+  --chart-6: 0 91% 71%;
+  --chart-7: 171 77% 64%;
+  --chart-8: 270 95% 75%;
+  --kpi-best: 158 62% 55%;
+  --kpi-warning: 2 90% 72%;
+  --kpi-ceiling: 187 75% 55%;
+  --bg-gradient-primary: hsla(243, 85%, 65%, 0.10);
+  --bg-gradient-secondary: hsla(190, 85%, 55%, 0.05);
+  --bg-gradient-base-start: #101226;
+  --bg-gradient-base-mid: #0C0E1D;
+  --bg-gradient-base-end: #080A14;
+  --success: 158 62% 50%;
+  --success-foreground: 160 65% 8%;
+  --warning: 38 95% 58%;
+  --warning-foreground: 30 70% 10%;
+  --info: 212 95% 68%;
+  --info-foreground: 220 45% 10%;
+  --severity-high: 22 90% 62%;
+  --severity-high-foreground: 24 65% 10%;
+  --sidebar-bg: 237 32% 6%;
+  --sidebar-foreground: 230 14% 62%;
+  --sidebar-active: 240 88% 77%;
+  --sidebar-hover: 235 22% 13%;
+  --sidebar-border: 235 20% 15%;
 }
 
 * {

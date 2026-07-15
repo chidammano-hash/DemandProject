@@ -32,15 +32,15 @@ export function TopMovers({ movers, className }: TopMoversProps) {
             key={`${mover.item_description}-${idx}`}
             className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 transition-colors duration-100 cursor-pointer"
           >
-            <span className={cn("flex-shrink-0", isUp ? "text-[var(--kpi-best)]" : "text-[var(--kpi-warning)]")}>
+            <span className={cn("flex-shrink-0", isUp ? "text-kpi-best" : "text-kpi-warning")}>
               {isUp ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
             </span>
             <span className="min-w-0 flex-1 truncate text-sm text-card-foreground">
               {mover.item_description}
             </span>
             <span className={cn(
-              "flex-shrink-0 text-sm font-semibold tabular-nums font-mono",
-              isUp ? "text-[var(--kpi-best)]" : "text-[var(--kpi-warning)]",
+              "flex-shrink-0 text-sm font-semibold tabular-nums",
+              isUp ? "text-kpi-best" : "text-kpi-warning",
             )}>
               {isUp ? "+" : ""}{formatCompact(mover.delta)}
             </span>

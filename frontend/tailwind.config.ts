@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
 
 const config: Config = {
   darkMode: ["class"],
@@ -44,6 +45,7 @@ const config: Config = {
           foreground: "hsl(var(--sidebar-foreground))",
           active: "hsl(var(--sidebar-active))",
           hover: "hsl(var(--sidebar-hover))",
+          border: "hsl(var(--sidebar-border))",
         },
         success: {
           DEFAULT: "hsl(var(--success))",
@@ -57,6 +59,32 @@ const config: Config = {
           DEFAULT: "hsl(var(--info))",
           foreground: "hsl(var(--info-foreground))",
         },
+        "severity-high": {
+          DEFAULT: "hsl(var(--severity-high))",
+          foreground: "hsl(var(--severity-high-foreground))",
+        },
+        chart: {
+          1: "hsl(var(--chart-1))",
+          2: "hsl(var(--chart-2))",
+          3: "hsl(var(--chart-3))",
+          4: "hsl(var(--chart-4))",
+          5: "hsl(var(--chart-5))",
+          6: "hsl(var(--chart-6))",
+          7: "hsl(var(--chart-7))",
+          8: "hsl(var(--chart-8))",
+        },
+        kpi: {
+          best: "hsl(var(--kpi-best))",
+          warning: "hsl(var(--kpi-warning))",
+          ceiling: "hsl(var(--kpi-ceiling))",
+        },
+      },
+      fontSize: {
+        "2xs": ["0.6875rem", { lineHeight: "0.875rem" }],
+      },
+      letterSpacing: {
+        heading: "var(--heading-tracking)",
+        kpi: "var(--kpi-tracking)",
       },
       boxShadow: {
         card: "0 1px 2px -1px rgb(15 23 42 / 0.06), 0 3px 8px -2px rgb(15 23 42 / 0.08)",
@@ -102,7 +130,15 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // `soft:` variant — active when the root carries the .soft class (the
+    // Soft mode adds `soft` alongside `light`; see hooks/useTheme.ts).
+    // Token utilities are mode-correct by construction; reach for `soft:`
+    // only for genuine per-mode divergences.
+    plugin(({ addVariant }) => {
+      addVariant("soft", ".soft &");
+    }),
+  ],
 };
 
 export default config;

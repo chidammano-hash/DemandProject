@@ -22,8 +22,11 @@
             mode = "light";
           }
           var root = document.documentElement;
-          root.classList.add(mode === "dark" ? "dark" : "light");
+          if (mode === "dark") root.classList.add("dark");
+          else if (mode === "soft") root.classList.add("light", "soft");
+          else root.classList.add("light");
           root.setAttribute("data-theme", "general");
+          root.setAttribute("data-mode", mode);
         } catch (e) { /* ignore */ }
       })();
     </script>
