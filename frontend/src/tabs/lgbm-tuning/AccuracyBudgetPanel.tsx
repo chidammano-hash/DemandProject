@@ -74,18 +74,25 @@ const SUB_TABS: { key: SubSection; label: string; icon: typeof TrendingUp }[] = 
   { key: "models", label: "Model Comparison", icon: Award },
 ];
 
-const WATERFALL_COLORS: Record<string, string> = {
-  baseline: "#94A3B8",
-  model: "#2563EB",
-  oracle: "#059669",
-  gap: "#F59E0B",
-};
+// Waterfall step colors from the semantic palette: baseline is muted,
+// the model is the forecast petrol, the oracle ceiling is teal, the
+// addressable gap is warning amber.
+function waterfallColors(charts: ReturnType<typeof useChartColors>): Record<string, string> {
+  return {
+    baseline: charts.fallback[0],
+    model: charts.roles.forecast,
+    oracle: charts.roles.ceiling,
+    gap: charts.roles.warning,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 1. Waterfall — built from decomposition endpoint
 // ---------------------------------------------------------------------------
 function WaterfallSection() {
-  const { chartColors } = useChartColors();
+  const colors = useChartColors();
+  const { chartColors } = colors;
+  const stepColors = waterfallColors(colors);
   const { data, isLoading, isError } = useQuery({
     queryKey: accuracyBudgetKeys.decomposition(),
     queryFn: () => fetchAccuracyDecomposition(),
@@ -119,7 +126,7 @@ function WaterfallSection() {
     label: s.label,
     value: s.value,
     type: s.type,
-    fill: WATERFALL_COLORS[s.type] ?? "#64748B",
+    fill: stepColors[s.type] ?? colors.fallback[0],
   }));
 
   // Value-added cards from forecast-value endpoint
@@ -187,7 +194,7 @@ function WaterfallSection() {
 
       {/* Legend */}
       <div className="flex items-center gap-4 justify-center">
-        {Object.entries(WATERFALL_COLORS).map(([key, color]) => (
+        {Object.entries(stepColors).map(([key, color]) => (
           <div key={key} className="flex items-center gap-1.5">
             <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
             <span className="text-xs text-muted-foreground capitalize">{key}</span>
@@ -382,7 +389,7 @@ function AbcTargetsSection() {
 // 4. Monthly Accuracy Trend
 // ---------------------------------------------------------------------------
 function TrendSection() {
-  const { chartColors, trendColors } = useChartColors();
+  const { chartColors, trendColors, roles } = useChartColors();
   const { data, isLoading, isError } = useQuery({
     queryKey: accuracyBudgetKeys.monthly(),
     queryFn: fetchMonthlyTrend,
@@ -441,9 +448,9 @@ function TrendSection() {
           <Legend wrapperStyle={{ fontSize: "11px" }} />
           <ReferenceLine
             y={70}
-            stroke="#F59E0B"
+            stroke={roles.warning}
             strokeDasharray="6 4"
-            label={{ value: "Target 70%", position: "right", fontSize: 10, fill: "#F59E0B" }}
+            label={{ value: "Target 70%", position: "right", fontSize: 10, fill: roles.warning }}
           />
           <Line
             type="monotone"

@@ -17,13 +17,10 @@ import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import type { SkuAnalysisPayload } from "@/types";
 import { modelLabel, formatChampionLabel } from "@/lib/model-labels";
 import {
-  PROD_FORECAST_COLOR,
-  AI_CHAMPION_COLOR,
   CHART_MARGIN,
   DESELECT_OPACITY,
+  getItemAnalysisColors,
   stagingModelColor,
-  DQ_ORIG_COLOR,
-  SUPPLY_COLORS,
   TOOLTIP_LABELS,
 } from "./colors";
 import type { SupplySeriesDef } from "./measures";
@@ -86,7 +83,8 @@ export function UnifiedChart({
   ss,
   ropUnits,
 }: UnifiedChartProps) {
-  const { chartColors, roles } = useChartColors();
+  const { chartColors, roles, theme } = useChartColors();
+  const iaColors = getItemAnalysisColors(theme);
   const hasCustomerBlend = hasCustomerBlendData(mergedData);
   return (
     <div className="h-[400px] overflow-x-auto overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
@@ -243,7 +241,7 @@ export function UnifiedChart({
                   dataKey="production_forecast"
                   yAxisId="left"
                   name="production_forecast"
-                  stroke={PROD_FORECAST_COLOR}
+                  stroke={iaColors.prodForecast}
                   strokeWidth={2.5}
                   strokeDasharray="6 3"
                   dot={false}
@@ -256,7 +254,7 @@ export function UnifiedChart({
                 dataKey="ai_champion"
                 yAxisId="left"
                 name="ai_champion"
-                stroke={AI_CHAMPION_COLOR}
+                stroke={iaColors.aiChampion}
                 strokeWidth={2.5}
                 strokeDasharray="2 2"
                 dot={false}
@@ -272,7 +270,7 @@ export function UnifiedChart({
               .filter((mid) => !hiddenStaging.has(mid) && !hiddenStagingPills.has(mid))
               .map((mid) => {
                 const key = `staging_${mid}`;
-                const color = stagingModelColor(mid, roles);
+                const color = stagingModelColor(mid, roles, iaColors);
                 return (
                   <Line
                     key={key}
@@ -297,7 +295,7 @@ export function UnifiedChart({
               .filter((mid) => !hiddenBacktest.has(mid))
               .map((mid) => {
                 const key = `backtest_${mid}`;
-                const color = stagingModelColor(mid, roles);
+                const color = stagingModelColor(mid, roles, iaColors);
                 return (
                   <Line
                     key={key}
@@ -344,10 +342,10 @@ export function UnifiedChart({
                   dataKey={origKey}
                   yAxisId="left"
                   name={origKey}
-                  stroke={DQ_ORIG_COLOR}
+                  stroke={iaColors.dqOrig}
                   strokeWidth={2}
                   strokeDasharray="4 3"
-                  dot={{ r: 3, fill: DQ_ORIG_COLOR }}
+                  dot={{ r: 3, fill: iaColors.dqOrig }}
                   connectNulls={false}
                   activeDot={{ r: 5 }}
                 />
@@ -358,14 +356,14 @@ export function UnifiedChart({
               <ReferenceLine
                 yAxisId="left"
                 y={ss!}
-                stroke={SUPPLY_COLORS.safety_stock}
+                stroke={iaColors.supply.safety_stock}
                 strokeDasharray="6 3"
                 strokeWidth={1.5}
                 label={{
                   value: `SS ${ss!.toFixed(0)}u`,
                   position: "insideTopLeft",
                   fontSize: 10,
-                  fill: SUPPLY_COLORS.safety_stock,
+                  fill: iaColors.supply.safety_stock,
                 }}
               />
             )}
@@ -373,14 +371,14 @@ export function UnifiedChart({
               <ReferenceLine
                 yAxisId="left"
                 y={ropUnits}
-                stroke={SUPPLY_COLORS.avg_lead_time}
+                stroke={iaColors.supply.avg_lead_time}
                 strokeDasharray="4 2"
                 strokeWidth={1.5}
                 label={{
                   value: `ROP ${ropUnits.toFixed(0)}u`,
                   position: "insideBottomLeft",
                   fontSize: 10,
-                  fill: SUPPLY_COLORS.avg_lead_time,
+                  fill: iaColors.supply.avg_lead_time,
                 }}
               />
             )}

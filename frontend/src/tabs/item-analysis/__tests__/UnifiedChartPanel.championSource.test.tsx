@@ -5,11 +5,22 @@ import type { SkuAnalysisPayload } from "@/types";
 
 // Recharts is heavy and DOM-dimension dependent; the project mocks it in tests.
 vi.mock("recharts");
-vi.mock("@/hooks/useChartColors", () => ({
-  useChartColors: () => ({
-    chartColors: { grid: "#eee", axis: "#333", tooltip_bg: "#fff", tooltip_border: "#ccc" },
-  }),
-}));
+vi.mock("@/hooks/useChartColors", async () => {
+  const { PALETTE } = await import("@/constants/palette");
+  const charts = PALETTE.light.charts;
+  return {
+    useChartColors: () => ({
+      theme: "light",
+      chartColors: { grid: "#eee", axis: "#333", tooltip_bg: "#fff", tooltip_border: "#ccc" },
+      roles: charts.roles,
+      series: [...charts.series],
+      fallback: [...charts.fallback],
+      heatmap: [...charts.heatmapScale],
+      trendColors: [...charts.series],
+      okabeIto: [...charts.series],
+    }),
+  };
+});
 
 function makeData(overrides: Partial<SkuAnalysisPayload> = {}): SkuAnalysisPayload {
   return {

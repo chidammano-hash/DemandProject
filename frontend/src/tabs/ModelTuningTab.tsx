@@ -16,7 +16,9 @@ import { Layers } from "lucide-react";
 import { type ModelType } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
 import { PipelineReadinessBanner } from "@/components/PipelineReadinessBanner";
-import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/PageHeader";
+import { Skeleton } from "@/components/Skeleton";
+import { TabStrip } from "@/components/ui/tabs";
 
 import {
   fetchPipelineConfig,
@@ -71,8 +73,10 @@ import type { PipelineStage } from "./model-tuning/_types";
 
 function StageLoader() {
   return (
-    <div className="flex items-center justify-center text-sm text-muted-foreground rounded-md border border-dashed h-64">
-      Loading...
+    <div className="space-y-3 rounded-xl border border-border/60 bg-card p-4 shadow-card" aria-busy="true">
+      <Skeleton className="h-5 w-48" />
+      <Skeleton className="h-3 w-72" />
+      <Skeleton className="h-48 w-full" />
     </div>
   );
 }
@@ -133,41 +137,23 @@ export default function ModelTuningTab() {
   return (
     <div className="flex flex-col gap-5 p-4 md:p-6">
       {/* ---- Header ---- */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="flex items-center gap-2 text-lg font-semibold">
-            <Layers className="h-5 w-5 text-muted-foreground" />
-            Forecasting
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Run the item-location lifecycle and monthly roll, or independently generate
-            customer-level forecasts.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        icon={Layers}
+        title="Forecasting"
+        description="Run the item-location lifecycle and monthly roll, or independently generate customer-level forecasts."
+      />
 
       {/* ---- Dependency readiness (e.g. clustering stale after a dim_sku reload) ---- */}
       <PipelineReadinessBanner />
 
       {/* ---- Pipeline Stage Tabs ---- */}
-      <div className="flex flex-wrap gap-1 border-b border-border pb-1">
-        {STAGE_TABS.map(({ key, label, icon: Icon }) => (
-          <button
-            type="button"
-            key={key}
-            onClick={() => handleStageChange(key)}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors",
-              stage === key
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-muted"
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </button>
-        ))}
-      </div>
+      <TabStrip
+        aria-label="Forecasting pipeline stages"
+        variant="pills"
+        value={stage}
+        onValueChange={(key) => handleStageChange(key as PipelineStage)}
+        items={STAGE_TABS.map(({ key, label, icon }) => ({ key, label, icon }))}
+      />
 
       {/* Stage panels — Suspense boundary fetches the active stage's chunk on demand. */}
       <Suspense fallback={<StageLoader />}>

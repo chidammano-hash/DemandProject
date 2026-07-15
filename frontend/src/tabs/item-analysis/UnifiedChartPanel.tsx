@@ -12,14 +12,12 @@ import { modelLabel, formatChampionLabel } from "@/lib/model-labels";
 import type { DQCorrection } from "@/api/queries/platform";
 import { formatMonthLabel, isFromDisabled, isToDisabled } from "./monthRange";
 import {
-  PROD_FORECAST_COLOR,
-  AI_CHAMPION_COLOR,
+  getItemAnalysisColors,
   stagingModelColor,
-  DQ_ORIG_COLOR,
   TOOLTIP_LABELS,
 } from "./colors";
 import {
-  SUPPLY_SERIES_DEFS,
+  getSupplySeriesDefs,
   loadDefaultHiddenSupply,
   toggleInSet,
 } from "./measures";
@@ -96,7 +94,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   aiChampionRecCode = null,
   aiChampionRationale = null,
 }: UnifiedChartPanelProps) {
-  const { roles } = useChartColors();
+  const { roles, theme } = useChartColors();
+  const iaColors = getItemAnalysisColors(theme);
+  const supplySeriesDefs = getSupplySeriesDefs(theme);
   const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(() => loadDefaultHiddenSupply());
   // Tracks demand series whose pill is shown but chart line is hidden (dimmed pill)
   const [hiddenDemand, setHiddenDemand] = useState<Set<string>>(new Set());
@@ -257,11 +257,11 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   // Right axis needed?
   const hasRightAxis =
     hasSupplyData &&
-    SUPPLY_SERIES_DEFS.some((s) => s.axis === "right" && !hiddenSupply.has(s.key));
+    supplySeriesDefs.some((s) => s.axis === "right" && !hiddenSupply.has(s.key));
 
   // Available supply series (conditionally include SS-dependent ones)
   const availableSupply = useMemo(() => {
-    return SUPPLY_SERIES_DEFS.filter((s) => {
+    return supplySeriesDefs.filter((s) => {
       if (s.key === "safety_stock" || s.key === "cycle_stock") return hasSs;
       return true;
     });
@@ -380,7 +380,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
           {hasProdForecast && skuVisibleSeries.has("production_forecast") && (
             <TogglePill
               label={prodForecastLabel}
-              color={PROD_FORECAST_COLOR}
+              color={iaColors.prodForecast}
               active={!hiddenDemand.has("production_forecast")}
               onClick={() => toggleDemandLineVisibility("production_forecast")}
               dashed
@@ -389,7 +389,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
           {hasAiChampion && skuVisibleSeries.has("ai_champion") && (
             <TogglePill
               label="AI Champion"
-              color={AI_CHAMPION_COLOR}
+              color={iaColors.aiChampion}
               active={!hiddenDemand.has("ai_champion")}
               onClick={() => toggleDemandLineVisibility("ai_champion")}
               dashed
@@ -410,7 +410,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             {stagingModelIds
               .filter((mid) => !hiddenStagingPills.has(mid))
               .map((mid) => {
-                const color = stagingModelColor(mid, roles);
+                const color = stagingModelColor(mid, roles, iaColors);
                 return (
                   <TogglePill
                     key={`staging_${mid}`}
@@ -436,7 +436,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
               {allBacktestOn ? "Backtest −" : "Backtest +"}
             </button>
             {backtestModelIds.map((mid) => {
-              const color = stagingModelColor(mid, roles);
+              const color = stagingModelColor(mid, roles, iaColors);
               return (
                 <TogglePill
                   key={`backtest_${mid}`}
@@ -463,7 +463,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                 <TogglePill
                   key={origKey}
                   label={label}
-                  color={DQ_ORIG_COLOR}
+                  color={iaColors.dqOrig}
                   active
                   onClick={() => {}}
                   dashed
@@ -584,7 +584,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
       {/* ---- AI Champion rationale (the reasons behind the amber line) ---- */}
       {hasAiChampion && aiChampionRationale && !hiddenDemand.has("ai_champion") && (
         <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
-          <span className="font-semibold" style={{ color: AI_CHAMPION_COLOR }}>
+          <span className="font-semibold" style={{ color: iaColors.aiChampion }}>
             AI Champion{aiChampionRecCode ? ` (${aiChampionRecCode})` : ""}:
           </span>{" "}
           {aiChampionRationale}

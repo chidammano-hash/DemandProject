@@ -37,6 +37,7 @@ import {
   type FeatureStabilityRow,
 } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
+import { PALETTE, type ColorMode } from "@/constants/palette";
 import { formatFixed } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
@@ -75,34 +76,42 @@ const SUB_TABS: { key: SubSection; label: string; icon: typeof Sparkles }[] = [
 // Stability badge
 // ---------------------------------------------------------------------------
 function StabilityBadge({ stability }: { stability: string }) {
-  const styles: Record<string, string> = {
-    stable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-    moderate: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-    unstable: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  const variant: Record<string, "success" | "warning" | "critical"> = {
+    stable: "success",
+    moderate: "warning",
+    unstable: "critical",
   };
   return (
-    <Badge className={cn("text-[10px] px-2 py-0.5", styles[stability] ?? styles.moderate)}>
+    <Badge variant={variant[stability] ?? "warning"} className="text-2xs px-2 py-0.5">
       {stability}
     </Badge>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Default category colors for features without a category color
+// Default category colors for features without a server-assigned color —
+// stable semantic slots from the mode palette.
 // ---------------------------------------------------------------------------
-const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
-  lag: "#2563EB",
-  rolling: "#0D9488",
-  seasonal: "#D97706",
-  calendar: "#0891B2",
-  cluster: "#EC4899",
-  external: "#84CC16",
-  demand: "#f97316",
-  other: "#64748B",
-};
+function defaultCategoryColors(mode: ColorMode): Record<string, string> {
+  const { series, fallback } = PALETTE[mode].charts;
+  return {
+    lag: series[0],
+    rolling: series[6],
+    seasonal: series[3],
+    calendar: series[4],
+    cluster: series[7],
+    external: series[2],
+    demand: series[5],
+    other: fallback[0],
+  };
+}
 
-function getCategoryColor(category: string, colorMap: Map<string, string>): string {
-  return colorMap.get(category) ?? DEFAULT_CATEGORY_COLORS[category.toLowerCase()] ?? "#64748B";
+function getCategoryColor(category: string, colorMap: Map<string, string>, mode: ColorMode): string {
+  return (
+    colorMap.get(category) ??
+    defaultCategoryColors(mode)[category.toLowerCase()] ??
+    PALETTE[mode].charts.fallback[0]
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +124,7 @@ function ImportanceChart({
   features: FeatureImportanceRow[];
   catColorMap: Map<string, string>;
 }) {
-  const { chartColors } = useChartColors();
+  const { chartColors, theme } = useChartColors();
 
   // Top 30 features sorted by SHAP value (descending)
   const chartData = useMemo(
@@ -129,9 +138,9 @@ function ImportanceChart({
           fullName: f.feature,
           shap_value: f.shap_value,
           category: f.category,
-          color: getCategoryColor(f.category, catColorMap),
+          color: getCategoryColor(f.category, catColorMap, theme),
         })),
-    [features, catColorMap],
+    [features, catColorMap, theme],
   );
 
   if (chartData.length === 0) {
@@ -247,6 +256,7 @@ function StabilityTable({ features }: { features: FeatureStabilityRow[] }) {
 // 3. Feature Correlation Heatmap
 // ---------------------------------------------------------------------------
 function CorrelationSection() {
+  const { roles, chartColors } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: featureLabKeys.correlation(20),
     queryFn: () => fetchFeatureCorrelation(20),
@@ -257,12 +267,12 @@ function CorrelationSection() {
     () => (value: number): string => {
       // value is correlation * 100 for the heatmap (scaled to 0-100 range)
       const r = value / 100;
-      if (Math.abs(r) >= 0.9) return "#DC2626"; // red — high collinearity
-      if (Math.abs(r) >= 0.7) return "#F59E0B"; // amber — moderate
-      if (Math.abs(r) >= 0.5) return "#3B82F6"; // blue — weak
-      return "#E2E8F0"; // muted — negligible
+      if (Math.abs(r) >= 0.9) return roles.error; // high collinearity
+      if (Math.abs(r) >= 0.7) return roles.warning; // moderate
+      if (Math.abs(r) >= 0.5) return roles.reference; // weak
+      return chartColors.grid; // negligible
     },
-    [],
+    [roles, chartColors],
   );
 
   if (isLoading) return <LoadingElement message="Loading correlation data..." />;

@@ -3,7 +3,8 @@
 // (localStorage) for the Item Analysis unified chart.
 // Relocated verbatim from UnifiedChartPanel.tsx.
 // ---------------------------------------------------------------------------
-import { SUPPLY_COLORS } from "./colors";
+import type { ColorMode } from "@/constants/palette";
+import { getItemAnalysisColors } from "./colors";
 
 export interface SupplySeriesDef {
   key: string;
@@ -15,19 +16,26 @@ export interface SupplySeriesDef {
   strokeWidth?: number;
 }
 
-export const SUPPLY_SERIES_DEFS: SupplySeriesDef[] = [
-  { key: "total_on_hand", label: "On Hand", color: SUPPLY_COLORS.total_on_hand, axis: "left", defaultVisible: true },
-  { key: "total_on_order", label: "On Order", color: SUPPLY_COLORS.total_on_order, axis: "left", defaultVisible: false },
-  { key: "total_position", label: "Position", color: SUPPLY_COLORS.total_position, axis: "left", defaultVisible: false, dashArray: "8 3" },
-  { key: "inv_monthly_sales", label: "Inv Sales", color: SUPPLY_COLORS.inv_monthly_sales, axis: "left", defaultVisible: false },
-  { key: "dos", label: "DOS", color: SUPPLY_COLORS.dos, axis: "right", defaultVisible: true, strokeWidth: 2.5 },
-  { key: "avg_lead_time", label: "Lead Time", color: SUPPLY_COLORS.avg_lead_time, axis: "right", defaultVisible: false, dashArray: "5 3" },
-  { key: "safety_stock", label: "Safety Stock", color: SUPPLY_COLORS.safety_stock, axis: "left", defaultVisible: false, dashArray: "6 3" },
-  { key: "cycle_stock", label: "Cycle Stock", color: SUPPLY_COLORS.cycle_stock, axis: "left", defaultVisible: false },
+/** Mode-independent series shape; colors are resolved per mode below. */
+const SUPPLY_SERIES_BASE: Array<Omit<SupplySeriesDef, "color">> = [
+  { key: "total_on_hand", label: "On Hand", axis: "left", defaultVisible: true },
+  { key: "total_on_order", label: "On Order", axis: "left", defaultVisible: false },
+  { key: "total_position", label: "Position", axis: "left", defaultVisible: false, dashArray: "8 3" },
+  { key: "inv_monthly_sales", label: "Inv Sales", axis: "left", defaultVisible: false },
+  { key: "dos", label: "DOS", axis: "right", defaultVisible: true, strokeWidth: 2.5 },
+  { key: "avg_lead_time", label: "Lead Time", axis: "right", defaultVisible: false, dashArray: "5 3" },
+  { key: "safety_stock", label: "Safety Stock", axis: "left", defaultVisible: false, dashArray: "6 3" },
+  { key: "cycle_stock", label: "Cycle Stock", axis: "left", defaultVisible: false },
 ];
 
+/** Supply series defs with mode-correct palette colors. */
+export function getSupplySeriesDefs(mode: ColorMode): SupplySeriesDef[] {
+  const { supply } = getItemAnalysisColors(mode);
+  return SUPPLY_SERIES_BASE.map((def) => ({ ...def, color: supply[def.key] }));
+}
+
 export const DEFAULT_HIDDEN_SUPPLY = new Set(
-  SUPPLY_SERIES_DEFS.filter((s) => !s.defaultVisible).map((s) => s.key),
+  SUPPLY_SERIES_BASE.filter((s) => !s.defaultVisible).map((s) => s.key),
 );
 
 // ---------------------------------------------------------------------------

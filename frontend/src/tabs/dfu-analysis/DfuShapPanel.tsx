@@ -18,33 +18,24 @@ import { Skeleton } from "@/components/Skeleton";
 
 import { useChartColors } from "@/hooks/useChartColors";
 import { fetchSkuShap, fetchShapSummary } from "@/api/queries/core";
+import { PALETTE, type ColorMode } from "@/constants/palette";
 import type { SkuShapPayload } from "@/types/shap";
 import type { ShapSummaryPayload } from "@/types/shap";
 import type { SkuAnalysisMode } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Color palette for features (15 distinct colors)
+// Mode-aware categorical ramp for features: the 8 semantic series colors
+// followed by the 6 muted fallback colors (14 distinct hues per mode).
 // ---------------------------------------------------------------------------
-const SHAP_FEATURE_COLORS = [
-  "#2563EB",
-  "#0D9488",
-  "#D97706",
-  "#0891B2",
-  "#DC2626",
-  "#0284C7",
-  "#7C3AED",
-  "#059669",
-  "#DB2777",
-  "#EA580C",
-  "#CA8A04",
-  "#0E7490",
-  "#4F46E5",
-  "#16A34A",
-  "#B91C1C",
-];
+const FEATURE_RAMPS: Record<ColorMode, string[]> = {
+  light: [...PALETTE.light.charts.series, ...PALETTE.light.charts.fallback],
+  soft: [...PALETTE.soft.charts.series, ...PALETTE.soft.charts.fallback],
+  dark: [...PALETTE.dark.charts.series, ...PALETTE.dark.charts.fallback],
+};
 
-function featureColor(idx: number): string {
-  return SHAP_FEATURE_COLORS[idx % SHAP_FEATURE_COLORS.length];
+function featureColor(idx: number, mode: ColorMode): string {
+  const ramp = FEATURE_RAMPS[mode];
+  return ramp[idx % ramp.length];
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +60,7 @@ function FallbackShapChart({
   modelId: string;
   chartColors: ReturnType<typeof useChartColors>["chartColors"];
 }) {
+  const { theme } = useChartColors();
   const [summary, setSummary] = useState<ShapSummaryPayload | null>(null);
 
   useEffect(() => {
@@ -90,12 +82,12 @@ function FallbackShapChart({
   const data = summary.features.map((f, i) => ({
     feature: f.feature,
     importance: f.mean_abs_shap_across_timeframes,
-    color: featureColor(i),
+    color: featureColor(i, theme),
   }));
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-amber-600 dark:text-amber-400">
+      <p className="text-xs text-warning">
         Showing cluster-level SHAP — model artifacts not available for per-DFU analysis.
       </p>
       <div className="h-[220px] overflow-x-auto">
@@ -289,6 +281,7 @@ interface ShapTooltipProps {
 }
 
 function ShapTooltip({ active, label, chartData, allFeatNames, chartColors }: ShapTooltipProps) {
+  const { theme, roles } = useChartColors();
   if (!active || !label) return null;
   const row = chartData.find((d) => d.__month__ === label);
   if (!row) return null;
@@ -304,9 +297,9 @@ function ShapTooltip({ active, label, chartData, allFeatNames, chartColors }: Sh
     ...allFeatNames.map((feat, i) => ({
       name: feat,
       value: row[feat] as number,
-      color: featureColor(i),
+      color: featureColor(i, theme),
     })),
-    { name: "Other features", value: row.__other__ as number, color: "#94a3b8" },
+    { name: "Other features", value: row.__other__ as number, color: chartColors.axis },
   ]
     .filter((it) => Math.abs(it.value) >= 0.001)
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
@@ -355,7 +348,7 @@ function ShapTooltip({ active, label, chartData, allFeatNames, chartColors }: Sh
           <span
             style={{
               fontFamily: "monospace",
-              color: it.value >= 0 ? "#16a34a" : "#ef4444",
+              color: it.value >= 0 ? roles.good : roles.error,
               fontWeight: 600,
             }}
           >
@@ -382,6 +375,7 @@ function ShapStackedChart({
   visibleMonths: string[];
   chartColors: ReturnType<typeof useChartColors>["chartColors"];
 }) {
+  const { theme } = useChartColors();
   const shapPointMap = useMemo(
     () => new Map(shapData.points.map((pt) => [pt.month, pt])),
     [shapData.points]
@@ -462,7 +456,7 @@ function ShapStackedChart({
       {/* Summary strip */}
       <div className="flex flex-wrap items-center gap-3 px-1 text-xs text-muted-foreground">
         {avgBase != null && (
-          <span className="rounded bg-slate-100 px-2 py-0.5 font-mono dark:bg-slate-800">
+          <span className="rounded bg-muted px-2 py-0.5 font-mono">
             Base avg: <span className="font-semibold text-foreground">{fmt(avgBase)}</span>
           </span>
         )}
@@ -521,9 +515,9 @@ function ShapStackedChart({
                   ...allFeatNames.map((feat, i) => ({
                     value: feat,
                     type: "square" as const,
-                    color: featureColor(i),
+                    color: featureColor(i, theme),
                   })),
-                  { value: "Other features", type: "square" as const, color: "#94a3b8" },
+                  { value: "Other features", type: "square" as const, color: chartColors.axis },
                 ]}
               />
               {/* Positive halves of each feature (above 0) */}
@@ -532,14 +526,14 @@ function ShapStackedChart({
                   key={`${feat}__p`}
                   dataKey={`${feat}__p`}
                   stackId="pos"
-                  fill={featureColor(i)}
+                  fill={featureColor(i, theme)}
                   legendType="none"
                   name={feat}
                 >
                   {chartData.map((entry, j) => (
                     <Cell
                       key={j}
-                      fill={featureColor(i)}
+                      fill={featureColor(i, theme)}
                       fillOpacity={(entry.is_future as boolean) ? 0.4 : 0.88}
                     />
                   ))}
@@ -549,14 +543,14 @@ function ShapStackedChart({
                 key="__other__p"
                 dataKey="__other__p"
                 stackId="pos"
-                fill="#94a3b8"
+                fill={chartColors.axis}
                 legendType="none"
                 name="Other features"
               >
                 {chartData.map((entry, j) => (
                   <Cell
                     key={j}
-                    fill="#94a3b8"
+                    fill={chartColors.axis}
                     fillOpacity={(entry.is_future as boolean) ? 0.3 : 0.5}
                   />
                 ))}
@@ -567,14 +561,14 @@ function ShapStackedChart({
                   key={`${feat}__n`}
                   dataKey={`${feat}__n`}
                   stackId="neg"
-                  fill={featureColor(i)}
+                  fill={featureColor(i, theme)}
                   legendType="none"
                   name={feat}
                 >
                   {chartData.map((entry, j) => (
                     <Cell
                       key={j}
-                      fill={featureColor(i)}
+                      fill={featureColor(i, theme)}
                       fillOpacity={(entry.is_future as boolean) ? 0.4 : 0.88}
                     />
                   ))}
@@ -584,14 +578,14 @@ function ShapStackedChart({
                 key="__other__n"
                 dataKey="__other__n"
                 stackId="neg"
-                fill="#94a3b8"
+                fill={chartColors.axis}
                 legendType="none"
                 name="Other features"
               >
                 {chartData.map((entry, j) => (
                   <Cell
                     key={j}
-                    fill="#94a3b8"
+                    fill={chartColors.axis}
                     fillOpacity={(entry.is_future as boolean) ? 0.3 : 0.5}
                   />
                 ))}

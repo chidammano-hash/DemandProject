@@ -370,23 +370,15 @@ function DistributionSection({ clusters }: { clusters: ClusterProfileRow[] }) {
 // 4. Seasonality Heatmap — month x cluster matrix
 // ---------------------------------------------------------------------------
 function SeasonalitySection() {
+  const { heatmap } = useChartColors();
   const { data, isLoading } = useQuery({
     queryKey: clusterEdaKeys.seasonalityHeatmap(),
     queryFn: fetchSeasonalityHeatmap,
     staleTime: STALE.FIVE_MIN,
   });
 
-  const heatmapScale = useMemo(
-    () =>
-      makeHeatmapScale([
-        "#059669", // excellent (95+)
-        "#10B981", // good (85+)
-        "#F59E0B", // warning (70+)
-        "#EF4444", // poor (50+)
-        "#991B1B", // critical (<50)
-      ]),
-    [],
-  );
+  // Good -> bad, the palette's 5-stop heatmap scale.
+  const heatmapScale = useMemo(() => makeHeatmapScale(heatmap), [heatmap]);
 
   if (isLoading) return <LoadingElement message="Loading seasonality heatmap..." />;
   if (!data || !data.rows || data.rows.length === 0) {

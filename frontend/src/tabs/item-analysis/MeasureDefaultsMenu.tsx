@@ -1,8 +1,9 @@
 import { memo, useState, useCallback, useRef, useEffect } from "react";
 
 import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
+import { useChartColors } from "@/hooks/useChartColors";
 import { modelLabel } from "@/lib/model-labels";
-import { PROD_FORECAST_COLOR, STAGING_COLORS, STAGING_FALLBACK_COLOR } from "./colors";
+import { getItemAnalysisColors } from "./colors";
 import {
   type SupplySeriesDef,
   loadDefaultMeasures,
@@ -38,6 +39,8 @@ export const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
   setHiddenSupply: React.Dispatch<React.SetStateAction<Set<string>>>;
   setHiddenStagingPills: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
+  const { theme } = useChartColors();
+  const iaColors = getItemAnalysisColors(theme);
   const [open, setOpen] = useState(false);
   const [demandDefaults, setDemandDefaults] = useState<Set<string>>(loadDefaultMeasures);
   const [supplyHidden, setSupplyHidden] = useState<Set<string>>(loadDefaultHiddenSupply);
@@ -95,7 +98,7 @@ export const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
     { key: "qty_shipped", label: "Shipped", color: SKU_SALES_COLORS.qty_shipped },
     { key: "qty_ordered", label: "Ordered", color: SKU_SALES_COLORS.qty_ordered },
     ...models.map((m, i) => ({ key: `forecast_${m}`, label: m, color: skuModelColor(m, i) })),
-    ...(hasProdForecast ? [{ key: "production_forecast", label: prodForecastLabel, color: PROD_FORECAST_COLOR }] : []),
+    ...(hasProdForecast ? [{ key: "production_forecast", label: prodForecastLabel, color: iaColors.prodForecast }] : []),
   ];
 
   return (
@@ -103,7 +106,7 @@ export const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
       <button
         ref={btnRef}
         onClick={() => setOpen((v) => !v)}
-        className={`flex h-6 items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+        className={`flex h-6 items-center gap-1 rounded border px-2 py-0.5 text-2xs font-medium transition-colors ${
           open
             ? "border-primary text-primary"
             : "border-input text-muted-foreground hover:text-foreground hover:border-foreground"
@@ -119,7 +122,7 @@ export const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
       {open && (
         <div
           ref={menuRef}
-          className="fixed z-[9999] min-w-[200px] overflow-y-auto rounded-md border bg-white p-2.5 shadow-lg dark:bg-zinc-900"
+          className="fixed z-[9999] min-w-[200px] overflow-y-auto rounded-md border border-border bg-popover p-2.5 shadow-elevated"
           style={{ top: pos.top, right: pos.right, maxHeight: `calc(100vh - ${pos.top}px - 16px)` }}
         >
           {/* Demand section */}
@@ -139,7 +142,7 @@ export const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
             <>
               <DefaultsSectionHeader label="Staging" />
               {stagingModelIds.map((mid) => {
-                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                const color = iaColors.staging[mid] ?? iaColors.stagingFallback;
                 return (
                   <DefaultCheckboxRow
                     key={`staging_${mid}`}
