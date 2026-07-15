@@ -22,7 +22,7 @@ vi.mock("@/api/queries", () => ({
     excess_dos_threshold: 90,
     by_model: {
       external: {
-        sku_months: 5000,
+        dfu_months: 5000,
         stockout_count: 150,
         stockout_rate: 3.0,
         excess_count: 400,
@@ -33,7 +33,7 @@ vi.mock("@/api/queries", () => ({
         bias: 3.2,
       },
       lgbm_cluster: {
-        sku_months: 5000,
+        dfu_months: 5000,
         stockout_count: 100,
         stockout_rate: 2.0,
         excess_count: 350,

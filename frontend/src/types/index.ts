@@ -305,7 +305,7 @@ export type Theme = "light" | "soft" | "dark";
 // Feature 37: Inventory Backtest types
 
 export type InvBacktestModelMetrics = {
-  sku_months: number;
+  dfu_months: number;
   stockout_count: number;
   stockout_rate: number;
   excess_count: number;
